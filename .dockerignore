@@ -1,0 +1,43 @@
+# Git files
+.git
+.gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+
+# Documentation
+*.md
+!README.md
+
+# Deployment files (not needed in image)
+render.yaml
+railway.json
+Procfile
+nixpacks.toml
+start.sh
+
+# Scripts
+supervisor.sh
+keepalive.sh
+bot-service.sh
+auto-start.sh
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

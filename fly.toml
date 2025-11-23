@@ -1,32 +1,40 @@
+# Fly.io Application Configuration
+# https://fly.io/docs/reference/configuration/
+
 app = "crypto-signal-bot"
-primary_region = "fra"
+primary_region = "ams" # Amsterdam (най-близо до България)
 
 [build]
+  dockerfile = "Dockerfile"
 
 [env]
   PYTHON_VERSION = "3.12"
 
+[mounts]
+  source = "crypto_bot_data"
+  destination = "/data"
+
+# Auto-restart on failure
+[experimental]
+  auto_rollback = true
+
+# Keep-alive (prevent sleeping)
 [[services]]
   internal_port = 8080
-  processes = ["app"]
   protocol = "tcp"
 
-  [services.concurrency]
-    hard_limit = 25
-    soft_limit = 20
-    type = "connections"
-
   [[services.ports]]
-    force_https = true
-    handlers = ["http"]
     port = 80
+    handlers = ["http"]
 
   [[services.ports]]
-    handlers = ["tls", "http"]
     port = 443
+    handlers = ["tls", "http"]
 
-  [[services.tcp_checks]]
-    grace_period = "1s"
-    interval = "15s"
-    restart_limit = 0
-    timeout = "2s"
+# Health check
+[[services.http_checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/health"
