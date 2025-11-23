@@ -1,0 +1,33 @@
+[INFO] 🚀 СТАРТИРАНЕ НА ДИАГНОСТИКА...
+[INFO] 📅 2025-11-23 04:19:13 UTC
+[INFO] ============================================================
+[INFO] 🔍 ПРОВЕРКА 1: Критични файлове...
+[INFO] ✅ bot.py - OK
+[INFO] ✅ bot_stats.json - OK
+[INFO] ✅ admin_module.py - OK
+[INFO] ✅ credentials.json - OK
+[INFO] ✅ admin_password.json - OK
+[INFO] ✅ .gitignore - OK
+[INFO] 🔍 ПРОВЕРКА 2: JSON файлове...
+[INFO] ✅ bot_stats.json - валиден JSON
+[INFO] ✅ credentials.json - валиден JSON
+[INFO] ✅ admin_password.json - валиден JSON
+[INFO] 🔍 ПРОВЕРКА 3: Процес на бота...
+[INFO] ✅ Бот работи (PID: 131304)
+[INFO] 🔍 ПРОВЕРКА 4: Log файлове...
+[INFO] ✅ bot.log - 0.01MB
+[INFO] ✅ diagnostics.log - 0.00MB
+[INFO] 🔍 ПРОВЕРКА 5: Дискова памет...
+[INFO] 💾 Свободно: 18.41GB / 31.33GB (63.9%)
+[INFO] 🔍 ПРОВЕРКА 6: File permissions...
+[INFO] ✅ backup.sh - OK
+[INFO] ✅ diagnostics.py - OK
+[INFO] ============================================================
+[INFO] 📊 ФИНАЛЕН ОТЧЕТ
+[INFO] ============================================================
+[INFO] ⏰ Време: 2025-11-23 04:19:13 UTC
+[INFO] 🔍 Намерени проблеми: 0
+[INFO] 🔧 Приложени поправки: 0
+[INFO] 
+🎉 СИСТЕМАТА Е В ОТЛИЧНО СЪСТОЯНИЕ!
+[INFO] ============================================================

@@ -1,0 +1,16 @@
+[Unit]
+Description=Crypto Signal Bot - Telegram Trading Bot
+After=network.target
+
+[Service]
+Type=simple
+User=codespace
+WorkingDirectory=/workspaces/Crypto-signal-bot
+ExecStart=/home/codespace/.python/current/bin/python3 /workspaces/Crypto-signal-bot/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/workspaces/Crypto-signal-bot/bot.log
+StandardError=append:/workspaces/Crypto-signal-bot/bot.log
+
+[Install]
+WantedBy=multi-user.target
