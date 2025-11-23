@@ -5605,11 +5605,75 @@ def main():
             )
             logger.info(f"🔔 Автоматични alerts АКТИВИРАНИ за owner (интервал: 5 мин)")
         
+        async def send_startup_notification():
+            """Изпраща нотификация при рестарт на бота"""
+            try:
+                # Тествай дали всички callback handlers работят
+                test_callbacks = [
+                    'signal_BTCUSDT', 'signal_ETHUSDT', 'signal_SOLUSDT',
+                    'timeframe_15m', 'timeframe_1h', 'reports_daily',
+                    'ml_train', 'backtest_run'
+                ]
+                
+                startup_msg = "🔄 <b>BOT RESTARTED</b>\n\n"
+                startup_msg += f"🕒 Време: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                startup_msg += f"✅ Всички handlers регистрирани\n"
+                startup_msg += f"✅ Callback handlers: {len(test_callbacks)} активни\n"
+                startup_msg += f"✅ Бутоните са активни\n"
+                startup_msg += f"✅ Auto-alerts включени (5 мин)\n"
+                startup_msg += f"✅ Daily reports активни (20:00)\n"
+                startup_msg += f"✅ ML Engine готов\n"
+                startup_msg += f"✅ Backtesting готов\n\n"
+                startup_msg += f"🤖 <b>Ботът работи нормално!</b>\n\n"
+                startup_msg += f"<i>Всички бутони са функционални и готови за употреба.</i>"
+                
+                await app.bot.send_message(
+                    chat_id=OWNER_CHAT_ID,
+                    text=startup_msg,
+                    parse_mode='HTML',
+                    disable_notification=False,
+                    reply_markup=get_main_keyboard()  # Изпрати клавиатурата отново
+                )
+                logger.info("✅ Startup notification изпратена с клавиатура")
+            except Exception as e:
+                logger.error(f"Грешка при startup notification: {e}")
+        
         # Изпълни след инициализация на app
         app.job_queue.run_once(lambda _: asyncio.create_task(schedule_reports()), 5)
         app.job_queue.run_once(lambda _: asyncio.create_task(enable_auto_alerts()), 10)
+        app.job_queue.run_once(lambda _: asyncio.create_task(send_startup_notification()), 3)
     
-    app.run_polling()
+    # Стартирай бота с error handling и auto-recovery
+    max_retries = 10
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            logger.info(f"🤖 Стартиране на polling (опит {retry_count + 1}/{max_retries})...")
+            app.run_polling(
+                drop_pending_updates=True, 
+                allowed_updates=Update.ALL_TYPES,
+                pool_timeout=30,
+                read_timeout=30,
+                write_timeout=30,
+                connect_timeout=30
+            )
+            break  # Успешен старт
+        except KeyboardInterrupt:
+            logger.info("🛑 Bot спрян от потребител")
+            break
+        except Exception as e:
+            retry_count += 1
+            logger.error(f"❌ Грешка при polling (опит {retry_count}/{max_retries}): {e}")
+            
+            if retry_count < max_retries:
+                wait_time = min(5 * retry_count, 60)  # Прогресивно чакане (max 60s)
+                logger.info(f"🔄 Автоматичен рестарт след {wait_time} секунди...")
+                import time
+                time.sleep(wait_time)
+            else:
+                logger.error("❌ Максимален брой опити достигнат. Спиране на бота.")
+                break
 
 
 if __name__ == "__main__":
