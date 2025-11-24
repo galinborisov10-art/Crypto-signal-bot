@@ -4545,13 +4545,16 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Форматирай съобщението
+        confidence_emoji = "🔥" if final_confidence >= 80 else "💪" if final_confidence >= 70 else "👍" if final_confidence >= 60 else "🤔"
+        change_emoji = "📈" if analysis['change_24h'] > 0 else "📉" if analysis['change_24h'] < 0 else "➡️"
+        
         message = f"{signal_emoji} <b>СИГНАЛ: {symbol}</b>\n\n"
         message += f"📊 <b>Анализ ({timeframe}):</b>\n"
-        message += f"Сигнал: <b>{analysis['signal']}</b>\n"
-        message += f"Увереност: {analysis['confidence']}%\n\n"
+        message += f"Сигнал: <b>{analysis['signal']}</b> {signal_emoji}\n"
+        message += f"Увереност: {final_confidence:.0f}% {confidence_emoji}\n\n"
         
         message += f"💰 <b>Текуща цена:</b> ${price:,.4f}\n"
-        message += f"📈 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
+        message += f"{change_emoji} 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
         
         # Обединена секция за ВСИЧКИ нива (Entry, TP, SL)
         message += f"🎯 <b>Нива за търговия:</b>\n\n"
