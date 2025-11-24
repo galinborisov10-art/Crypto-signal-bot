@@ -1,0 +1,57 @@
+{
+  "total_signals": 17,
+  "by_symbol": {
+    "BTCUSDT": {
+      "count": 14,
+      "BUY": 6,
+      "SELL": 8
+    },
+    "XRPUSDT": {
+      "count": 2,
+      "BUY": 1,
+      "SELL": 1
+    },
+    "SOLUSDT": {
+      "count": 1,
+      "BUY": 1,
+      "SELL": 0
+    }
+  },
+  "by_timeframe": {
+    "1d": {
+      "count": 3
+    },
+    "30m": {
+      "count": 8
+    },
+    "5m": {
+      "count": 1
+    },
+    "15m": {
+      "count": 1
+    },
+    "1h": {
+      "count": 1
+    },
+    "1w": {
+      "count": 2
+    },
+    "2h": {
+      "count": 1
+    }
+  },
+  "by_confidence": {
+    "70-79": {
+      "count": 8
+    },
+    "80-89": {
+      "count": 6
+    },
+    "90-99": {
+      "count": 2
+    },
+    "60-69": {
+      "count": 1
+    }
+  }
+}

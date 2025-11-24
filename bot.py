@@ -1500,8 +1500,16 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /backtest BTCUSDT 1h - Custom back-test
 /ml_status - Machine Learning статус
 /ml_train - Ръчно обучение на ML модел
-/daily_report - Дневен отчет
-/weekly_report - Седмичен обобщен отчет
+/daily_report - 📊 Дневен отчет с точност и успеваемост
+/weekly_report - 📈 Седмичен отчет (7 дни)
+/monthly_report - 📆 Месечен отчет (30 дни)
+
+<i>Отчетите показват:</i>
+• Брой генерирани сигнали
+• Точност на сигналите (Accuracy %)
+• Успеваемост (Profit/Loss %)
+• Анализ по валути и периоди
+• Най-добър/най-лош trade
 
 <b>4. Новини:</b>
 /news - Последни крипто новини (преведени на БГ)
@@ -2562,9 +2570,18 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tp_pct = adaptive_levels['tp']
     sl_pct = adaptive_levels['sl']
     
-    # Запиши сигнала в статистиката
+    # Запиши сигнала в статистиката с trading параметри
+    signal_id = None
     if analysis['has_good_trade']:
-        record_signal(symbol, timeframe, analysis['signal'], final_confidence)
+        signal_id = record_signal(
+            symbol, 
+            timeframe, 
+            analysis['signal'], 
+            final_confidence,
+            entry_price=price,
+            tp_price=tp_price,
+            sl_price=sl_price
+        )
     
     # Изчисли TP и SL нива
     price = analysis['price']
@@ -4331,34 +4348,41 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Обнови confidence и has_good_trade
         final_confidence = max(0, min(final_confidence, 95))
         analysis['confidence'] = final_confidence
-        analysis['has_good_trade'] = analysis['signal'] in ['BUY', 'SELL'] and final_confidence >= 65
-        
-        # Използвай adaptive TP/SL
-        adaptive_levels = analysis['adaptive_tp_sl']
-        tp_pct = adaptive_levels['tp']
-        sl_pct = adaptive_levels['sl']
-        
-        # Запиши сигнала в статистиката
-        if analysis['has_good_trade']:
-            record_signal(symbol, timeframe, analysis['signal'], final_confidence)
-        
-        # Изчисли TP и SL нива
-        price = analysis['price']
-        
-        if analysis['signal'] == 'BUY':
-            tp_price = price * (1 + tp_pct / 100)
-            sl_price = price * (1 - sl_pct / 100)
-            signal_emoji = "🟢"
-        elif analysis['signal'] == 'SELL':
-            tp_price = price * (1 - tp_pct / 100)
-            sl_price = price * (1 + sl_pct / 100)
-            signal_emoji = "🔴"
-        else:
-            tp_price = price * (1 + tp_pct / 100)
-            sl_price = price * (1 - sl_pct / 100)
-            signal_emoji = "⚪"
-        
-        # Генерирай графика
+    analysis['has_good_trade'] = analysis['signal'] in ['BUY', 'SELL'] and final_confidence >= 65
+    
+    # Използвай adaptive TP/SL
+    adaptive_levels = analysis['adaptive_tp_sl']
+    tp_pct = adaptive_levels['tp']
+    sl_pct = adaptive_levels['sl']
+    
+    # Изчисли TP и SL нива
+    price = analysis['price']
+    
+    if analysis['signal'] == 'BUY':
+        tp_price = price * (1 + tp_pct / 100)
+        sl_price = price * (1 - sl_pct / 100)
+        signal_emoji = "🟢"
+    elif analysis['signal'] == 'SELL':
+        tp_price = price * (1 - tp_pct / 100)
+        sl_price = price * (1 + sl_pct / 100)
+        signal_emoji = "🔴"
+    else:
+        tp_price = price * (1 + tp_pct / 100)
+        sl_price = price * (1 - sl_pct / 100)
+        signal_emoji = "⚪"
+    
+    # Запиши сигнала в статистиката с trading параметри
+    signal_id = None
+    if analysis['has_good_trade']:
+        signal_id = record_signal(
+            symbol, 
+            timeframe, 
+            analysis['signal'], 
+            final_confidence,
+            entry_price=price,
+            tp_price=tp_price,
+            sl_price=sl_price
+        )        # Генерирай графика
         chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe)
         
         # Изчисли вероятност за достигане на TP
@@ -5323,36 +5347,199 @@ async def daily_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def weekly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Генерира седмичен отчет"""
+    """Генерира седмичен отчет с точност и успеваемост"""
     if not REPORTS_AVAILABLE:
         await update.message.reply_text("❌ Reports модул не е наличен")
         return
     
-    await update.message.reply_text("📊 Генерирам седмичен отчет...")
+    await update.message.reply_text("📊 Генерирам седмичен отчет (7 дни)...")
     
     summary = report_engine.get_weekly_summary()
     
     if summary:
-        message = f"""📊 <b>СЕДМИЧЕН ОТЧЕТ</b>
-📅 Период: {summary['period']}
+        # Форматиране на съобщението
+        accuracy_emoji = "🔥" if summary['accuracy'] >= 70 else "💪" if summary['accuracy'] >= 60 else "👍" if summary['accuracy'] >= 50 else "😐"
+        profit_emoji = "💰" if summary['total_profit'] > 0 else "📉" if summary['total_profit'] < 0 else "⚪"
+        
+        message = f"""📊 <b>СЕДМИЧЕН ОТЧЕТ - 7 ДНИ</b>
+📅 {summary['start_date']} → {summary['end_date']}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-📈 <b>Обобщение:</b>
-   Общо сигнали: {summary['total_signals']}
-   Завършени trades: {summary['total_completed']}
-   
-🎯 <b>Резултати:</b>
-   ✅ Печеливши: {summary['total_wins']}
-   ❌ Загубени: {summary['total_losses']}
-   🎯 Win Rate: {summary['win_rate']:.1f}%
-   
-💪 <b>Средна увереност:</b> {summary['avg_confidence']:.1f}%
+📈 <b>ГЕНЕРИРАНИ СИГНАЛИ:</b>
+   📊 Общо: <b>{summary['total_signals']}</b>
+   🟢 BUY: {summary['buy_signals']}
+   🔴 SELL: {summary['sell_signals']}
+   ⏳ Активни: {summary['active_signals']}
+   ✅ Завършени: {summary['completed_signals']}
 
-📊 Базирано на {summary['reports_count']} дневни отчета
 """
+        
+        if summary['completed_signals'] > 0:
+            message += f"""🎯 <b>ТОЧНОСТ НА СИГНАЛИТЕ:</b>
+   {accuracy_emoji} Accuracy: <b>{summary['accuracy']:.1f}%</b>
+   ✅ Печеливши: {summary['wins']} ({summary['wins']}/{summary['completed_signals']})
+   ❌ Загубени: {summary['losses']} ({summary['losses']}/{summary['completed_signals']})
+
+💵 <b>УСПЕВАЕМОСТ:</b>
+   {profit_emoji} Общ Profit: <b>{summary['total_profit']:+.2f}%</b>
+"""
+            
+            if summary['avg_win'] > 0:
+                message += f"   📈 Среден печеливш: +{summary['avg_win']:.2f}%\n"
+            if summary['avg_loss'] < 0:
+                message += f"   📉 Среден губещ: {summary['avg_loss']:.2f}%\n"
+            
+            message += "\n"
+        
+        # Best/Worst trade
+        if summary.get('best_trade'):
+            best = summary['best_trade']
+            message += f"""💎 <b>НАЙ-ДОБЪР TRADE:</b>
+   {best['symbol']} {best['type']} - {best['timeframe']}
+   💰 Profit: <b>+{best.get('profit_pct', 0):.2f}%</b>
+
+"""
+        
+        if summary.get('worst_trade'):
+            worst = summary['worst_trade']
+            message += f"""⚠️ <b>НАЙ-ЛОШ TRADE:</b>
+   {worst['symbol']} {worst['type']} - {worst['timeframe']}
+   📉 Loss: <b>{worst.get('profit_pct', 0):.2f}%</b>
+
+"""
+        
+        # Дневен breakdown
+        if summary.get('daily_breakdown'):
+            message += f"""📅 <b>ПО ДНИ:</b>
+"""
+            for date in sorted(summary['daily_breakdown'].keys(), reverse=True)[:7]:
+                data = summary['daily_breakdown'][date]
+                if data['completed'] > 0:
+                    day_emoji = "💚" if data['profit'] > 0 else "🔴" if data['profit'] < 0 else "⚪"
+                    message += f"   {day_emoji} {date}: {data['accuracy']:.0f}% acc, {data['profit']:+.1f}% profit ({data['completed']} trades)\n"
+            
+            message += "\n"
+        
+        message += f"""💪 <b>Средна увереност:</b> {summary['avg_confidence']:.1f}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ Генериран: {datetime.now().strftime('%H:%M:%S')}
+"""
+        
         await update.message.reply_text(message, parse_mode='HTML')
     else:
         await update.message.reply_text("❌ Недостатъчно данни за седмичен отчет")
+
+
+async def monthly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Генерира месечен отчет с точност и успеваемост"""
+    if not REPORTS_AVAILABLE:
+        await update.message.reply_text("❌ Reports модул не е наличен")
+        return
+    
+    await update.message.reply_text("📊 Генерирам месечен отчет (30 дни)...")
+    
+    summary = report_engine.get_monthly_summary()
+    
+    if summary:
+        # Форматиране на съобщението
+        accuracy_emoji = "🔥" if summary['accuracy'] >= 70 else "💪" if summary['accuracy'] >= 60 else "👍" if summary['accuracy'] >= 50 else "😐"
+        profit_emoji = "💰" if summary['total_profit'] > 0 else "📉" if summary['total_profit'] < 0 else "⚪"
+        
+        message = f"""📊 <b>МЕСЕЧЕН ОТЧЕТ - 30 ДНИ</b>
+📅 {summary['start_date']} → {summary['end_date']}
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 <b>ГЕНЕРИРАНИ СИГНАЛИ:</b>
+   📊 Общо: <b>{summary['total_signals']}</b>
+   🟢 BUY: {summary['buy_signals']}
+   🔴 SELL: {summary['sell_signals']}
+   ⏳ Активни: {summary['active_signals']}
+   ✅ Завършени: {summary['completed_signals']}
+
+"""
+        
+        if summary['completed_signals'] > 0:
+            message += f"""🎯 <b>ТОЧНОСТ НА СИГНАЛИТЕ:</b>
+   {accuracy_emoji} Accuracy: <b>{summary['accuracy']:.1f}%</b>
+   ✅ Печеливши: {summary['wins']} ({summary['wins']}/{summary['completed_signals']})
+   ❌ Загубени: {summary['losses']} ({summary['losses']}/{summary['completed_signals']})
+
+💵 <b>УСПЕВАЕМОСТ:</b>
+   {profit_emoji} Общ Profit: <b>{summary['total_profit']:+.2f}%</b>
+"""
+            
+            if summary['avg_win'] > 0:
+                message += f"   📈 Среден печеливш: +{summary['avg_win']:.2f}%\n"
+            if summary['avg_loss'] < 0:
+                message += f"   📉 Среден губещ: {summary['avg_loss']:.2f}%\n"
+            if summary.get('profit_factor', 0) > 0:
+                pf_emoji = "🔥" if summary['profit_factor'] >= 2 else "💪" if summary['profit_factor'] >= 1.5 else "👍"
+                message += f"   {pf_emoji} Profit Factor: {summary['profit_factor']:.2f}\n"
+            
+            message += "\n"
+        
+        # Best/Worst trade
+        if summary.get('best_trade'):
+            best = summary['best_trade']
+            message += f"""💎 <b>НАЙ-ДОБЪР TRADE:</b>
+   {best['symbol']} {best['type']} - {best['timeframe']}
+   💰 Profit: <b>+{best.get('profit_pct', 0):.2f}%</b>
+
+"""
+        
+        if summary.get('worst_trade'):
+            worst = summary['worst_trade']
+            message += f"""⚠️ <b>НАЙ-ЛОШ TRADE:</b>
+   {worst['symbol']} {worst['type']} - {worst['timeframe']}
+   📉 Loss: <b>{worst.get('profit_pct', 0):.2f}%</b>
+
+"""
+        
+        # Статистика по валути
+        if summary.get('symbols_stats'):
+            message += f"""💰 <b>ЕФЕКТИВНОСТ ПО ВАЛУТИ:</b>
+"""
+            for symbol, stats in sorted(summary['symbols_stats'].items(), key=lambda x: x[1]['profit'], reverse=True):
+                if stats['completed'] > 0:
+                    sym_emoji = "💚" if stats['profit'] > 0 else "🔴" if stats['profit'] < 0 else "⚪"
+                    message += f"   {sym_emoji} {symbol}: {stats['accuracy']:.0f}% acc, {stats['profit']:+.2f}% profit\n"
+            
+            message += "\n"
+        
+        # Седмичен breakdown
+        if summary.get('weekly_breakdown'):
+            message += f"""📅 <b>ПО СЕДМИЦИ:</b>
+"""
+            for week in sorted(summary['weekly_breakdown'].keys()):
+                data = summary['weekly_breakdown'][week]
+                if data['completed'] > 0:
+                    week_emoji = "💚" if data['profit'] > 0 else "🔴" if data['profit'] < 0 else "⚪"
+                    message += f"   {week_emoji} {week}: {data['accuracy']:.0f}% acc, {data['profit']:+.1f}% profit\n"
+            
+            message += "\n"
+        
+        message += f"""💪 <b>Средна увереност:</b> {summary['avg_confidence']:.1f}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ Генериран: {datetime.now().strftime('%H:%M:%S')}
+
+📈 <b>ОБОБЩЕНИЕ:</b>"""
+        
+        # Финално обобщение
+        if summary['completed_signals'] > 0:
+            if summary['accuracy'] >= 70 and summary['total_profit'] > 10:
+                message += "\n🔥 <b>ОТЛИЧЕН МЕСЕЦ!</b> Високи резултати по всички показатели!"
+            elif summary['accuracy'] >= 60 and summary['total_profit'] > 0:
+                message += "\n💪 <b>ДОБЪР МЕСЕЦ!</b> Стабилна ефективност."
+            elif summary['accuracy'] >= 50:
+                message += "\n👍 <b>СРЕДЕН МЕСЕЦ.</b> Има място за подобрение."
+            else:
+                message += "\n⚠️ <b>СЛАБ МЕСЕЦ.</b> Препоръчва се анализ на стратегията."
+        
+        await update.message.reply_text(message, parse_mode='HTML')
+    else:
+        await update.message.reply_text("❌ Недостатъчно данни за месечен отчет")
 
 
 async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5588,6 +5775,7 @@ def main():
     app.add_handler(CommandHandler("ml_train", ml_train_cmd))  # Ръчно обучение
     app.add_handler(CommandHandler("daily_report", daily_report_cmd))  # Дневен отчет
     app.add_handler(CommandHandler("weekly_report", weekly_report_cmd))  # Седмичен отчет
+    app.add_handler(CommandHandler("monthly_report", monthly_report_cmd))  # Месечен отчет
     app.add_handler(CommandHandler("reports", reports_cmd))  # Централизирани отчети
     
     # Кратки съкращения
