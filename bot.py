@@ -5711,9 +5711,18 @@ def main():
                 logger.error(f"Грешка при startup notification: {e}")
         
         # Изпълни след инициализация на app
-        app.job_queue.run_once(lambda _: asyncio.create_task(schedule_reports()), 5)
-        app.job_queue.run_once(lambda _: asyncio.create_task(enable_auto_alerts()), 10)
-        app.job_queue.run_once(lambda _: asyncio.create_task(send_startup_notification()), 3)
+        async def schedule_reports_task(context):
+            await schedule_reports()
+        
+        async def enable_auto_alerts_task(context):
+            await enable_auto_alerts()
+        
+        async def send_startup_notification_task(context):
+            await send_startup_notification()
+        
+        app.job_queue.run_once(schedule_reports_task, 5)
+        app.job_queue.run_once(enable_auto_alerts_task, 10)
+        app.job_queue.run_once(send_startup_notification_task, 3)
     
     # Стартирай бота с error handling и auto-recovery
     max_retries = 10
