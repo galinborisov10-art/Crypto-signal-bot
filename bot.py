@@ -4364,41 +4364,43 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Обнови confidence и has_good_trade
         final_confidence = max(0, min(final_confidence, 95))
         analysis['confidence'] = final_confidence
-    analysis['has_good_trade'] = analysis['signal'] in ['BUY', 'SELL'] and final_confidence >= 65
-    
-    # Използвай adaptive TP/SL
-    adaptive_levels = analysis['adaptive_tp_sl']
-    tp_pct = adaptive_levels['tp']
-    sl_pct = adaptive_levels['sl']
-    
-    # Изчисли TP и SL нива
-    price = analysis['price']
-    
-    if analysis['signal'] == 'BUY':
-        tp_price = price * (1 + tp_pct / 100)
-        sl_price = price * (1 - sl_pct / 100)
-        signal_emoji = "🟢"
-    elif analysis['signal'] == 'SELL':
-        tp_price = price * (1 - tp_pct / 100)
-        sl_price = price * (1 + sl_pct / 100)
-        signal_emoji = "🔴"
-    else:
-        tp_price = price * (1 + tp_pct / 100)
-        sl_price = price * (1 - sl_pct / 100)
-        signal_emoji = "⚪"
-    
-    # Запиши сигнала в статистиката с trading параметри
-    signal_id = None
-    if analysis['has_good_trade']:
-        signal_id = record_signal(
-            symbol, 
-            timeframe, 
-            analysis['signal'], 
-            final_confidence,
-            entry_price=price,
-            tp_price=tp_price,
-            sl_price=sl_price
-        )        # Генерирай графика
+        analysis['has_good_trade'] = analysis['signal'] in ['BUY', 'SELL'] and final_confidence >= 65
+        
+        # Използвай adaptive TP/SL
+        adaptive_levels = analysis['adaptive_tp_sl']
+        tp_pct = adaptive_levels['tp']
+        sl_pct = adaptive_levels['sl']
+        
+        # Изчисли TP и SL нива
+        price = analysis['price']
+        
+        if analysis['signal'] == 'BUY':
+            tp_price = price * (1 + tp_pct / 100)
+            sl_price = price * (1 - sl_pct / 100)
+            signal_emoji = "🟢"
+        elif analysis['signal'] == 'SELL':
+            tp_price = price * (1 - tp_pct / 100)
+            sl_price = price * (1 + sl_pct / 100)
+            signal_emoji = "🔴"
+        else:
+            tp_price = price * (1 + tp_pct / 100)
+            sl_price = price * (1 - sl_pct / 100)
+            signal_emoji = "⚪"
+        
+        # Запиши сигнала в статистиката с trading параметри
+        signal_id = None
+        if analysis['has_good_trade']:
+            signal_id = record_signal(
+                symbol, 
+                timeframe, 
+                analysis['signal'], 
+                final_confidence,
+                entry_price=price,
+                tp_price=tp_price,
+                sl_price=sl_price
+            )
+        
+        # Генерирай графика
         chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe)
         
         # Изчисли вероятност за достигане на TP
