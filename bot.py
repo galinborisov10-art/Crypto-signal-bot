@@ -3599,9 +3599,12 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             analysis['sl'],
             settings['timeframe']
         )
-        logger.info(f"📊 Графика генерирана: {chart_file}")
+        if chart_file:
+            logger.info(f"📊 Графика генерирана успешно за {symbol}")
+        else:
+            logger.warning(f"⚠️ Графика не е генерирана за {symbol}")
     except Exception as e:
-        logger.error(f"Грешка при генериране на графика: {e}")
+        logger.error(f"❌ Грешка при генериране на графика за {symbol}: {e}")
         chart_file = None
     
     # === ОПРЕДЕЛИ ТИП НА ТРЕЙДА ===
@@ -3751,24 +3754,18 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             message += f"   • {reason}\n"
     
     try:
-        # Изпрати съобщението
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text=message, 
-            parse_mode='HTML',
-            disable_notification=False  # Със звук за важни сигнали
-        )
-        
-        # Изпрати графиката ако е налична
+        # Изпрати съобщението С ГРАФИКА (ако е налична)
         if chart_file:
             try:
                 if isinstance(chart_file, BytesIO):
-                    # BytesIO обект - изпрати директно
+                    # BytesIO обект - изпрати директно с пълното съобщение
                     chart_file.seek(0)
                     await context.bot.send_photo(
                         chat_id=chat_id,
                         photo=chart_file,
-                        caption=f"📊 {symbol} - {analysis['signal']} сигнал ({settings['timeframe']})"
+                        caption=f"🔔🔊 {message}",
+                        parse_mode='HTML',
+                        disable_notification=False  # Със звук за важни сигнали
                     )
                 elif isinstance(chart_file, str) and os.path.exists(chart_file):
                     # Файлов път - отвори и изпрати
@@ -3776,17 +3773,36 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_photo(
                             chat_id=chat_id,
                             photo=photo,
-                            caption=f"📊 {symbol} - {analysis['signal']} сигнал ({settings['timeframe']})"
+                            caption=f"🔔🔊 {message}",
+                            parse_mode='HTML',
+                            disable_notification=False
                         )
                     # Изтрий временния файл
                     try:
                         os.remove(chart_file)
                     except:
                         pass
+                
+                logger.info(f"🔔 Автоматичен сигнал изпратен С ГРАФИКА: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
             except Exception as e:
                 logger.error(f"Грешка при изпращане на графика: {e}")
+                # Ако графиката не може да се изпрати, изпрати само текст
+                await context.bot.send_message(
+                    chat_id=chat_id, 
+                    text=f"🔔🔊 {message}", 
+                    parse_mode='HTML',
+                    disable_notification=False
+                )
+        else:
+            # Няма графика - изпрати само текст
+            await context.bot.send_message(
+                chat_id=chat_id, 
+                text=f"🔔🔊 {message}", 
+                parse_mode='HTML',
+                disable_notification=False
+            )
+            logger.info(f"🔔 Автоматичен сигнал изпратен БЕЗ ГРАФИКА: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
         
-        logger.info(f"🔔 Автоматичен сигнал изпратен: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
     except Exception as e:
         logger.error(f"Грешка при изпращане на alert: {e}")
 
