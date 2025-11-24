@@ -815,6 +815,101 @@ def calculate_adaptive_tp_sl(symbol, volatility, timeframe):
         return {'tp': 3.0, 'sl': 1.0, 'rr': 3.0}
 
 
+async def get_multi_timeframe_analysis(symbol, current_timeframe):
+    """Анализира сигнала на множество таймфреймове за консенсус"""
+    try:
+        # Дефинирай таймфреймовете за проверка
+        all_timeframes = ['15m', '1h', '4h', '1d']
+        
+        # Ако текущият timeframe не е в списъка, добави го
+        if current_timeframe not in all_timeframes:
+            all_timeframes.insert(0, current_timeframe)
+        
+        # Премахни таймфреймове по-малки от текущия
+        timeframe_order = {'1m': 0, '5m': 1, '15m': 2, '30m': 3, '1h': 4, '2h': 5, '4h': 6, '1d': 7, '1w': 8}
+        current_index = timeframe_order.get(current_timeframe, 3)
+        
+        # Вземи само по-големи или равни таймфреймове
+        relevant_tfs = [tf for tf in all_timeframes if timeframe_order.get(tf, 0) >= current_index][:4]
+        
+        mtf_signals = {}
+        
+        for tf in relevant_tfs:
+            try:
+                # Извлечи данни за този таймфрейм
+                params_24h = {'symbol': symbol}
+                data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
+                
+                if isinstance(data_24h, list):
+                    data_24h = next((s for s in data_24h if s['symbol'] == symbol), None)
+                
+                if not data_24h:
+                    continue
+                
+                params_klines = {
+                    'symbol': symbol,
+                    'interval': tf,
+                    'limit': 100
+                }
+                klines = await fetch_json(BINANCE_KLINES_URL, params_klines)
+                
+                if not klines:
+                    continue
+                
+                # Анализирай
+                analysis = analyze_signal(data_24h, klines, symbol, tf)
+                
+                if analysis:
+                    mtf_signals[tf] = {
+                        'signal': analysis['signal'],
+                        'confidence': analysis['confidence'],
+                        'rsi': analysis.get('rsi', 0)
+                    }
+                
+                # Малка пауза между заявки
+                await asyncio.sleep(0.3)
+                
+            except Exception as e:
+                logger.error(f"MTF analysis error for {tf}: {e}")
+                continue
+        
+        # Анализирай консенсуса
+        if len(mtf_signals) < 2:
+            return None
+        
+        buy_count = sum(1 for s in mtf_signals.values() if s['signal'] == 'BUY')
+        sell_count = sum(1 for s in mtf_signals.values() if s['signal'] == 'SELL')
+        total = len(mtf_signals)
+        
+        # Определи консенсус
+        if buy_count / total >= 0.66:
+            consensus = 'BUY'
+            consensus_strength = 'Силен'
+        elif sell_count / total >= 0.66:
+            consensus = 'SELL'
+            consensus_strength = 'Слаб'
+        elif buy_count > sell_count:
+            consensus = 'BUY'
+            consensus_strength = 'Слаб'
+        elif sell_count > buy_count:
+            consensus = 'SELL'
+            consensus_strength = 'Слаб'
+        else:
+            consensus = 'NEUTRAL'
+            consensus_strength = 'Няма консенсус'
+        
+        return {
+            'signals': mtf_signals,
+            'consensus': consensus,
+            'consensus_strength': consensus_strength,
+            'agreement': max(buy_count, sell_count) / total * 100
+        }
+        
+    except Exception as e:
+        logger.error(f"Multi-timeframe analysis error: {e}")
+        return None
+
+
 async def analyze_btc_correlation(symbol, timeframe):
     """Анализ на корелация с BTC"""
     try:
@@ -2507,6 +2602,11 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # === NEWS SENTIMENT ANALYSIS ===
     sentiment = await analyze_news_sentiment(symbol)
     
+    # === MULTI-TIMEFRAME ANALYSIS ===
+    logger.info(f"Starting multi-timeframe analysis for {symbol}")
+    mtf_analysis = await get_multi_timeframe_analysis(symbol, timeframe)
+    logger.info(f"MTF analysis result: {mtf_analysis}")
+    
     # Коригирай confidence според допълнителните анализи
     final_confidence = analysis['confidence']
     
@@ -2701,6 +2801,29 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     message += f"🛡️ <b>STOP LOSS:</b> ${sl_price:,.4f} (<b>{-sl_pct:.1f}%</b>)\n"
     message += f"⚖️ <b>Risk/Reward:</b> 1:{settings['rr']}\n\n"
+    
+    # === MULTI-TIMEFRAME КОНСЕНСУС ===
+    if mtf_analysis and len(mtf_analysis['signals']) >= 2:
+        message += f"🔍 <b>Multi-Timeframe Анализ:</b>\n"
+        
+        # Покажи сигналите от различните таймфреймове
+        for tf, sig in mtf_analysis['signals'].items():
+            sig_emoji = "🟢" if sig['signal'] == 'BUY' else "🔴" if sig['signal'] == 'SELL' else "⚪"
+            current_marker = " ← текущ" if tf == timeframe else ""
+            message += f"{tf}: {sig['signal']} {sig_emoji} ({sig['confidence']:.0f}%){current_marker}\n"
+        
+        # Консенсус
+        consensus_emoji = "🟢" if mtf_analysis['consensus'] == 'BUY' else "🔴" if mtf_analysis['consensus'] == 'SELL' else "⚪"
+        message += f"\n💎 <b>Консенсус:</b> {mtf_analysis['consensus']} {consensus_emoji}\n"
+        message += f"💪 <b>Сила:</b> {mtf_analysis['consensus_strength']} ({mtf_analysis['agreement']:.0f}% съгласие)\n"
+        
+        # Препоръка според консенсуса
+        if mtf_analysis['consensus'] == analysis['signal'] and mtf_analysis['consensus_strength'] == 'Силен':
+            message += f"✅ <i>Всички таймфреймове потвърждават сигнала!</i>\n"
+        elif mtf_analysis['consensus'] != analysis['signal']:
+            message += f"⚠️ <i>Внимание: По-големите таймфреймове показват {mtf_analysis['consensus']}</i>\n"
+        
+        message += "\n"
     
     message += f"📊 <b>Индикатори:</b>\n"
     if analysis['rsi']:
@@ -4308,6 +4431,11 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # === NEWS SENTIMENT ANALYSIS ===
         sentiment = await analyze_news_sentiment(symbol)
         
+        # === MULTI-TIMEFRAME ANALYSIS ===
+        logger.info(f"Starting MTF analysis for manual signal {symbol}")
+        mtf_analysis = await get_multi_timeframe_analysis(symbol, timeframe)
+        logger.info(f"MTF analysis result: {mtf_analysis}")
+        
         # Коригирай confidence според допълнителните анализи
         final_confidence = analysis['confidence']
         
@@ -4495,6 +4623,29 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         message += f"🛡️ <b>STOP LOSS:</b> ${sl_price:,.4f} (<b>{-sl_pct:.1f}%</b>)\n"
         message += f"⚖️ <b>Risk/Reward:</b> 1:{settings['rr']}\n\n"
+        
+        # === MULTI-TIMEFRAME КОНСЕНСУС ===
+        if mtf_analysis and len(mtf_analysis['signals']) >= 2:
+            message += f"🔍 <b>Multi-Timeframe Анализ:</b>\n"
+            
+            # Покажи сигналите от различните таймфреймове
+            for tf, sig in mtf_analysis['signals'].items():
+                sig_emoji = "🟢" if sig['signal'] == 'BUY' else "🔴" if sig['signal'] == 'SELL' else "⚪"
+                current_marker = " ← текущ" if tf == timeframe else ""
+                message += f"{tf}: {sig['signal']} {sig_emoji} ({sig['confidence']:.0f}%){current_marker}\n"
+            
+            # Консенсус
+            consensus_emoji = "🟢" if mtf_analysis['consensus'] == 'BUY' else "🔴" if mtf_analysis['consensus'] == 'SELL' else "⚪"
+            message += f"\n💎 <b>Консенсус:</b> {mtf_analysis['consensus']} {consensus_emoji}\n"
+            message += f"💪 <b>Сила:</b> {mtf_analysis['consensus_strength']} ({mtf_analysis['agreement']:.0f}% съгласие)\n"
+            
+            # Препоръка според консенсуса
+            if mtf_analysis['consensus'] == analysis['signal'] and mtf_analysis['consensus_strength'] == 'Силен':
+                message += f"✅ <i>Всички таймфреймове потвърждават сигнала!</i>\n"
+            elif mtf_analysis['consensus'] != analysis['signal']:
+                message += f"⚠️ <i>Внимание: По-големите таймфреймове показват {mtf_analysis['consensus']}</i>\n"
+            
+            message += "\n"
         
         message += f"📊 <b>Индикатори:</b>\n"
         if analysis['rsi']:
