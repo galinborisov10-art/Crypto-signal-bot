@@ -818,19 +818,25 @@ def calculate_adaptive_tp_sl(symbol, volatility, timeframe):
 async def get_multi_timeframe_analysis(symbol, current_timeframe):
     """Анализира сигнала на множество таймфреймове за консенсус"""
     try:
-        # Дефинирай таймфреймовете за проверка
-        all_timeframes = ['15m', '1h', '4h', '1d']
-        
-        # Ако текущият timeframe не е в списъка, добави го
-        if current_timeframe not in all_timeframes:
-            all_timeframes.insert(0, current_timeframe)
-        
-        # Премахни таймфреймове по-малки от текущия
+        # Дефинирай всички възможни таймфреймове
         timeframe_order = {'1m': 0, '5m': 1, '15m': 2, '30m': 3, '1h': 4, '2h': 5, '4h': 6, '1d': 7, '1w': 8}
         current_index = timeframe_order.get(current_timeframe, 3)
         
-        # Вземи само по-големи или равни таймфреймове
-        relevant_tfs = [tf for tf in all_timeframes if timeframe_order.get(tf, 0) >= current_index][:4]
+        # Избери таймфреймове за анализ (включително текущия и по-големи)
+        # Винаги анализираме поне 2-3 таймфрейма
+        all_available_tfs = ['15m', '1h', '4h', '1d', '1w']
+        
+        # Вземи таймфреймове >= текущия
+        relevant_tfs = [tf for tf in all_available_tfs if timeframe_order.get(tf, 0) >= current_index]
+        
+        # Ако няма достатъчно по-големи, вземи и по-малки
+        if len(relevant_tfs) < 2:
+            # Вземи текущия + 2-3 по-малки таймфрейма
+            smaller_tfs = [tf for tf in all_available_tfs if timeframe_order.get(tf, 0) < current_index]
+            relevant_tfs = smaller_tfs[-2:] + relevant_tfs  # Последните 2 по-малки + текущия и по-големи
+        
+        # Ограничи до максимум 4 таймфрейма
+        relevant_tfs = relevant_tfs[:4]
         
         mtf_signals = {}
         
@@ -874,7 +880,8 @@ async def get_multi_timeframe_analysis(symbol, current_timeframe):
                 continue
         
         # Анализирай консенсуса
-        if len(mtf_signals) < 2:
+        if len(mtf_signals) < 1:  # Поне 1 таймфрейм трябва да има
+            logger.warning(f"MTF: Not enough signals ({len(mtf_signals)}) for {symbol}")
             return None
         
         buy_count = sum(1 for s in mtf_signals.values() if s['signal'] == 'BUY')
@@ -887,7 +894,7 @@ async def get_multi_timeframe_analysis(symbol, current_timeframe):
             consensus_strength = 'Силен'
         elif sell_count / total >= 0.66:
             consensus = 'SELL'
-            consensus_strength = 'Слаб'
+            consensus_strength = 'Силен'  # Поправка: SELL консенсус също може да е силен!
         elif buy_count > sell_count:
             consensus = 'BUY'
             consensus_strength = 'Слаб'
