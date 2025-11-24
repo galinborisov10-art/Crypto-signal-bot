@@ -295,7 +295,6 @@ class DailyReportEngine:
             best = report['best_trade']
             message += f"""💎 <b>НАЙ-ДОБЪР TRADE:</b>
    {best['symbol']} {best['type']} - {best['timeframe']}
-   Entry: ${best.get('entry_price', 0):,.2f} → Exit: ${best.get('exit_price', 0):,.2f}
    💰 Profit: <b>+{best.get('profit_pct', 0):.2f}%</b>
    💪 Confidence: {best['confidence']}%
 
@@ -305,7 +304,6 @@ class DailyReportEngine:
             worst = report['worst_trade']
             message += f"""⚠️ <b>НАЙ-ЛОШ TRADE:</b>
    {worst['symbol']} {worst['type']} - {worst['timeframe']}
-   Entry: ${worst.get('entry_price', 0):,.2f} → Exit: ${worst.get('exit_price', 0):,.2f}
    📉 Loss: <b>{worst.get('profit_pct', 0):.2f}%</b>
    💪 Confidence: {worst['confidence']}%
 
