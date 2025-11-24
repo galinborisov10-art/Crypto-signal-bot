@@ -914,11 +914,27 @@ def load_stats():
     try:
         if os.path.exists(STATS_FILE):
             with open(STATS_FILE, 'r') as f:
-                return json.load(f)
-        return {'total_signals': 0, 'by_symbol': {}, 'by_timeframe': {}, 'by_confidence': {}}
+                data = json.load(f)
+                # Надгради стария формат ако няма 'signals'
+                if 'signals' not in data:
+                    data['signals'] = []
+                return data
+        return {
+            'total_signals': 0, 
+            'by_symbol': {}, 
+            'by_timeframe': {}, 
+            'by_confidence': {},
+            'signals': []  # Детайлен списък с всички сигнали
+        }
     except Exception as e:
         logger.error(f"Грешка при зареждане на статистика: {e}")
-        return {'total_signals': 0, 'by_symbol': {}, 'by_timeframe': {}, 'by_confidence': {}}
+        return {
+            'total_signals': 0, 
+            'by_symbol': {}, 
+            'by_timeframe': {}, 
+            'by_confidence': {},
+            'signals': []
+        }
 
 
 def save_stats(stats):
@@ -933,6 +949,7 @@ def save_stats(stats):
 def record_signal(symbol, timeframe, signal_type, confidence):
     """Записва сигнал в статистиката"""
     try:
+        from datetime import datetime
         stats = load_stats()
         stats['total_signals'] += 1
         
@@ -952,6 +969,24 @@ def record_signal(symbol, timeframe, signal_type, confidence):
         if conf_bucket not in stats['by_confidence']:
             stats['by_confidence'][conf_bucket] = {'count': 0}
         stats['by_confidence'][conf_bucket]['count'] += 1
+        
+        # Запиши детайлен сигнал (за дневни отчети)
+        signal_detail = {
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'type': signal_type,
+            'confidence': confidence,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        if 'signals' not in stats:
+            stats['signals'] = []
+        
+        stats['signals'].append(signal_detail)
+        
+        # Пази само последните 1000 сигнала (за да не расте файлът безкрайно)
+        if len(stats['signals']) > 1000:
+            stats['signals'] = stats['signals'][-1000:]
         
         save_stats(stats)
         

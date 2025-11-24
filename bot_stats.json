@@ -1,10 +1,10 @@
 {
-  "total_signals": 16,
+  "total_signals": 17,
   "by_symbol": {
     "BTCUSDT": {
-      "count": 13,
+      "count": 14,
       "BUY": 6,
-      "SELL": 7
+      "SELL": 8
     },
     "XRPUSDT": {
       "count": 2,
@@ -34,7 +34,7 @@
       "count": 1
     },
     "1w": {
-      "count": 1
+      "count": 2
     },
     "2h": {
       "count": 1
@@ -49,6 +49,130 @@
     },
     "90-99": {
       "count": 2
+    },
+    "60-69": {
+      "count": 1
     }
-  }
+  },
+  "signals": [
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "BUY",
+      "confidence": 75,
+      "timestamp": "2025-11-24T09:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "BUY",
+      "confidence": 76,
+      "timestamp": "2025-11-24T07:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "BUY",
+      "confidence": 77,
+      "timestamp": "2025-11-24T05:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "BUY",
+      "confidence": 78,
+      "timestamp": "2025-11-24T03:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "BUY",
+      "confidence": 79,
+      "timestamp": "2025-11-24T01:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "BUY",
+      "confidence": 80,
+      "timestamp": "2025-11-23T23:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "SELL",
+      "confidence": 81,
+      "timestamp": "2025-11-23T21:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "SELL",
+      "confidence": 82,
+      "timestamp": "2025-11-23T19:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "SELL",
+      "confidence": 83,
+      "timestamp": "2025-11-23T17:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "SELL",
+      "confidence": 84,
+      "timestamp": "2025-11-23T15:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "SELL",
+      "confidence": 85,
+      "timestamp": "2025-11-23T13:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "SELL",
+      "confidence": 86,
+      "timestamp": "2025-11-23T11:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "SELL",
+      "confidence": 87,
+      "timestamp": "2025-11-23T09:13:58.832953"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "SELL",
+      "confidence": 88,
+      "timestamp": "2025-11-23T07:13:58.832953"
+    },
+    {
+      "symbol": "XRPUSDT",
+      "timeframe": "1h",
+      "type": "BUY",
+      "confidence": 70,
+      "timestamp": "2025-11-24T09:13:58.832953"
+    },
+    {
+      "symbol": "XRPUSDT",
+      "timeframe": "1h",
+      "type": "SELL",
+      "confidence": 75,
+      "timestamp": "2025-11-24T06:13:58.832953"
+    },
+    {
+      "symbol": "SOLUSDT",
+      "timeframe": "4h",
+      "type": "BUY",
+      "confidence": 82,
+      "timestamp": "2025-11-24T08:13:58.832953"
+    }
+  ]
 }
