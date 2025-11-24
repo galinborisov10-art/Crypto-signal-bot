@@ -1506,6 +1506,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /admin_monthly - Месечен отчет
 /admin_docs - Пълна документация
 /update - 🔄 Обновяване на бота от GitHub
+/restart - 🔄 Рестартиране на бота
 
 <b>🧪 10. Система:</b>
 /test - Тест и автоматично отстраняване на грешки
@@ -3099,6 +3100,75 @@ When completed, user will receive Telegram notification.
     except Exception as e:
         logger.error(f"Грешка при създаване на task: {e}")
         await update.message.reply_text(f"❌ Грешка: {e}")
+
+
+async def send_bot_status_notification(bot, status, reason=""):
+    """Изпраща нотификация за статуса на бота"""
+    try:
+        from datetime import datetime
+        
+        if status == "stopping":
+            message = f"""⚠️ <b>БОТ СПИРА!</b>
+
+🔴 <b>Причина:</b> {reason}
+⏱️ <b>Време:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+🔄 Опитвам се да рестартирам автоматично...
+"""
+        elif status == "restarted":
+            message = f"""✅ <b>БОТ РЕСТАРТИРАН!</b>
+
+🟢 <b>Статус:</b> Онлайн
+⏱️ <b>Време:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+💡 Всичко работи нормално!
+"""
+        elif status == "crashed":
+            message = f"""🚨 <b>БОТ CRASHED!</b>
+
+❌ <b>Грешка:</b> {reason}
+⏱️ <b>Време:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+🔄 Автоматично рестартиране след 10 секунди...
+"""
+        else:
+            message = f"ℹ️ Статус: {status}\n{reason}"
+        
+        await bot.send_message(
+            chat_id=OWNER_CHAT_ID,
+            text=message,
+            parse_mode='HTML',
+            disable_notification=False  # Със звук
+        )
+    except Exception as e:
+        logger.error(f"Грешка при изпращане на статус нотификация: {e}")
+
+
+async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Рестартира бота автоматично"""
+    # Провери дали е owner
+    if update.effective_user.id != OWNER_CHAT_ID:
+        await update.message.reply_text("❌ Само owner-ът може да рестартира бота!")
+        return
+    
+    await update.message.reply_text(
+        "🔄 <b>РЕСТАРТИРАМ БОТА...</b>\n\n"
+        "⏳ Ще се върна след 5 секунди!\n"
+        "💡 Ще получиш потвърждение когато съм онлайн.",
+        parse_mode='HTML'
+    )
+    
+    logger.info(f"🔄 Bot restart requested by user {update.effective_user.id}")
+    
+    # Изпрати нотификация
+    await send_bot_status_notification(context.bot, "stopping", "Ръчен рестарт от потребител")
+    
+    # Спри бота и рестартирай процеса
+    import os
+    import sys
+    
+    # Изпрати команда за рестарт
+    os.execv(sys.executable, ['python3'] + sys.argv)
 
 
 async def workspace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5460,6 +5530,7 @@ def main():
     app.add_handler(CommandHandler("breaking", breaking_cmd))  # Критични новини
     app.add_handler(CommandHandler("task", task_cmd))  # Задания за Copilot
     app.add_handler(CommandHandler("workspace", workspace_cmd))  # Workspace info
+    app.add_handler(CommandHandler("restart", restart_cmd))  # Рестарт на бота
     app.add_handler(CommandHandler("autonews", autonews_cmd))
     app.add_handler(CommandHandler("settings", settings_cmd))
     app.add_handler(CommandHandler("timeframe", timeframe_cmd))
@@ -5608,6 +5679,9 @@ def main():
         async def send_startup_notification():
             """Изпраща нотификация при рестарт на бота"""
             try:
+                # Изпрати потвърждение за успешен рестарт
+                await send_bot_status_notification(app.bot, "restarted", "")
+                
                 # Тествай дали всички callback handlers работят
                 test_callbacks = [
                     'signal_BTCUSDT', 'signal_ETHUSDT', 'signal_SOLUSDT',
@@ -5615,8 +5689,7 @@ def main():
                     'ml_train', 'backtest_run'
                 ]
                 
-                startup_msg = "🔄 <b>BOT RESTARTED</b>\n\n"
-                startup_msg += f"🕒 Време: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                startup_msg = "🤖 <b>ДЕТАЙЛИ ЗА СТАРТИРАНЕ:</b>\n\n"
                 startup_msg += f"✅ Всички handlers регистрирани\n"
                 startup_msg += f"✅ Callback handlers: {len(test_callbacks)} активни\n"
                 startup_msg += f"✅ Бутоните са активни\n"
@@ -5624,14 +5697,13 @@ def main():
                 startup_msg += f"✅ Daily reports активни (20:00)\n"
                 startup_msg += f"✅ ML Engine готов\n"
                 startup_msg += f"✅ Backtesting готов\n\n"
-                startup_msg += f"🤖 <b>Ботът работи нормално!</b>\n\n"
-                startup_msg += f"<i>Всички бутони са функционални и готови за употреба.</i>"
+                startup_msg += f"<i>Всички системи функционални.</i>"
                 
                 await app.bot.send_message(
                     chat_id=OWNER_CHAT_ID,
                     text=startup_msg,
                     parse_mode='HTML',
-                    disable_notification=False,
+                    disable_notification=True,  # Без звук за детайлите
                     reply_markup=get_main_keyboard()  # Изпрати клавиатурата отново
                 )
                 logger.info("✅ Startup notification изпратена с клавиатура")
@@ -5666,6 +5738,15 @@ def main():
             retry_count += 1
             logger.error(f"❌ Грешка при polling (опит {retry_count}/{max_retries}): {e}")
             
+            # Изпрати нотификация за crash
+            try:
+                from telegram import Bot
+                bot = Bot(token=TELEGRAM_BOT_TOKEN)
+                import asyncio
+                asyncio.run(send_bot_status_notification(bot, "crashed", str(e)))
+            except:
+                pass  # Ако не може да изпрати, продължи
+            
             if retry_count < max_retries:
                 wait_time = min(5 * retry_count, 60)  # Прогресивно чакане (max 60s)
                 logger.info(f"🔄 Автоматичен рестарт след {wait_time} секунди...")
@@ -5673,6 +5754,16 @@ def main():
                 time.sleep(wait_time)
             else:
                 logger.error("❌ Максимален брой опити достигнат. Спиране на бота.")
+                
+                # Изпрати финална нотификация
+                try:
+                    from telegram import Bot
+                    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+                    import asyncio
+                    asyncio.run(send_bot_status_notification(bot, "crashed", "Максимален брой опити достигнат"))
+                except:
+                    pass
+                
                 break
 
 
