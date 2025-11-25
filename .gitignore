@@ -35,3 +35,9 @@ Thumbs.db
 
 # Stats (опционално - може да се вземе backup)
 # bot_stats.json
+# Добави .env файл в gitignore
+.env
+
+# Добави ML модел файлове в gitignore
+ml_model.pkl
+*.pkl

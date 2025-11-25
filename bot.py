@@ -15,6 +15,12 @@ import pandas as pd
 from io import BytesIO
 import os
 
+# ================= ENVIRONMENT VARIABLES =================
+from dotenv import load_dotenv
+
+# Зареди .env файла
+load_dotenv()
+
 # Логване
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -43,12 +49,24 @@ try:
 except ImportError:
     DIAGNOSTICS_AVAILABLE = False
 
+# RSS и HTML парсинг за новини
+try:
+    import feedparser
+    from bs4 import BeautifulSoup
+    RSS_PARSER_AVAILABLE = True
+    logger.info("✅ RSS Parser (feedparser + BeautifulSoup) loaded successfully")
+except ImportError as e:
+    RSS_PARSER_AVAILABLE = False
+    logger.warning(f"⚠️ RSS Parser not available: {e}")
+
 # Превод на текст
 try:
     from deep_translator import GoogleTranslator
     TRANSLATOR_AVAILABLE = True
-except ImportError:
+    logger.info("✅ Google Translator loaded successfully")
+except ImportError as e:
     TRANSLATOR_AVAILABLE = False
+    logger.warning(f"⚠️ Google Translator not available: {e}")
 
 # ================= ML & BACKTEST & REPORTS =================
 try:
@@ -75,18 +93,33 @@ except ImportError as e:
     REPORTS_AVAILABLE = False
     print(f"⚠️ Daily Reports Engine not available: {e}")
 
-# ================= НАСТРОЙКИ =================
-TELEGRAM_BOT_TOKEN = "8349449826:AAFNmP0i-DlERin8Z7HVir4awGTpa5n8vUM"
-# Owner Chat ID за автоматични съобщения
-OWNER_CHAT_ID = 7003238836  # Твой user chat ID
+# ================= ML PREDICTOR =================
+try:
+    from ml_predictor import get_ml_predictor
+    ML_PREDICTOR_AVAILABLE = True
+    print("✅ ML Predictor loaded successfully")
+except ImportError as e:
+    ML_PREDICTOR_AVAILABLE = False
+    print(f"⚠️ ML Predictor not available: {e}")
 
-# Admin парола hash (парола: 8109)
-ADMIN_PASSWORD_HASH = hashlib.sha256("8109".encode()).hexdigest()
+# ================= НАСТРОЙКИ (от .env файл) =================
+# Зареди от environment variables
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '7003238836'))
 
-# Binance API endpoints
-BINANCE_PRICE_URL = "https://api.binance.com/api/v3/ticker/price"
-BINANCE_24H_URL = "https://api.binance.com/api/v3/ticker/24hr"
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+# Admin парола hash (от .env или fallback към хардкоднат hash)
+ADMIN_PASSWORD_HASH = os.getenv('ADMIN_PASSWORD_HASH', hashlib.sha256("8109".encode()).hexdigest())
+
+# Binance API endpoints (от .env или fallback към defaults)
+BINANCE_PRICE_URL = os.getenv('BINANCE_PRICE_URL', "https://api.binance.com/api/v3/ticker/price")
+BINANCE_24H_URL = os.getenv('BINANCE_24H_URL', "https://api.binance.com/api/v3/ticker/24hr")
+BINANCE_KLINES_URL = os.getenv('BINANCE_KLINES_URL', "https://api.binance.com/api/v3/klines")
+
+# Провери дали TELEGRAM_BOT_TOKEN е зареден
+if not TELEGRAM_BOT_TOKEN:
+    logger.error("❌ TELEGRAM_BOT_TOKEN не е намерен в .env файла!")
+    logger.error("💡 Създай .env файл от .env.example и попълни с реални стойности")
+    raise ValueError("TELEGRAM_BOT_TOKEN е задължителен!")
 BINANCE_DEPTH_URL = "https://api.binance.com/api/v3/depth"
 
 # Win-rate tracking file
@@ -121,6 +154,11 @@ SYMBOLS = {
 #     'news_interval': 7200,  # Интервал за новини (2 часа)
 # }
 
+# ================= ДЕДУПЛИКАЦИЯ НА СИГНАЛИ =================
+# Tracking на изпратени автоматични сигнали (за предотвратяване на дублиране)
+# Формат: {"BTCUSDT_BUY_4h": {'timestamp': datetime, 'confidence': 75}, ...}
+SENT_SIGNALS_CACHE = {}
+
 # ================= ПОМОЩНИ ФУНКЦИИ =================
 
 async def fetch_json(url: str, params: dict = None):
@@ -140,15 +178,17 @@ async def fetch_json(url: str, params: dict = None):
 async def translate_text(text: str, target_lang: str = 'bg') -> str:
     """Превод на текст с deep-translator (по-надежден)"""
     if not TRANSLATOR_AVAILABLE or not text:
+        logger.warning(f"⚠️ Превод прескочен: TRANSLATOR_AVAILABLE={TRANSLATOR_AVAILABLE}, text={text[:50] if text else 'None'}")
         return text
     
     try:
         # Използвай deep-translator който е по-надежден
         translator = GoogleTranslator(source='auto', target=target_lang)
         translated = await asyncio.to_thread(translator.translate, text)
+        logger.info(f"✅ Преведено: '{text[:30]}...' → '{translated[:30] if translated else None}...'")
         return translated if translated else text
     except Exception as e:
-        logger.error(f"Грешка при превод: {e}")
+        logger.error(f"❌ Грешка при превод на '{text[:50]}': {e}")
         return text
 
 
@@ -181,6 +221,76 @@ def get_main_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
+def is_signal_already_sent(symbol, signal_type, timeframe, confidence, cooldown_minutes=60):
+    """Проверява дали даден сигнал вече е изпращан наскоро
+    
+    Args:
+        symbol: Символ (напр. BTCUSDT)
+        signal_type: BUY или SELL
+        timeframe: Таймфрейм (напр. 4h)
+        confidence: Ниво на увереност
+        cooldown_minutes: Време за изчакване преди повторно изпращане (по подразбиране 60 мин)
+    
+    Returns:
+        True ако сигналът вече е изпращан, False ако е нов
+    """
+    global SENT_SIGNALS_CACHE
+    
+    # Създай уникален ключ за сигнала
+    signal_key = f"{symbol}_{signal_type}_{timeframe}"
+    
+    current_time = datetime.now()
+    
+    # Провери дали този сигнал е изпращан наскоро
+    if signal_key in SENT_SIGNALS_CACHE:
+        last_sent_time = SENT_SIGNALS_CACHE[signal_key]['timestamp']
+        last_confidence = SENT_SIGNALS_CACHE[signal_key]['confidence']
+        
+        # Изчисли колко време е минало
+        time_diff = (current_time - last_sent_time).total_seconds() / 60  # в минути
+        
+        # Ако е минало по-малко от cooldown време, не изпращай
+        if time_diff < cooldown_minutes:
+            logger.info(f"⏭️ Skip {signal_key}: Изпратен преди {time_diff:.1f} мин (cooldown: {cooldown_minutes} мин)")
+            return True
+        
+        # Ако confidence е почти същият (±5%), също не изпращай
+        if abs(confidence - last_confidence) < 5 and time_diff < cooldown_minutes * 2:
+            logger.info(f"⏭️ Skip {signal_key}: Същия confidence ({confidence}% vs {last_confidence}%)")
+            return True
+    
+    # Запази новия сигнал в кеша
+    SENT_SIGNALS_CACHE[signal_key] = {
+        'timestamp': current_time,
+        'confidence': confidence
+    }
+    
+    # Почисти стари записи (по-стари от 24 часа)
+    cleanup_old_signals()
+    
+    logger.info(f"✅ New signal: {signal_key} ({confidence}%)")
+    return False
+
+
+def cleanup_old_signals():
+    """Премахва записи за сигнали по-стари от 24 часа"""
+    global SENT_SIGNALS_CACHE
+    
+    current_time = datetime.now()
+    keys_to_remove = []
+    
+    for key, data in SENT_SIGNALS_CACHE.items():
+        time_diff_hours = (current_time - data['timestamp']).total_seconds() / 3600
+        if time_diff_hours > 24:
+            keys_to_remove.append(key)
+    
+    for key in keys_to_remove:
+        del SENT_SIGNALS_CACHE[key]
+    
+    if keys_to_remove:
+        logger.info(f"🧹 Cleaned {len(keys_to_remove)} old signals from cache")
+
+
 def get_admin_keyboard():
     """Връща клавиатура за Admin режим"""
     keyboard = [
@@ -192,8 +302,136 @@ def get_admin_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
+def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_obs=3):
+    """
+    Детектира само НАЙ-ВАЖНИТЕ Order Blocks - тези с най-голяма вероятност за отблъскване
+    
+    Args:
+        df: DataFrame с OHLC данни
+        lookback: Колко свещи назад да търсим
+        threshold: Минимална промяна за валиден OB (2% по подразбиране - по-строг)
+        current_price: Текуща цена за филтриране по близост
+        max_obs: Максимален брой OB на тип (по подразбиране 3)
+    
+    Returns:
+        List of dict: [{'index': idx, 'type': 'bullish/bearish', 'high': x, 'low': y, 'strength': z, 'score': w}, ...]
+    """
+    # Провери дали има достатъчно данни
+    if len(df) < lookback + 2:
+        logger.warning(f"Not enough data for Order Blocks detection: {len(df)} candles (need at least {lookback + 2})")
+        return []
+    
+    all_order_blocks = []
+    
+    for i in range(lookback, len(df) - 1):
+        if i >= lookback:
+            current_candle = df.iloc[i]
+            next_candle = df.iloc[i + 1]
+            
+            # Bullish OB: bearish свещ + следва силен ръст
+            if current_candle['close'] < current_candle['open']:  # Bearish свещ
+                # Изчисли силата на движението
+                move_up = (next_candle['high'] - current_candle['low']) / current_candle['low']
+                
+                if move_up >= threshold:
+                    # Допълнителни критерии за качество
+                    candle_size = abs(current_candle['open'] - current_candle['close'])
+                    candle_range = current_candle['high'] - current_candle['low']
+                    body_ratio = candle_size / candle_range if candle_range > 0 else 0
+                    
+                    # Проверка дали OB зоната не е пробита (validnost)
+                    is_valid = True
+                    for j in range(i + 1, min(i + 10, len(df))):
+                        if df.iloc[j]['low'] < current_candle['low'] * 0.998:  # Пробита с 0.2%
+                            is_valid = False
+                            break
+                    
+                    if is_valid:
+                        strength = move_up * 100
+                        
+                        # Изчисли SCORE за важност (комбинация от фактори)
+                        score = strength  # Базов score
+                        score += body_ratio * 20  # Бонус за силна свещ (не doji)
+                        
+                        # Бонус ако е близо до текущата цена (по-релевантен)
+                        if current_price:
+                            distance = abs(current_price - current_candle['low']) / current_price
+                            if distance < 0.05:  # В рамките на 5%
+                                score += 30
+                            elif distance < 0.10:  # В рамките на 10%
+                                score += 15
+                        
+                        all_order_blocks.append({
+                            'index': i,
+                            'type': 'bullish',
+                            'high': current_candle['high'],
+                            'low': current_candle['low'],
+                            'open': current_candle['open'],
+                            'close': current_candle['close'],
+                            'strength': strength,
+                            'score': score,
+                            'body_ratio': body_ratio
+                        })
+            
+            # Bearish OB: bullish свещ + следва силен спад
+            if current_candle['close'] > current_candle['open']:  # Bullish свещ
+                move_down = (current_candle['high'] - next_candle['low']) / current_candle['high']
+                
+                if move_down >= threshold:
+                    candle_size = abs(current_candle['close'] - current_candle['open'])
+                    candle_range = current_candle['high'] - current_candle['low']
+                    body_ratio = candle_size / candle_range if candle_range > 0 else 0
+                    
+                    # Проверка за validност
+                    is_valid = True
+                    for j in range(i + 1, min(i + 10, len(df))):
+                        if df.iloc[j]['high'] > current_candle['high'] * 1.002:
+                            is_valid = False
+                            break
+                    
+                    if is_valid:
+                        strength = move_down * 100
+                        
+                        score = strength
+                        score += body_ratio * 20
+                        
+                        if current_price:
+                            distance = abs(current_candle['high'] - current_price) / current_price
+                            if distance < 0.05:
+                                score += 30
+                            elif distance < 0.10:
+                                score += 15
+                        
+                        all_order_blocks.append({
+                            'index': i,
+                            'type': 'bearish',
+                            'high': current_candle['high'],
+                            'low': current_candle['low'],
+                            'open': current_candle['open'],
+                            'close': current_candle['close'],
+                            'strength': strength,
+                            'score': score,
+                            'body_ratio': body_ratio
+                        })
+    
+    # ФИЛТРИРАНЕ: Вземи само най-важните OB
+    bullish_obs = [ob for ob in all_order_blocks if ob['type'] == 'bullish']
+    bearish_obs = [ob for ob in all_order_blocks if ob['type'] == 'bearish']
+    
+    # Сортирай по score (най-важните отгоре)
+    bullish_obs.sort(key=lambda x: x['score'], reverse=True)
+    bearish_obs.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Вземи топ N най-важни от всеки тип
+    top_bullish = bullish_obs[:max_obs]
+    top_bearish = bearish_obs[:max_obs]
+    
+    # Обедини и върни
+    return top_bullish + top_bearish
+
+
 def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_price, timeframe):
-    """Генерира графика със свещи, индикатори и стрелка за тренда"""
+    """Генерира графика със свещи, индикатори, Order Blocks и стрелка за тренда"""
     try:
         # Конвертирай klines data към DataFrame
         df = pd.DataFrame(klines_data, columns=[
@@ -212,9 +450,37 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         # Вземи последните 50 свещи за по-добра визуализация
         df = df.tail(50)
         
-        # Изчисли MA за графиката
-        df['MA20'] = df['close'].rolling(window=20).mean()
-        df['MA50'] = df['close'].rolling(window=50).mean()
+        # Провери дали има достатъчно данни
+        if len(df) < 10:
+            logger.warning(f"Insufficient data for chart: only {len(df)} candles")
+            return None
+        
+        # 🔍 ДЕТЕКТИРАЙ САМО НАЙ-ВАЖНИТЕ ORDER BLOCKS
+        # Подавай текущата цена за филтриране по близост
+        # Намали lookback и max_obs ако има малко данни
+        lookback_period = min(5, len(df) - 2)
+        max_obs_count = 3 if len(df) >= 30 else 2
+        
+        order_blocks = detect_order_blocks(
+            df.reset_index(drop=True), 
+            lookback=lookback_period, 
+            threshold=0.02,  # 2% threshold - по-строг
+            current_price=current_price,
+            max_obs=max_obs_count
+        )
+        
+        logger.info(f"📦 Detected {len(order_blocks)} high-quality Order Blocks for {symbol}")
+        
+        # Изчисли MA за графиката - адаптивно според наличните данни
+        if len(df) >= 20:
+            df['MA20'] = df['close'].rolling(window=20).mean()
+        else:
+            df['MA20'] = None
+            
+        if len(df) >= 50:
+            df['MA50'] = df['close'].rolling(window=50).mean()
+        else:
+            df['MA50'] = None
         
         # Създай графика
         fig, axes = plt.subplots(2, 1, figsize=(12, 8), gridspec_kw={'height_ratios': [3, 1]})
@@ -233,16 +499,130 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             bottom = min(row['open'], row['close'])
             ax1.add_patch(plt.Rectangle((idx-0.3, bottom), 0.6, height, facecolor=color, edgecolor='black', linewidth=0.5))
         
-        # MA линии
-        if not df['MA20'].isna().all():
+        # MA линии - покажи само ако са налични
+        if df.get('MA20') is not None and not df['MA20'].isna().all():
             ax1.plot(range(len(df)), df['MA20'], label='MA(20)', color='blue', linewidth=1.5, alpha=0.7)
-        if not df['MA50'].isna().all():
+        if df.get('MA50') is not None and not df['MA50'].isna().all():
             ax1.plot(range(len(df)), df['MA50'], label='MA(50)', color='orange', linewidth=1.5, alpha=0.7)
         
-        # TP и SL линии
-        ax1.axhline(y=tp_price, color='green', linestyle='--', linewidth=1.5, label=f'TP: ${tp_price:.2f}', alpha=0.7)
-        ax1.axhline(y=sl_price, color='red', linestyle='--', linewidth=1.5, label=f'SL: ${sl_price:.2f}', alpha=0.7)
-        ax1.axhline(y=current_price, color='yellow', linestyle='-', linewidth=2, label=f'Цена: ${current_price:.2f}')
+        # 📦 ВИЗУАЛИЗИРАЙ САМО НАЙ-ВАЖНИТЕ ORDER BLOCKS
+        for ob in order_blocks:
+            idx = ob['index']
+            ob_type = ob['type']
+            score = ob.get('score', 0)
+            
+            if ob_type == 'bullish':
+                # Bullish OB - зелена зона (support)
+                color = 'lime'
+                alpha = 0.3  # По-видима
+                edge_color = 'darkgreen'
+                
+                # Определи важността според score
+                if score >= 50:
+                    label = f"🟢💎 Strong Support"  # Много силен
+                    linewidth = 3
+                elif score >= 35:
+                    label = f"🟢 Support"  # Силен
+                    linewidth = 2
+                else:
+                    label = f"🟢 Weak Support"  # Слаб
+                    linewidth = 1.5
+            else:
+                # Bearish OB - червена зона (resistance)
+                color = 'red'
+                alpha = 0.3
+                edge_color = 'darkred'
+                
+                if score >= 50:
+                    label = f"🔴💎 Strong Resistance"
+                    linewidth = 3
+                elif score >= 35:
+                    label = f"🔴 Resistance"
+                    linewidth = 2
+                else:
+                    label = f"🔴 Weak Resistance"
+                    linewidth = 1.5
+            
+            # Нарисувай правоъгълник от low до high на OB свещта
+            width = 0.8
+            height = ob['high'] - ob['low']
+            
+            rect = plt.Rectangle(
+                (idx - width/2, ob['low']),
+                width,
+                height,
+                facecolor=color,
+                edgecolor=edge_color,
+                alpha=alpha,
+                linewidth=linewidth,
+                linestyle='--'
+            )
+            ax1.add_patch(rect)
+            
+            # Добави текст маркер с важност
+            marker_text = f"OB\n{ob['strength']:.1f}%"
+            
+            ax1.text(
+                idx,
+                ob['high'] + (height * 0.15),
+                marker_text,
+                fontsize=7,
+                color='white',
+                weight='bold',
+                ha='center',
+                bbox=dict(boxstyle='round,pad=0.4', facecolor=edge_color, alpha=0.8, edgecolor='white', linewidth=1.5)
+            )
+            
+            # Добави хоризонтална линия за по-добра видимост на зоната
+            # Ограничи xmax да не надвишава дължината на данните
+            xmin_val = max(0, (idx - 2) / len(df))
+            xmax_val = min(1.0, (idx + 10) / len(df))
+            
+            ax1.axhline(y=ob['low'], color=edge_color, linestyle=':', linewidth=1, alpha=0.6, 
+                       xmin=xmin_val, xmax=xmax_val)
+            ax1.axhline(y=ob['high'], color=edge_color, linestyle=':', linewidth=1, alpha=0.6,
+                       xmin=xmin_val, xmax=xmax_val)
+        
+        # 📍 ENTRY ZONE - синя зона около текущата цена
+        entry_zone_width = current_price * 0.005  # 0.5% зона около entry
+        entry_low = current_price - entry_zone_width
+        entry_high = current_price + entry_zone_width
+        
+        ax1.axhspan(entry_low, entry_high, color='cyan', alpha=0.2)
+        ax1.axhline(y=current_price, color='cyan', linestyle='-', linewidth=2.5, alpha=0.9)
+        
+        # Текстов етикет върху линията на ENTRY
+        ax1.text(5, current_price, f'  📍 ENTRY ${current_price:.2f}', 
+                fontsize=10, color='white', weight='bold', va='center',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='dodgerblue', alpha=0.95, edgecolor='white', linewidth=2))
+        
+        # 🎯 TAKE PROFIT - зелена зона
+        tp_zone_width = tp_price * 0.003  # 0.3% зона omkring TP
+        tp_low = tp_price - tp_zone_width
+        tp_high = tp_price + tp_zone_width
+        
+        ax1.axhspan(tp_low, tp_high, color='lime', alpha=0.25)
+        ax1.axhline(y=tp_price, color='green', linestyle='--', linewidth=2.5, alpha=0.9)
+        
+        # Текстов етикет върху линията на TP
+        tp_pct_display = ((tp_price - current_price) / current_price) * 100
+        ax1.text(5, tp_price, f'  🎯 TAKE PROFIT ${tp_price:.2f} ({tp_pct_display:+.1f}%)', 
+                fontsize=10, color='white', weight='bold', va='center',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='green', alpha=0.95, edgecolor='white', linewidth=2))
+        
+        # 🛡️ STOP LOSS - червена зона
+        sl_zone_width = sl_price * 0.003  # 0.3% зона около SL
+        sl_low = sl_price - sl_zone_width
+        sl_high = sl_price + sl_zone_width
+        
+        ax1.axhspan(sl_low, sl_high, color='red', alpha=0.25)
+        ax1.axhline(y=sl_price, color='red', linestyle='--', linewidth=2.5, alpha=0.9)
+        
+        # Текстов етикет върху линията на SL
+        sl_pct_display = ((sl_price - current_price) / current_price) * 100
+        ax1.text(5, sl_price, f'  🛡️ STOP LOSS ${sl_price:.2f} ({sl_pct_display:.1f}%)', 
+                fontsize=10, color='white', weight='bold', va='center',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='darkred', alpha=0.95, edgecolor='white', linewidth=2))
         
         # Добави ГОЛЯМА СТРЕЛКА за посоката на тренда
         arrow_x = len(df) - 5
@@ -273,23 +653,54 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         ax1.set_title(f'{symbol} - Таймфрейм: {timeframe} - {datetime.now().strftime("%Y-%m-%d %H:%M")}', 
                      fontsize=14, weight='bold')
         ax1.set_ylabel('Цена (USDT)', fontsize=12)
+        
+        # Добави информация за Order Blocks с качество
+        if order_blocks:
+            bullish_obs = [ob for ob in order_blocks if ob['type'] == 'bullish']
+            bearish_obs = [ob for ob in order_blocks if ob['type'] == 'bearish']
+            
+            # Изчисли средна сила
+            avg_score_bullish = sum(ob['score'] for ob in bullish_obs) / len(bullish_obs) if bullish_obs else 0
+            avg_score_bearish = sum(ob['score'] for ob in bearish_obs) / len(bearish_obs) if bearish_obs else 0
+            
+            ob_info = f'📦 Key Order Blocks: {len(bullish_obs)} Support, {len(bearish_obs)} Resistance'
+            
+            # Добави оценка на силата
+            if avg_score_bullish > 50 or avg_score_bearish > 50:
+                ob_info += ' (💎 Strong zones)'
+            elif avg_score_bullish > 35 or avg_score_bearish > 35:
+                ob_info += ' (⭐ Good zones)'
+            
+            ax1.text(0.02, 0.98, ob_info,
+                    transform=ax1.transAxes, fontsize=9, verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.9, edgecolor='orange', linewidth=2))
+        
         ax1.legend(loc='upper left', fontsize=9)
         ax1.grid(True, alpha=0.3)
         ax1.set_xticks([])
         
-        # RSI панел
+        # RSI панел - само ако има достатъчно данни
         ax2 = axes[1]
         closes = df['close'].values
-        rsi_values = []
         
-        for i in range(14, len(closes)):
-            rsi = calculate_rsi(closes[:i+1], 14)
-            rsi_values.append(rsi if rsi else 50)
+        if len(closes) >= 15:
+            rsi_values = []
+            
+            for i in range(14, len(closes)):
+                rsi = calculate_rsi(closes[:i+1], 14)
+                rsi_values.append(rsi if rsi else 50)
+            
+            if rsi_values:
+                ax2.plot(range(14, len(df)), rsi_values, color='purple', linewidth=2)
+                ax2.axhline(y=70, color='red', linestyle='--', alpha=0.5)
+                ax2.axhline(y=30, color='green', linestyle='--', alpha=0.5)
+                ax2.axhline(y=50, color='gray', linestyle='-', alpha=0.3)
+        else:
+            # Недостатъчно данни за RSI - покажи съобщение
+            ax2.text(0.5, 0.5, 'Недостатъчно данни за RSI индикатор',
+                    ha='center', va='center', fontsize=10, color='gray',
+                    transform=ax2.transAxes)
         
-        ax2.plot(range(14, len(df)), rsi_values, color='purple', linewidth=2)
-        ax2.axhline(y=70, color='red', linestyle='--', alpha=0.5)
-        ax2.axhline(y=30, color='green', linestyle='--', alpha=0.5)
-        ax2.axhline(y=50, color='gray', linestyle='-', alpha=0.3)
         ax2.set_ylabel('RSI', fontsize=12)
         ax2.set_ylim(0, 100)
         ax2.grid(True, alpha=0.3)
@@ -1048,7 +1459,294 @@ def save_stats(stats):
         logger.error(f"Грешка при записване на статистика: {e}")
 
 
-def record_signal(symbol, timeframe, signal_type, confidence):
+# ================= TRADING JOURNAL (ML SELF-LEARNING) =================
+
+JOURNAL_FILE = 'trading_journal.json'
+
+def load_journal():
+    """Зареждане на trading journal"""
+    try:
+        if os.path.exists(JOURNAL_FILE):
+            with open(JOURNAL_FILE, 'r') as f:
+                return json.load(f)
+        else:
+            from datetime import datetime
+            return {
+                'metadata': {
+                    'created': datetime.now().strftime('%Y-%m-%d'),
+                    'version': '1.0',
+                    'total_trades': 0,
+                    'last_updated': datetime.now().isoformat()
+                },
+                'trades': [],
+                'patterns': {
+                    'successful_conditions': {},
+                    'failed_conditions': {},
+                    'best_timeframes': {},
+                    'best_symbols': {}
+                },
+                'ml_insights': {
+                    'accuracy_by_confidence': {},
+                    'accuracy_by_timeframe': {},
+                    'accuracy_by_symbol': {},
+                    'optimal_entry_zones': {}
+                }
+            }
+    except Exception as e:
+        logger.error(f"Грешка при зареждане на journal: {e}")
+        return None
+
+
+def save_journal(journal):
+    """Запазване на trading journal"""
+    try:
+        from datetime import datetime
+        journal['metadata']['last_updated'] = datetime.now().isoformat()
+        with open(JOURNAL_FILE, 'w') as f:
+            json.dump(journal, f, indent=2)
+        logger.info("✅ Trading journal saved successfully")
+    except Exception as e:
+        logger.error(f"Грешка при запазване на journal: {e}")
+
+
+def log_trade_to_journal(symbol, timeframe, signal_type, confidence, entry_price, tp_price, sl_price, analysis_data=None):
+    """Логва trade в журнала за ML анализ"""
+    try:
+        from datetime import datetime
+        journal = load_journal()
+        if not journal:
+            return None
+        
+        trade_id = len(journal['trades']) + 1
+        
+        trade_entry = {
+            'id': trade_id,
+            'timestamp': datetime.now().isoformat(),
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'signal': signal_type,
+            'confidence': confidence,
+            'entry_price': entry_price,
+            'tp_price': tp_price,
+            'sl_price': sl_price,
+            'status': 'PENDING',
+            'outcome': None,
+            'profit_loss_pct': None,
+            'closed_at': None,
+            'conditions': {
+                'rsi': analysis_data.get('rsi') if analysis_data else None,
+                'ma_20': analysis_data.get('ma_20') if analysis_data else None,
+                'ma_50': analysis_data.get('ma_50') if analysis_data else None,
+                'volume_ratio': analysis_data.get('volume_ratio') if analysis_data else None,
+                'volatility': analysis_data.get('volatility') if analysis_data else None,
+                'trend': analysis_data.get('trend') if analysis_data else None,
+                'btc_correlation': analysis_data.get('btc_correlation') if analysis_data else None,
+                'sentiment': analysis_data.get('sentiment') if analysis_data else None
+            },
+            'notes': []
+        }
+        
+        journal['trades'].append(trade_entry)
+        journal['metadata']['total_trades'] += 1
+        
+        save_journal(journal)
+        logger.info(f"📝 Trade #{trade_id} logged: {symbol} {signal_type} @ ${entry_price}")
+        
+        return trade_id
+        
+    except Exception as e:
+        logger.error(f"Грешка при логване на trade: {e}")
+        return None
+
+
+def update_trade_outcome(trade_id, outcome, profit_loss_pct, notes=None):
+    """Обновява резултата от trade и анализира за ML"""
+    try:
+        from datetime import datetime
+        journal = load_journal()
+        if not journal:
+            return False
+        
+        trade = next((t for t in journal['trades'] if t['id'] == trade_id), None)
+        if not trade:
+            logger.warning(f"Trade #{trade_id} not found")
+            return False
+        
+        trade['status'] = outcome
+        trade['outcome'] = outcome
+        trade['profit_loss_pct'] = profit_loss_pct
+        trade['closed_at'] = datetime.now().isoformat()
+        
+        if notes:
+            trade['notes'].append({
+                'timestamp': datetime.now().isoformat(),
+                'note': notes
+            })
+        
+        # ML анализ
+        analyze_trade_patterns(journal, trade)
+        
+        save_journal(journal)
+        logger.info(f"✅ Trade #{trade_id} updated: {outcome} ({profit_loss_pct:+.2f}%)")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Грешка при обновяване на trade: {e}")
+        return False
+
+
+def analyze_trade_patterns(journal, trade):
+    """ML анализ на trade patterns за самообучение"""
+    try:
+        outcome = trade['outcome']
+        symbol = trade['symbol']
+        timeframe = trade['timeframe']
+        confidence = trade['confidence']
+        conditions = trade['conditions']
+        
+        # Pattern 1: Успешни vs Неуспешни условия
+        if outcome == 'WIN':
+            pattern_key = 'successful_conditions'
+        else:
+            pattern_key = 'failed_conditions'
+        
+        pattern_id = f"{symbol}_{timeframe}_{trade['signal']}"
+        
+        if pattern_id not in journal['patterns'][pattern_key]:
+            journal['patterns'][pattern_key][pattern_id] = {
+                'count': 0,
+                'avg_confidence': 0,
+                'conditions_summary': []
+            }
+        
+        pattern = journal['patterns'][pattern_key][pattern_id]
+        pattern['count'] += 1
+        pattern['avg_confidence'] = (pattern['avg_confidence'] * (pattern['count'] - 1) + confidence) / pattern['count']
+        pattern['conditions_summary'].append(conditions)
+        
+        # Pattern 2: Най-добри timeframes
+        if timeframe not in journal['patterns']['best_timeframes']:
+            journal['patterns']['best_timeframes'][timeframe] = {'wins': 0, 'losses': 0, 'total': 0}
+        
+        tf_stats = journal['patterns']['best_timeframes'][timeframe]
+        tf_stats['total'] += 1
+        if outcome == 'WIN':
+            tf_stats['wins'] += 1
+        else:
+            tf_stats['losses'] += 1
+        
+        # Pattern 3: Най-добри symbols
+        if symbol not in journal['patterns']['best_symbols']:
+            journal['patterns']['best_symbols'][symbol] = {'wins': 0, 'losses': 0, 'total': 0, 'total_profit': 0}
+        
+        sym_stats = journal['patterns']['best_symbols'][symbol]
+        sym_stats['total'] += 1
+        sym_stats['total_profit'] += trade.get('profit_loss_pct', 0)
+        if outcome == 'WIN':
+            sym_stats['wins'] += 1
+        else:
+            sym_stats['losses'] += 1
+        
+        # ML Insights: Accuracy by confidence
+        conf_range = f"{int(confidence // 10) * 10}-{int(confidence // 10) * 10 + 10}"
+        if conf_range not in journal['ml_insights']['accuracy_by_confidence']:
+            journal['ml_insights']['accuracy_by_confidence'][conf_range] = {'wins': 0, 'total': 0}
+        
+        conf_stats = journal['ml_insights']['accuracy_by_confidence'][conf_range]
+        conf_stats['total'] += 1
+        if outcome == 'WIN':
+            conf_stats['wins'] += 1
+        
+        logger.info(f"📊 ML Pattern analysis completed for trade #{trade['id']}")
+        
+    except Exception as e:
+        logger.error(f"Грешка при ML анализ: {e}")
+
+
+def get_ml_insights():
+    """Извлича ML insights от журнала за подобряване на сигналите"""
+    try:
+        journal = load_journal()
+        if not journal or not journal['trades']:
+            return None
+        
+        insights = {
+            'total_trades': journal['metadata']['total_trades'],
+            'best_timeframes': {},
+            'best_symbols': {},
+            'confidence_accuracy': {},
+            'avoid_conditions': [],
+            'recommended_conditions': []
+        }
+        
+        # Най-добри timeframes
+        for tf, stats in journal['patterns']['best_timeframes'].items():
+            if stats['total'] > 0:
+                win_rate = (stats['wins'] / stats['total']) * 100
+                insights['best_timeframes'][tf] = {
+                    'win_rate': win_rate,
+                    'total_trades': stats['total']
+                }
+        
+        insights['best_timeframes'] = dict(sorted(
+            insights['best_timeframes'].items(),
+            key=lambda x: x[1]['win_rate'],
+            reverse=True
+        ))
+        
+        # Най-добри symbols
+        for sym, stats in journal['patterns']['best_symbols'].items():
+            if stats['total'] > 0:
+                win_rate = (stats['wins'] / stats['total']) * 100
+                avg_profit = stats['total_profit'] / stats['total']
+                insights['best_symbols'][sym] = {
+                    'win_rate': win_rate,
+                    'avg_profit': avg_profit,
+                    'total_trades': stats['total']
+                }
+        
+        insights['best_symbols'] = dict(sorted(
+            insights['best_symbols'].items(),
+            key=lambda x: x[1]['win_rate'],
+            reverse=True
+        ))
+        
+        # Accuracy by confidence
+        for conf_range, stats in journal['ml_insights']['accuracy_by_confidence'].items():
+            if stats['total'] > 0:
+                accuracy = (stats['wins'] / stats['total']) * 100
+                insights['confidence_accuracy'][conf_range] = {
+                    'accuracy': accuracy,
+                    'total': stats['total']
+                }
+        
+        # Избягвай условия с ниска успеваемост
+        for pattern_id, data in journal['patterns']['failed_conditions'].items():
+            if data['count'] >= 3:
+                insights['avoid_conditions'].append({
+                    'pattern': pattern_id,
+                    'failed_count': data['count'],
+                    'avg_confidence': data['avg_confidence']
+                })
+        
+        # Препоръчай условия с висока успеваемост
+        for pattern_id, data in journal['patterns']['successful_conditions'].items():
+            if data['count'] >= 3:
+                insights['recommended_conditions'].append({
+                    'pattern': pattern_id,
+                    'success_count': data['count'],
+                    'avg_confidence': data['avg_confidence']
+                })
+        
+        return insights
+        
+    except Exception as e:
+        logger.error(f"Грешка при извличане на ML insights: {e}")
+        return None
+
+
+def record_signal(symbol, timeframe, signal_type, confidence, entry_price=None, tp_price=None, sl_price=None):
     """Записва сигнал в статистиката"""
     try:
         from datetime import datetime
@@ -1081,6 +1779,14 @@ def record_signal(symbol, timeframe, signal_type, confidence):
             'timestamp': datetime.now().isoformat()
         }
         
+        # Добави trading параметри ако са подадени
+        if entry_price is not None:
+            signal_detail['entry_price'] = entry_price
+        if tp_price is not None:
+            signal_detail['tp_price'] = tp_price
+        if sl_price is not None:
+            signal_detail['sl_price'] = sl_price
+        
         if 'signals' not in stats:
             stats['signals'] = []
         
@@ -1092,8 +1798,12 @@ def record_signal(symbol, timeframe, signal_type, confidence):
         
         save_stats(stats)
         
+        # Върни signal_id (индексът в масива)
+        return len(stats['signals']) - 1
+        
     except Exception as e:
         logger.error(f"Грешка при record_signal: {e}")
+        return None
 
 
 def get_performance_stats():
@@ -1124,6 +1834,176 @@ def get_performance_stats():
     except Exception as e:
         logger.error(f"Грешка при get_performance_stats: {e}")
         return "Няма налична статистика"
+
+
+def get_yesterday_signal_stats():
+    """Извлича статистика за сигналите от предходния ден"""
+    try:
+        from datetime import datetime, timedelta
+        stats = load_stats()
+        
+        # Изчисли границите на предходния ден
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        yesterday_start = today - timedelta(days=1)
+        yesterday_end = today
+        
+        # Филтрирай сигналите от предходния ден
+        yesterday_signals = []
+        for signal in stats.get('signals', []):
+            try:
+                signal_time = datetime.fromisoformat(signal['timestamp'])
+                if yesterday_start <= signal_time < yesterday_end:
+                    yesterday_signals.append(signal)
+            except:
+                continue
+        
+        # Брои на сигналите
+        total_signals = len(yesterday_signals)
+        
+        # Брой успешни и неуспешни
+        completed_signals = [s for s in yesterday_signals if s.get('status') == 'COMPLETED']
+        successful = len([s for s in completed_signals if s.get('result') == 'WIN'])
+        failed = len([s for s in completed_signals if s.get('result') == 'LOSS'])
+        active = total_signals - len(completed_signals)
+        
+        # Изчисли win rate
+        win_rate = 0
+        if len(completed_signals) > 0:
+            win_rate = (successful / len(completed_signals)) * 100
+        
+        # Средна печалба/загуба
+        avg_profit = 0
+        if completed_signals:
+            profits = [s.get('profit_pct', 0) for s in completed_signals if s.get('profit_pct') is not None]
+            if profits:
+                avg_profit = sum(profits) / len(profits)
+        
+        return {
+            'total': total_signals,
+            'successful': successful,
+            'failed': failed,
+            'active': active,
+            'win_rate': win_rate,
+            'avg_profit': avg_profit,
+            'has_data': total_signals > 0
+        }
+        
+    except Exception as e:
+        logger.error(f"Грешка при get_yesterday_signal_stats: {e}")
+        return {
+            'total': 0,
+            'successful': 0,
+            'failed': 0,
+            'active': 0,
+            'win_rate': 0,
+            'avg_profit': 0,
+            'has_data': False
+        }
+
+
+def get_daily_signals_report():
+    """Генерира дневен отчет за сигналите от предходния ден"""
+    try:
+        from datetime import datetime, timedelta
+        stats = load_stats()
+        journal = load_journal()
+        
+        # Вземи вчерашната дата
+        yesterday = (datetime.now() - timedelta(days=1)).date()
+        
+        # Филтрирай сигналите от вчера
+        yesterday_signals = []
+        if 'signals' in stats and stats['signals']:
+            for sig in stats['signals']:
+                try:
+                    sig_date = datetime.fromisoformat(sig['timestamp']).date()
+                    if sig_date == yesterday:
+                        yesterday_signals.append(sig)
+                except:
+                    continue
+        
+        # Брой сигнали по тип
+        total_signals = len(yesterday_signals)
+        buy_signals = sum(1 for s in yesterday_signals if s['type'] == 'BUY')
+        sell_signals = sum(1 for s in yesterday_signals if s['type'] == 'SELL')
+        hold_signals = sum(1 for s in yesterday_signals if s['type'] == 'HOLD')
+        
+        # Средна увереност
+        avg_confidence = sum(s['confidence'] for s in yesterday_signals) / total_signals if total_signals > 0 else 0
+        
+        # Успешни/неуспешни trades от journal (ако има)
+        successful_trades = 0
+        failed_trades = 0
+        pending_trades = 0
+        
+        if journal and 'trades' in journal:
+            for trade in journal['trades']:
+                try:
+                    trade_date = datetime.fromisoformat(trade.get('entry_time', '')).date()
+                    if trade_date == yesterday:
+                        status = trade.get('status', 'pending')
+                        if status == 'win':
+                            successful_trades += 1
+                        elif status == 'loss':
+                            failed_trades += 1
+                        else:
+                            pending_trades += 1
+                except:
+                    continue
+        
+        # Win rate
+        closed_trades = successful_trades + failed_trades
+        win_rate = (successful_trades / closed_trades * 100) if closed_trades > 0 else 0
+        
+        # Формирай съобщението
+        report = f"📊 <b>ДНЕВЕН ОТЧЕТ - {yesterday.strftime('%d.%m.%Y')}</b>\n"
+        report += f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        report += f"<b>📈 СИГНАЛИ ЗА ДЕНЯ:</b>\n"
+        report += f"Общо пуснати: <b>{total_signals}</b>\n"
+        report += f"🟢 BUY: {buy_signals}\n"
+        report += f"🔴 SELL: {sell_signals}\n"
+        report += f"⚪ HOLD: {hold_signals}\n"
+        report += f"💪 Средна увереност: {avg_confidence:.1f}%\n\n"
+        
+        report += f"<b>🎯 РЕЗУЛТАТИ ОТ TRADES:</b>\n"
+        report += f"✅ Успешни: <b>{successful_trades}</b>\n"
+        report += f"❌ Неуспешни: <b>{failed_trades}</b>\n"
+        report += f"⏳ В изчакване: <b>{pending_trades}</b>\n"
+        
+        if closed_trades > 0:
+            report += f"\n📊 <b>Win Rate: {win_rate:.1f}%</b>\n"
+            
+            # Емоджи според win rate
+            if win_rate >= 70:
+                report += f"🔥 Отличен ден!\n"
+            elif win_rate >= 55:
+                report += f"💪 Добър ден!\n"
+            elif win_rate >= 40:
+                report += f"👍 Приемливо представяне\n"
+            else:
+                report += f"⚠️ Труден ден - анализирай грешките\n"
+        else:
+            report += f"\n⏳ Все още няма приключени trades от вчера\n"
+        
+        # Най-активни символи
+        if yesterday_signals:
+            symbol_counts = {}
+            for sig in yesterday_signals:
+                sym = sig.get('symbol', 'Unknown')
+                symbol_counts[sym] = symbol_counts.get(sym, 0) + 1
+            
+            report += f"\n<b>💰 Най-активни символи:</b>\n"
+            for sym, count in sorted(symbol_counts.items(), key=lambda x: x[1], reverse=True)[:3]:
+                report += f"  {sym}: {count} сигнала\n"
+        
+        report += f"\n<i>📱 Използвай /stats за пълна статистика</i>"
+        
+        return report
+        
+    except Exception as e:
+        logger.error(f"Грешка при get_daily_signals_report: {e}")
+        return None
 
 
 def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
@@ -1602,16 +2482,20 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /backtest BTCUSDT 1h - Custom back-test
 /ml_status - Machine Learning статус
 /ml_train - Ръчно обучение на ML модел
+/dailyreport - 📊 Дневен отчет за сигнали от вчера
 /daily_report - 📊 Дневен отчет с точност и успеваемост
 /weekly_report - 📈 Седмичен отчет (7 дни)
 /monthly_report - 📆 Месечен отчет (30 дни)
 
-<i>Отчетите показват:</i>
-• Брой генерирани сигнали
-• Точност на сигналите (Accuracy %)
-• Успеваемост (Profit/Loss %)
-• Анализ по валути и периоди
-• Най-добър/най-лош trade
+<i>Дневният отчет (/dailyreport) показва:</i>
+• Общо сигнали от предходния ден
+• Успешни сигнали (✅)
+• Неуспешни сигнали (❌)
+• В изчакване (⏳)
+• Статистика по валута и таймфрейм
+• Топ 5 сигнала с най-висока увереност
+
+🕗 <b>Автоматично се изпраща всяка сутрин в 08:00!</b>
 
 <b>4. Новини:</b>
 /news - Последни крипто новини (преведени на БГ)
@@ -1656,6 +2540,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <b>🧪 10. Система:</b>
 /test - Тест и автоматично отстраняване на грешки
 /stats - Статистика на бота
+/journal - 📝 Trading Journal с ML самообучение
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1663,10 +2548,25 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 📈 <b>Back-testing:</b> Тества стратегията на 90 дни
 🤖 <b>Machine Learning:</b> Учи от сигнали и се подобрява
-📊 <b>Daily Reports:</b> Автоматични отчети всеки ден в 20:00
+📊 <b>Daily Reports:</b> Автоматични отчети всеки ден в 08:00 (за предходния ден)
+📝 <b>Trading Journal 24/7:</b> 
+   • Автоматичен запис на всички trades
+   • Мониторинг на активни позиции на всеки 2 мин
+   • ML анализ и самообучение
+   • Автоматично затваряне при TP/SL
+   • Нотификации при завършване на trades
 
 📖 <b>Пълна документация:</b>
 ML_BACKTEST_REPORTS_DOCS.md
+TRADING_JOURNAL_DOCS.md
+ORDER_BLOCKS_GUIDE.md
+
+📦 <b>Order Blocks на графиката:</b>
+Всички графики показват Order Blocks:
+   • 🟢 Bullish OB (зелени зони) - support
+   • 🔴 Bearish OB (червени зони) - resistance
+   • Силата на всеки OB е посочена в %
+   • Виж ORDER_BLOCKS_GUIDE.md за детайли
 
 ⚠️ <b>Важно:</b> Това не е финансов съвет!
 Винаги правете собствено проучване (DYOR).
@@ -1678,6 +2578,97 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показва статистика на бота"""
     stats_message = get_performance_stats()
     await update.message.reply_text(stats_message, parse_mode='HTML')
+
+
+async def journal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📝 Trading Journal - ML самообучение и insights"""
+    logger.info(f"User {update.effective_user.id} executed /journal")
+    
+    try:
+        journal = load_journal()
+        if not journal or not journal['trades']:
+            await update.message.reply_text(
+                "📝 <b>Trading Journal</b>\n\n"
+                "Все още няма записани trades.\n"
+                "Журналът автоматично се попълва при всеки сигнал!\n\n"
+                "💡 <i>ML системата ще започне да се учи след първите trades.</i>",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Общ преглед
+        total_trades = journal['metadata']['total_trades']
+        pending_trades = sum(1 for t in journal['trades'] if t['status'] == 'PENDING')
+        completed_trades = sum(1 for t in journal['trades'] if t['status'] in ['WIN', 'LOSS'])
+        wins = sum(1 for t in journal['trades'] if t['outcome'] == 'WIN')
+        losses = sum(1 for t in journal['trades'] if t['outcome'] == 'LOSS')
+        
+        win_rate = (wins / completed_trades * 100) if completed_trades > 0 else 0
+        
+        message = "📝 <b>TRADING JOURNAL - ML САМООБУЧЕНИЕ</b>\n"
+        message += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        message += f"📊 <b>Обща статистика:</b>\n"
+        message += f"Общо trades: {total_trades}\n"
+        message += f"Завършени: {completed_trades}\n"
+        message += f"В изчакване: {pending_trades}\n\n"
+        
+        if completed_trades > 0:
+            message += f"🎯 <b>Резултати:</b>\n"
+            message += f"✅ Успешни: {wins} ({win_rate:.1f}%)\n"
+            message += f"❌ Неуспешни: {losses}\n\n"
+        
+        # ML Insights
+        insights = get_ml_insights()
+        
+        if insights and insights['best_timeframes']:
+            message += f"⏱️ <b>Най-добри Timeframes:</b>\n"
+            for tf, data in list(insights['best_timeframes'].items())[:3]:
+                message += f"  {tf}: {data['win_rate']:.1f}% ({data['total_trades']} trades)\n"
+            message += "\n"
+        
+        if insights and insights['best_symbols']:
+            message += f"💰 <b>Най-добри Валути:</b>\n"
+            for sym, data in list(insights['best_symbols'].items())[:3]:
+                message += f"  {sym}: {data['win_rate']:.1f}% (avg: {data['avg_profit']:+.2f}%)\n"
+            message += "\n"
+        
+        if insights and insights['confidence_accuracy']:
+            message += f"🎯 <b>Точност по Confidence:</b>\n"
+            for conf_range, data in sorted(insights['confidence_accuracy'].items(), reverse=True):
+                message += f"  {conf_range}%: {data['accuracy']:.1f}% ({data['total']} trades)\n"
+            message += "\n"
+        
+        # Препоръки от ML
+        if insights and insights['recommended_conditions']:
+            message += f"💡 <b>ML Препоръки (успешни patterns):</b>\n"
+            for rec in insights['recommended_conditions'][:2]:
+                message += f"  ✅ {rec['pattern']} ({rec['success_count']} успеха)\n"
+            message += "\n"
+        
+        if insights and insights['avoid_conditions']:
+            message += f"⚠️ <b>ML Предупреждения (избягвай):</b>\n"
+            for avoid in insights['avoid_conditions'][:2]:
+                message += f"  ❌ {avoid['pattern']} ({avoid['failed_count']} неуспеха)\n"
+            message += "\n"
+        
+        # Последни trades
+        recent_trades = sorted(journal['trades'], key=lambda x: x['timestamp'], reverse=True)[:5]
+        
+        message += f"📋 <b>Последни 5 Trades:</b>\n"
+        for trade in recent_trades:
+            status_emoji = "✅" if trade['outcome'] == 'WIN' else "❌" if trade['outcome'] == 'LOSS' else "⏳"
+            message += f"{status_emoji} #{trade['id']} {trade['symbol']} {trade['signal']} "
+            message += f"({trade['confidence']:.0f}%) - {trade['status']}\n"
+        
+        message += f"\n<i>📖 Журналът автоматично се обновява при всеки trade.</i>\n"
+        message += f"<i>🤖 ML системата се учи от всички резултати!</i>"
+        
+        await update.message.reply_text(message, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Грешка в journal_cmd: {e}")
+        await update.message.reply_text(f"❌ Грешка при показване на журнала: {e}")
 
 
 async def analyze_news_impact(title, description=""):
@@ -1795,6 +2786,148 @@ async def monitor_breaking_news():
         logger.error(f"Грешка при мониторинг на новини: {e}")
 
 
+async def send_daily_signal_report(bot):
+    """Изпраща автоматичен дневен отчет за всички сигнали от предходния ден"""
+    try:
+        from datetime import datetime, timedelta
+        
+        # Зареди статистиката
+        stats = load_stats()
+        
+        if 'signals' not in stats or not stats['signals']:
+            logger.info("Няма сигнали за дневен отчет")
+            return
+        
+        # Определи началото и края на предходния ден
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        yesterday_start = today - timedelta(days=1)
+        yesterday_end = today
+        
+        # Филтрирай сигналите от предходния ден
+        yesterday_signals = []
+        for signal in stats['signals']:
+            try:
+                signal_time = datetime.fromisoformat(signal['timestamp'])
+                if yesterday_start <= signal_time < yesterday_end:
+                    yesterday_signals.append(signal)
+            except:
+                continue
+        
+        if not yesterday_signals:
+            message = f"""📊 <b>ДНЕВЕН ОТЧЕТ</b>
+📅 {yesterday_start.strftime('%d.%m.%Y')}
+
+❌ Няма генерирани сигнали за предходния ден.
+"""
+            await bot.send_message(
+                chat_id=OWNER_CHAT_ID,
+                text=message,
+                parse_mode='HTML',
+                disable_notification=False
+            )
+            return
+        
+        # Анализ на успешни/неуспешни сигнали
+        total_signals = len(yesterday_signals)
+        successful_signals = 0
+        failed_signals = 0
+        pending_signals = 0
+        
+        # Статистика по тип
+        buy_signals = sum(1 for s in yesterday_signals if s['type'] == 'BUY')
+        sell_signals = sum(1 for s in yesterday_signals if s['type'] == 'SELL')
+        
+        # Средна увереност
+        avg_confidence = sum(s['confidence'] for s in yesterday_signals) / total_signals
+        
+        # Проверка на успешност (ако има entry/tp/sl данни)
+        for signal in yesterday_signals:
+            if 'entry_price' in signal and 'tp_price' in signal:
+                # Провери дали TP е достигната (опростена проверка)
+                # В реална имплементация трябва да се провери текущата цена
+                # За целите на отчета, използваме outcome ако е зададен
+                if 'outcome' in signal:
+                    if signal['outcome'] == 'success':
+                        successful_signals += 1
+                    elif signal['outcome'] == 'failed':
+                        failed_signals += 1
+                    else:
+                        pending_signals += 1
+                else:
+                    pending_signals += 1
+            else:
+                pending_signals += 1
+        
+        # Статистика по символ
+        by_symbol = {}
+        for signal in yesterday_signals:
+            sym = signal['symbol']
+            if sym not in by_symbol:
+                by_symbol[sym] = {'count': 0, 'BUY': 0, 'SELL': 0}
+            by_symbol[sym]['count'] += 1
+            by_symbol[sym][signal['type']] += 1
+        
+        # Статистика по таймфрейм
+        by_timeframe = {}
+        for signal in yesterday_signals:
+            tf = signal.get('timeframe', 'N/A')
+            if tf not in by_timeframe:
+                by_timeframe[tf] = 0
+            by_timeframe[tf] += 1
+        
+        # Генерирай отчета
+        message = f"""📊 <b>ДНЕВЕН ОТЧЕТ ЗА СИГНАЛИ</b>
+📅 {yesterday_start.strftime('%d.%m.%Y')} (Предходен ден)
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 <b>ОБЩА СТАТИСТИКА:</b>
+🔢 Общо сигнали: <b>{total_signals}</b>
+✅ Успешни: <b>{successful_signals}</b> ({(successful_signals/total_signals*100) if total_signals > 0 else 0:.1f}%)
+❌ Неуспешни: <b>{failed_signals}</b> ({(failed_signals/total_signals*100) if total_signals > 0 else 0:.1f}%)
+⏳ В изчакване: <b>{pending_signals}</b> ({(pending_signals/total_signals*100) if total_signals > 0 else 0:.1f}%)
+
+💪 Средна увереност: <b>{avg_confidence:.1f}%</b>
+
+📊 <b>ПО ТИП:</b>
+🟢 BUY сигнали: <b>{buy_signals}</b>
+🔴 SELL сигнали: <b>{sell_signals}</b>
+
+💰 <b>ПО ВАЛУТА:</b>
+"""
+        
+        for sym, data in sorted(by_symbol.items(), key=lambda x: x[1]['count'], reverse=True):
+            message += f"• {sym}: {data['count']} ({data['BUY']} BUY, {data['SELL']} SELL)\n"
+        
+        message += f"\n⏰ <b>ПО ТАЙМФРЕЙМ:</b>\n"
+        for tf, count in sorted(by_timeframe.items(), key=lambda x: x[1], reverse=True):
+            message += f"• {tf}: {count} сигнала\n"
+        
+        # Топ 5 сигнала с най-висока увереност
+        top_signals = sorted(yesterday_signals, key=lambda x: x['confidence'], reverse=True)[:5]
+        if top_signals:
+            message += f"\n🏆 <b>ТОП 5 СИГНАЛА (по увереност):</b>\n"
+            for i, sig in enumerate(top_signals, 1):
+                sig_emoji = "🟢" if sig['type'] == 'BUY' else "🔴"
+                message += f"{i}. {sig_emoji} {sig['symbol']} {sig['type']} - {sig['confidence']:.0f}% ({sig.get('timeframe', 'N/A')})\n"
+        
+        message += f"\n━━━━━━━━━━━━━━━━━━━━━━━━"
+        message += f"\n⚠️ <i>Отчетът е автоматичен и базиран на генерирани сигнали.</i>"
+        message += f"\n📱 <i>Използвай /stats за пълна статистика</i>"
+        
+        # Изпрати отчета
+        await bot.send_message(
+            chat_id=OWNER_CHAT_ID,
+            text=message,
+            parse_mode='HTML',
+            disable_notification=False  # С звукова нотификация
+        )
+        
+        logger.info(f"✅ Daily signal report sent: {total_signals} signals from {yesterday_start.strftime('%Y-%m-%d')}")
+        
+    except Exception as e:
+        logger.error(f"Грешка при генериране на дневен отчет: {e}")
+
+
 async def send_task_completion_notification(task_id, task_title, changes_summary):
     """Изпраща нотификация когато задача е завършена"""
     try:
@@ -1841,6 +2974,14 @@ async def send_critical_news_alert(critical_news):
         for article in critical_news:
             impact = article['impact_analysis']
             
+            # Използвай преведеното заглавие и описание
+            title_bg = article.get('title_bg', article.get('title', 'Без заглавие'))
+            desc_bg = article.get('description_bg', '')
+            
+            # Escape Telegram символи
+            title_bg = title_bg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            desc_bg = desc_bg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            
             # Избери емоджи според impact
             if impact['impact'] == 'CRITICAL':
                 alert_emoji = "🚨🚨🚨"
@@ -1862,7 +3003,7 @@ async def send_critical_news_alert(critical_news):
             
             message = f"""{alert_emoji} <b>{priority} НОВИНА!</b> {alert_emoji}
 
-{article.get('source', '📰')} <b>{article['title']}</b>
+{article.get('source', '📰')} <b>{title_bg}</b>
 
 {sentiment_emoji} <b>Анализ на въздействието:</b>
 • Sentiment: {sentiment_text}
@@ -1872,13 +3013,13 @@ async def send_critical_news_alert(critical_news):
 
 """
             
-            if article.get('description'):
-                import re
-                desc = re.sub('<[^<]+?>', '', article['description'])[:200]
-                message += f"<i>{desc}...</i>\n\n"
+            if desc_bg:
+                desc_short = desc_bg[:200] + "..." if len(desc_bg) > 200 else desc_bg
+                message += f"<i>{desc_short}</i>\n\n"
             
             if article.get('link'):
-                message += f"🔗 {article['link']}\n\n"
+                message += f"🔗 <a href=\"{article['link']}\">Прочети пълна статия</a>\n"
+                message += f"🌍 <i>Автоматично преведено на български</i>\n\n"
             
             message += f"⏰ <b>Време:</b> {datetime.now().strftime('%H:%M:%S UTC')}\n"
             message += f"💡 <b>Препоръка:</b> "
@@ -1895,7 +3036,7 @@ async def send_critical_news_alert(critical_news):
                 chat_id=OWNER_CHAT_ID,
                 text=message,
                 parse_mode='HTML',
-                disable_web_page_preview=False,
+                disable_web_page_preview=True,
                 disable_notification=False  # ЗВУКОВА АЛЕРТА!
             )
             
@@ -1990,88 +3131,133 @@ async def fetch_market_news():
     """Извлича последни крипто новини от най-надеждните източници"""
     all_news = []
     
-    # === CoinDesk RSS Feed (Най-авторитетен източник) ===
-    try:
-        coindesk_rss = "https://www.coindesk.com/arc/outboundfeeds/rss/"
-        
-        resp = await asyncio.to_thread(requests.get, coindesk_rss, timeout=10)
-        
-        if resp.status_code == 200:
-            import xml.etree.ElementTree as ET
-            root = ET.fromstring(resp.content)
-            items = root.findall('.//item')[:3]  # Топ 3 от CoinDesk
-            
-            for item in items:
-                title = item.find('title').text if item.find('title') is not None else "Без заглавие"
-                pub_date = item.find('pubDate').text if item.find('pubDate') is not None else ""
-                description = item.find('description').text if item.find('description') is not None else ""
-                link = item.find('link').text if item.find('link') is not None else ""
-                
-                all_news.append({
-                    'source': '🏆 CoinDesk',
-                    'title': title,
-                    'date': pub_date,
-                    'description': description[:200] if description else "",
-                    'link': link
-                })
-    except Exception as e:
-        logger.error(f"Грешка при CoinDesk: {e}")
-    
-    # === Cointelegraph RSS Feed (Втори по надеждност) ===
+    # === Cointelegraph RSS Feed (Работи БЕЗ блокировки!) ===
     try:
         cointelegraph_rss = "https://cointelegraph.com/rss"
+        feed = await asyncio.to_thread(feedparser.parse, cointelegraph_rss)
         
-        resp = await asyncio.to_thread(requests.get, cointelegraph_rss, timeout=10)
-        
-        if resp.status_code == 200:
-            import xml.etree.ElementTree as ET
-            root = ET.fromstring(resp.content)
-            items = root.findall('.//item')[:2]  # Топ 2 от Cointelegraph
+        for entry in feed.entries[:6]:  # Вземаме 6 новини вместо 2
+            clean_title = BeautifulSoup(entry.title, 'html.parser').get_text()
+            clean_desc = BeautifulSoup(entry.get('summary', ''), 'html.parser').get_text()
             
-            for item in items:
-                title = item.find('title').text if item.find('title') is not None else "Без заглавие"
-                pub_date = item.find('pubDate').text if item.find('pubDate') is not None else ""
-                description = item.find('description').text if item.find('description') is not None else ""
-                link = item.find('link').text if item.find('link') is not None else ""
-                
-                all_news.append({
-                    'source': '📰 Cointelegraph',
-                    'title': title,
-                    'date': pub_date,
-                    'description': description[:200] if description else "",
-                    'link': link
-                })
+            # Автоматичен превод на български
+            title_bg = await translate_text(clean_title)
+            desc_bg = await translate_text(clean_desc[:500]) if clean_desc else ''
+            
+            # Google Translate wrapper за преведена статия на български
+            translate_url = f"https://translate.google.com/translate?sl=en&tl=bg&u={entry.link}"
+            
+            all_news.append({
+                'title': clean_title,
+                'title_bg': title_bg,
+                'description': clean_desc,
+                'description_bg': desc_bg,
+                'link': entry.link,  # Оригинален линк
+                'translate_link': translate_url,  # Google Translate версия на български
+                'source': '📊 Cointelegraph'
+            })
     except Exception as e:
         logger.error(f"Грешка при Cointelegraph: {e}")
+    
+    return all_news[:6] if all_news else []  # Връщаме до 6 най-важни новини
     
     # === Decrypt RSS Feed (Технологична перспектива) ===
     try:
         decrypt_rss = "https://decrypt.co/feed"
+        feed = await asyncio.to_thread(feedparser.parse, decrypt_rss)
         
-        resp = await asyncio.to_thread(requests.get, decrypt_rss, timeout=10)
-        
-        if resp.status_code == 200:
-            import xml.etree.ElementTree as ET
-            root = ET.fromstring(resp.content)
-            items = root.findall('.//item')[:2]  # Топ 2 от Decrypt
+        for entry in feed.entries[:2]:
+            clean_title = BeautifulSoup(entry.title, 'html.parser').get_text()
+            clean_desc = BeautifulSoup(entry.get('summary', ''), 'html.parser').get_text()
             
-            for item in items:
-                title = item.find('title').text if item.find('title') is not None else "Без заглавие"
-                pub_date = item.find('pubDate').text if item.find('pubDate') is not None else ""
-                description = item.find('description').text if item.find('description') is not None else ""
-                link = item.find('link').text if item.find('link') is not None else ""
-                
-                all_news.append({
-                    'source': '🔐 Decrypt',
-                    'title': title,
-                    'date': pub_date,
-                    'description': description[:200] if description else "",
-                    'link': link
-                })
+            # Автоматичен превод на български
+            title_bg = await translate_text(clean_title)
+            desc_bg = await translate_text(clean_desc[:500]) if clean_desc else ''
+            
+            all_news.append({
+                'title': clean_title,
+                'title_bg': title_bg,
+                'description': clean_desc,
+                'description_bg': desc_bg,
+                'link': entry.link,  # Директен линк
+                'source': '🔐 Decrypt'
+            })
     except Exception as e:
         logger.error(f"Грешка при Decrypt: {e}")
     
-    return all_news[:7] if all_news else []  # Връщаме до 7 най-важни новини
+    # === The Block RSS Feed (Институционални новини и анализи) ===
+    try:
+        theblock_rss = "https://www.theblock.co/rss.xml"
+        feed = await asyncio.to_thread(feedparser.parse, theblock_rss)
+        
+        for entry in feed.entries[:2]:
+            clean_title = BeautifulSoup(entry.title, 'html.parser').get_text()
+            clean_desc = BeautifulSoup(entry.get('summary', ''), 'html.parser').get_text()
+            
+            # Автоматичен превод на български
+            title_bg = await translate_text(clean_title)
+            desc_bg = await translate_text(clean_desc[:500]) if clean_desc else ''
+            
+            all_news.append({
+                'title': clean_title,
+                'title_bg': title_bg,
+                'description': clean_desc,
+                'description_bg': desc_bg,
+                'link': entry.link,  # Директен линк
+                'source': '📰 The Block'
+            })
+    except Exception as e:
+        logger.error(f"Грешка при The Block: {e}")
+    
+    # === Bitcoin.com News RSS Feed (Глобални крипто новини) ===
+    try:
+        bitcoincom_rss = "https://news.bitcoin.com/feed/"
+        feed = await asyncio.to_thread(feedparser.parse, bitcoincom_rss)
+        
+        for entry in feed.entries[:2]:
+            clean_title = BeautifulSoup(entry.title, 'html.parser').get_text()
+            clean_desc = BeautifulSoup(entry.get('summary', ''), 'html.parser').get_text()
+            
+            # Автоматичен превод на български
+            title_bg = await translate_text(clean_title)
+            desc_bg = await translate_text(clean_desc[:500]) if clean_desc else ''
+            
+            all_news.append({
+                'title': clean_title,
+                'title_bg': title_bg,
+                'description': clean_desc,
+                'description_bg': desc_bg,
+                'link': entry.link,  # Директен линк
+                'source': '₿ Bitcoin.com'
+            })
+    except Exception as e:
+        logger.error(f"Грешка при Bitcoin.com: {e}")
+    
+    # === CoinJournal RSS Feed (Пазарни данни и ETF потоци) ===
+    try:
+        coinjournal_rss = "https://coinjournal.net/feed/"
+        feed = await asyncio.to_thread(feedparser.parse, coinjournal_rss)
+        
+        for entry in feed.entries[:2]:
+            clean_title = BeautifulSoup(entry.title, 'html.parser').get_text()
+            clean_desc = BeautifulSoup(entry.get('summary', ''), 'html.parser').get_text()
+            
+            # Автоматичен превод на български
+            title_bg = await translate_text(clean_title)
+            desc_bg = await translate_text(clean_desc[:500]) if clean_desc else ''
+            
+            all_news.append({
+                'title': clean_title,
+                'title_bg': title_bg,
+                'description': clean_desc,
+                'description_bg': desc_bg,
+                'link': entry.link,  # Директен линк
+                'source': '📊 CoinJournal'
+            })
+    except Exception as e:
+        logger.error(f"Грешка при CoinJournal: {e}")
+    
+    return all_news[:12] if all_news else []  # Връщаме до 12 най-важни новини
 
 
 async def analyze_coin_performance(coin_data, include_external=True):
@@ -2082,11 +3268,10 @@ async def analyze_coin_performance(coin_data, include_external=True):
         change = float(coin_data['priceChangePercent'])
         high = float(coin_data['highPrice'])
         low = float(coin_data['lowPrice'])
-        volume = float(coin_data['volume'])
         quote_volume = float(coin_data['quoteVolume'])
         trades = int(coin_data['count'])
         
-        # Мапване на символи към CoinGecko IDs
+        # CoinGecko mapping
         coingecko_map = {
             'BTCUSDT': 'bitcoin',
             'ETHUSDT': 'ethereum',
@@ -2329,9 +3514,42 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Изчакай Fear & Greed Index
     fear_greed = await fear_greed_task
     
+    # Извлечи статистика за вчерашните сигнали
+    yesterday_stats = get_yesterday_signal_stats()
+    
     # === MARKET SENTIMENT SECTION ===
     message = "📊 <b>ДНЕВЕН ПАЗАРЕН АНАЛИЗ</b>\n"
     message += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Добави статистика за предходния ден ако има данни
+    if yesterday_stats['has_data']:
+        message += f"<b>📈 Сигнали от вчера:</b>\n"
+        message += f"📊 Общо пуснати: <b>{yesterday_stats['total']}</b>\n"
+        message += f"✅ Успешни: <b>{yesterday_stats['successful']}</b>\n"
+        message += f"❌ Неуспешни: <b>{yesterday_stats['failed']}</b>\n"
+        
+        if yesterday_stats['active'] > 0:
+            message += f"⏳ Активни: <b>{yesterday_stats['active']}</b>\n"
+        
+        # Win rate с емоджи
+        if yesterday_stats['win_rate'] >= 70:
+            wr_emoji = "🔥"
+        elif yesterday_stats['win_rate'] >= 60:
+            wr_emoji = "💪"
+        elif yesterday_stats['win_rate'] >= 50:
+            wr_emoji = "👍"
+        else:
+            wr_emoji = "⚠️"
+        
+        message += f"{wr_emoji} Win Rate: <b>{yesterday_stats['win_rate']:.1f}%</b>\n"
+        
+        # Средна печалба
+        if yesterday_stats['avg_profit'] > 0:
+            message += f"💰 Средна печалба: <b>+{yesterday_stats['avg_profit']:.2f}%</b>\n"
+        elif yesterday_stats['avg_profit'] < 0:
+            message += f"💸 Средна загуба: <b>{yesterday_stats['avg_profit']:.2f}%</b>\n"
+        
+        message += "\n"
     
     message += f"<b>🎯 Пазарен Sentiment:</b>\n"
     message += f"{sentiment_analysis['emoji']} <b>{sentiment_analysis['description']}</b>\n"
@@ -2446,22 +3664,36 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     news = await news_task
     
     if news:
+        import re
+        import html
+        
         news_message = "<b>📰 Последни Новини (Топ източници):</b>\n\n"
         
         for i, article in enumerate(news[:3], 1):  # Първите 3
             source = article.get('source', '📰')
-            news_message += f"{i}. {source} <b>{article['title']}</b>\n"
-            if article.get('description'):
-                # Вземи първите 100 символа и премахни HTML
-                import re
-                desc = re.sub('<[^<]+?>', '', article['description'])
-                desc = desc[:100] + "..." if len(desc) > 100 else desc
-                news_message += f"   <i>{desc}</i>\n"
-            if article.get('link'):
-                news_message += f"   🔗 {article['link']}\n"
+            
+            # Използвай преведеното заглавие ако е налично
+            title_bg = article.get('title_bg', article.get('title', 'Без заглавие'))
+            desc_bg = article.get('description_bg', '')
+            link = article.get('link', None)
+            
+            # Escape специални символи
+            title_bg = title_bg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            
+            news_message += f"{i}. {source} <b>{title_bg}</b>\n"
+            
+            if desc_bg:
+                desc_bg = desc_bg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                desc_short = desc_bg[:100] + "..." if len(desc_bg) > 100 else desc_bg
+                news_message += f"   <i>{desc_short}</i>\n"
+            
+            if link:
+                news_message += f"   🔗 <a href=\"{link}\">Прочети пълната статия</a>\n"
+            
             news_message += "\n"
         
-        news_message += f"<i>📊 Източници: CoinDesk, Cointelegraph, Decrypt</i>\n"
+        news_message += f"<i>📰 Източник: Cointelegraph (без блокировки)</i>\n"
+        news_message += "<i>🌍 Автоматично преведени на български</i>\n"
         news_message += "<i>📱 Използвай /news за повече новини</i>"
         
         await update.message.reply_text(news_message, parse_mode='HTML', disable_web_page_preview=True)
@@ -2677,19 +3909,6 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tp_pct = adaptive_levels['tp']
     sl_pct = adaptive_levels['sl']
     
-    # Запиши сигнала в статистиката с trading параметри
-    signal_id = None
-    if analysis['has_good_trade']:
-        signal_id = record_signal(
-            symbol, 
-            timeframe, 
-            analysis['signal'], 
-            final_confidence,
-            entry_price=price,
-            tp_price=tp_price,
-            sl_price=sl_price
-        )
-    
     # Изчисли TP и SL нива
     price = analysis['price']
     
@@ -2705,6 +3924,103 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tp_price = price * (1 + tp_pct / 100)
         sl_price = price * (1 - sl_pct / 100)
         signal_emoji = "⚪"
+    
+    # Запиши сигнала в статистиката с trading параметри + ML Journal
+    signal_id = None
+    if analysis['has_good_trade']:
+        # Подготви analysis_data за ML журнала
+        analysis_data = {
+            'rsi': analysis.get('rsi'),
+            'ma_20': analysis.get('ma_20'),
+            'ma_50': analysis.get('ma_50'),
+            'volume_ratio': analysis.get('volume_ratio'),
+            'volatility': analysis.get('volatility'),
+            'trend': analysis.get('trend'),
+            'btc_correlation': btc_correlation,
+            'sentiment': sentiment
+        }
+        
+        signal_id = record_signal(
+            symbol, 
+            timeframe, 
+            analysis['signal'], 
+            final_confidence,
+            entry_price=price,
+            tp_price=tp_price,
+            sl_price=sl_price
+        )
+        
+        # 📝 Логвай също в Trading Journal за ML самообучение
+        journal_id = log_trade_to_journal(
+            symbol=symbol,
+            timeframe=timeframe,
+            signal_type=analysis['signal'],
+            confidence=final_confidence,
+            entry_price=price,
+            tp_price=tp_price,
+            sl_price=sl_price,
+            analysis_data=analysis_data
+        )
+        
+        if journal_id:
+            logger.info(f"📝 Trade logged to ML journal (ID: {journal_id})")
+    
+    # === ML PREDICTION ===
+    ml_probability = None
+    ml_message = ""
+    
+    if ML_PREDICTOR_AVAILABLE and analysis['has_good_trade']:
+        try:
+            ml_predictor = get_ml_predictor()
+            
+            # Подготви данни за ML прогноза
+            ml_trade_data = {
+                'signal_type': analysis['signal'],
+                'confidence': final_confidence,
+                'entry_price': price,
+                'analysis_data': analysis_data
+            }
+            
+            # Получи ML прогноза
+            ml_probability = ml_predictor.predict(ml_trade_data)
+            
+            if ml_probability is not None:
+                logger.info(f"🤖 ML Prediction: {ml_probability:.1f}% вероятност за успех")
+                
+                # Изчисли корекция на confidence
+                ml_adjustment = ml_predictor.get_confidence_adjustment(ml_probability, final_confidence)
+                
+                # Определи ML emoji според вероятността
+                if ml_probability >= 80:
+                    ml_emoji = "🤖💎"
+                    ml_quality = "Отлична"
+                elif ml_probability >= 70:
+                    ml_emoji = "🤖✅"
+                    ml_quality = "Много добра"
+                elif ml_probability >= 60:
+                    ml_emoji = "🤖👍"
+                    ml_quality = "Добра"
+                elif ml_probability >= 50:
+                    ml_emoji = "🤖⚠️"
+                    ml_quality = "Средна"
+                else:
+                    ml_emoji = "🤖❌"
+                    ml_quality = "Ниска"
+                
+                ml_message = f"\n🤖 <b>ML ПРОГНОЗА:</b> {ml_probability:.1f}% ({ml_quality}) {ml_emoji}\n"
+                
+                if abs(ml_adjustment) >= 5:
+                    if ml_adjustment > 0:
+                        ml_message += f"   💡 ML модел повишава увереността с +{ml_adjustment:.0f}%\n"
+                    else:
+                        ml_message += f"   ⚠️ ML модел понижава увереността с {ml_adjustment:.0f}%\n"
+                
+                # Добави ML причина в analysis
+                analysis['reasons'].append(f"ML прогноза: {ml_probability:.1f}% успех")
+                
+        except Exception as e:
+            logger.error(f"❌ Грешка при ML прогноза: {e}")
+    
     
     # Генерирай графика
     chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe)
@@ -2729,9 +4045,13 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = f"{signal_emoji} <b>СИГНАЛ: {symbol}</b>\n\n"
     message += f"📊 <b>Анализ ({timeframe}):</b>\n"
     message += f"Сигнал: <b>{analysis['signal']}</b> {signal_emoji}\n"
-    message += f"Увереност: {analysis['confidence']}% {confidence_emoji}\n\n"
+    message += f"Увереност: {analysis['confidence']}% {confidence_emoji}\n"
     
-    message += f"💰 <b>Текуща цена:</b> ${price:,.4f}\n"
+    # Добави ML прогноза ако е налична
+    if ml_message:
+        message += ml_message
+    
+    message += f"\n💰 <b>Текуща цена:</b> ${price:,.4f}\n"
     message += f"{change_emoji} 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
     
     # Обединена секция за ВСИЧКИ нива (Entry, TP, SL)
@@ -2903,64 +4223,24 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Последни новини от крипто света - Топ надеждни източници"""
+    logger.info(f"User {update.effective_user.id} executed /news")
     await update.message.reply_text("📰 Извличане на новини от най-надеждните източници...")
     
-    # Извлечи от множество източници (вече имаме обновена функция)
-    news_from_rss = await fetch_market_news()
-    
-    all_news = []
-    
-    # Добави новините от RSS източниците
-    for article in news_from_rss:
-        all_news.append({
-            'source': article.get('source', '📰'),
-            'title': article['title'],
-            'link': article.get('link', None),
-            'description': article.get('description', '')
-        })
-    
-    # === CoinMarketCap (като допълнителен източник) ===
     try:
-        cmc_url = "https://coinmarketcap.com/headlines/news/"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        resp = await asyncio.to_thread(requests.get, cmc_url, headers=headers, timeout=15)
-        
-        if resp.status_code == 200:
-            # Опростен parsing - търси основни заглавия в HTML
-            import re
-            # Търси JSON data в страницата
-            json_match = re.search(r'window\.__NEXT_DATA__\s*=\s*({.*?})\s*</script>', resp.text, re.DOTALL)
-            
-            if json_match:
-                import json
-                data = json.loads(json_match.group(1))
-                
-                # Навигирай до новините
-                try:
-                    articles = data.get('props', {}).get('pageProps', {}).get('articles', [])[:3]
-                    
-                    for article in articles:
-                        title = article.get('meta', {}).get('title', '')
-                        subtitle = article.get('meta', {}).get('subtitle', '')
-                        slug = article.get('meta', {}).get('slug', '')
-                        
-                        if title and slug:
-                            link = f"https://coinmarketcap.com/headlines/news/{slug}/"
-                            all_news.append({
-                                'source': '📊 CoinMarketCap',
-                                'title': title,
-                                'link': link,
-                                'description': subtitle[:150] if subtitle else ''
-                            })
-                except Exception as parse_err:
-                    logger.error(f"CoinMarketCap parse error: {parse_err}")
+        # Извлечи от множество източници (вече имаме обновена функция с превод)
+        logger.info("Fetching market news...")
+        all_news = await fetch_market_news()
+        logger.info(f"Received {len(all_news) if all_news else 0} news items")
     except Exception as e:
-        logger.error(f"CoinMarketCap error: {e}")
+        logger.error(f"Грешка при извличане на новини: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Грешка при извличане на новини: {e}")
+        return
+    
+    logger.info("Preparing news message...")
     
     # Изпрати новините
     if not all_news:
+        logger.warning("No news available")
         # Fallback
         message = """
 📰 <b>КРИПТО НОВИНИ</b>
@@ -2977,37 +4257,47 @@ async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(message, parse_mode='HTML', disable_web_page_preview=True)
         return
     
-    message = "📰 <b>ПОСЛЕДНИ НОВИНИ ОТ ТОП ИЗТОЧНИЦИ</b>\n"
-    message += "<i>CoinDesk, Cointelegraph, Decrypt, CoinMarketCap</i>\n\n"
+    # ФОРМАТ С ВАЛИДНИ НОВИНИ - САМО НАЙ-ВАЖНИТЕ
+    message = "📰 <b>НАЙ-ВАЖНИ КРИПТО НОВИНИ</b>\n"
+    message += "<i>📊 Източник: Cointelegraph - БЕЗ блокировки!</i>\n\n"
     
-    for i, news in enumerate(all_news[:10], 1):  # Топ 10 новини
+    # Показваме максимум 6 най-важни новини (С АВТОМАТИЧЕН ПРЕВОД - ПЪЛЕН ТЕКСТ)
+    for i, news in enumerate(all_news[:6], 1):
         source = news.get('source', '📰')
-        translate_url = f"https://translate.google.com/translate?sl=auto&tl=bg&u={news['link']}" if news.get('link') else None
         
-        # Преведи заглавието и описанието
-        title_bg = await translate_text(news['title'])
-        description_bg = ""
-        if news.get('description'):
-            description_bg = await translate_text(news['description'])
+        # Използвай преведеното заглавие ако е налично, иначе оригиналното
+        title_bg = news.get('title_bg', news.get('title', 'Без заглавие'))
+        desc_bg = news.get('description_bg', '')
+        
+        # Escape специални Telegram символи
+        title_bg = title_bg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
         
         message += f"{i}. {source} <b>{title_bg}</b>\n"
         
-        if description_bg:
-            message += f"   <i>{description_bg}...</i>\n"
+        if desc_bg:
+            # ПОКАЗВАМЕ ПЪЛНИЯ ПРЕВЕДЕН ТЕКСТ (не само 150 символа)
+            desc_bg = desc_bg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            message += f"   <i>{desc_bg}</i>\n"
         
-        if news.get('link'):
-            message += f"   🌐 Оригинал: {news['link']}\n"
-            if translate_url:
-                message += f"   🇧🇬 Преведено: {translate_url}\n"
+        if news.get('translate_link'):
+            # Google Translate линк - статията автоматично на български!
+            message += f"   🌍 <a href=\"{news['translate_link']}\">📖 Прочети пълната статия на БЪЛГАРСКИ</a>\n"
+        elif news.get('link'):
+            # Fallback към оригинален линк
+            message += f"   🔗 <a href=\"{news['link']}\">📖 Прочети оригинала (английски)</a>\n"
         
         message += "\n"
-        
-        # Малка пауза между преводите
-        await asyncio.sleep(0.2)
     
-    message += "💡 <i>Новини от топ източници, преведени автоматично!</i>"
+    message += "🌍 <i>Новините са автоматично преведени на български език</i>\n"
+    message += f"<i>📊 Показани {len(all_news[:6])} от {len(all_news)} налични новини</i>"
     
-    await update.message.reply_text(message, parse_mode='HTML', disable_web_page_preview=True)
+    logger.info(f"Sending news message with {len(all_news[:10])} items...")
+    try:
+        await update.message.reply_text(message, parse_mode='HTML', disable_web_page_preview=True)
+        logger.info("News message sent successfully!")
+    except Exception as send_err:
+        logger.error(f"Error sending news message: {send_err}", exc_info=True)
+        await update.message.reply_text(f"❌ Грешка при изпращане: {send_err}")
 
 
 async def breaking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3051,6 +4341,14 @@ async def breaking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for article in critical_news:
                 impact = article['impact_analysis']
                 
+                # Използвай преведеното заглавие и описание
+                title_bg = article.get('title_bg', article.get('title', 'Без заглавие'))
+                desc_bg = article.get('description_bg', '')
+                
+                # Escape Telegram символи
+                title_bg = title_bg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                desc_bg = desc_bg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                
                 if impact['sentiment'] == 'BULLISH':
                     sentiment_emoji = "🟢📈"
                     sentiment_text = "BULLISH"
@@ -3063,7 +4361,7 @@ async def breaking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 msg = f"""🚨 <b>КРИТИЧНА НОВИНА!</b> 🚨
 
-{article.get('source', '📰')} <b>{article['title']}</b>
+{article.get('source', '📰')} <b>{title_bg}</b>
 
 {sentiment_emoji} <b>Sentiment:</b> {sentiment_text}
 📊 <b>Bullish фактори:</b> {impact['bullish_score']}
@@ -3071,21 +4369,25 @@ async def breaking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 """
                 
-                if article.get('description'):
-                    import re
-                    desc = re.sub('<[^<]+?>', '', article['description'])[:150]
-                    msg += f"<i>{desc}...</i>\n\n"
+                if desc_bg:
+                    desc_short = desc_bg[:150] + "..." if len(desc_bg) > 150 else desc_bg
+                    msg += f"<i>{desc_short}</i>\n\n"
                 
                 if article.get('link'):
-                    msg += f"🔗 {article['link']}\n"
+                    msg += f"🔗 <a href=\"{article['link']}\">Прочети пълната статия</a>\n"
+                    msg += f"🌍 <i>Автоматично преведено на български</i>\n"
                 
-                await update.message.reply_text(msg, parse_mode='HTML', disable_web_page_preview=False)
+                await update.message.reply_text(msg, parse_mode='HTML', disable_web_page_preview=True)
                 await asyncio.sleep(0.5)
         
         # Изпрати високо въздействащите новини
         if high_impact_news:
             for article in high_impact_news[:3]:  # Максимум 3
                 impact = article['impact_analysis']
+                
+                # Използвай преведеното заглавие
+                title_bg = article.get('title_bg', article.get('title', 'Без заглавие'))
+                title_bg = title_bg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                 
                 if impact['sentiment'] == 'BULLISH':
                     sentiment_emoji = "🟢"
@@ -3096,13 +4398,14 @@ async def breaking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 msg = f"""⚠️ <b>ВАЖНА НОВИНА</b>
 
-{article.get('source', '📰')} {article['title']}
+{article.get('source', '📰')} <b>{title_bg}</b>
 
 {sentiment_emoji} Sentiment: {impact['sentiment']}
 """
                 
                 if article.get('link'):
-                    msg += f"🔗 {article['link']}\n"
+                    msg += f"🔗 <a href=\"{article['link']}\">Прочети пълната статия</a>\n"
+                    msg += f"🌍 <i>Автоматично преведено на български</i>\n"
                 
                 await update.message.reply_text(msg, parse_mode='HTML', disable_web_page_preview=True)
                 await asyncio.sleep(0.3)
@@ -3196,6 +4499,20 @@ async def task_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Създай ново задание
     task_description = ' '.join(context.args)
+
+
+async def dailyreport_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Генерира ръчен дневен отчет за сигнали"""
+    logger.info(f"User {update.effective_user.id} executed /dailyreport")
+    
+    await update.message.reply_text("📊 Генерирам дневен отчет за сигнали...")
+    
+    try:
+        await send_daily_signal_report(context.bot)
+        await update.message.reply_text("✅ Дневният отчет е изпратен!")
+    except Exception as e:
+        logger.error(f"Грешка при /dailyreport: {e}")
+        await update.message.reply_text(f"❌ Грешка при генериране на отчет: {e}")
     
     # Запази в JSON файл
     try:
@@ -3640,6 +4957,102 @@ async def autonews_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Невалидна стойност за минути")
 
 
+async def monitor_active_trades(context: ContextTypes.DEFAULT_TYPE):
+    """24/7 мониторинг на активни trades в журнала"""
+    try:
+        journal = load_journal()
+        if not journal or not journal['trades']:
+            return
+        
+        # Намери всички PENDING trades
+        pending_trades = [t for t in journal['trades'] if t['status'] == 'PENDING']
+        
+        if not pending_trades:
+            logger.info("📝 Няма активни trades за мониторинг")
+            return
+        
+        logger.info(f"📝 Проверявам {len(pending_trades)} активни trades...")
+        
+        for trade in pending_trades:
+            try:
+                symbol = trade['symbol']
+                entry_price = trade['entry_price']
+                tp_price = trade['tp_price']
+                sl_price = trade['sl_price']
+                signal_type = trade['signal']
+                
+                # Вземи текущата цена
+                params = {'symbol': symbol}
+                data = await fetch_json(BINANCE_24H_URL, params)
+                
+                if isinstance(data, list):
+                    data = next((s for s in data if s['symbol'] == symbol), None)
+                
+                if not data:
+                    continue
+                
+                current_price = float(data['lastPrice'])
+                
+                # Провери дали е ударил TP или SL
+                outcome = None
+                profit_loss_pct = 0
+                
+                if signal_type == 'BUY':
+                    if current_price >= tp_price:
+                        outcome = 'WIN'
+                        profit_loss_pct = ((current_price - entry_price) / entry_price) * 100
+                        logger.info(f"✅ Trade #{trade['id']} HIT TP: {symbol} @ ${current_price:,.2f} (+{profit_loss_pct:.2f}%)")
+                    elif current_price <= sl_price:
+                        outcome = 'LOSS'
+                        profit_loss_pct = ((current_price - entry_price) / entry_price) * 100
+                        logger.info(f"❌ Trade #{trade['id']} HIT SL: {symbol} @ ${current_price:,.2f} ({profit_loss_pct:.2f}%)")
+                
+                elif signal_type == 'SELL':
+                    if current_price <= tp_price:
+                        outcome = 'WIN'
+                        profit_loss_pct = ((entry_price - current_price) / entry_price) * 100
+                        logger.info(f"✅ Trade #{trade['id']} HIT TP: {symbol} @ ${current_price:,.2f} (+{profit_loss_pct:.2f}%)")
+                    elif current_price >= sl_price:
+                        outcome = 'LOSS'
+                        profit_loss_pct = ((entry_price - current_price) / entry_price) * 100
+                        logger.info(f"❌ Trade #{trade['id']} HIT SL: {symbol} @ ${current_price:,.2f} ({profit_loss_pct:.2f}%)")
+                
+                # Обнови trade-а ако е завършен
+                if outcome:
+                    update_trade_outcome(
+                        trade_id=trade['id'],
+                        outcome=outcome,
+                        profit_loss_pct=profit_loss_pct,
+                        notes=f"Автоматично затворен: Цена удари {'TP' if outcome == 'WIN' else 'SL'} @ ${current_price:,.2f}"
+                    )
+                    
+                    # Изпрати нотификация до owner
+                    emoji = "✅" if outcome == 'WIN' else "❌"
+                    message = f"{emoji} <b>TRADE ЗАТВОРЕН АВТОМАТИЧНО</b>\n\n"
+                    message += f"📊 Trade #{trade['id']}\n"
+                    message += f"💰 {symbol} {signal_type}\n"
+                    message += f"📍 Entry: ${entry_price:,.2f}\n"
+                    message += f"🎯 Exit: ${current_price:,.2f}\n"
+                    message += f"💵 P/L: {profit_loss_pct:+.2f}%\n\n"
+                    message += f"🤖 Резултатът е записан в ML Journal!"
+                    
+                    await context.bot.send_message(
+                        chat_id=OWNER_CHAT_ID,
+                        text=message,
+                        parse_mode='HTML',
+                        disable_notification=False
+                    )
+            
+            except Exception as e:
+                logger.error(f"Грешка при мониторинг на trade #{trade.get('id', '?')}: {e}")
+                continue
+        
+        logger.info(f"📝 Journal мониторинг завършен")
+        
+    except Exception as e:
+        logger.error(f"Грешка в monitor_active_trades: {e}")
+
+
 async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     """Изпраща автоматичен сигнал с пълен анализ - проверява всички монети"""
     chat_id = context.job.data['chat_id']
@@ -3681,6 +5094,11 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"🔍 {symbol}: NEUTRAL")
             continue
         
+        # ⚡ ПРОВЕРКА ЗА ДУБЛИРАНЕ - ТУК, ПРЕДИ да го кандидатстваме!
+        if is_signal_already_sent(symbol, analysis['signal'], settings['timeframe'], analysis['confidence'], cooldown_minutes=60):
+            logger.info(f"⏭️ ПРОПУСКАМ: {symbol} {analysis['signal']} вече е изпратен наскоро - не участва в избора")
+            continue
+        
         # Ако липсват TP/SL, изчисли прости нива
         if 'tp' not in analysis or 'sl' not in analysis:
             price = analysis['price']
@@ -3707,7 +5125,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     
     # Ако няма добър сигнал, не изпращай нищо
     if not best_signal:
-        logger.info("⚠️ Няма сигнали с увереност ≥60%")
+        logger.info("⚠️ Няма сигнали с увереност ≥60% (или всички вече изпратени)")
         return
     
     # Изпрати най-добрия сигнал
@@ -3716,6 +5134,38 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     klines = best_signal['klines']
     price = analysis['price']
     signal_emoji = "🟢" if analysis['signal'] == 'BUY' else "🔴"
+    
+    # ✅ Сигналът вече е валидиран по-рано, можем да го изпратим
+    
+    # 📝 АВТОМАТИЧНО ЛОГВАНЕ В JOURNAL - 24/7 събиране на данни
+    if best_confidence >= 65:
+        try:
+            analysis_data = {
+                'rsi': analysis.get('rsi'),
+                'ma_20': analysis.get('ma_20'),
+                'ma_50': analysis.get('ma_50'),
+                'volume_ratio': analysis.get('volume_ratio'),
+                'volatility': analysis.get('volatility'),
+                'trend': analysis.get('trend'),
+                'btc_correlation': None,
+                'sentiment': None
+            }
+            
+            journal_id = log_trade_to_journal(
+                symbol=symbol,
+                timeframe=settings['timeframe'],
+                signal_type=analysis['signal'],
+                confidence=best_confidence,
+                entry_price=price,
+                tp_price=analysis['tp'],
+                sl_price=analysis['sl'],
+                analysis_data=analysis_data
+            )
+            
+            if journal_id:
+                logger.info(f"📝 AUTO-SIGNAL logged to ML journal (ID: {journal_id}) - 24/7 data collection")
+        except Exception as e:
+            logger.error(f"Journal logging error in auto-signal: {e}")
     
     # === ГЕНЕРИРАЙ ГРАФИКА ===
     chart_file = None
@@ -3980,18 +5430,15 @@ async def send_auto_news(context: ContextTypes.DEFAULT_TYPE):
             if description:
                 description_bg = await translate_text(description)
             
-            # Създай Google Translate линк
-            translate_url = f"https://translate.google.com/translate?sl=auto&tl=bg&u={link}"
-            
             message = f"📰 <b>НОВА КРИПТО НОВИНА</b>\n\n"
             message += f"<b>{title_bg}</b>\n\n"
             
             if description_bg:
                 message += f"<i>{description_bg}</i>\n\n"
             
-            message += f"🌐 Оригинал:\n{link}\n\n"
-            message += f"🇧🇬 Пълна статия преведена:\n{translate_url}\n\n"
-            message += "💡 <i>Заглавие и описание са преведени автоматично!</i>"
+            message += f"🌐 <a href=\"{link}\">Прочети пълната статия</a>\n\n"
+            message += "💡 <i>Заглавие и описание са преведени автоматично!</i>\n"
+            message += "💡 <i>Използвай автоматичен превод в браузъра за пълен текст</i>"
             
             await context.bot.send_message(
                 chat_id=chat_id, 
@@ -4364,353 +5811,392 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Избор на таймфрейм - изпълни анализа
     if query.data.startswith("tf_"):
-        logger.info(f"Callback data: {query.data}")
-        parts = query.data.replace("tf_", "").split("_")
-        symbol = parts[0]
-        timeframe = parts[1]
-        logger.info(f"Processing signal for {symbol} on {timeframe}")
-        
-        # Изтрий предишното съобщение
-        await query.message.delete()
-        
-        # Изпрати съобщение че анализира
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"🔍 Анализирам {symbol} на {timeframe}...",
-            parse_mode='HTML'
-        )
-        
-        # Вземи настройките
-        settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
-        
-        # Извлечи 24h данни
-        params_24h = {'symbol': symbol}
-        data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
-        
-        if not data_24h or isinstance(data_24h, list):
-            if isinstance(data_24h, list):
-                data_24h = next((s for s in data_24h if s['symbol'] == symbol), None)
-        
-        if not data_24h:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="❌ Грешка при извличане на данни",
-                parse_mode='HTML'
-            )
-            return
-        
-        # Извлечи исторически данни (klines)
-        params_klines = {
-            'symbol': symbol,
-            'interval': timeframe,
-            'limit': 100
-        }
-        klines = await fetch_json(BINANCE_KLINES_URL, params_klines)
-        
-        if not klines:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="❌ Грешка при извличане на исторически данни",
-                parse_mode='HTML'
-            )
-            return
-        
-        # Анализирай
-        analysis = analyze_signal(data_24h, klines, symbol, timeframe)
-        
-        if not analysis:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="❌ Грешка при анализ",
-                parse_mode='HTML'
-            )
-            return
-        
-        # === BTC CORRELATION ANALYSIS ===
-        btc_correlation = await analyze_btc_correlation(symbol, timeframe)
-        
-        # === ORDER BOOK ANALYSIS ===
-        order_book = await analyze_order_book(symbol, analysis['price'])
-        
-        # === MULTI-TIMEFRAME CONFIRMATION ===
-        mtf_confirmation = await get_higher_timeframe_confirmation(symbol, timeframe, analysis['signal'])
-        
-        # === NEWS SENTIMENT ANALYSIS ===
-        sentiment = await analyze_news_sentiment(symbol)
-        
-        # === MULTI-TIMEFRAME ANALYSIS ===
-        logger.info(f"Starting MTF analysis for manual signal {symbol}")
-        mtf_analysis = await get_multi_timeframe_analysis(symbol, timeframe)
-        logger.info(f"MTF analysis result: {mtf_analysis}")
-        
-        # Коригирай confidence според допълнителните анализи
-        final_confidence = analysis['confidence']
-        
-        # Order Book корекция
-        if order_book:
-            if order_book['pressure'] == analysis['signal']:
-                final_confidence += 10
-                analysis['reasons'].append(f"Order Book натиск: {order_book['pressure']}")
-            elif order_book['pressure'] != 'NEUTRAL' and order_book['pressure'] != analysis['signal']:
-                final_confidence -= 8
-                analysis['reasons'].append(f"Order Book противоречи ({order_book['pressure']})")
+        try:
+            logger.info(f"Callback data: {query.data}")
+            parts = query.data.replace("tf_", "").split("_")
+            symbol = parts[0]
+            timeframe = parts[1]
+            logger.info(f"Processing signal for {symbol} on {timeframe}")
             
-            # Ако има близки стени
-            if order_book['closest_support'] and analysis['signal'] == 'BUY':
-                support_price = order_book['closest_support'][0]
-                if abs(analysis['price'] - support_price) / analysis['price'] < 0.02:  # В рамките на 2%
-                    final_confidence += 8
-                    analysis['reasons'].append(f"Силна support стена на ${support_price:,.2f}")
+            # Изтрий предишното съобщение
+            await query.message.delete()
             
-            if order_book['closest_resistance'] and analysis['signal'] == 'SELL':
-                resistance_price = order_book['closest_resistance'][0]
-                if abs(resistance_price - analysis['price']) / analysis['price'] < 0.02:
-                    final_confidence += 8
-                    analysis['reasons'].append(f"Силна resistance стена на ${resistance_price:,.2f}")
+            # Изпрати съобщение че анализира
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"🔍 Анализирам {symbol} на {timeframe}...",
+                parse_mode='HTML'
+            )
+            
+            # Вземи настройките
+            settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
+            
+            # Извлечи 24h данни
+            params_24h = {'symbol': symbol}
+            data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
+            
+            if not data_24h or isinstance(data_24h, list):
+                if isinstance(data_24h, list):
+                    data_24h = next((s for s in data_24h if s['symbol'] == symbol), None)
+            
+            if not data_24h:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="❌ Грешка при извличане на данни",
+                    parse_mode='HTML'
+                )
+                return
+            
+            # Извлечи исторически данни (klines)
+            params_klines = {
+                'symbol': symbol,
+                'interval': timeframe,
+                'limit': 100
+            }
+            klines = await fetch_json(BINANCE_KLINES_URL, params_klines)
+            
+            if not klines:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="❌ Грешка при извличане на исторически данни",
+                    parse_mode='HTML'
+                )
+                return
+            
+            # Анализирай
+            analysis = analyze_signal(data_24h, klines, symbol, timeframe)
+            
+            if not analysis:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="❌ Грешка при анализ",
+                    parse_mode='HTML'
+                )
+                return
+            
+            # === BTC CORRELATION ANALYSIS ===
+            btc_correlation = await analyze_btc_correlation(symbol, timeframe)
+            
+            # === ORDER BOOK ANALYSIS ===
+            order_book = await analyze_order_book(symbol, analysis['price'])
+            
+            # === MULTI-TIMEFRAME CONFIRMATION ===
+            mtf_confirmation = await get_higher_timeframe_confirmation(symbol, timeframe, analysis['signal'])
+            
+            # === NEWS SENTIMENT ANALYSIS ===
+            sentiment = await analyze_news_sentiment(symbol)
+            
+            # === MULTI-TIMEFRAME ANALYSIS ===
+            logger.info(f"Starting MTF analysis for manual signal {symbol}")
+            mtf_analysis = await get_multi_timeframe_analysis(symbol, timeframe)
+            logger.info(f"MTF analysis result: {mtf_analysis}")
+            
+            # Коригирай confidence според допълнителните анализи
+            final_confidence = analysis['confidence']
         
-        # Multi-timeframe корекция
-        if mtf_confirmation and mtf_confirmation['confirmed']:
-            final_confidence += 15
-            analysis['reasons'].append(f"Потвърждение от {mtf_confirmation['timeframe']}")
-        elif mtf_confirmation and not mtf_confirmation['confirmed']:
-            final_confidence -= 10
-            analysis['reasons'].append(f"{mtf_confirmation['timeframe']} не потвърждава")
-        
-        # BTC Correlation корекция
-        if btc_correlation:
-            if btc_correlation['trend'] == analysis['signal']:
-                boost = min(btc_correlation['strength'] / 2, 12)
-                final_confidence += boost
-                analysis['reasons'].append(f"BTC {btc_correlation['trend']} ({btc_correlation['change']:+.1f}%)")
-            elif btc_correlation['trend'] != 'NEUTRAL' and btc_correlation['trend'] != analysis['signal']:
-                penalty = min(btc_correlation['strength'] / 3, 10)
-                final_confidence -= penalty
-                analysis['reasons'].append(f"⚠️ BTC противоречи ({btc_correlation['trend']} {btc_correlation['change']:+.1f}%)")
-        
-        # Sentiment корекция
-        if sentiment and sentiment['sentiment'] != 'NEUTRAL':
-            if sentiment['sentiment'] == analysis['signal']:
-                final_confidence += sentiment['confidence']
-                analysis['reasons'].append(f"Новини {sentiment['sentiment']}: +{sentiment['confidence']:.0f}%")
+            # Order Book корекция
+            if order_book:
+                if order_book['pressure'] == analysis['signal']:
+                    final_confidence += 10
+                    analysis['reasons'].append(f"Order Book натиск: {order_book['pressure']}")
+                elif order_book['pressure'] != 'NEUTRAL' and order_book['pressure'] != analysis['signal']:
+                    final_confidence -= 8
+                    analysis['reasons'].append(f"Order Book противоречи ({order_book['pressure']})")
+                
+                # Ако има близки стени
+                if order_book['closest_support'] and analysis['signal'] == 'BUY':
+                    support_price = order_book['closest_support'][0]
+                    if abs(analysis['price'] - support_price) / analysis['price'] < 0.02:  # В рамките на 2%
+                        final_confidence += 8
+                        analysis['reasons'].append(f"Силна support стена на ${support_price:,.2f}")
+                
+                if order_book['closest_resistance'] and analysis['signal'] == 'SELL':
+                    resistance_price = order_book['closest_resistance'][0]
+                    if abs(resistance_price - analysis['price']) / analysis['price'] < 0.02:
+                        final_confidence += 8
+                        analysis['reasons'].append(f"Силна resistance стена на ${resistance_price:,.2f}")
+            
+            # Multi-timeframe корекция
+            if mtf_confirmation and mtf_confirmation['confirmed']:
+                final_confidence += 15
+                analysis['reasons'].append(f"Потвърждение от {mtf_confirmation['timeframe']}")
+            elif mtf_confirmation and not mtf_confirmation['confirmed']:
+                final_confidence -= 10
+                analysis['reasons'].append(f"{mtf_confirmation['timeframe']} не потвърждава")
+            
+            # BTC Correlation корекция
+            if btc_correlation:
+                if btc_correlation['trend'] == analysis['signal']:
+                    boost = min(btc_correlation['strength'] / 2, 12)
+                    final_confidence += boost
+                    analysis['reasons'].append(f"BTC {btc_correlation['trend']} ({btc_correlation['change']:+.1f}%)")
+                elif btc_correlation['trend'] != 'NEUTRAL' and btc_correlation['trend'] != analysis['signal']:
+                    penalty = min(btc_correlation['strength'] / 3, 10)
+                    final_confidence -= penalty
+                    analysis['reasons'].append(f"⚠️ BTC противоречи ({btc_correlation['trend']} {btc_correlation['change']:+.1f}%)")
+            
+            # Sentiment корекция
+            if sentiment and sentiment['sentiment'] != 'NEUTRAL':
+                if sentiment['sentiment'] == analysis['signal']:
+                    final_confidence += sentiment['confidence']
+                    analysis['reasons'].append(f"Новини {sentiment['sentiment']}: +{sentiment['confidence']:.0f}%")
+                else:
+                    final_confidence -= sentiment['confidence'] / 2
+                    analysis['reasons'].append(f"Новини противоречат ({sentiment['sentiment']})")
+            
+            # Обнови confidence и has_good_trade
+            final_confidence = max(0, min(final_confidence, 95))
+            analysis['confidence'] = final_confidence
+            analysis['has_good_trade'] = analysis['signal'] in ['BUY', 'SELL'] and final_confidence >= 65
+            
+            # Използвай adaptive TP/SL
+            adaptive_levels = analysis['adaptive_tp_sl']
+            tp_pct = adaptive_levels['tp']
+            sl_pct = adaptive_levels['sl']
+            
+            # Изчисли TP и SL нива
+            price = analysis['price']
+            
+            if analysis['signal'] == 'BUY':
+                tp_price = price * (1 + tp_pct / 100)
+                sl_price = price * (1 - sl_pct / 100)
+                signal_emoji = "🟢"
+            elif analysis['signal'] == 'SELL':
+                tp_price = price * (1 - tp_pct / 100)
+                sl_price = price * (1 + sl_pct / 100)
+                signal_emoji = "🔴"
             else:
-                final_confidence -= sentiment['confidence'] / 2
-                analysis['reasons'].append(f"Новини противоречат ({sentiment['sentiment']})")
-        
-        # Обнови confidence и has_good_trade
-        final_confidence = max(0, min(final_confidence, 95))
-        analysis['confidence'] = final_confidence
-        analysis['has_good_trade'] = analysis['signal'] in ['BUY', 'SELL'] and final_confidence >= 65
-        
-        # Използвай adaptive TP/SL
-        adaptive_levels = analysis['adaptive_tp_sl']
-        tp_pct = adaptive_levels['tp']
-        sl_pct = adaptive_levels['sl']
-        
-        # Изчисли TP и SL нива
-        price = analysis['price']
-        
-        if analysis['signal'] == 'BUY':
-            tp_price = price * (1 + tp_pct / 100)
-            sl_price = price * (1 - sl_pct / 100)
-            signal_emoji = "🟢"
-        elif analysis['signal'] == 'SELL':
-            tp_price = price * (1 - tp_pct / 100)
-            sl_price = price * (1 + sl_pct / 100)
-            signal_emoji = "🔴"
-        else:
-            tp_price = price * (1 + tp_pct / 100)
-            sl_price = price * (1 - sl_pct / 100)
-            signal_emoji = "⚪"
-        
-        # Запиши сигнала в статистиката с trading параметри
-        signal_id = None
-        if analysis['has_good_trade']:
-            signal_id = record_signal(
-                symbol, 
-                timeframe, 
+                tp_price = price * (1 + tp_pct / 100)
+                sl_price = price * (1 - sl_pct / 100)
+                signal_emoji = "⚪"
+            
+            # Запиши сигнала в статистиката с trading параметри
+            signal_id = None
+            if analysis['has_good_trade']:
+                signal_id = record_signal(
+                    symbol, 
+                    timeframe, 
+                    analysis['signal'], 
+                    final_confidence,
+                    entry_price=price,
+                    tp_price=tp_price,
+                    sl_price=sl_price
+                )
+            
+            # Генерирай графика
+            chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe)
+            
+            # Изчисли вероятност за достигане на TP
+            tp_probability = calculate_tp_probability(analysis, tp_price, analysis['signal'])
+            
+            # Изчисли оптимални entry zones
+            entry_zones = calculate_entry_zones(
+                price, 
                 analysis['signal'], 
-                final_confidence,
-                entry_price=price,
-                tp_price=tp_price,
-                sl_price=sl_price
+                analysis['closes'], 
+                analysis['highs'], 
+                analysis['lows'],
+                analysis
             )
-        
-        # Генерирай графика
-        chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe)
-        
-        # Изчисли вероятност за достигане на TP
-        tp_probability = calculate_tp_probability(analysis, tp_price, analysis['signal'])
-        
-        # Изчисли оптимални entry zones
-        entry_zones = calculate_entry_zones(
-            price, 
-            analysis['signal'], 
-            analysis['closes'], 
-            analysis['highs'], 
-            analysis['lows'],
-            analysis
-        )
-        
-        # Форматирай съобщението
-        confidence_emoji = "🔥" if final_confidence >= 80 else "💪" if final_confidence >= 70 else "👍" if final_confidence >= 60 else "🤔"
-        change_emoji = "📈" if analysis['change_24h'] > 0 else "📉" if analysis['change_24h'] < 0 else "➡️"
-        
-        message = f"{signal_emoji} <b>СИГНАЛ: {symbol}</b>\n\n"
-        message += f"📊 <b>Анализ ({timeframe}):</b>\n"
-        message += f"Сигнал: <b>{analysis['signal']}</b> {signal_emoji}\n"
-        message += f"Увереност: {final_confidence:.0f}% {confidence_emoji}\n\n"
-        
-        message += f"💰 <b>Текуща цена:</b> ${price:,.4f}\n"
-        message += f"{change_emoji} 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
-        
-        # Обединена секция за ВСИЧКИ нива (Entry, TP, SL)
-        message += f"🎯 <b>Нива за търговия:</b>\n\n"
-        
-        # Entry zone с quality badge
-        if entry_zones['quality'] >= 75:
-            quality_badge = "💎 Отлична"
-        elif entry_zones['quality'] >= 60:
-            quality_badge = "🟢 Много добра"
-        elif entry_zones['quality'] >= 45:
-            quality_badge = "🟡 Добра"
-        else:
-            quality_badge = "🟠 Приемлива"
-        
-        message += f"📍 <b>ENTRY ZONE</b> ({quality_badge} - {entry_zones['quality']}/100):\n"
-        message += f"   Оптимален вход: <b>${entry_zones['best_entry']:,.4f}</b>\n"
-        message += f"   Зона: ${entry_zones['entry_zone_low']:,.4f} - ${entry_zones['entry_zone_high']:,.4f}\n"
-        
-        # Support/Resistance ако има
-        if analysis['signal'] == 'BUY' and entry_zones['supports']:
-            message += f"   Support: ${entry_zones['supports'][0]:,.4f}\n"
-        elif analysis['signal'] == 'SELL' and entry_zones['resistances']:
-            message += f"   Resistance: ${entry_zones['resistances'][0]:,.4f}\n"
-        
-        # Entry препоръка
-        price_vs_entry = (price - entry_zones['best_entry']) / price * 100
-        if abs(price_vs_entry) < 0.5:
-            entry_recommendation = "✅ Добър момент за вход - цената е близо до оптималния вход"
-        elif (analysis['signal'] == 'BUY' and price > entry_zones['best_entry']) or \
-             (analysis['signal'] == 'SELL' and price < entry_zones['best_entry']):
-            entry_recommendation = "⏳ По-добре изчакай pullback към зоната"
-        else:
-            entry_recommendation = "⚡ Цената е в entry зоната - разгледай вход"
-        
-        message += f"   💡 <i>{entry_recommendation}</i>\n\n"
-        
-        # Take Profit & Stop Loss
-        message += f"🎯 <b>TAKE PROFIT:</b> ${tp_price:,.4f} (<b>{tp_pct:+.1f}%</b>)\n"
-        
-        # TP вероятност с интерпретация
-        if tp_probability >= 76:
-            tp_interpretation = "💚 Много добър шанс"
-        elif tp_probability >= 66:
-            tp_interpretation = "🟢 Добър шанс"
-        elif tp_probability >= 56:
-            tp_interpretation = "🟡 Среден шанс"
-        elif tp_probability >= 36:
-            tp_interpretation = "🟠 Нисък шанс"
-        else:
-            tp_interpretation = "🔴 Много нисък шанс"
-        
-        message += f"   🎲 Вероятност: {tp_probability}% ({tp_interpretation})\n"
-        
-        # Очаквано време за изпълнение
-        timeframe_hours = {
-            '1m': 0.017, '5m': 0.083, '15m': 0.25, '30m': 0.5,
-            '1h': 1, '2h': 2, '4h': 4, '1d': 24, '1w': 168
-        }
-        estimated_hours = timeframe_hours.get(timeframe, 4) * 3
-        
-        if estimated_hours < 1:
-            time_str = f"{int(estimated_hours * 60)} минути"
-        elif estimated_hours < 24:
-            time_str = f"{estimated_hours:.1f} часа"
-        else:
-            time_str = f"{estimated_hours / 24:.1f} дни"
-        
-        message += f"   ⏱️ Очаквано време: ~{time_str}\n\n"
-        
-        message += f"🛡️ <b>STOP LOSS:</b> ${sl_price:,.4f} (<b>{-sl_pct:.1f}%</b>)\n"
-        message += f"⚖️ <b>Risk/Reward:</b> 1:{settings['rr']}\n\n"
-        
-        # === MULTI-TIMEFRAME КОНСЕНСУС ===
-        if mtf_analysis and len(mtf_analysis['signals']) >= 2:
-            message += f"🔍 <b>Multi-Timeframe Анализ:</b>\n"
             
-            # Покажи сигналите от различните таймфреймове
-            for tf, sig in mtf_analysis['signals'].items():
-                sig_emoji = "🟢" if sig['signal'] == 'BUY' else "🔴" if sig['signal'] == 'SELL' else "⚪"
-                current_marker = " ← текущ" if tf == timeframe else ""
-                message += f"{tf}: {sig['signal']} {sig_emoji} ({sig['confidence']:.0f}%){current_marker}\n"
+            # Форматирай съобщението
+            confidence_emoji = "🔥" if final_confidence >= 80 else "💪" if final_confidence >= 70 else "👍" if final_confidence >= 60 else "🤔"
+            change_emoji = "📈" if analysis['change_24h'] > 0 else "📉" if analysis['change_24h'] < 0 else "➡️"
             
-            # Консенсус
-            consensus_emoji = "🟢" if mtf_analysis['consensus'] == 'BUY' else "🔴" if mtf_analysis['consensus'] == 'SELL' else "⚪"
-            message += f"\n💎 <b>Консенсус:</b> {mtf_analysis['consensus']} {consensus_emoji}\n"
-            message += f"💪 <b>Сила:</b> {mtf_analysis['consensus_strength']} ({mtf_analysis['agreement']:.0f}% съгласие)\n"
+            message = f"{signal_emoji} <b>СИГНАЛ: {symbol}</b>\n\n"
+            message += f"📊 <b>Анализ ({timeframe}):</b>\n"
+            message += f"Сигнал: <b>{analysis['signal']}</b> {signal_emoji}\n"
+            message += f"Увереност: {final_confidence:.0f}% {confidence_emoji}\n\n"
             
-            # Препоръка според консенсуса
-            if mtf_analysis['consensus'] == analysis['signal'] and mtf_analysis['consensus_strength'] == 'Силен':
-                message += f"✅ <i>Всички таймфреймове потвърждават сигнала!</i>\n"
-            elif mtf_analysis['consensus'] != analysis['signal']:
-                message += f"⚠️ <i>Внимание: По-големите таймфреймове показват {mtf_analysis['consensus']}</i>\n"
+            message += f"💰 <b>Текуща цена:</b> ${price:,.4f}\n"
+            message += f"{change_emoji} 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
             
-            message += "\n"
-        
-        message += f"📊 <b>Индикатори:</b>\n"
-        if analysis['rsi']:
-            message += f"RSI(14): {analysis['rsi']:.1f}\n"
-        if analysis['ma_20']:
-            message += f"MA(20): ${analysis['ma_20']:.2f}\n"
-        if analysis['ma_50']:
-            message += f"MA(50): ${analysis['ma_50']:.2f}\n"
-        
-        if analysis['reasons']:
-            message += f"\n💡 <b>Причини:</b>\n"
-            for reason in analysis['reasons']:
-                message += f"• {reason}\n"
-        
-        message += f"\n⚠️ <i>Това не е финансов съвет!</i>"
-        
-        # Провери дали има подходящ трейд
-        if not analysis.get('has_good_trade', False):
-            # Няма подходящ трейд
-            no_trade_message = f"⚪ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>\n\n"
-            no_trade_message += f"📊 <b>{symbol} ({timeframe})</b>\n\n"
-            no_trade_message += f"💰 Цена: ${price:,.4f}\n"
-            no_trade_message += f"📈 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
-            no_trade_message += f"📊 <b>Индикатори:</b>\n"
+            # Обединена секция за ВСИЧКИ нива (Entry, TP, SL)
+            message += f"🎯 <b>Нива за търговия:</b>\n\n"
+            
+            # Entry zone с quality badge
+            if entry_zones['quality'] >= 75:
+                quality_badge = "💎 Отлична"
+            elif entry_zones['quality'] >= 60:
+                quality_badge = "🟢 Много добра"
+            elif entry_zones['quality'] >= 45:
+                quality_badge = "🟡 Добра"
+            else:
+                quality_badge = "🟠 Приемлива"
+            
+            message += f"📍 <b>ENTRY ZONE</b> ({quality_badge} - {entry_zones['quality']}/100):\n"
+            message += f"   Оптимален вход: <b>${entry_zones['best_entry']:,.4f}</b>\n"
+            message += f"   Зона: ${entry_zones['entry_zone_low']:,.4f} - ${entry_zones['entry_zone_high']:,.4f}\n"
+            
+            # Support/Resistance ако има
+            if analysis['signal'] == 'BUY' and entry_zones['supports']:
+                message += f"   Support: ${entry_zones['supports'][0]:,.4f}\n"
+            elif analysis['signal'] == 'SELL' and entry_zones['resistances']:
+                message += f"   Resistance: ${entry_zones['resistances'][0]:,.4f}\n"
+            
+            # Entry препоръка
+            price_vs_entry = (price - entry_zones['best_entry']) / price * 100
+            if abs(price_vs_entry) < 0.5:
+                entry_recommendation = "✅ Добър момент за вход - цената е близо до оптималния вход"
+            elif (analysis['signal'] == 'BUY' and price > entry_zones['best_entry']) or \
+                 (analysis['signal'] == 'SELL' and price < entry_zones['best_entry']):
+                entry_recommendation = "⏳ По-добре изчакай pullback към зоната"
+            else:
+                entry_recommendation = "⚡ Цената е в entry зоната - разгледай вход"
+            
+            message += f"   💡 <i>{entry_recommendation}</i>\n\n"
+            
+            # Take Profit & Stop Loss
+            message += f"🎯 <b>TAKE PROFIT:</b> ${tp_price:,.4f} (<b>{tp_pct:+.1f}%</b>)\n"
+            
+            # TP вероятност с интерпретация
+            if tp_probability >= 76:
+                tp_interpretation = "💚 Много добър шанс"
+            elif tp_probability >= 66:
+                tp_interpretation = "🟢 Добър шанс"
+            elif tp_probability >= 56:
+                tp_interpretation = "🟡 Среден шанс"
+            elif tp_probability >= 36:
+                tp_interpretation = "🟠 Нисък шанс"
+            else:
+                tp_interpretation = "🔴 Много нисък шанс"
+            
+            message += f"   🎲 Вероятност: {tp_probability}% ({tp_interpretation})\n"
+            
+            # Очаквано време за изпълнение
+            timeframe_hours = {
+                '1m': 0.017, '5m': 0.083, '15m': 0.25, '30m': 0.5,
+                '1h': 1, '2h': 2, '4h': 4, '1d': 24, '1w': 168
+            }
+            estimated_hours = timeframe_hours.get(timeframe, 4) * 3
+            
+            if estimated_hours < 1:
+                time_str = f"{int(estimated_hours * 60)} минути"
+            elif estimated_hours < 24:
+                time_str = f"{estimated_hours:.1f} часа"
+            else:
+                time_str = f"{estimated_hours / 24:.1f} дни"
+            
+            message += f"   ⏱️ Очаквано време: ~{time_str}\n\n"
+            
+            message += f"🛡️ <b>STOP LOSS:</b> ${sl_price:,.4f} (<b>{-sl_pct:.1f}%</b>)\n"
+            message += f"⚖️ <b>Risk/Reward:</b> 1:{settings['rr']}\n\n"
+            
+            # === MULTI-TIMEFRAME КОНСЕНСУС ===
+            # DEBUG: Покажи какво е върнато от MTF анализа
+            logger.info(f"MTF Analysis Debug: {mtf_analysis}")
+            
+            if mtf_analysis and mtf_analysis.get('signals') and len(mtf_analysis['signals']) >= 1:
+                message += f"🔍 <b>Multi-Timeframe Анализ:</b>\n"
+                
+                # Покажи сигналите от различните таймфреймове
+                for tf, sig in mtf_analysis['signals'].items():
+                    sig_emoji = "🟢" if sig['signal'] == 'BUY' else "🔴" if sig['signal'] == 'SELL' else "⚪"
+                    current_marker = " ← текущ" if tf == timeframe else ""
+                    message += f"{tf}: {sig['signal']} {sig_emoji} ({sig['confidence']:.0f}%){current_marker}\n"
+                
+                # Консенсус
+                consensus_emoji = "🟢" if mtf_analysis['consensus'] == 'BUY' else "🔴" if mtf_analysis['consensus'] == 'SELL' else "⚪"
+                message += f"\n💎 <b>Консенсус:</b> {mtf_analysis['consensus']} {consensus_emoji}\n"
+                message += f"💪 <b>Сила:</b> {mtf_analysis['consensus_strength']} ({mtf_analysis['agreement']:.0f}% съгласие)\n"
+                
+                # Препоръка според консенсуса
+                if mtf_analysis['consensus'] == analysis['signal'] and mtf_analysis['consensus_strength'] == 'Силен':
+                    message += f"✅ <i>Всички таймфреймове потвърждават сигнала!</i>\n"
+                elif mtf_analysis['consensus'] != analysis['signal']:
+                    message += f"⚠️ <i>Внимание: По-големите таймфреймове показват {mtf_analysis['consensus']}</i>\n"
+                
+                message += "\n"
+            else:
+                # DEBUG: Покажи защо не се показва MTF анализа
+                logger.warning(f"MTF analysis не се показва: mtf_analysis={mtf_analysis}")
+            
+            message += f"📊 <b>Индикатори:</b>\n"
             if analysis['rsi']:
-                no_trade_message += f"RSI(14): {analysis['rsi']:.1f}\n"
+                message += f"RSI(14): {analysis['rsi']:.1f}\n"
             if analysis['ma_20']:
-                no_trade_message += f"MA(20): ${analysis['ma_20']:.2f}\n"
+                message += f"MA(20): ${analysis['ma_20']:.2f}\n"
             if analysis['ma_50']:
-                no_trade_message += f"MA(50): ${analysis['ma_50']:.2f}\n"
-            no_trade_message += f"\nСигнал: {analysis['signal']}\n"
-            no_trade_message += f"Увереност: {analysis['confidence']}%\n\n"
-            no_trade_message += f"⚠️ <i>Пазарните условия не са подходящи за трейд в момента.</i>"
+                message += f"MA(50): ${analysis['ma_50']:.2f}\n"
             
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=no_trade_message,
-                parse_mode='HTML'
-            )
-            return
+            if analysis['reasons']:
+                message += f"\n💡 <b>Причини:</b>\n"
+                for reason in analysis['reasons']:
+                    message += f"• {reason}\n"
+            
+            message += f"\n⚠️ <i>Това не е финансов съвет!</i>"
+            
+            # Провери дали има подходящ трейд
+            if not analysis.get('has_good_trade', False):
+                # Няма подходящ трейд
+                no_trade_message = f"⚪ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>\n\n"
+                no_trade_message += f"📊 <b>{symbol} ({timeframe})</b>\n\n"
+                no_trade_message += f"💰 Цена: ${price:,.4f}\n"
+                no_trade_message += f"📈 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
+                no_trade_message += f"📊 <b>Индикатори:</b>\n"
+                if analysis['rsi']:
+                    no_trade_message += f"RSI(14): {analysis['rsi']:.1f}\n"
+                if analysis['ma_20']:
+                    no_trade_message += f"MA(20): ${analysis['ma_20']:.2f}\n"
+                if analysis['ma_50']:
+                    no_trade_message += f"MA(50): ${analysis['ma_50']:.2f}\n"
+                no_trade_message += f"\nСигнал: {analysis['signal']}\n"
+                no_trade_message += f"Увереност: {analysis['confidence']}%\n\n"
+                no_trade_message += f"⚠️ <i>Пазарните условия не са подходящи за трейд в момента.</i>"
+                
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=no_trade_message,
+                    parse_mode='HTML'
+                )
+                return
+            
+            # DEBUG: Има подходящ трейд, изпращаме резултата
+            logger.info(f"✅ Good trade found! Sending signal for {symbol} {timeframe}")
+            logger.info(f"Chart buffer exists: {chart_buffer is not None}")
+            logger.info(f"Message length: {len(message)} chars")
+            
+            # Изпрати графиката като снимка
+            try:
+                if chart_buffer:
+                    logger.info("Sending photo with caption...")
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=chart_buffer,
+                        caption=message,
+                        parse_mode='HTML'
+                    )
+                    logger.info("✅ Photo sent successfully!")
+                else:
+                    logger.warning("⚠️ No chart buffer, sending text only...")
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=message,
+                        parse_mode='HTML'
+                    )
+                    logger.info("✅ Text message sent successfully!")
+            except Exception as e:
+                logger.error(f"❌ Error sending signal: {e}")
+                # Fallback - изпрати поне текста
+                try:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"⚠️ Грешка при изпращане на графика:\n\n{message}",
+                        parse_mode='HTML'
+                    )
+                except Exception as e2:
+                    logger.error(f"❌ Failed to send fallback message: {e2}")
         
-        # Изпрати графиката като снимка
-        if chart_buffer:
-            await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=chart_buffer,
-                caption=message,
-                parse_mode='HTML'
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=message,
-                parse_mode='HTML'
-            )
+        except Exception as main_error:
+            logger.error(f"❌ CRITICAL ERROR in signal_callback: {main_error}", exc_info=True)
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"❌ Грешка при обработка на сигнала:\n{str(main_error)}",
+                    parse_mode='HTML'
+                )
+            except:
+                pass
 
 
 # ================= АДМИН КОМАНДИ =================
@@ -5870,54 +7356,33 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.edit_message_text(f"❌ Грешка: {e}")
     
-    elif query.data == "report_ml":
-        # ML статистика
-        if not ML_AVAILABLE:
-            await query.edit_message_text("❌ ML модул не е наличен")
-            return
-        
-        status = ml_engine.get_status()
-        
-        mode_text = "🤖 Hybrid Mode" if status['hybrid_mode'] else "⚡ Full ML Mode"
-        ml_weight_pct = int(status['ml_weight'] * 100)
-        classical_weight_pct = 100 - ml_weight_pct
-        
-        message = f"""🤖 <b>MACHINE LEARNING СТАТИСТИКА</b>
-
-<b>Режим:</b> {mode_text}
-   ML Weight: {ml_weight_pct}%
-   Classical Weight: {classical_weight_pct}%
-
-<b>Обучение:</b>
-   Модел: {'✅ Trained' if status['model_trained'] else '❌ Not trained'}
-   Training samples: {status['training_samples']}
-   Нужни за обучение: {status['min_samples_needed']}
-   
-{'✅ Готов за обучение!' if status['ready_for_training'] else f"⚠️ Нужни още {status['min_samples_needed'] - status['training_samples']} samples"}
-
-💡 <i>ML се обучава автоматично на всеки 20 сигнала</i>
-
-📖 <b>Как работи:</b>
-Week 1-2: 30% ML (learning)
-Week 3-4: 50% ML (scaling)
-Week 5+: 70-90% ML (dominance)
-"""
-        await query.edit_message_text(message, parse_mode='HTML')
-    
-    elif query.data == "report_stats":
-        # Bot статистика
-        stats_message = get_performance_stats()
-        await query.edit_message_text(stats_message, parse_mode='HTML')
-    
-    elif query.data == "report_refresh":
-        # Refresh - покажи менюто отново
-        await reports_cmd(query, context)
-
-
-# ================= ГЛАВНА ФУНКЦИЯ =================
-
-
-# ================= ГЛАВНА ФУНКЦИЯ =================
+            # ДНЕВЕН ОТЧЕТ СЪС СТАТИСТИКА НА СИГНАЛИТЕ - Всеки ден в 08:00 BG време (06:00 UTC)
+            async def send_daily_signals_report():
+                """Изпраща автоматичен дневен отчет със статистика на сигналите за предходния ден"""
+                try:
+                    report = get_daily_signals_report()
+                    if report:
+                        await app.bot.send_message(
+                            chat_id=OWNER_CHAT_ID,
+                            text=report,
+                            parse_mode='HTML',
+                            disable_notification=False  # Със звук за важно съобщение
+                        )
+                        logger.info("✅ Daily signals report sent for previous day (08:00 BG time)")
+                    else:
+                        logger.warning("⚠️ No daily signals report generated")
+                except Exception as e:
+                    logger.error(f"❌ Daily signals report error: {e}")
+            
+            scheduler.add_job(
+                send_daily_signals_report,
+                'cron',
+                hour=6,  # 08:00 BG = 06:00 UTC (България е UTC+2)
+                minute=0
+            )
+            logger.info("✅ Daily signals report scheduled at 08:00 BG time (summary of previous day)")
+            
+            # Автоматична диагностика всеки ден в 01:00 UTC (03:00 BG време)
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
@@ -5930,6 +7395,7 @@ def main():
     app.add_handler(CommandHandler("news", news_cmd))
     app.add_handler(CommandHandler("breaking", breaking_cmd))  # Критични новини
     app.add_handler(CommandHandler("task", task_cmd))  # Задания за Copilot
+    app.add_handler(CommandHandler("dailyreport", dailyreport_cmd))  # Дневен отчет за сигнали
     app.add_handler(CommandHandler("workspace", workspace_cmd))  # Workspace info
     app.add_handler(CommandHandler("restart", restart_cmd))  # Рестарт на бота
     app.add_handler(CommandHandler("autonews", autonews_cmd))
@@ -5937,6 +7403,7 @@ def main():
     app.add_handler(CommandHandler("timeframe", timeframe_cmd))
     app.add_handler(CommandHandler("alerts", alerts_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("journal", journal_cmd))  # 📝 Trading Journal с ML
     
     # Админ команди
     app.add_handler(CommandHandler("admin_login", admin_login_cmd))
@@ -5964,6 +7431,7 @@ def main():
     app.add_handler(CommandHandler("b", breaking_cmd))  # /b = /breaking
     app.add_handler(CommandHandler("t", task_cmd))  # /t = /task
     app.add_handler(CommandHandler("w", workspace_cmd))  # /w = /workspace
+    app.add_handler(CommandHandler("j", journal_cmd))  # /j = /journal
     
     # Callback handlers за inline бутони
     app.add_handler(CallbackQueryHandler(signal_callback, pattern='^tf_'))
@@ -6010,31 +7478,47 @@ def main():
                 minute=0
             )
             
-            # НОВИ ДНЕВНИ ОТЧЕТИ - Всеки ден в 20:00 BG време (18:00 UTC)
+            # ДНЕВНИ ОТЧЕТИ ЗА СИГНАЛИ - Всеки ден в 08:00 BG време (06:00 UTC)
+            async def send_daily_signal_report_job():
+                """Wrapper за изпращане на дневен отчет за сигнали"""
+                try:
+                    await send_daily_signal_report(app.bot)
+                except Exception as e:
+                    logger.error(f"❌ Daily signal report error: {e}")
+            
+            scheduler.add_job(
+                send_daily_signal_report_job,
+                'cron',
+                hour=6,  # 08:00 BG = 06:00 UTC
+                minute=0
+            )
+            logger.info("✅ Daily signal reports scheduled at 08:00 BG time (previous day analysis)")
+            
+            # НОВИ ДНЕВНИ ОТЧЕТИ (ако има външен engine) - Всеки ден в 08:00 BG време
             if REPORTS_AVAILABLE:
                 async def send_daily_auto_report():
-                    """Изпраща автоматичен дневен отчет към owner"""
+                    """Изпраща автоматичен дневен отчет към owner за предходния ден"""
                     try:
                         report = report_engine.generate_daily_report()
                         if report:
                             message = report_engine.format_report_message(report)
                             await app.bot.send_message(
                                 chat_id=OWNER_CHAT_ID,
-                                text=f"🔔 <b>АВТОМАТИЧЕН ДНЕВЕН ОТЧЕТ</b>\n\n{message}",
+                                text=f"🔔 <b>ДОПЪЛНИТЕЛЕН ДНЕВЕН ОТЧЕТ</b>\n\n{message}",
                                 parse_mode='HTML',
-                                disable_notification=False
+                                disable_notification=True
                             )
-                            logger.info("✅ Automatic daily report sent")
+                            logger.info("✅ Additional daily report sent")
                     except Exception as e:
-                        logger.error(f"❌ Daily report error: {e}")
+                        logger.error(f"❌ Additional report error: {e}")
                 
                 scheduler.add_job(
                     send_daily_auto_report,
                     'cron',
-                    hour=18,  # 20:00 BG = 18:00 UTC
-                    minute=0
+                    hour=6,  # 08:00 BG = 06:00 UTC
+                    minute=5  # 5 минути след основния отчет
                 )
-                logger.info("✅ Daily automatic reports scheduled (20:00 BG time)")
+                logger.info("✅ Additional daily reports scheduled (08:00:05 BG time)")
             
             # Автоматична диагностика всеки ден в 01:00 UTC (03:00 BG време)
             scheduler.add_job(
@@ -6059,8 +7543,29 @@ def main():
                 minutes=3
             )
             
+            # 📝 24/7 TRADING JOURNAL МОНИТОРИНГ - всеки 2 минути!
+            async def journal_monitoring_wrapper():
+                """Wrapper за journal мониторинг с context"""
+                try:
+                    from telegram.ext import ContextTypes
+                    # Създай минимален context за bot
+                    class SimpleContext:
+                        def __init__(self, bot):
+                            self.bot = bot
+                    
+                    context = SimpleContext(app.bot)
+                    await monitor_active_trades(context)
+                except Exception as e:
+                    logger.error(f"Journal monitoring wrapper error: {e}")
+            
+            scheduler.add_job(
+                journal_monitoring_wrapper,
+                'interval',
+                minutes=2
+            )
+            
             scheduler.start()
-            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS")
+            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7")
         
         async def enable_auto_alerts():
             """Автоматично активиране на alerts за owner при стартиране"""
