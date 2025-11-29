@@ -1,4 +1,4 @@
-name: Deploy to DigitalOcean Droplet
+name: Deploy Bot to DigitalOcean
 
 on:
   push:
@@ -7,26 +7,25 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v3
 
-      - name: Copy files to droplet
-        uses: appleboy/scp-action@v0.1.4
-        with:
-          host: ${{ secrets.DO_HOST }}
-          username: root
-          key: ${{ secrets.DO_SSH_KEY }}
-          source: "./"
-          target: "/root/app"
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        ssh-keyscan -H 167.172.34.181 >> ~/.ssh/known_hosts
 
-      - name: Restart bot
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host: ${{ secrets.DO_HOST }}
-          username: root
-          key: ${{ secrets.DO_SSH_KEY }}
-          script: |
-            cd /root/app
-            npm install
-            pm2 restart all || pm2 start bot.js
+    - name: Deploy to server
+      run: |
+        ssh root@167.172.34.181 "
+          cd /root/galinbot ||
+          git clone https://github.com/galinborisov10-at/Crypto-signal-bot.git galinbot;
+          cd /root/galinbot;
+          git pull;
+          docker compose down || true;
+          docker compose up -d --build;
+        "
