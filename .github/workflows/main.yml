@@ -33,15 +33,16 @@ jobs:
 
       # SUCCESS MESSAGE
       - name: Notify success
-  if: success()
-  run: |
-    curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-      -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-      -d text="✅ Deployment е изпълнен успешно!"
+        if: success()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
+          -d text="✅ Deployment е изпълнен успешно!"
 
+      # FAILURE MESSAGE
       - name: Notify failure
-  if: failure()
-  run: |
-    curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-      -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-      -d text="❌ Deployment НЕ е изпълнен успешно!"
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
+          -d text="❌ Deployment НЕ е изпълнен успешно!"
