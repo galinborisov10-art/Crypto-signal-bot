@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Админ модул
 import sys
+# test deploy
 
 sys.path.append('/workspaces/Crypto-signal-bot/admin')
 try:
