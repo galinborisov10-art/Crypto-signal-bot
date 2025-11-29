@@ -1,4 +1,4 @@
-name: Deploy Bot to DigitalOcean
+name: Deploy to DigitalOcean
 
 on:
   push:
@@ -9,23 +9,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Setup SSH
+    - name: Setup SSH key
       run: |
         mkdir -p ~/.ssh
-        echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
-        ssh-keyscan -H 167.172.34.181 >> ~/.ssh/known_hosts
+        echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
 
-    - name: Deploy to server
+    - name: Add known hosts
       run: |
-        ssh root@167.172.34.181 "
-          cd /root/galinbot ||
-          git clone https://github.com/galinborisov10-at/Crypto-signal-bot.git galinbot;
-          cd /root/galinbot;
-          git pull;
-          docker compose down || true;
-          docker compose up -d --build;
-        "
+        ssh-keyscan -H ${{ secrets.DO_HOST }} >> ~/.ssh/known_hosts
+
+    - name: Deploy to Droplet
+      run: |
+        rsync -avz --delete . ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }}:/root/bot/
+        ssh ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }} "cd /root/bot && docker compose down && docker compose up -d --build"
