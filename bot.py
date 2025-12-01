@@ -975,7 +975,7 @@ async def get_higher_timeframe_confirmation(symbol, current_timeframe, signal):
     """Multi-timeframe потвърждение"""
     try:
         # Определи по-висок таймфрейм
-        tf_hierarchy = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
+        tf_hierarchy = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
         
         if current_timeframe not in tf_hierarchy:
             return None
@@ -1205,7 +1205,7 @@ def calculate_adaptive_tp_sl(symbol, volatility, timeframe):
         # Корекция според таймфрейм
         tf_multipliers = {
             '1m': 0.5, '5m': 0.6, '15m': 0.7, '30m': 0.8,
-            '1h': 0.9, '2h': 1.0, '4h': 1.2, '1d': 1.5, '1w': 2.0
+            '1h': 0.9, '2h': 1.0, '3h': 1.1, '4h': 1.2, '1d': 1.5, '1w': 2.0
         }
         tf_mult = tf_multipliers.get(timeframe, 1.0)
         
@@ -1232,12 +1232,12 @@ async def get_multi_timeframe_analysis(symbol, current_timeframe):
     """Анализира сигнала на множество таймфреймове за консенсус"""
     try:
         # Дефинирай всички възможни таймфреймове
-        timeframe_order = {'1m': 0, '5m': 1, '15m': 2, '30m': 3, '1h': 4, '2h': 5, '4h': 6, '1d': 7, '1w': 8}
+        timeframe_order = {'1m': 0, '5m': 1, '15m': 2, '30m': 3, '1h': 4, '2h': 5, '3h': 6, '4h': 7, '1d': 8, '1w': 9}
         current_index = timeframe_order.get(current_timeframe, 3)
         
         # Избери таймфреймове за анализ (включително текущия и по-големи)
         # Винаги анализираме поне 2-3 таймфрейма
-        all_available_tfs = ['15m', '1h', '4h', '1d', '1w']
+        all_available_tfs = ['15m', '1h', '3h', '4h', '1d', '1w']
         
         # Вземи таймфреймове >= текущия
         relevant_tfs = [tf for tf in all_available_tfs if timeframe_order.get(tf, 0) >= current_index]
@@ -4772,8 +4772,11 @@ async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("2ч", callback_data="tf_2h"),
             ],
             [
+                InlineKeyboardButton("3ч", callback_data="tf_3h"),
                 InlineKeyboardButton("4ч", callback_data="tf_4h"),
                 InlineKeyboardButton("1д", callback_data="tf_1d"),
+            ],
+            [
                 InlineKeyboardButton("1с", callback_data="tf_1w"),
             ]
         ]
@@ -4785,7 +4788,7 @@ async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Директна промяна
     tf = context.args[0].lower()
-    valid_tfs = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
+    valid_tfs = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
     
     if tf not in valid_tfs:
         await update.message.reply_text(f"❌ Невалиден таймфрейм. Избери от: {', '.join(valid_tfs)}")
@@ -5794,8 +5797,11 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("📊 2h", callback_data=f"tf_{symbol}_2h"),
             ],
             [
+                InlineKeyboardButton("📊 3h", callback_data=f"tf_{symbol}_3h"),
                 InlineKeyboardButton("📊 4h", callback_data=f"tf_{symbol}_4h"),
                 InlineKeyboardButton("📈 1d", callback_data=f"tf_{symbol}_1d"),
+            ],
+            [
                 InlineKeyboardButton("📈 1w", callback_data=f"tf_{symbol}_1w"),
             ],
             [
@@ -6516,6 +6522,134 @@ async def update_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Маркирай че очакваме парола
     context.user_data['awaiting_update_password'] = True
+
+
+async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Автоматично обновяване на бота от GitHub с рестарт"""
+    user_id = update.effective_user.id
+    
+    # Само за owner (security)
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("🔐 Тази команда е само за owner-а на бота.")
+        return
+    
+    # Проверка за парола - ако няма аргумент, питай за парола
+    if not context.args:
+        await update.message.reply_text(
+            "🔐 <b>AUTO-UPDATE - Admin парола изискана</b>\n\n"
+            "Изпрати: /auto_update <парола>\n\n"
+            "Или използвай:\n"
+            "<code>/auto_update 8109</code>",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Провери паролата
+    password = context.args[0]
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    
+    if password_hash != ADMIN_PASSWORD_HASH:
+        await update.message.reply_text(
+            "❌ <b>ГРЕШНА ПАРОЛА</b>\n\n"
+            "Достъпът е отказан.",
+            parse_mode='HTML'
+        )
+        return
+    
+    await update.message.reply_text(
+        "🔄 <b>AUTO-UPDATE СТАРТИРАН</b>\n\n"
+        "⏳ Изпълнявам актуализация от GitHub...",
+        parse_mode='HTML'
+    )
+    
+    import subprocess
+    import os
+    
+    try:
+        # Намери update_bot.sh скрипта
+        project_dir = os.path.dirname(os.path.abspath(__file__))
+        script_path = os.path.join(project_dir, "update_bot.sh")
+        
+        # Ако сме на сървър (DigitalOcean), опитай други пътища
+        if not os.path.exists(script_path):
+            possible_paths = [
+                "~/Crypto-signal-bot/update_bot.sh",
+                "/var/www/crypto-bot/update_bot.sh",
+                "/opt/crypto-bot/update_bot.sh",
+                "./update_bot.sh"
+            ]
+            for path in possible_paths:
+                expanded_path = os.path.expanduser(path)
+                if os.path.exists(expanded_path):
+                    script_path = expanded_path
+                    break
+        
+        if not os.path.exists(script_path):
+            await update.message.reply_text(
+                "❌ <b>ГРЕШКА</b>\n\n"
+                "update_bot.sh не е намерен!\n"
+                "Моля, уверете се че скриптът съществува.",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Изпълни update скрипта
+        await update.message.reply_text("📥 Pulling latest changes from GitHub...")
+        
+        result = subprocess.run(
+            [script_path],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=os.path.dirname(script_path)
+        )
+        
+        # Изпрати резултата
+        if result.returncode == 0:
+            success_msg = "✅ <b>UPDATE УСПЕШЕН!</b>\n\n"
+            
+            # Извлечи важна информация от output
+            if "✓ Backup създаден" in result.stdout:
+                success_msg += "💾 Backup създаден\n"
+            if "✓ Успешно обновяване от GitHub" in result.stdout:
+                success_msg += "📥 GitHub код обновен\n"
+            if "✓ Dependencies обновени" in result.stdout:
+                success_msg += "📦 Dependencies обновени\n"
+            if "✓ Бот рестартиран" in result.stdout or "✓ Бот стартиран" in result.stdout:
+                success_msg += "🔄 PM2 рестартиран\n"
+            
+            success_msg += "\n<i>Ботът работи с последната версия от GitHub!</i>"
+            
+            await update.message.reply_text(success_msg, parse_mode='HTML')
+            
+            # Покажи последните логове ако има
+            if "📜 Последни логове:" in result.stdout:
+                log_section = result.stdout.split("📜 Последни логове:")[1]
+                log_preview = log_section[:500] if len(log_section) > 500 else log_section
+                await update.message.reply_text(
+                    f"📜 <b>Последни логове:</b>\n\n<code>{log_preview}</code>",
+                    parse_mode='HTML'
+                )
+        else:
+            error_msg = "❌ <b>UPDATE FAILED</b>\n\n"
+            error_msg += f"<b>Error Code:</b> {result.returncode}\n\n"
+            error_msg += f"<b>Output:</b>\n<code>{result.stderr[:500]}</code>"
+            
+            await update.message.reply_text(error_msg, parse_mode='HTML')
+            
+    except subprocess.TimeoutExpired:
+        await update.message.reply_text(
+            "⏱️ <b>TIMEOUT</b>\n\n"
+            "Update скриптът отне твърде много време.\n"
+            "Моля, проверете ръчно статуса на сървъра.",
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ <b>ГРЕШКА</b>\n\n"
+            f"<code>{str(e)}</code>",
+            parse_mode='HTML'
+        )
 
 
 async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7415,6 +7549,7 @@ def main():
     app.add_handler(CommandHandler("admin_monthly", admin_monthly_cmd))
     app.add_handler(CommandHandler("admin_docs", admin_docs_cmd))
     app.add_handler(CommandHandler("update", update_bot_cmd))  # Обновяване на бота
+    app.add_handler(CommandHandler("auto_update", auto_update_cmd))  # 🔄 Auto-update от GitHub
     app.add_handler(CommandHandler("test", test_system_cmd))  # Тест и автоматично отстраняване на грешки
     
     # ML, Back-testing, Reports команди

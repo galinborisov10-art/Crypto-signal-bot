@@ -1,8 +1,51 @@
 {
-  "total_signals": 0,
-  "by_symbol": {},
-  "by_timeframe": {},
-  "by_confidence": {},
+  "total_signals": 19,
+  "by_symbol": {
+    "BTCUSDT": {
+      "count": 14,
+      "BUY": 7,
+      "SELL": 7
+    },
+    "XRPUSDT": {
+      "count": 5,
+      "BUY": 0,
+      "SELL": 5
+    }
+  },
+  "by_timeframe": {
+    "2h": {
+      "count": 2
+    },
+    "4h": {
+      "count": 9
+    },
+    "5m": {
+      "count": 3
+    },
+    "1h": {
+      "count": 3
+    },
+    "30m": {
+      "count": 1
+    },
+    "1w": {
+      "count": 1
+    }
+  },
+  "by_confidence": {
+    "80-89": {
+      "count": 5
+    },
+    "60-69": {
+      "count": 7
+    },
+    "70-79": {
+      "count": 5
+    },
+    "90-99": {
+      "count": 2
+    }
+  },
   "signals": [
     {
       "id": 1,
@@ -371,6 +414,196 @@
       "exit_price": null,
       "profit_pct": null,
       "exit_timestamp": null
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "2h",
+      "type": "SELL",
+      "confidence": 82,
+      "timestamp": "2025-11-24T10:44:05.998825",
+      "entry_price": 85938.24,
+      "tp_price": 84004.62960000001,
+      "sl_price": 86754.65328000001
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "type": "BUY",
+      "confidence": 65,
+      "timestamp": "2025-11-24T10:44:51.126654",
+      "entry_price": 85933.0,
+      "tp_price": 88253.19099999999,
+      "sl_price": 84953.3638
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "5m",
+      "type": "SELL",
+      "confidence": 78,
+      "timestamp": "2025-11-24T10:46:34.764223",
+      "entry_price": 86003.85,
+      "tp_price": 84842.79802500001,
+      "sl_price": 86494.071945
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "5m",
+      "type": "SELL",
+      "confidence": 68,
+      "timestamp": "2025-11-24T10:47:14.353052",
+      "entry_price": 85972.95,
+      "tp_price": 84812.315175,
+      "sl_price": 86462.995815
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "2h",
+      "type": "SELL",
+      "confidence": 95,
+      "timestamp": "2025-11-24T11:47:54.461528",
+      "entry_price": 86345.18,
+      "tp_price": 84402.41345,
+      "sl_price": 87165.45921
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "1h",
+      "type": "BUY",
+      "confidence": 70,
+      "timestamp": "2025-11-24T17:13:40.126658",
+      "entry_price": 87089.56,
+      "tp_price": 88848.769112,
+      "sl_price": 86349.29874
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "30m",
+      "type": "BUY",
+      "confidence": 90,
+      "timestamp": "2025-11-24T17:14:32.611161",
+      "entry_price": 87010.05,
+      "tp_price": 88576.23090000001,
+      "sl_price": 86348.77361999999
+    },
+    {
+      "symbol": "XRPUSDT",
+      "timeframe": "4h",
+      "type": "SELL",
+      "confidence": 67.13806017961097,
+      "timestamp": "2025-11-25T08:25:50.025776",
+      "entry_price": 2.2119,
+      "tp_price": 2.09113026,
+      "sl_price": 2.25658038
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "1h",
+      "type": "SELL",
+      "confidence": 65,
+      "timestamp": "2025-11-25T08:29:48.782071",
+      "entry_price": 87506.9,
+      "tp_price": 85739.26062,
+      "sl_price": 88250.70864999999
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "1h",
+      "type": "SELL",
+      "confidence": 65,
+      "timestamp": "2025-11-25T08:30:22.002126",
+      "entry_price": 87529.72,
+      "tp_price": 85761.619656,
+      "sl_price": 88273.72262
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "5m",
+      "type": "BUY",
+      "confidence": 82,
+      "timestamp": "2025-11-25T08:32:14.091292",
+      "entry_price": 87408.32,
+      "tp_price": 88588.33232000002,
+      "sl_price": 86910.09257600001
+    },
+    {
+      "symbol": "XRPUSDT",
+      "timeframe": "4h",
+      "type": "SELL",
+      "confidence": 87.12222529232251,
+      "timestamp": "2025-11-25T08:42:35.532326",
+      "entry_price": 2.2006,
+      "tp_price": 2.0804472400000003,
+      "sl_price": 2.24505212
+    },
+    {
+      "symbol": "XRPUSDT",
+      "timeframe": "4h",
+      "type": "SELL",
+      "confidence": 77.07516319882983,
+      "timestamp": "2025-11-25T08:49:10.991178",
+      "entry_price": 2.2004,
+      "tp_price": 2.08025816,
+      "sl_price": 2.24484808
+    },
+    {
+      "symbol": "XRPUSDT",
+      "timeframe": "4h",
+      "type": "SELL",
+      "confidence": 69.05647426825588,
+      "timestamp": "2025-11-25T08:49:38.907329",
+      "entry_price": 2.1951,
+      "tp_price": 2.07524754,
+      "sl_price": 2.23944102
+    },
+    {
+      "symbol": "XRPUSDT",
+      "timeframe": "4h",
+      "type": "SELL",
+      "confidence": 87.07753982583924,
+      "timestamp": "2025-11-25T08:50:23.856812",
+      "entry_price": 2.1977,
+      "tp_price": 2.0777055800000004,
+      "sl_price": 2.2420935400000004
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "1w",
+      "type": "SELL",
+      "confidence": 80,
+      "timestamp": "2025-11-25T18:31:20.437725",
+      "entry_price": 87667.97,
+      "tp_price": 81969.55195000001,
+      "sl_price": 89772.00128
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "type": "BUY",
+      "confidence": 67,
+      "timestamp": "2025-11-25T19:07:29.682848",
+      "entry_price": 86952.47,
+      "tp_price": 89300.18668999999,
+      "sl_price": 85961.211842
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "type": "BUY",
+      "confidence": 78,
+      "timestamp": "2025-12-01T21:25:58.502038",
+      "entry_price": 86244.0,
+      "tp_price": 89090.052,
+      "sl_price": 85157.32560000001
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "type": "BUY",
+      "confidence": 78,
+      "timestamp": "2025-12-01T22:06:32.988071",
+      "entry_price": 86732.57,
+      "tp_price": 89594.74481,
+      "sl_price": 85639.739618
     }
   ]
 }

@@ -1,0 +1,46 @@
+name: Auto Deploy to DigitalOcean
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔍 Checkout Code
+      uses: actions/checkout@v3
+    
+    - name: 🚀 Deploy to DigitalOcean
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.DO_HOST }}
+        username: ${{ secrets.DO_USERNAME }}
+        key: ${{ secrets.DO_SSH_KEY }}
+        port: ${{ secrets.DO_PORT || 22 }}
+        script: |
+          cd ~/Crypto-signal-bot || cd /var/www/crypto-bot || cd /opt/crypto-bot
+          
+          echo "📥 Pulling latest changes..."
+          git pull origin main
+          
+          echo "📦 Installing dependencies..."
+          pip3 install -r requirements.txt --upgrade
+          
+          echo "🔄 Restarting bot with PM2..."
+          pm2 restart crypto-bot || pm2 start ecosystem.config.js
+          
+          echo "✅ Deploy completed successfully!"
+          pm2 status
+    
+    - name: 📢 Notify Success
+      if: success()
+      run: |
+        echo "✅ Deployment successful!"
+        
+    - name: 📢 Notify Failure
+      if: failure()
+      run: |
+        echo "❌ Deployment failed!"
