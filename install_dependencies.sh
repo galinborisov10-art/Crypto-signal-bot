@@ -17,17 +17,17 @@ echo "📦 CRYPTO SIGNAL BOT - DEPENDENCY INSTALLER"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Determine pip command
-if command -v pip3 &> /dev/null; then
-    PIP_CMD="pip3"
-elif command -v pip &> /dev/null; then
-    PIP_CMD="pip"
+# Determine python command
+if command -v python3 &> /dev/null; then
+    PYTHON_CMD="python3"
+elif command -v python &> /dev/null; then
+    PYTHON_CMD="python"
 else
-    echo "❌ Python pip is not installed!"
+    echo "❌ Python is not installed!"
     exit 1
 fi
 
-echo "📋 Using: $PIP_CMD"
+echo "📋 Using: $PIP_CMD and $PYTHON_CMD"
 echo ""
 
 # Install from requirements.txt
@@ -58,14 +58,14 @@ for MODULE_INFO in "${CRITICAL_MODULES[@]}"; do
     MODULE_NAME="${MODULE_INFO%%:*}"
     PACKAGE_NAME="${MODULE_INFO##*:}"
     
-    if python3 -c "import $MODULE_NAME" 2>/dev/null; then
+    if $PYTHON_CMD -c "import $MODULE_NAME" 2>/dev/null; then
         echo "  ✅ $MODULE_NAME"
     else
         echo "  ❌ $MODULE_NAME (installing $PACKAGE_NAME...)"
         $PIP_CMD install "$PACKAGE_NAME" --quiet
         
         # Verify after install
-        if python3 -c "import $MODULE_NAME" 2>/dev/null; then
+        if $PYTHON_CMD -c "import $MODULE_NAME" 2>/dev/null; then
             echo "     ✅ Installed successfully"
         else
             echo "     ❌ Failed to install"

@@ -48,13 +48,17 @@ module.exports = {
   ],
   
   // Deployment configuration (optional)
+  // NOTE: Customize user and host for your production environment
+  // It is recommended to use a dedicated non-privileged user instead of root
   deploy: {
     production: {
-      user: 'root',
-      host: 'crypto-bot-prod',
+      // SECURITY: Use a dedicated non-privileged user (e.g., 'crypto-bot') instead of 'root'
+      user: process.env.DEPLOY_USER || 'crypto-bot',
+      host: process.env.DEPLOY_HOST || 'crypto-bot-prod',
       ref: 'origin/main',
-      repo: 'git@github.com:galinborisov10-art/Crypto-signal-bot.git',
-      path: '/root/Crypto-signal-bot',
+      // Use HTTPS URL for compatibility (SSH can be configured via environment)
+      repo: process.env.DEPLOY_REPO || 'https://github.com/galinborisov10-art/Crypto-signal-bot.git',
+      path: process.env.DEPLOY_PATH || '/home/crypto-bot/Crypto-signal-bot',
       'pre-deploy-local': '',
       'post-deploy': 'pip3 install -r requirements.txt && pm2 reload ecosystem.config.js --env production',
       'pre-setup': '',

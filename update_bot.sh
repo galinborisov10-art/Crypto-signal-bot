@@ -30,8 +30,21 @@ if [ ! -d ".git" ]; then
 fi
 
 echo "📥 Pulling latest code from GitHub..."
-git fetch origin main
-git reset --hard origin/main
+# Check for local changes
+if [ -n "$(git status --porcelain)" ]; then
+    echo "⚠️ Local changes detected. Stashing before update..."
+    git stash --include-untracked
+    STASHED=true
+else
+    STASHED=false
+fi
+
+# Pull latest changes
+git pull origin main --rebase || {
+    echo "⚠️ Rebase failed, trying merge strategy..."
+    git pull origin main
+}
+
 echo "✅ Code updated successfully!"
 echo ""
 
