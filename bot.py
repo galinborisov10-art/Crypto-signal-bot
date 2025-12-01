@@ -7735,52 +7735,57 @@ def main():
         app.job_queue.run_once(enable_auto_alerts_task, 10)
         app.job_queue.run_once(send_startup_notification_task, 3)
     
-    # Стартирай бота с error handling и auto-recovery
-    max_retries = 10
+    # Стартирай бота с error handling и БЕЗКРАЕН auto-recovery
     retry_count = 0
     
-    while retry_count < max_retries:
+    while True:  # Безкраен loop - винаги се опитва да рестартира
         try:
-            logger.info(f"🤖 Стартиране на polling (опит {retry_count + 1}/{max_retries})...")
+            retry_count += 1
+            logger.info(f"🤖 Стартиране на polling (опит #{retry_count})...")
             app.run_polling(
                 drop_pending_updates=True, 
-                allowed_updates=Update.ALL_TYPES
+                allowed_updates=Update.ALL_TYPES,
+                close_loop=False  # НЕ затваряй event loop при грешка
             )
-            break  # Успешен старт
-        except KeyboardInterrupt:
-            logger.info("🛑 Bot спрян от потребител")
+            # Ако polling спре нормално (KeyboardInterrupt), излез
+            logger.info("ℹ️ Polling спря нормално")
             break
+            
+        except KeyboardInterrupt:
+            logger.info("🛑 Bot спрян от потребител (Ctrl+C)")
+            break
+            
         except Exception as e:
-            retry_count += 1
-            logger.error(f"❌ Грешка при polling (опит {retry_count}/{max_retries}): {e}")
+            error_msg = str(e)
+            logger.error(f"❌ Грешка при polling (опит #{retry_count}): {error_msg}")
+            logger.exception(e)  # Full stack trace в логовете
             
-            # Изпрати нотификация за crash
-            try:
-                from telegram import Bot
-                bot = Bot(token=TELEGRAM_BOT_TOKEN)
-                import asyncio
-                asyncio.run(send_bot_status_notification(bot, "crashed", str(e)))
-            except:
-                pass  # Ако не може да изпрати, продължи
-            
-            if retry_count < max_retries:
-                wait_time = min(5 * retry_count, 60)  # Прогресивно чакане (max 60s)
-                logger.info(f"🔄 Автоматичен рестарт след {wait_time} секунди...")
-                import time
-                time.sleep(wait_time)
-            else:
-                logger.error("❌ Максимален брой опити достигнат. Спиране на бота.")
-                
-                # Изпрати финална нотификация
+            # Изпрати нотификация за crash (само на всеки 5-ти опит)
+            if retry_count % 5 == 0:
                 try:
                     from telegram import Bot
                     bot = Bot(token=TELEGRAM_BOT_TOKEN)
                     import asyncio
-                    asyncio.run(send_bot_status_notification(bot, "crashed", "Максимален брой опити достигнат"))
+                    asyncio.run(send_bot_status_notification(
+                        bot, 
+                        "crashed", 
+                        f"Attempt #{retry_count}: {error_msg[:200]}"
+                    ))
                 except:
-                    pass
-                
-                break
+                    pass  # Ако не може да изпрати, продължи
+            
+            # Прогресивно чакане с cap на 120 секунди
+            wait_time = min(10 + (retry_count * 5), 120)
+            logger.info(f"🔄 Автоматичен рестарт след {wait_time} секунди...")
+            import time
+            time.sleep(wait_time)
+            
+            # Cleanup преди retry
+            try:
+                import gc
+                gc.collect()  # Освобождаване на памет
+            except:
+                pass
 
 
 if __name__ == "__main__":

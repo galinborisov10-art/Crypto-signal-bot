@@ -1,0 +1,23 @@
+[Unit]
+Description=Crypto Signal Bot - Auto-Healing Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Crypto-signal-bot
+Environment="PATH=/root/Crypto-signal-bot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/root/Crypto-signal-bot/venv/bin/python /root/Crypto-signal-bot/bot.py
+
+# Auto-restart настройки
+Restart=always
+RestartSec=10
+StartLimitInterval=0
+
+# Limits
+LimitNOFILE=65536
+StandardOutput=append:/root/Crypto-signal-bot/bot.log
+StandardError=append:/root/Crypto-signal-bot/bot.log
+
+[Install]
+WantedBy=multi-user.target
