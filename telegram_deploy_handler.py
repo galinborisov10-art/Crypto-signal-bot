@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
+import html
+import os
+import re
+import subprocess
+
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, CallbackContext
-import subprocess, os, html
 
 TOKEN = os.environ.get("TG_BOT_TOKEN")
 ALLOWED_ADMIN_IDS = {123456789}  # replace with your numeric Telegram id
+
+# Validate branch names to prevent command injection
+BRANCH_PATTERN = re.compile(r'^[a-zA-Z0-9._/-]+$')
 
 
 def deploy_cmd(update: Update, context: CallbackContext):
@@ -15,6 +22,9 @@ def deploy_cmd(update: Update, context: CallbackContext):
     branch = "main"
     if context.args:
         branch = context.args[0]
+        if not BRANCH_PATTERN.match(branch) or len(branch) > 100:
+            update.message.reply_text("Invalid branch name.")
+            return
     update.message.reply_text(f"Starting deploy (branch={branch})...")
     try:
         res = subprocess.run(["/usr/local/bin/crypto-deploy.sh", branch],
