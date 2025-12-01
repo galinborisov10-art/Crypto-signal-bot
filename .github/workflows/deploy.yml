@@ -1,0 +1,117 @@
+name: CI and Deploy to DigitalOcean
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run syntax check
+        run: |
+          python -m py_compile bot.py
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.DO_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to DigitalOcean
+        run: |
+          ssh ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }} << 'DEPLOY_SCRIPT'
+            set -e
+            
+            # Navigate to project directory
+            cd /root/Crypto-signal-bot
+            
+            # Reset to match remote
+            git fetch origin main
+            git reset --hard origin/main
+            
+            # Clean Python caches
+            find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+            find . -type f -name "*.pyc" -delete 2>/dev/null || true
+            
+            # Install dependencies
+            if [ -f "install_dependencies.sh" ]; then
+              chmod +x install_dependencies.sh
+              ./install_dependencies.sh
+            else
+              pip install -r requirements.txt
+            fi
+            
+            # Kill old processes
+            pm2 stop crypto-bot 2>/dev/null || true
+            pkill -f "python.*bot.py" 2>/dev/null || true
+            sleep 2
+            
+            # Restart via PM2
+            if [ -f "ecosystem.config.js" ]; then
+              pm2 start ecosystem.config.js --update-env
+            else
+              pm2 start bot.py --name crypto-bot --interpreter python3
+            fi
+            
+            # Wait and show logs
+            sleep 5
+            pm2 logs crypto-bot --lines 20 --nostream
+          DEPLOY_SCRIPT
+
+      - name: Notify success
+        if: success()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d text="✅ CI/CD Deployment успешен! Commit: ${{ github.sha }}" \
+            -d parse_mode="HTML" || true
+
+      - name: Notify failure
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d text="❌ CI/CD Deployment неуспешен! Commit: ${{ github.sha }}" \
+            -d parse_mode="HTML" || true
