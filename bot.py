@@ -6525,34 +6525,13 @@ async def update_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Автоматично обновяване на бота от GitHub с рестарт"""
+    """Автоматично обновяване на бота от GitHub с рестарт - САМО ЗА OWNER"""
     user_id = update.effective_user.id
     
-    # Само за owner (security)
+    # Само за owner (security) - достатъчна защита!
     if user_id != OWNER_CHAT_ID:
         await update.message.reply_text("🔐 Тази команда е само за owner-а на бота.")
         return
-    
-    # Ако има парола - провери я, иначе продължи (owner е достатъчен)
-    if context.args:
-        password = context.args[0]
-        password_hash = hashlib.sha256(password.encode()).hexdigest()
-        
-        if password_hash != ADMIN_PASSWORD_HASH:
-            await update.message.reply_text(
-                "❌ <b>ГРЕШНА ПАРОЛА</b>\n\n"
-                "Достъпът е отказан.\n\n"
-                "Или използвай само: /auto_update (без парола)",
-                parse_mode='HTML'
-            )
-            return
-    
-    # Owner може да update-ва с или без парола
-    await update.message.reply_text(
-        "🔄 <b>AUTO-UPDATE СТАРТИРАН</b>\n\n"
-        "⏳ Изпълнявам актуализация от GitHub...",
-        parse_mode='HTML'
-    )
     
     import subprocess
     import os
@@ -6579,15 +6558,12 @@ async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not os.path.exists(script_path):
             await update.message.reply_text(
                 "❌ <b>ГРЕШКА</b>\n\n"
-                "update_bot.sh не е намерен!\n"
-                "Моля, уверете се че скриптът съществува.",
+                "update_bot.sh не е намерен!",
                 parse_mode='HTML'
             )
             return
         
-        # Изпълни update скрипта
-        await update.message.reply_text("📥 Pulling latest changes from GitHub...")
-        
+        # Изпълни update скрипта (тихо, без междинни съобщения)
         result = subprocess.run(
             [script_path],
             capture_output=True,
@@ -6596,32 +6572,23 @@ async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cwd=os.path.dirname(script_path)
         )
         
-        # Изпрати резултата
+        # Изпрати САМО финалния резултат
         if result.returncode == 0:
-            success_msg = "✅ <b>UPDATE УСПЕШЕН!</b>\n\n"
+            success_msg = "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
             
             # Извлечи важна информация от output
             if "✓ Backup създаден" in result.stdout:
                 success_msg += "💾 Backup създаден\n"
             if "✓ Успешно обновяване от GitHub" in result.stdout:
-                success_msg += "📥 GitHub код обновен\n"
+                success_msg += "📥 Код обновен от GitHub\n"
             if "✓ Dependencies обновени" in result.stdout:
                 success_msg += "📦 Dependencies обновени\n"
             if "✓ Бот рестартиран" in result.stdout or "✓ Бот стартиран" in result.stdout:
                 success_msg += "🔄 PM2 рестартиран\n"
             
-            success_msg += "\n<i>Ботът работи с последната версия от GitHub!</i>"
+            success_msg += "\n<i>Ботът работи с последната версия! 🚀</i>"
             
             await update.message.reply_text(success_msg, parse_mode='HTML')
-            
-            # Покажи последните логове ако има
-            if "📜 Последни логове:" in result.stdout:
-                log_section = result.stdout.split("📜 Последни логове:")[1]
-                log_preview = log_section[:500] if len(log_section) > 500 else log_section
-                await update.message.reply_text(
-                    f"📜 <b>Последни логове:</b>\n\n<code>{log_preview}</code>",
-                    parse_mode='HTML'
-                )
         else:
             error_msg = "❌ <b>UPDATE FAILED</b>\n\n"
             error_msg += f"<b>Error Code:</b> {result.returncode}\n\n"
