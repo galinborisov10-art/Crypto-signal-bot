@@ -119,7 +119,7 @@ ta==0.11.0
 terminado==0.18.1
 threadpoolctl==3.6.0
 tinycss2==1.4.0
-torch==2.9.0+cpu
+# torch==2.9.0+cpu - REMOVED: Not used by the bot and +cpu tag is not available in PyPI
 tornado==6.5.2
 traitlets==5.14.3
 typing_extensions==4.15.0
