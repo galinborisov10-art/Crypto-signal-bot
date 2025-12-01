@@ -11,8 +11,10 @@ import os
 
 class BacktestEngine:
     def __init__(self):
-        self.results_path = '/workspaces/Crypto-signal-bot/backtest_results.json'
-        self.optimized_params_path = '/workspaces/Crypto-signal-bot/optimized_params.json'
+        # Динамични пътища
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.results_path = os.path.join(base_dir, 'backtest_results.json')
+        self.optimized_params_path = os.path.join(base_dir, 'optimized_params.json')
     
     async def fetch_historical_data(self, symbol, timeframe, days=90):
         """Извлича исторически klines данни"""

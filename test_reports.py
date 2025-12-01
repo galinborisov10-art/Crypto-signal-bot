@@ -83,7 +83,9 @@ def create_test_signals():
         stats['signals'].append(signal)
     
     # Запази
-    with open('/workspaces/Crypto-signal-bot/bot_stats.json', 'w') as f:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    stats_path = os.path.join(base_dir, 'bot_stats.json')
+    with open(stats_path, 'w') as f:
         json.dump(stats, f, indent=2)
     
     print("✅ Тестови данни създадени!")

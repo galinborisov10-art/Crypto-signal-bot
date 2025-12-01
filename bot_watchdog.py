@@ -12,12 +12,12 @@ import subprocess
 import requests
 from datetime import datetime, timedelta
 
-# Настройки
-WORKSPACE = "/workspaces/Crypto-signal-bot"
-BOT_PID_FILE = f"{WORKSPACE}/bot.pid"
-WATCHDOG_LOG = f"{WORKSPACE}/watchdog.log"
-BOT_LOG = f"{WORKSPACE}/bot.log"
-BOT_MANAGER = f"{WORKSPACE}/bot-manager.sh"
+# Настройки - динамични пътища
+WORKSPACE = os.path.dirname(os.path.abspath(__file__))
+BOT_PID_FILE = os.path.join(WORKSPACE, "bot.pid")
+WATCHDOG_LOG = os.path.join(WORKSPACE, "watchdog.log")
+BOT_LOG = os.path.join(WORKSPACE, "bot.log")
+BOT_MANAGER = os.path.join(WORKSPACE, "bot-manager.sh")
 CHECK_INTERVAL = 120  # 2 минути
 TELEGRAM_BOT_TOKEN = "8349449826:AAFNmP0i-DlERin8Z7HVir4awGTpa5n8vUM"
 OWNER_CHAT_ID = 7003238836

@@ -15,9 +15,11 @@ class MLTradingEngine:
     def __init__(self):
         self.model = None
         self.scaler = StandardScaler()
-        self.model_path = '/workspaces/Crypto-signal-bot/ml_model.pkl'
-        self.scaler_path = '/workspaces/Crypto-signal-bot/ml_scaler.pkl'
-        self.training_data_path = '/workspaces/Crypto-signal-bot/ml_training_data.json'
+        # Динамични пътища
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.model_path = os.path.join(base_dir, 'ml_model.pkl')
+        self.scaler_path = os.path.join(base_dir, 'ml_scaler.pkl')
+        self.training_data_path = os.path.join(base_dir, 'ml_training_data.json')
         self.min_training_samples = 50  # Минимум данни за обучение
         self.hybrid_mode = True  # Стартира в хибриден режим
         self.ml_weight = 0.3  # Първоначално 30% ML, 70% класически

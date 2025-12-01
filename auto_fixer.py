@@ -13,11 +13,11 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-# Настройки
-WORKSPACE = "/workspaces/Crypto-signal-bot"
-LOG_FILE = f"{WORKSPACE}/bot.log"
-FIXER_LOG = f"{WORKSPACE}/auto_fixer.log"
-BOT_MANAGER = f"{WORKSPACE}/bot-manager.sh"
+# Настройки - динамични пътища
+WORKSPACE = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = os.path.join(WORKSPACE, "bot.log")
+FIXER_LOG = os.path.join(WORKSPACE, "auto_fixer.log")
+BOT_MANAGER = os.path.join(WORKSPACE, "bot-manager.sh")
 CHECK_INTERVAL = 15 * 60  # 15 минути
 
 # Логване

@@ -9,8 +9,10 @@ import os
 
 class DailyReportEngine:
     def __init__(self):
-        self.stats_path = '/workspaces/Crypto-signal-bot/bot_stats.json'
-        self.reports_path = '/workspaces/Crypto-signal-bot/daily_reports.json'
+        # Динамични пътища
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.stats_path = os.path.join(base_dir, 'bot_stats.json')
+        self.reports_path = os.path.join(base_dir, 'daily_reports.json')
     
     def generate_daily_report(self):
         """Генерира дневен отчет с анализ на точност и успеваемост"""
