@@ -1,4 +1,4 @@
-name: Deploy to DigitalOcean
+name: Deploy to DigitalOcean Droplet
 
 on:
   push:
@@ -20,18 +20,31 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan ${{ secrets.DO_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy to Droplet
+      - name: Deploy to Droplet (systemd)
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }} "
-            cd crypto_bot;
-            git pull origin main;
-            pm2 stop all || true;
-            pm2 delete all || true;
-            pm2 start index.js --name crypto-bot;
-            sudo systemctl restart crypto-bot.service;
-          "
+          ssh -i ~/.ssh/id_rsa ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }} '
+            set -euo pipefail
 
-      # SUCCESS MESSAGE
+            # go to correct project dir
+            cd /root/Crypto-signal-bot || { echo "project dir not found"; exit 2; }
+
+            # update code
+            git fetch --prune origin main
+            git reset --hard origin/main
+
+            # update venv deps if present
+            if [ -f venv/bin/activate ]; then
+              source venv/bin/activate
+              pip install -r requirements.txt
+              deactivate || true
+            fi
+
+            # restart systemd service
+            sudo systemctl daemon-reload || true
+            sudo systemctl restart crypto-bot.service
+            sudo systemctl is-active --quiet crypto-bot.service && echo "service ok" || { echo "service failed"; exit 3; }
+          '
+
       - name: Notify success
         if: success()
         run: |
@@ -39,7 +52,6 @@ jobs:
           -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
           -d text="✅ Deployment е изпълнен успешно!"
 
-      # FAILURE MESSAGE
       - name: Notify failure
         if: failure()
         run: |
