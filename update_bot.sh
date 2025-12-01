@@ -71,9 +71,20 @@ echo ""
 
 # Стъпка 3: Проверка за промени в requirements.txt
 echo -e "${YELLOW}📦 Проверка на dependencies...${NC}"
+
+# Проверка за venv
+if [ -d "venv" ]; then
+    echo -e "${BLUE}  🐍 Намерен virtual environment - активиране...${NC}"
+    source venv/bin/activate
+    PIP_CMD="pip"
+else
+    echo -e "${YELLOW}  ⚠️ Няма venv - използване на system pip${NC}"
+    PIP_CMD="pip3 --break-system-packages"
+fi
+
 if git diff --name-only "$CURRENT_COMMIT" "$LATEST_COMMIT" | grep -q "requirements.txt"; then
     echo -e "${YELLOW}  ⚠️ requirements.txt е променен - обновяване на dependencies...${NC}"
-    pip3 install -r requirements.txt --upgrade
+    $PIP_CMD install -r requirements.txt --upgrade
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}  ✓ Dependencies обновени успешно${NC}"
     else
@@ -82,22 +93,17 @@ if git diff --name-only "$CURRENT_COMMIT" "$LATEST_COMMIT" | grep -q "requiremen
     fi
 else
     echo -e "${GREEN}  ✓ requirements.txt не е променен${NC}"
+    # Все пак инсталирай ако липсват
+    $PIP_CMD install -r requirements.txt --quiet 2>/dev/null || true
 fi
 echo ""
 
-# Стъпка 4: Рестартиране на PM2
-echo -e "${YELLOW}🔄 Рестартиране на бота с PM2...${NC}"
+# Стъпка 4: Рестартиране на PM2/Manual
+echo -e "${YELLOW}🔄 Рестартиране на бота...${NC}"
 
 # Проверка дали PM2 е инсталиран
-if ! command -v pm2 &> /dev/null; then
-    echo -e "${RED}  ✗ PM2 не е инсталиран!${NC}"
-    echo -e "${YELLOW}  💡 Инсталирайте PM2: npm install -g pm2${NC}"
-    exit 1
-fi
-
-# Проверка дали ботът е стартиран с PM2
-if pm2 list | grep -q "crypto-bot"; then
-    echo -e "${YELLOW}  ⟳ Рестартиране на crypto-bot...${NC}"
+if command -v pm2 &> /dev/null && pm2 list | grep -q "crypto-bot"; then
+    echo -e "${YELLOW}  ⟳ Рестартиране с PM2...${NC}"
     pm2 restart crypto-bot
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}  ✓ Бот рестартиран успешно${NC}"
@@ -106,16 +112,23 @@ if pm2 list | grep -q "crypto-bot"; then
         exit 1
     fi
 else
-    echo -e "${YELLOW}  🚀 Стартиране на бота за първи път...${NC}"
-    if [ -f "ecosystem.config.js" ]; then
-        pm2 start ecosystem.config.js
+    echo -e "${YELLOW}  ⟳ Manual рестартиране...${NC}"
+    pkill -f bot.py || true
+    sleep 2
+    
+    if [ -d "venv" ]; then
+        nohup venv/bin/python bot.py > bot.log 2>&1 &
+        echo -e "${GREEN}  ✓ Бот стартиран с venv/bin/python${NC}"
     else
-        pm2 start bot.py --name crypto-bot --interpreter python3
+        nohup python3 bot.py > bot.log 2>&1 &
+        echo -e "${GREEN}  ✓ Бот стартиран с python3${NC}"
     fi
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}  ✓ Бот стартиран успешно${NC}"
+    
+    sleep 3
+    if pgrep -f "bot.py" > /dev/null; then
+        echo -e "${GREEN}  ✓ Бот работи успешно${NC}"
     else
-        echo -e "${RED}  ✗ Грешка при стартиране${NC}"
+        echo -e "${RED}  ✗ Бот не стартира - проверете bot.log${NC}"
         exit 1
     fi
 fi
@@ -123,12 +136,29 @@ echo ""
 
 # Стъпка 5: Проверка на статуса
 echo -e "${YELLOW}📊 Статус на бота:${NC}"
-pm2 status crypto-bot
+if command -v pm2 &> /dev/null && pm2 list | grep -q "crypto-bot"; then
+    pm2 status crypto-bot
+else
+    if pgrep -f "bot.py" > /dev/null; then
+        PID=$(pgrep -f "bot.py")
+        echo -e "${GREEN}  ✓ Bot running (PID: $PID)${NC}"
+    else
+        echo -e "${RED}  ✗ Bot не работи${NC}"
+    fi
+fi
 echo ""
 
 # Стъпка 6: Показване на логове (последните 20 реда)
 echo -e "${YELLOW}📜 Последни логове:${NC}"
-pm2 logs crypto-bot --lines 20 --nostream
+if command -v pm2 &> /dev/null && pm2 list | grep -q "crypto-bot"; then
+    pm2 logs crypto-bot --lines 20 --nostream
+else
+    if [ -f "bot.log" ]; then
+        tail -20 bot.log
+    else
+        echo -e "${YELLOW}  ⚠️ Няма логове${NC}"
+    fi
+fi
 echo ""
 
 # Финален резултат
