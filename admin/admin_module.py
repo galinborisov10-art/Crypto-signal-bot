@@ -11,12 +11,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-ADMIN_DIR = "/workspaces/Crypto-signal-bot/admin"
-ADMIN_PASSWORD_FILE = f"{ADMIN_DIR}/admin_password.json"
-REPORTS_DIR = f"{ADMIN_DIR}/reports"
-DAILY_REPORTS_DIR = f"{REPORTS_DIR}/daily"
-WEEKLY_REPORTS_DIR = f"{REPORTS_DIR}/weekly"
-MONTHLY_REPORTS_DIR = f"{REPORTS_DIR}/monthly"
+# Динамична конфигурация на пътища
+ADMIN_DIR = os.path.dirname(os.path.abspath(__file__))
+ADMIN_PASSWORD_FILE = os.path.join(ADMIN_DIR, "admin_password.json")
+REPORTS_DIR = os.path.join(ADMIN_DIR, "reports")
+DAILY_REPORTS_DIR = os.path.join(REPORTS_DIR, "daily")
+WEEKLY_REPORTS_DIR = os.path.join(REPORTS_DIR, "weekly")
+MONTHLY_REPORTS_DIR = os.path.join(REPORTS_DIR, "monthly")
 
 # Създай необходимите директории
 for dir_path in [ADMIN_DIR, REPORTS_DIR, DAILY_REPORTS_DIR, WEEKLY_REPORTS_DIR, MONTHLY_REPORTS_DIR]:
@@ -66,7 +67,7 @@ def is_admin(chat_id):
 
 def load_trade_history():
     """Зареди история на трейдовете"""
-    stats_file = "/workspaces/Crypto-signal-bot/bot_stats.json"
+    stats_file = os.path.join(os.path.dirname(ADMIN_DIR), "bot_stats.json")
     if os.path.exists(stats_file):
         with open(stats_file, 'r') as f:
             return json.load(f)

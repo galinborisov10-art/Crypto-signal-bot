@@ -21,6 +21,11 @@ from dotenv import load_dotenv
 # Зареди .env файла
 load_dotenv()
 
+# ================= DYNAMIC PATH CONFIGURATION =================
+# Вземи базовата директория на проекта (където се намира bot.py)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ADMIN_DIR = os.path.join(BASE_DIR, 'admin')
+
 # Логване
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -32,7 +37,7 @@ logger = logging.getLogger(__name__)
 import sys
 # test deploy
 
-sys.path.append('/workspaces/Crypto-signal-bot/admin')
+sys.path.append(ADMIN_DIR)
 try:
     from admin_module import (
         set_admin_password, verify_admin_password, is_admin,
@@ -125,7 +130,7 @@ if not TELEGRAM_BOT_TOKEN:
 BINANCE_DEPTH_URL = "https://api.binance.com/api/v3/depth"
 
 # Win-rate tracking file
-STATS_FILE = "/workspaces/Crypto-signal-bot/bot_stats.json"
+STATS_FILE = os.path.join(BASE_DIR, "bot_stats.json")
 
 # CoinMarketCap API ключ (опционално - за повече новини)
 CMC_API_KEY = ""  # Може да добавите CoinMarketCap API ключ тук
@@ -2740,7 +2745,7 @@ async def monitor_breaking_news():
             return
         
         # Проверка дали имаме cache файл за последно видените новини
-        cache_file = "/workspaces/Crypto-signal-bot/news_cache.json"
+        cache_file = os.path.join(BASE_DIR, "news_cache.json")
         seen_news = set()
         
         if os.path.exists(cache_file):
@@ -4455,7 +4460,7 @@ async def task_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         # Покажи текущи задачи
         try:
-            with open('/workspaces/Crypto-signal-bot/copilot_tasks.json', 'r') as f:
+            with open(os.path.join(BASE_DIR, 'copilot_tasks.json'), 'r') as f:
                 import json
                 data = json.load(f)
                 
@@ -4523,7 +4528,7 @@ async def dailyreport_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Зареди текущите задачи
         try:
-            with open('/workspaces/Crypto-signal-bot/copilot_tasks.json', 'r') as f:
+            with open(os.path.join(BASE_DIR, 'copilot_tasks.json'), 'r') as f:
                 data = json.load(f)
         except:
             data = {'tasks': [], 'completed': []}
@@ -4543,11 +4548,11 @@ async def dailyreport_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data['tasks'].append(new_task)
         
         # Запази обратно
-        with open('/workspaces/Crypto-signal-bot/copilot_tasks.json', 'w') as f:
+        with open(os.path.join(BASE_DIR, 'copilot_tasks.json'), 'w') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         
         # Създай и файл с по-детайлна информация
-        task_file = f"/workspaces/Crypto-signal-bot/COPILOT_TASK_{new_task['id']}.md"
+        task_file = os.path.join(BASE_DIR, f"COPILOT_TASK_{new_task['id']}.md")
         task_content = f"""# 🤖 COPILOT TASK #{new_task['id']}
 
 ## 📋 Task Details
@@ -6321,7 +6326,7 @@ async def admin_docs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Моля, влезте с /admin_login ПАРОЛА")
         return
     
-    readme_path = "/workspaces/Crypto-signal-bot/admin/README.md"
+    readme_path = os.path.join(ADMIN_DIR, "README.md")
     
     try:
         with open(readme_path, 'rb') as f:
@@ -6424,7 +6429,7 @@ def run_diagnostics():
         try:
             import subprocess
             result = subprocess.run(
-                [sys.executable, '/workspaces/Crypto-signal-bot/admin/diagnostics.py'],
+                [sys.executable, os.path.join(ADMIN_DIR, 'diagnostics.py')],
                 capture_output=True,
                 text=True
             )
@@ -6552,7 +6557,7 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             problems_found.append("Ботът НЕ работи")
             await update.message.reply_text("⚠️ Ботът НЕ работи - стартирам...")
             
-            subprocess.run(["/workspaces/Crypto-signal-bot/bot-manager.sh", "start"], timeout=30)
+            subprocess.run([os.path.join(BASE_DIR, "bot-manager.sh"), "start"], timeout=30)
             problems_fixed.append("Стартиран неработещ бот")
             await update.message.reply_text("✅ Ботът стартиран")
         
@@ -6604,7 +6609,7 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Рестартирай бота
                 await update.message.reply_text("🔄 Рестартирам бота...")
-                subprocess.run(["/workspaces/Crypto-signal-bot/bot-manager.sh", "restart"], timeout=30)
+                subprocess.run([os.path.join(BASE_DIR, "bot-manager.sh"), "restart"], timeout=30)
             else:
                 await update.message.reply_text(f"❌ Грешка при инсталация: {result.stderr[:500]}")
         else:
@@ -6630,7 +6635,7 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             subprocess.run(["pkill", "-9", "-f", "python3.*bot.py"], timeout=10)
             import time
             time.sleep(3)
-            subprocess.run(["/workspaces/Crypto-signal-bot/bot-manager.sh", "start"], timeout=30)
+            subprocess.run([os.path.join(BASE_DIR, "bot-manager.sh"), "start"], timeout=30)
             
             problems_fixed.append("Отстранени множество инстанции")
             await update.message.reply_text("✅ Конфликтът е отстранен")
@@ -6640,7 +6645,7 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 4. Анализ на логове
         await update.message.reply_text("4️⃣ Анализирам логове за грешки...")
         
-        log_file = "/workspaces/Crypto-signal-bot/bot.log"
+        log_file = os.path.join(BASE_DIR, "bot.log")
         if os.path.exists(log_file):
             with open(log_file, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
@@ -6664,7 +6669,7 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if connection_errors > 10:
                 problems_found.append(f"Connection errors: {connection_errors}")
                 await update.message.reply_text("⚠️ Много connection errors - рестартирам бота...")
-                subprocess.run(["/workspaces/Crypto-signal-bot/bot-manager.sh", "restart"], timeout=30)
+                subprocess.run([os.path.join(BASE_DIR, "bot-manager.sh"), "restart"], timeout=30)
                 problems_fixed.append("Рестартиран поради connection errors")
         else:
             await update.message.reply_text("⚠️ Няма log файл")
@@ -6686,7 +6691,7 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             problems_found.append("Auto-fixer НЕ работи")
             await update.message.reply_text("⚠️ Auto-fixer НЕ работи - стартирам...")
             
-            subprocess.run(["/workspaces/Crypto-signal-bot/auto-fixer-manager.sh", "start"], timeout=30)
+            subprocess.run([os.path.join(BASE_DIR, "auto-fixer-manager.sh"), "start"], timeout=30)
             problems_fixed.append("Стартиран Auto-fixer")
             await update.message.reply_text("✅ Auto-fixer стартиран")
         
@@ -6761,7 +6766,7 @@ async def update_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result = subprocess.run(
                 command,
                 shell=True,
-                cwd='/workspaces/Crypto-signal-bot',
+                cwd=BASE_DIR,
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -7238,9 +7243,10 @@ async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if REPORTS_AVAILABLE:
         try:
             import os
-            if os.path.exists('/workspaces/Crypto-signal-bot/daily_reports.json'):
+            daily_reports_path = os.path.join(BASE_DIR, 'daily_reports.json')
+            if os.path.exists(daily_reports_path):
                 import json
-                with open('/workspaces/Crypto-signal-bot/daily_reports.json', 'r') as f:
+                with open(daily_reports_path, 'r') as f:
                     data = json.load(f)
                     reports_count = len(data.get('reports', []))
                     overview += f"📊 Запазени дневни отчети: {reports_count}\n"
@@ -7255,9 +7261,10 @@ async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if BACKTEST_AVAILABLE:
         try:
             import os
-            if os.path.exists('/workspaces/Crypto-signal-bot/backtest_results.json'):
+            backtest_path = os.path.join(BASE_DIR, 'backtest_results.json')
+            if os.path.exists(backtest_path):
                 import json
-                with open('/workspaces/Crypto-signal-bot/backtest_results.json', 'r') as f:
+                with open(backtest_path, 'r') as f:
                     data = json.load(f)
                     bt_count = len(data.get('backtests', []))
                     overview += f"📉 Back-test резултати: {bt_count}\n"
@@ -7325,8 +7332,9 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             import os
             import json
-            if os.path.exists('/workspaces/Crypto-signal-bot/backtest_results.json'):
-                with open('/workspaces/Crypto-signal-bot/backtest_results.json', 'r') as f:
+            backtest_path = os.path.join(BASE_DIR, 'backtest_results.json')
+            if os.path.exists(backtest_path):
+                with open(backtest_path, 'r') as f:
                     data = json.load(f)
                     backtests = data.get('backtests', [])
                     
