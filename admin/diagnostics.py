@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Настройки
+# Get parent directory of diagnostics.py (which is in admin/) to get the project root
 BASE_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ADMIN_DIR = BASE_DIR / "admin"
 LOG_FILE = ADMIN_DIR / "diagnostics.log"

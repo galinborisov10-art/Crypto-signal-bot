@@ -2,6 +2,7 @@
 Тестване на новите функции за отчети
 """
 
+import os
 import json
 from datetime import datetime, timedelta
 from daily_reports import DailyReportEngine
