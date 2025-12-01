@@ -1,11 +1,12 @@
 #!/bin/bash
 # install_dependencies.sh - Script to detect and install missing critical packages
-# Location: /root/Crypto-signal-bot/install_dependencies.sh
+# Location: Can be run from any location
 
 set -e
 
-# Configuration
-PROJECT_DIR="/root/Crypto-signal-bot"
+# Configuration - detect project directory dynamically
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${CRYPTO_BOT_DIR:-$SCRIPT_DIR}"
 
 # Colors for output
 RED='\033[0;31m'

@@ -1,10 +1,13 @@
+// Get the project directory from environment variable or default to /root/Crypto-signal-bot
+const PROJECT_DIR = process.env.CRYPTO_BOT_DIR || '/root/Crypto-signal-bot';
+
 module.exports = {
   apps: [
     {
       name: 'crypto-bot',
       script: 'bot.py',
       interpreter: 'python3',
-      cwd: '/root/Crypto-signal-bot',
+      cwd: PROJECT_DIR,
       instances: 1,
       autorestart: true,
       watch: false,

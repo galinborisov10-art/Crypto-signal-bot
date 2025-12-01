@@ -1,11 +1,12 @@
 #!/bin/bash
 # update_bot.sh - Script to update, install dependencies, and restart the Crypto Signal Bot
-# Location: /root/Crypto-signal-bot/update_bot.sh
+# Location: Can be run from any location
 
 set -e
 
-# Configuration
-PROJECT_DIR="/root/Crypto-signal-bot"
+# Configuration - detect project directory dynamically
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${CRYPTO_BOT_DIR:-$SCRIPT_DIR}"
 LOG_FILE="${PROJECT_DIR}/update_bot.log"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 

@@ -6427,7 +6427,6 @@ def run_diagnostics():
     """Изпълнява диагностика на системата"""
     if DIAGNOSTICS_AVAILABLE:
         try:
-            import subprocess
             result = subprocess.run(
                 [sys.executable, os.path.join(BASE_DIR, 'admin', 'diagnostics.py')],
                 capture_output=True,
@@ -6533,9 +6532,6 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     await update.message.reply_text("🔍 <b>ТЕСТВАНЕ НА СИСТЕМАТА</b>\n\n⏳ Анализирам и отстранявам грешки...", parse_mode='HTML')
-    
-    import subprocess
-    import os
     
     problems_found = []
     problems_fixed = []
@@ -6837,7 +6833,6 @@ async def update_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await update.message.reply_text(f"⚙️ Изпълнявам: <code>{command}</code>", parse_mode='HTML')
             
-            import subprocess
             result = subprocess.run(
                 command,
                 shell=True,

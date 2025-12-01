@@ -60,12 +60,14 @@ jobs:
           ssh-keyscan -H ${{ secrets.DO_HOST }} >> ~/.ssh/known_hosts
 
       - name: Deploy to DigitalOcean
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/root/Crypto-signal-bot' }}
         run: |
           ssh ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }} << 'DEPLOY_SCRIPT'
             set -e
             
-            # Navigate to project directory
-            cd /root/Crypto-signal-bot
+            # Navigate to project directory (can be configured via DEPLOY_PATH secret)
+            cd ${DEPLOY_PATH:-/root/Crypto-signal-bot}
             
             # Reset to match remote
             git fetch origin main
