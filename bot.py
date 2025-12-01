@@ -6533,29 +6533,21 @@ async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔐 Тази команда е само за owner-а на бота.")
         return
     
-    # Проверка за парола - ако няма аргумент, питай за парола
-    if not context.args:
-        await update.message.reply_text(
-            "🔐 <b>AUTO-UPDATE - Admin парола изискана</b>\n\n"
-            "Изпрати: /auto_update <парола>\n\n"
-            "Или използвай:\n"
-            "<code>/auto_update 8109</code>",
-            parse_mode='HTML'
-        )
-        return
+    # Ако има парола - провери я, иначе продължи (owner е достатъчен)
+    if context.args:
+        password = context.args[0]
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        
+        if password_hash != ADMIN_PASSWORD_HASH:
+            await update.message.reply_text(
+                "❌ <b>ГРЕШНА ПАРОЛА</b>\n\n"
+                "Достъпът е отказан.\n\n"
+                "Или използвай само: /auto_update (без парола)",
+                parse_mode='HTML'
+            )
+            return
     
-    # Провери паролата
-    password = context.args[0]
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
-    if password_hash != ADMIN_PASSWORD_HASH:
-        await update.message.reply_text(
-            "❌ <b>ГРЕШНА ПАРОЛА</b>\n\n"
-            "Достъпът е отказан.",
-            parse_mode='HTML'
-        )
-        return
-    
+    # Owner може да update-ва с или без парола
     await update.message.reply_text(
         "🔄 <b>AUTO-UPDATE СТАРТИРАН</b>\n\n"
         "⏳ Изпълнявам актуализация от GitHub...",
