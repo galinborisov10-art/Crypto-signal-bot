@@ -7480,7 +7480,15 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Автоматична диагностика всеки ден в 01:00 UTC (03:00 BG време)
 
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .get_updates_pool_timeout(30)
+        .get_updates_read_timeout(30)
+        .get_updates_write_timeout(30)
+        .get_updates_connect_timeout(30)
+        .build()
+    )
     
     # Регистрирай команди
     app.add_handler(CommandHandler("start", start_cmd))
@@ -7736,11 +7744,7 @@ def main():
             logger.info(f"🤖 Стартиране на polling (опит {retry_count + 1}/{max_retries})...")
             app.run_polling(
                 drop_pending_updates=True, 
-                allowed_updates=Update.ALL_TYPES,
-                pool_timeout=30,
-                read_timeout=30,
-                write_timeout=30,
-                connect_timeout=30
+                allowed_updates=Update.ALL_TYPES
             )
             break  # Успешен старт
         except KeyboardInterrupt:
