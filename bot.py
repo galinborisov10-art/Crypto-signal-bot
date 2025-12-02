@@ -68,6 +68,15 @@ except ImportError as e:
     LUXALGO_ICT_AVAILABLE = False
     logger.warning(f"⚠️ LuxAlgo + ICT module not available: {e}")
 
+# Risk Management System
+try:
+    from risk_management import get_risk_manager
+    RISK_MANAGER_AVAILABLE = True
+    logger.info("✅ Risk Management System loaded")
+except ImportError as e:
+    RISK_MANAGER_AVAILABLE = False
+    logger.warning(f"⚠️ Risk Management not available: {e}")
+
 # RSS и HTML парсинг за новини
 try:
     import feedparser
@@ -2374,6 +2383,24 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         # ========== HAS GOOD TRADE CHECK ==========
         has_good_trade = signal in ['BUY', 'SELL'] and confidence >= 55  # Balanced threshold
         
+        # ========== RISK MANAGEMENT VALIDATION ==========
+        risk_validation = None
+        if has_good_trade and RISK_MANAGER_AVAILABLE and tp_price and sl_price:
+            try:
+                rm = get_risk_manager()
+                risk_validation = rm.validate_trade(
+                    entry=current_price,
+                    tp=tp_price,
+                    sl=sl_price,
+                    signal=signal,
+                    journal_file='trading_journal.json'
+                )
+                # Override has_good_trade if risk check fails
+                if not risk_validation['approved']:
+                    has_good_trade = False
+            except Exception as e:
+                logger.warning(f"Risk validation error: {e}")
+        
         return {
             'signal': signal,
             'confidence': confidence,
@@ -2397,7 +2424,8 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
             'adaptive_tp_sl': calculate_adaptive_tp_sl(symbol, volatility, timeframe),
             'luxalgo_ict': luxalgo_ict,  # Full analysis data
             'time_factor': get_time_of_day_factor(),
-            'liquidity': check_liquidity(volume_24h, avg_volume, volume_ratio)
+            'liquidity': check_liquidity(volume_24h, avg_volume, volume_ratio),
+            'risk_validation': risk_validation  # Risk Management results
         }
     
     except Exception as e:
@@ -2761,7 +2789,14 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /settings sl 1.5 - Промени Stop Loss на 1.5%
 /settings rr 2.5 - Промени Risk/Reward
 
-<b>7. Таймфрейм:</b>
+<b>7. 🛡️ Risk Management:</b>
+/risk - Виж настройки и статус
+/risk set portfolio 5000 - Задай баланс
+/risk set max_loss 8 - Дневен лимит (%)
+/risk set max_trades 3 - Макс паралелни trades
+/risk set min_rr 2.5 - Минимален R/R
+
+<b>8. Таймфрейм:</b>
 /timeframe - Покажи опции
 /timeframe 4h - Избери 4-часов таймфрейм
 
@@ -5006,6 +5041,98 @@ Timeframe: {settings['timeframe']}
         await update.message.reply_text("❌ Непознат параметър. Използвай: tp, sl, rr")
 
 
+async def risk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🛡️ Risk Management настройки и статус"""
+    logger.info(f"User {update.effective_user.id} executed /risk")
+    
+    if not RISK_MANAGER_AVAILABLE:
+        await update.message.reply_text(
+            "⚠️ Risk Management системата не е налична.\n"
+            "Моля, проверете дали файлът risk_management.py е наличен."
+        )
+        return
+    
+    try:
+        rm = get_risk_manager()
+        
+        # Ако има аргументи - update настройки
+        if context.args:
+            if len(context.args) < 3 or context.args[0] != 'set':
+                await update.message.reply_text(
+                    "❌ Невалидна команда!\n\n"
+                    "Използвай:\n"
+                    "/risk - Показва настройки\n"
+                    "/risk set portfolio 5000 - Задай баланс\n"
+                    "/risk set max_loss 8 - Дневен лимит\n"
+                    "/risk set max_trades 3 - Макс паралелни\n"
+                    "/risk set min_rr 2.5 - Минимален R/R"
+                )
+                return
+            
+            # Update settings
+            setting_name = context.args[1]
+            try:
+                setting_value = float(context.args[2])
+            except:
+                await update.message.reply_text("❌ Стойността трябва да е число!")
+                return
+            
+            # Map user-friendly names to config keys
+            setting_map = {
+                'portfolio': 'portfolio_balance',
+                'max_loss': 'max_daily_loss_pct',
+                'max_trades': 'max_concurrent_trades',
+                'min_rr': 'min_risk_reward_ratio',
+                'risk_pct': 'risk_per_trade_pct',
+                'max_position': 'max_position_size_pct'
+            }
+            
+            if setting_name not in setting_map:
+                await update.message.reply_text(
+                    f"❌ Непозната настройка: {setting_name}\n\n"
+                    f"Налични: {', '.join(setting_map.keys())}"
+                )
+                return
+            
+            config_key = setting_map[setting_name]
+            rm.config[config_key] = setting_value
+            rm.save_config(rm.config)
+            
+            await update.message.reply_text(
+                f"✅ <b>Настройката е обновена!</b>\n\n"
+                f"{setting_name} = {setting_value}\n\n"
+                f"Използвай /risk за преглед на всички настройки.",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Покажи настройки и текущ статус
+        settings_text = rm.get_settings_summary()
+        
+        # Добави текущ дневен P/L и активни trades
+        can_trade, daily_pnl, daily_msg = rm.check_daily_loss_limit('trading_journal.json')
+        can_open, active_count, active_msg = rm.check_concurrent_trades('trading_journal.json')
+        
+        status_text = "\n📊 <b>ТЕКУЩ СТАТУС:</b>\n\n"
+        status_text += f"{daily_msg}\n"
+        status_text += f"{active_msg}\n"
+        
+        if not can_trade:
+            status_text += f"\n🛑 <b>ТЪРГОВИЯТА Е СПРЯНА - дневният лимит е достигнат!</b>\n"
+        elif not can_open:
+            status_text += f"\n⚠️ <b>Не можеш да отвориш нови trades - лимитът е достигнат!</b>\n"
+        else:
+            status_text += f"\n✅ <b>Можеш да търгуваш</b>\n"
+        
+        full_message = settings_text + status_text
+        
+        await update.message.reply_text(full_message, parse_mode='HTML')
+    
+    except Exception as e:
+        logger.error(f"Грешка в /risk: {e}")
+        await update.message.reply_text("❌ Грешка при зареждане на Risk Management")
+
+
 async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Избор на таймфрейм"""
     settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
@@ -6344,6 +6471,39 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             message += f"🛡️ <b>STOP LOSS:</b> ${sl_price:,.4f} (<b>{-sl_pct:.1f}%</b>)\n"
             message += f"⚖️ <b>Risk/Reward:</b> 1:{settings['rr']}\n\n"
+            
+            # === RISK MANAGEMENT ===
+            risk_val = analysis.get('risk_validation')
+            if risk_val:
+                if risk_val['approved']:
+                    message += f"🛡️ <b>RISK MANAGEMENT:</b> ✅ Одобрен\n"
+                else:
+                    message += f"🛡️ <b>RISK MANAGEMENT:</b> 🛑 НЕ одобрен\n"
+                
+                # Position size
+                message += f"💰 Position size: ${risk_val['position_size_usd']:,.2f}\n"
+                
+                # Risk/Reward actual
+                if risk_val['risk_reward_ratio'] > 0:
+                    rr_emoji = "✅" if risk_val['risk_reward_ratio'] >= 2.0 else "⚠️"
+                    message += f"⚖️ R/R фактически: 1:{risk_val['risk_reward_ratio']:.2f} {rr_emoji}\n"
+                
+                # Daily P/L
+                daily_pnl = risk_val['daily_pnl_pct']
+                if daily_pnl != 0:
+                    pnl_emoji = "🟢" if daily_pnl > 0 else "🔴"
+                    message += f"📊 Дневен P/L: {daily_pnl:+.2f}% {pnl_emoji}\n"
+                
+                # Active trades
+                message += f"📈 Активни trades: {risk_val['active_trades']}/5\n"
+                
+                # Errors (if any)
+                if risk_val['errors']:
+                    message += f"\n⛔ <b>БЛОКИРАЩИ ПРОБЛЕМИ:</b>\n"
+                    for error in risk_val['errors']:
+                        message += f"  {error}\n"
+                
+                message += "\n"
             
             # === MULTI-TIMEFRAME КОНСЕНСУС ===
             # DEBUG: Покажи какво е върнато от MTF анализа
@@ -8003,6 +8163,7 @@ def main():
     app.add_handler(CommandHandler("alerts", alerts_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("journal", journal_cmd))  # 📝 Trading Journal с ML
+    app.add_handler(CommandHandler("risk", risk_cmd))  # 🛡️ Risk Management
     
     # Deploy команда (само owner)
     app.add_handler(CommandHandler("deploy", deploy_cmd))  # 🚀 Auto-deploy от GitHub
