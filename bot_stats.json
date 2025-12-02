@@ -1,9 +1,9 @@
 {
-  "total_signals": 21,
+  "total_signals": 26,
   "by_symbol": {
     "BTCUSDT": {
-      "count": 16,
-      "BUY": 8,
+      "count": 21,
+      "BUY": 13,
       "SELL": 8
     },
     "XRPUSDT": {
@@ -14,10 +14,10 @@
   },
   "by_timeframe": {
     "2h": {
-      "count": 2
+      "count": 5
     },
     "4h": {
-      "count": 10
+      "count": 12
     },
     "5m": {
       "count": 3
@@ -37,13 +37,13 @@
   },
   "by_confidence": {
     "80-89": {
-      "count": 5
+      "count": 6
     },
     "60-69": {
-      "count": 7
+      "count": 8
     },
     "70-79": {
-      "count": 7
+      "count": 10
     },
     "90-99": {
       "count": 2
@@ -627,6 +627,56 @@
       "entry_price": 86390.99,
       "tp_price": 82175.10968800001,
       "sl_price": 87946.02782
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "type": "BUY",
+      "confidence": 68,
+      "timestamp": "2025-12-02T00:48:43.074233",
+      "entry_price": 86440.0,
+      "tp_price": 89292.51999999999,
+      "sl_price": 85350.856
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "2h",
+      "type": "BUY",
+      "confidence": 72,
+      "timestamp": "2025-12-02T00:54:36.514238",
+      "entry_price": 86545.65,
+      "tp_price": 88925.655375,
+      "sl_price": 85636.920675
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "2h",
+      "type": "BUY",
+      "confidence": 72,
+      "timestamp": "2025-12-02T00:55:21.705309",
+      "entry_price": 86517.57,
+      "tp_price": 88896.80317500001,
+      "sl_price": 85609.13551500002
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "2h",
+      "type": "BUY",
+      "confidence": 80,
+      "timestamp": "2025-12-02T00:57:48.410035",
+      "entry_price": 86492.64,
+      "tp_price": 88871.1876,
+      "sl_price": 85584.46728
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "type": "BUY",
+      "confidence": 78,
+      "timestamp": "2025-12-02T00:58:46.116506",
+      "entry_price": 86469.97,
+      "tp_price": 89323.47901,
+      "sl_price": 85380.448378
     }
   ]
 }

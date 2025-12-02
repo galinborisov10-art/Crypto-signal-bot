@@ -2,8 +2,8 @@
   "metadata": {
     "created": "2025-11-25",
     "version": "1.0",
-    "total_trades": 96,
-    "last_updated": "2025-12-02T00:35:48.774815"
+    "total_trades": 98,
+    "last_updated": "2025-12-02T01:00:49.206069"
   },
   "trades": [
     {
@@ -2891,6 +2891,58 @@
         "ma_50": 136.10399999999998,
         "volume_ratio": 0.14232722403588888,
         "volatility": 3.806833310451115,
+        "trend": null,
+        "btc_correlation": null,
+        "sentiment": null
+      },
+      "notes": []
+    },
+    {
+      "id": 97,
+      "timestamp": "2025-12-02T00:50:48.842391",
+      "symbol": "ETHUSDT",
+      "timeframe": "4h",
+      "signal": "BUY",
+      "confidence": 72,
+      "entry_price": 2794.53,
+      "tp_price": 2878.3659000000002,
+      "sl_price": 2738.6394,
+      "status": "PENDING",
+      "outcome": null,
+      "profit_loss_pct": null,
+      "closed_at": null,
+      "conditions": {
+        "rsi": 27.736706768298305,
+        "ma_20": 2934.6445,
+        "ma_50": 2946.4408000000003,
+        "volume_ratio": 0.14340628860045612,
+        "volatility": 3.5328996177738414,
+        "trend": null,
+        "btc_correlation": null,
+        "sentiment": null
+      },
+      "notes": []
+    },
+    {
+      "id": 98,
+      "timestamp": "2025-12-02T01:00:49.206055",
+      "symbol": "BNBUSDT",
+      "timeframe": "4h",
+      "signal": "SELL",
+      "confidence": 95,
+      "entry_price": 826.59,
+      "tp_price": 801.7923,
+      "sl_price": 843.1218,
+      "status": "PENDING",
+      "outcome": null,
+      "profit_loss_pct": null,
+      "closed_at": null,
+      "conditions": {
+        "rsi": 31.81640472280867,
+        "ma_20": 860.6850000000001,
+        "ma_50": 867.3353999999999,
+        "volume_ratio": 0.13942699722508653,
+        "volatility": 3.2536876130020653,
         "trend": null,
         "btc_correlation": null,
         "sentiment": null

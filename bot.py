@@ -3498,6 +3498,7 @@ async def analyze_coin_performance(coin_data, include_external=True):
         high = float(coin_data['highPrice'])
         low = float(coin_data['lowPrice'])
         quote_volume = float(coin_data['quoteVolume'])
+        volume = float(coin_data.get('volume', quote_volume))  # Добави volume
         trades = int(coin_data['count'])
         
         # CoinGecko mapping
@@ -4729,20 +4730,6 @@ async def task_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Създай ново задание
     task_description = ' '.join(context.args)
-
-
-async def dailyreport_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Генерира ръчен дневен отчет за сигнали"""
-    logger.info(f"User {update.effective_user.id} executed /dailyreport")
-    
-    await update.message.reply_text("📊 Генерирам дневен отчет за сигнали...")
-    
-    try:
-        await send_daily_signal_report(context.bot)
-        await update.message.reply_text("✅ Дневният отчет е изпратен!")
-    except Exception as e:
-        logger.error(f"Грешка при /dailyreport: {e}")
-        await update.message.reply_text(f"❌ Грешка при генериране на отчет: {e}")
     
     # Запази в JSON файл
     try:
@@ -4829,6 +4816,20 @@ When completed, user will receive Telegram notification.
     except Exception as e:
         logger.error(f"Грешка при създаване на task: {e}")
         await update.message.reply_text(f"❌ Грешка: {e}")
+
+
+async def dailyreport_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Генерира ръчен дневен отчет за сигнали"""
+    logger.info(f"User {update.effective_user.id} executed /dailyreport")
+    
+    await update.message.reply_text("📊 Генерирам дневен отчет за сигнали...")
+    
+    try:
+        await send_daily_signal_report(context.bot)
+        await update.message.reply_text("✅ Дневният отчет е изпратен!")
+    except Exception as e:
+        logger.error(f"Грешка при /dailyreport: {e}")
+        await update.message.reply_text(f"❌ Грешка при генериране на отчет: {e}")
 
 
 async def send_bot_status_notification(bot, status, reason=""):
@@ -5711,6 +5712,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start_cmd(update, context)
     elif text == "🔄 Обновяване":
         # Redirect to /auto_update for owner
+        user_id = update.effective_user.id
         if user_id == OWNER_CHAT_ID:
             await auto_update_cmd(update, context)
         else:
@@ -7984,13 +7986,14 @@ def main():
     
     # APScheduler за автоматични отчети (стартира СЛЕД app.run_polling)
     if ADMIN_MODULE_AVAILABLE:
-        async def schedule_reports():
+        async def schedule_reports(application):
             """Инициализира APScheduler след стартиране на бота"""
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
             scheduler = AsyncIOScheduler(timezone="UTC")
             
             # Дневен отчет всеки ден в 08:00 UTC
             scheduler.add_job(
-                lambda: asyncio.create_task(send_auto_report('daily', app.bot)),
+                lambda: asyncio.create_task(send_auto_report('daily', application.bot)),
                 'cron',
                 hour=8,
                 minute=0
@@ -7998,7 +8001,7 @@ def main():
             
             # Седмичен отчет всеки понеделник в 08:00 UTC
             scheduler.add_job(
-                lambda: asyncio.create_task(send_auto_report('weekly', app.bot)),
+                lambda: asyncio.create_task(send_auto_report('weekly', application.bot)),
                 'cron',
                 day_of_week='mon',
                 hour=8,
@@ -8007,7 +8010,7 @@ def main():
             
             # Месечен отчет на 1-во число в 08:00 UTC
             scheduler.add_job(
-                lambda: asyncio.create_task(send_auto_report('monthly', app.bot)),
+                lambda: asyncio.create_task(send_auto_report('monthly', application.bot)),
                 'cron',
                 day=1,
                 hour=8,
@@ -8018,7 +8021,7 @@ def main():
             async def send_daily_signal_report_job():
                 """Wrapper за изпращане на дневен отчет за сигнали"""
                 try:
-                    await send_daily_signal_report(app.bot)
+                    await send_daily_signal_report(application.bot)
                 except Exception as e:
                     logger.error(f"❌ Daily signal report error: {e}")
             
@@ -8038,7 +8041,7 @@ def main():
                         report = report_engine.generate_daily_report()
                         if report:
                             message = report_engine.format_report_message(report)
-                            await app.bot.send_message(
+                            await application.bot.send_message(
                                 chat_id=OWNER_CHAT_ID,
                                 text=f"🔔 <b>ДОПЪЛНИТЕЛЕН ДНЕВЕН ОТЧЕТ</b>\n\n{message}",
                                 parse_mode='HTML',
