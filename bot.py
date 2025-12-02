@@ -126,6 +126,26 @@ except ImportError as e:
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '7003238836'))
 
+# ================= USER ACCESS CONTROL =================
+# Списък с разрешени потребители (Owner винаги е разрешен)
+ALLOWED_USERS = {OWNER_CHAT_ID}  # Само owner по подразбиране
+
+# Файл за съхранение на разрешените потребители
+ALLOWED_USERS_FILE = "/workspaces/Crypto-signal-bot/allowed_users.json"
+
+# Зареди разрешени потребители от файл (ако има)
+try:
+    if os.path.exists(ALLOWED_USERS_FILE):
+        with open(ALLOWED_USERS_FILE, 'r') as f:
+            loaded_users = json.load(f)
+            ALLOWED_USERS.update(loaded_users)
+            logger.info(f"✅ Заредени {len(ALLOWED_USERS)} разрешени потребители")
+except Exception as e:
+    logger.warning(f"⚠️ Грешка при зареждане на разрешени потребители: {e}")
+
+# Tracking на опити за препращане/достъп
+ACCESS_ATTEMPTS = {}  # {user_id: {'username': str, 'attempts': int, 'last_attempt': datetime}}
+
 # Admin парола hash (от .env или fallback към хардкоднат hash)
 ADMIN_PASSWORD_HASH = os.getenv('ADMIN_PASSWORD_HASH', hashlib.sha256("8109".encode()).hexdigest())
 
@@ -2545,8 +2565,71 @@ def calculate_tp_probability(analysis, tp_price, signal):
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Стартира бота"""
-    logger.info(f"User {update.effective_user.id} executed /start")
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "Unknown"
+    first_name = update.effective_user.first_name or "Unknown"
     
+    logger.info(f"User {user_id} (@{username}) executed /start")
+    
+    # ================= FORWARD DETECTION =================
+    # Провери дали съобщението е препратено (forward)
+    if update.message.forward_date or update.message.forward_from or update.message.forward_from_chat:
+        # Ако НЕ Е owner-а - блокирай препращането
+        if user_id != OWNER_CHAT_ID:
+            # Запиши опита за препращане
+            if user_id not in ACCESS_ATTEMPTS:
+                ACCESS_ATTEMPTS[user_id] = {
+                    'username': username,
+                    'first_name': first_name,
+                    'attempts': 0,
+                    'last_attempt': datetime.now(timezone.utc)
+                }
+            
+            ACCESS_ATTEMPTS[user_id]['attempts'] += 1
+            ACCESS_ATTEMPTS[user_id]['last_attempt'] = datetime.now(timezone.utc)
+            
+            # Алертирай owner-а
+            try:
+                alert_text = f"""🚨 <b>ОПИТ ЗА ПРЕПРАЩАНЕ</b>
+
+👤 <b>Потребител:</b> {first_name}
+🆔 <b>User ID:</b> <code>{user_id}</code>
+📱 <b>Username:</b> @{username}
+🔢 <b>Опит №:</b> {ACCESS_ATTEMPTS[user_id]['attempts']}
+⏰ <b>Време:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}
+
+⚠️ <b>Действие:</b> Опит да препрати бота към друг потребител
+
+💡 <b>За да одобриш:</b>
+<code>/approve {user_id}</code>
+
+🚫 <b>За да блокираш:</b>
+<code>/block {user_id}</code>"""
+                
+                await context.bot.send_message(
+                    chat_id=OWNER_CHAT_ID,
+                    text=alert_text,
+                    parse_mode='HTML'
+                )
+            except Exception as e:
+                logger.error(f"Грешка при изпращане на алерт до owner: {e}")
+            
+            # Изпрати съобщение на потребителя
+            forward_blocked_text = """🚫 <b>ПРЕПРАЩАНЕТО Е БЛОКИРАНО</b>
+
+❌ Само owner-ът има право да споделя този бот.
+
+💡 Ако искате достъп до бота, моля попитайте owner-а директно.
+
+⚠️ <b>ВАЖНО:</b> Не можете да препращате (forward) този бот към други потребители.
+
+Вашият опит е записан и owner-ът е уведомен."""
+            
+            await update.message.reply_text(forward_blocked_text, parse_mode='HTML')
+            logger.warning(f"🚫 Блокиран опит за forward от @{username} (ID:{user_id})")
+            return
+    
+    # Нормален старт (не е препратен или е от owner)
     welcome_text = """
 🤖 <b>Добре дошли в Crypto Signal Bot!</b>
 
@@ -2653,7 +2736,12 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /update - 🔄 Обновяване на бота от GitHub
 /restart - 🔄 Рестартиране на бота
 
-<b>🧪 10. Система:</b>
+<b>👥 10. User Access (Owner):</b>
+/approve USER_ID - Одобри нов потребител
+/block USER_ID - Блокирай потребител
+/users - Списък с разрешени потребители
+
+<b>🧪 11. Система:</b>
 /test - Тест и автоматично отстраняване на грешки
 /stats - Статистика на бота
 /journal - 📝 Trading Journal с ML самообучение
@@ -6974,6 +7062,160 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка при тестване: {str(e)}", parse_mode='HTML')
 
 
+# ================= USER ACCESS MANAGEMENT =================
+
+async def approve_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Одобрява нов потребител (само owner)"""
+    user_id = update.effective_user.id
+    
+    # Само owner може да одобрява
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("🔐 Тази команда е само за owner-а.")
+        return
+    
+    # Провери аргументи
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Моля, посочи User ID:\n\n"
+            "<code>/approve USER_ID</code>\n\n"
+            "Пример: <code>/approve 123456789</code>",
+            parse_mode='HTML'
+        )
+        return
+    
+    try:
+        new_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Невалиден User ID")
+        return
+    
+    # Добави в allowed users
+    ALLOWED_USERS.add(new_user_id)
+    
+    # Запази във файл
+    try:
+        with open(ALLOWED_USERS_FILE, 'w') as f:
+            json.dump(list(ALLOWED_USERS), f, indent=2)
+        
+        # Вземи информация за потребителя ако има
+        user_info = ACCESS_ATTEMPTS.get(new_user_id, {})
+        username = user_info.get('username', 'Unknown')
+        first_name = user_info.get('first_name', 'Unknown')
+        
+        success_msg = f"""✅ <b>ПОТРЕБИТЕЛ ОДОБРЕН</b>
+
+👤 <b>Име:</b> {first_name}
+🆔 <b>User ID:</b> <code>{new_user_id}</code>
+📱 <b>Username:</b> @{username}
+
+✅ Потребителят вече може да използва бота."""
+        
+        await update.message.reply_text(success_msg, parse_mode='HTML')
+        
+        # Изтрий от опити
+        if new_user_id in ACCESS_ATTEMPTS:
+            del ACCESS_ATTEMPTS[new_user_id]
+        
+        logger.info(f"✅ Owner одобри потребител {new_user_id} (@{username})")
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Грешка при запис: {e}")
+        logger.error(f"Грешка при одобрение на потребител: {e}")
+
+
+async def block_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Блокира потребител (само owner)"""
+    user_id = update.effective_user.id
+    
+    # Само owner може да блокира
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("🔐 Тази команда е само за owner-а.")
+        return
+    
+    # Провери аргументи
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Моля, посочи User ID:\n\n"
+            "<code>/block USER_ID</code>\n\n"
+            "Пример: <code>/block 123456789</code>",
+            parse_mode='HTML'
+        )
+        return
+    
+    try:
+        blocked_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Невалиден User ID")
+        return
+    
+    # Не може да блокираш owner-а
+    if blocked_user_id == OWNER_CHAT_ID:
+        await update.message.reply_text("❌ Не можеш да блокираш owner-а!")
+        return
+    
+    # Махни от allowed users
+    if blocked_user_id in ALLOWED_USERS:
+        ALLOWED_USERS.discard(blocked_user_id)
+        
+        # Запази във файл
+        try:
+            with open(ALLOWED_USERS_FILE, 'w') as f:
+                json.dump(list(ALLOWED_USERS), f, indent=2)
+            
+            user_info = ACCESS_ATTEMPTS.get(blocked_user_id, {})
+            username = user_info.get('username', 'Unknown')
+            first_name = user_info.get('first_name', 'Unknown')
+            
+            block_msg = f"""🚫 <b>ПОТРЕБИТЕЛ БЛОКИРАН</b>
+
+👤 <b>Име:</b> {first_name}
+🆔 <b>User ID:</b> <code>{blocked_user_id}</code>
+📱 <b>Username:</b> @{username}
+
+❌ Достъпът е отнет."""
+            
+            await update.message.reply_text(block_msg, parse_mode='HTML')
+            logger.info(f"🚫 Owner блокира потребител {blocked_user_id} (@{username})")
+            
+        except Exception as e:
+            await update.message.reply_text(f"❌ Грешка при запис: {e}")
+            logger.error(f"Грешка при блокиране на потребител: {e}")
+    else:
+        await update.message.reply_text(f"ℹ️ Потребител {blocked_user_id} не е в списъка с разрешени.")
+
+
+async def list_users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показва списък с разрешени потребители (само owner)"""
+    user_id = update.effective_user.id
+    
+    # Само owner може да вижда списъка
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("🔐 Тази команда е само за owner-а.")
+        return
+    
+    users_list = f"""👥 <b>РАЗРЕШЕНИ ПОТРЕБИТЕЛИ</b>
+
+📊 <b>Общо:</b> {len(ALLOWED_USERS)}
+
+<b>User IDs:</b>
+"""
+    
+    for uid in sorted(ALLOWED_USERS):
+        if uid == OWNER_CHAT_ID:
+            users_list += f"• <code>{uid}</code> 👑 (Owner)\n"
+        else:
+            users_list += f"• <code>{uid}</code>\n"
+    
+    # Покажи и опитите за достъп
+    if ACCESS_ATTEMPTS:
+        users_list += f"\n\n🚨 <b>ОПИТИ ЗА ДОСТЪП:</b> {len(ACCESS_ATTEMPTS)}\n\n"
+        for uid, info in sorted(ACCESS_ATTEMPTS.items(), key=lambda x: x[1]['attempts'], reverse=True):
+            users_list += f"• @{info['username']} (<code>{uid}</code>)\n"
+            users_list += f"  └ Опити: {info['attempts']}\n"
+    
+    await update.message.reply_text(users_list, parse_mode='HTML')
+
+
 async def admin_mode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command mode handler - изисква admin парола"""
     user_id = update.effective_user.id
@@ -7678,6 +7920,11 @@ def main():
     app.add_handler(CommandHandler("update", update_bot_cmd))  # Обновяване на бота
     app.add_handler(CommandHandler("auto_update", auto_update_cmd))  # 🔄 Auto-update от GitHub
     app.add_handler(CommandHandler("test", test_system_cmd))  # Тест и автоматично отстраняване на грешки
+    
+    # User Access Management команди (само owner)
+    app.add_handler(CommandHandler("approve", approve_user_cmd))  # Одобри потребител
+    app.add_handler(CommandHandler("block", block_user_cmd))  # Блокирай потребител
+    app.add_handler(CommandHandler("users", list_users_cmd))  # Списък с потребители
     
     # ML, Back-testing, Reports команди
     app.add_handler(CommandHandler("backtest", backtest_cmd))  # Back-testing
