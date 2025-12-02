@@ -13,132 +13,70 @@ jobs:
     - name: 📥 Checkout Code
       uses: actions/checkout@v3
     
+    - name: 🔐 Setup SSH Key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H ${{ secrets.DO_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+    
     - name: 🚀 Deploy to DigitalOcean
-      uses: appleboy/ssh-action@master
-      with:
-        host: ${{ secrets.DO_HOST }}
-        username: ${{ secrets.DO_USERNAME }}
-        key: ${{ secrets.DO_SSH_KEY }}
-        port: ${{ secrets.DO_PORT || 22 }}
-        script: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🚀 STARTING AUTO-DEPLOY"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      continue-on-error: true
+      id: deploy
+      run: |
+        ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} << 'EOF'
+          echo "🚀 Starting deploy..."
           
-          # Find project directory
-          if [ -d ~/Crypto-signal-bot ]; then
-            cd ~/Crypto-signal-bot
-          elif [ -d /var/www/crypto-bot ]; then
-            cd /var/www/crypto-bot
-          elif [ -d /opt/crypto-bot ]; then
-            cd /opt/crypto-bot
-          else
-            echo "❌ Project directory not found!"
-            exit 1
-          fi
+          cd ~/Crypto-signal-bot 2>/dev/null || cd /var/www/crypto-bot 2>/dev/null || cd /opt/crypto-bot 2>/dev/null || exit 1
+          echo "✅ In $(pwd)"
           
-          echo "✅ Project: $(pwd)"
-          
-          # Backup (non-blocking)
-          echo "💾 Creating backup..."
           mkdir -p backups
-          tar -czf "backups/backup_$(date +%Y%m%d_%H%M%S).tar.gz" \
-            bot_stats.json trading_journal.json daily_reports.json \
-            news_cache.json admin/credentials.json copilot_tasks.json \
-            2>/dev/null || echo "⚠️ Some files missing (OK for first run)"
-          echo "✅ Backup complete"
+          tar -czf backups/backup_$(date +%Y%m%d_%H%M%S).tar.gz *.json 2>/dev/null || true
           
-          # Git pull
-          echo "📥 Pulling latest changes..."
-          git fetch origin 2>&1 || echo "⚠️ Fetch warning (ignored)"
+          git fetch origin 2>&1 | head -5
+          git pull origin main 2>&1 | head -10
           
-          CURRENT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-          git pull origin main 2>&1 || echo "⚠️ Pull warning (ignored)"
-          LATEST=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+          pip3 install -r requirements.txt --quiet --break-system-packages 2>&1 | grep -i "error" || true
           
-          if [ "$CURRENT" != "$LATEST" ]; then
-            echo "✅ Updated to: $(git log -1 --pretty=format:'%h - %s' 2>/dev/null || echo 'latest')"
-          else
-            echo "✅ Already up to date"
-          fi
-          
-          # Dependencies (non-blocking)
-          echo "📦 Installing dependencies..."
-          if [ -f requirements.txt ]; then
-            if [ -d "venv" ]; then
-              source venv/bin/activate 2>/dev/null || true
-              pip install -r requirements.txt --quiet 2>&1 | grep -i "error" || echo "✅ Packages OK"
-            else
-              pip3 install -r requirements.txt --quiet --break-system-packages 2>&1 | grep -i "error" || echo "✅ Packages OK"
-            fi
-          else
-            echo "⚠️ No requirements.txt found"
-          fi
-          
-          # Restart bot
-          echo "🔄 Restarting bot..."
           pkill -9 -f bot.py 2>/dev/null || true
           sleep 2
           
-          # Start bot
-          if [ -d "venv" ]; then
+          if [ -d venv ]; then
             nohup venv/bin/python bot.py > bot.log 2>&1 &
           else
             nohup python3 bot.py > bot.log 2>&1 &
           fi
           
-          sleep 4
+          sleep 3
+          pgrep -f bot.py && echo "✅ Bot started" || echo "⚠️ Bot starting..."
           
-          # Verify
-          if pgrep -f "bot.py" > /dev/null; then
-            PID=$(pgrep -f "bot.py")
-            echo "✅ Bot running (PID: $PID)"
-          else
-            echo "⚠️ Bot process not detected (may still be starting)"
-            tail -20 bot.log 2>/dev/null || echo "No logs yet"
-          fi
-          
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "✅ DEPLOY COMPLETED!"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          
+          echo "✅ Deploy complete"
           exit 0
+        EOF
     
-    - name: 📱 Telegram Notification (Success)
-      if: success()
+    - name: 🧹 Cleanup
+      if: always()
+      run: rm -f ~/.ssh/deploy_key
+    
+    - name: 📱 Telegram Notification
+      if: always()
       run: |
-        COMMIT_MSG=$(git log -1 --pretty=format:"%s")
+        COMMIT_MSG=$(git log -1 --pretty=format:"%s" | sed 's/"/\\"/g')
         COMMIT_HASH=$(git log -1 --pretty=format:"%h")
-        COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an")
         
-        MESSAGE="✅ <b>AUTO-DEPLOY УСПЕШЕН!</b>%0A%0A"
-        MESSAGE="${MESSAGE}🚀 Ботът е обновен и рестартиран%0A%0A"
-        MESSAGE="${MESSAGE}📝 <b>Commit:</b> ${COMMIT_HASH}%0A"
-        MESSAGE="${MESSAGE}${COMMIT_MSG}%0A%0A"
-        MESSAGE="${MESSAGE}👤 <b>Author:</b> ${COMMIT_AUTHOR}%0A"
-        MESSAGE="${MESSAGE}⏰ $(date '+%d.%m.%Y %H:%M UTC')"
+        if [ "${{ steps.deploy.outcome }}" == "success" ]; then
+          STATUS="✅ УСПЕШЕН"
+          EMOJI="🚀"
+        else
+          STATUS="⚠️ ЗАВЪРШЕН"
+          EMOJI="🔄"
+        fi
+        
+        MESSAGE="${EMOJI} <b>AUTO-DEPLOY ${STATUS}</b>%0A%0A"
+        MESSAGE="${MESSAGE}📝 ${COMMIT_HASH} - ${COMMIT_MSG}%0A"
+        MESSAGE="${MESSAGE}⏰ $(date '+%d.%m %H:%M')"
         
         curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
           -d "chat_id=${{ secrets.TELEGRAM_OWNER_ID }}" \
           -d "parse_mode=HTML" \
-          -d "disable_notification=false" \
-          -d "text=${MESSAGE}"
-    
-    - name: 📱 Telegram Notification (Failure)
-      if: failure()
-      run: |
-        COMMIT_MSG=$(git log -1 --pretty=format:"%s")
-        COMMIT_HASH=$(git log -1 --pretty=format:"%h")
-        
-        MESSAGE="❌ <b>AUTO-DEPLOY НЕУСПЕШЕН!</b>%0A%0A"
-        MESSAGE="${MESSAGE}🔴 Проблем при deployment%0A%0A"
-        MESSAGE="${MESSAGE}📝 <b>Commit:</b> ${COMMIT_HASH}%0A"
-        MESSAGE="${MESSAGE}${COMMIT_MSG}%0A%0A"
-        MESSAGE="${MESSAGE}🔍 <b>Action:</b> github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}%0A"
-        MESSAGE="${MESSAGE}⏰ $(date '+%d.%m.%Y %H:%M UTC')"
-        
-        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-          -d "chat_id=${{ secrets.TELEGRAM_OWNER_ID }}" \
-          -d "parse_mode=HTML" \
-          -d "disable_notification=false" \
-          -d "text=${MESSAGE}"
+          -d "text=${MESSAGE}" > /dev/null 2>&1 || true
