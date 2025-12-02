@@ -5490,266 +5490,336 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         logger.info("⚠️ Няма сигнали с увереност ≥60% (или всички вече изпратени)")
         return
     
-    # Изпрати най-добрия сигнал
-    symbol = best_signal['symbol']
-    timeframe = best_signal['timeframe']
-    analysis = best_signal['analysis']
-    klines = best_signal['klines']
-    price = analysis['price']
-    signal_emoji = "🟢" if analysis['signal'] == 'BUY' else "🔴"
+    # 🎯 ИЗПРАТИ ТОП 3 СИГНАЛА (независимо от монета/timeframe)
+    # Сортирай всички добри сигнали по confidence
+    all_good_signals = []
     
-    # ✅ Сигналът вече е валидиран по-рано, можем да го изпратим
-    
-    # 📝 АВТОМАТИЧНО ЛОГВАНЕ В JOURNAL - 24/7 събиране на данни
-    if best_confidence >= 65:
-        try:
-            analysis_data = {
-                'rsi': analysis.get('rsi'),
-                'ma_20': analysis.get('ma_20'),
-                'ma_50': analysis.get('ma_50'),
-                'volume_ratio': analysis.get('volume_ratio'),
-                'volatility': analysis.get('volatility'),
-                'trend': analysis.get('trend'),
-                'btc_correlation': None,
-                'sentiment': None
+    # Събери ВСИЧКИ сигнали ≥60% от цикъла по-горе
+    for symbol in SYMBOLS.values():
+        for timeframe in timeframes_to_check:
+            params_24h = {'symbol': symbol}
+            data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
+            
+            if isinstance(data_24h, list):
+                data_24h = next((s for s in data_24h if s['symbol'] == symbol), None)
+            
+            if not data_24h:
+                continue
+            
+            params_klines = {
+                'symbol': symbol,
+                'interval': timeframe,
+                'limit': 100
             }
+            klines = await fetch_json(BINANCE_KLINES_URL, params_klines)
             
-            journal_id = log_trade_to_journal(
-                symbol=symbol,
-                timeframe=timeframe,  # От best_signal
-                signal_type=analysis['signal'],
-                confidence=best_confidence,
-                entry_price=price,
-                tp_price=analysis['tp'],
-                sl_price=analysis['sl'],
-                analysis_data=analysis_data
-            )
+            if not klines:
+                continue
             
-            if journal_id:
-                logger.info(f"📝 AUTO-SIGNAL logged to ML journal (ID: {journal_id}) - 24/7 data collection")
-        except Exception as e:
-            logger.error(f"Journal logging error in auto-signal: {e}")
+            analysis = analyze_signal(data_24h, klines)
+            
+            if not analysis or analysis['signal'] == 'NEUTRAL':
+                continue
+            
+            if is_signal_already_sent(symbol, analysis['signal'], timeframe, analysis['confidence'], cooldown_minutes=60):
+                continue
+            
+            if 'tp' not in analysis or 'sl' not in analysis:
+                price = analysis['price']
+                if analysis['signal'] == 'BUY':
+                    analysis['tp'] = price * 1.03
+                    analysis['sl'] = price * 0.98
+                else:
+                    analysis['tp'] = price * 0.97
+                    analysis['sl'] = price * 1.02
+            
+            if analysis['confidence'] >= 60:
+                all_good_signals.append({
+                    'symbol': symbol,
+                    'timeframe': timeframe,
+                    'analysis': analysis,
+                    'data_24h': data_24h,
+                    'klines': klines,
+                    'confidence': analysis['confidence']
+                })
     
-    # === ГЕНЕРИРАЙ ГРАФИКА ===
-    chart_file = None
-    try:
-        luxalgo_ict_data = analysis.get('luxalgo_ict')
-        chart_file = generate_chart(
-            klines,
-            symbol,
-            analysis['signal'],
-            price,
-            analysis['tp'],
-            analysis['sl'],
-            timeframe,  # От best_signal
-            luxalgo_ict_data
-        )
-        if chart_file:
-            logger.info(f"📊 Графика генерирана успешно за {symbol}")
-        else:
-            logger.warning(f"⚠️ Графика не е генерирана за {symbol}")
-    except Exception as e:
-        logger.error(f"❌ Грешка при генериране на графика за {symbol}: {e}")
-        chart_file = None
+    if not all_good_signals:
+        logger.info("⚠️ Няма добри сигнали за изпращане")
+        return
     
-    # === ОПРЕДЕЛИ ТИП НА ТРЕЙДА ===
-    # timeframe вече е взет от best_signal
-    if timeframe in ['1m', '5m', '15m', '30m']:
-        trade_type = "⚡ Краткосрочен"
-        trade_duration = "Минути до часове"
-    elif timeframe in ['1h', '2h', '4h']:
-        trade_type = "📊 Средносрочен"
-        trade_duration = "Часове до дни"
-    elif timeframe in ['1d', '1w', '1M']:
-        trade_type = "📈 Дългосрочен"
-        trade_duration = "Дни до седмици"
-    else:
-        trade_type = "📊 Средносрочен"
-        trade_duration = "Часове до дни"
+    # Сортирай по confidence (най-високите първи)
+    all_good_signals.sort(key=lambda x: x['confidence'], reverse=True)
     
-    # === ПЪЛЕН АНАЛИЗ КАТО РЪЧНИТЕ СИГНАЛИ ===
+    # Вземи топ 3 (или колкото има)
+    signals_to_send = all_good_signals[:3]
     
-    # Изчисли оптимални entry zones
-    entry_zones = calculate_entry_zones(
-        price, analysis['signal'], 
-        analysis['closes'], analysis['highs'], analysis['lows'],
-        analysis
-    )
+    logger.info(f"📤 Изпращам {len(signals_to_send)} топ сигнал(а)")
     
-    # Quality badge за entry zone
-    quality = entry_zones['quality']
-    if quality >= 75:
-        quality_badge = "💎"
-        quality_text = "Отлично качество"
-    elif quality >= 60:
-        quality_badge = "🟢"
-        quality_text = "Добро качество"
-    elif quality >= 45:
-        quality_badge = "🟡"
-        quality_text = "Средно качество"
-    else:
-        quality_badge = "🟠"
-        quality_text = "Ниско качество"
-    
-    # Създай съобщението
-    message = f"🤖 <b>АВТОМАТИЧЕН СИГНАЛ</b> 🤖\n"
-    message += f"━━━━━━━━━━━━━━━━━━━━\n\n"
-    message += f"{signal_emoji} <b>{symbol}: {analysis['signal']}</b>\n"
-    message += f"📊 Увереност: <b>{analysis['confidence']}%</b>\n"
-    message += f"💰 Цена: <b>${price:,.4f}</b>\n"
-    message += f"📈 24ч промяна: <b>{analysis['change_24h']:+.2f}%</b>\n"
-    message += f"⏰ Таймфрейм: <b>{timeframe}</b>\n"
-    message += f"🎯 Тип трейд: <b>{trade_type}</b>\n"
-    message += f"⏱️ Продължителност: <i>{trade_duration}</i>\n\n"
-    
-    # Entry zones
-    message += f"🎯 <b>Нива за търговия:</b>\n\n"
-    message += f"📍 <b>ENTRY ZONE</b> {quality_badge}:\n"
-    message += f"   Качество: <b>{quality_text} ({entry_zones['quality']}/100)</b>\n"
-    message += f"   Оптимален вход: <b>${entry_zones['best_entry']:,.4f}</b>\n"
-    message += f"   Зона: ${entry_zones['entry_zone_low']:,.4f} - ${entry_zones['entry_zone_high']:,.4f}\n"
-    
-    # Support/Resistance levels
-    if entry_zones.get('support_level'):
-        message += f"   Support: ${entry_zones['support_level']:,.4f}\n"
-    if entry_zones.get('resistance_level'):
-        message += f"   Resistance: ${entry_zones['resistance_level']:,.4f}\n"
-    
-    # Entry recommendation
-    if entry_zones.get('recommendation'):
-        message += f"\n   💡 {entry_zones['recommendation']}\n\n"
-    else:
-        message += "\n"
-    
-    # TP/SL
-    tp_pct = ((analysis['tp'] - price) / price) * 100
-    sl_pct = ((analysis['sl'] - price) / price) * 100
-    
-    message += f"🎯 <b>TAKE PROFIT:</b> ${analysis['tp']:,.4f} ({tp_pct:+.2f}%)\n"
-    
-    # TP вероятност и време
-    if 'tp_probability' in analysis:
-        tp_prob = analysis['tp_probability']
-        prob_interpretation = ""
-        if tp_prob >= 70:
-            prob_interpretation = "Много високо"
-        elif tp_prob >= 50:
-            prob_interpretation = "Високо"
-        elif tp_prob >= 30:
-            prob_interpretation = "Средно"
-        else:
-            prob_interpretation = "Ниско"
-        message += f"   🎲 Вероятност: {tp_prob:.0f}% ({prob_interpretation})\n"
-    
-    # Изчисли очаквано време за TP базирано на таймфрейм и волатилност
-    if 'expected_time_hours' in analysis:
-        expected_hours = analysis['expected_time_hours']
-    else:
-        # Изчисли базирано на таймфрейм и целева промяна
-        target_change_pct = abs(tp_pct)
+    # Изпрати всеки сигнал
+    for idx, sig in enumerate(signals_to_send):
+        symbol = sig['symbol']
+        timeframe = sig['timeframe']
+        analysis = sig['analysis']
+        klines = sig['klines']
+        price = analysis['price']
+        signal_emoji = "🟢" if analysis['signal'] == 'BUY' else "🔴"
+        best_confidence = sig['confidence']
         
-        # Волатилност на база 24ч промяна
-        volatility_24h = abs(analysis.get('change_24h', 2.0))
+        # Header
+        header = f" #{idx+1}" if len(signals_to_send) > 1 else ""
         
-        # Таймфрейм множители
-        tf_multipliers = {
-            '1m': 0.5, '5m': 1, '15m': 2, '30m': 4,
-            '1h': 8, '2h': 12, '4h': 24,
-            '1d': 48, '1w': 168, '1M': 720
-        }
+        # ✅ Сигналът вече е валидиран по-рано, можем да го изпратим
         
-        base_hours = tf_multipliers.get(timeframe, 12)
-        
-        # Изчисли очаквано време
-        if volatility_24h > 0:
-            # Колко време е нужно да се постигне целта при текуща волатилност
-            expected_hours = (target_change_pct / volatility_24h) * 24
-            # Коригирай според таймфрейма
-            expected_hours = min(expected_hours, base_hours * 3)
-            expected_hours = max(expected_hours, base_hours * 0.5)
-        else:
-            expected_hours = base_hours
-    
-    # Форматирай времето красиво
-    if expected_hours < 1:
-        time_str = f"{int(expected_hours * 60)} минути"
-    elif expected_hours < 24:
-        time_str = f"{expected_hours:.1f} часа"
-    elif expected_hours < 168:
-        days = expected_hours / 24
-        time_str = f"{days:.1f} дни"
-    else:
-        weeks = expected_hours / 168
-        time_str = f"{weeks:.1f} седмици"
-    
-    message += f"   ⏱️ Очаквано време за цел: <b>~{time_str}</b>\n"
-    
-    message += f"\n🛡️ <b>STOP LOSS:</b> ${analysis['sl']:,.4f} ({sl_pct:+.2f}%)\n"
-    
-    # Risk/Reward
-    risk = abs(price - analysis['sl'])
-    reward = abs(analysis['tp'] - price)
-    rr_ratio = reward / risk if risk > 0 else 0
-    message += f"⚖️ Risk/Reward: 1:{rr_ratio:.2f}\n\n"
-    
-    # Причини за сигнала
-    if analysis['reasons']:
-        message += "💡 <b>Причини:</b>\n"
-        for reason in analysis['reasons'][:3]:  # Първите 3 причини
-            message += f"   • {reason}\n"
-    
-    try:
-        # Изпрати съобщението С ГРАФИКА (ако е налична)
-        if chart_file:
+        # 📝 АВТОМАТИЧНО ЛОГВАНЕ В JOURNAL - 24/7 събиране на данни
+        if best_confidence >= 65:
             try:
-                if isinstance(chart_file, BytesIO):
-                    # BytesIO обект - изпрати директно с пълното съобщение
-                    chart_file.seek(0)
-                    await context.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=chart_file,
-                        caption=f"🔔🔊 {message}",
-                        parse_mode='HTML',
-                        disable_notification=False  # Със звук за важни сигнали
-                    )
-                elif isinstance(chart_file, str) and os.path.exists(chart_file):
-                    # Файлов път - отвори и изпрати
-                    with open(chart_file, 'rb') as photo:
+                analysis_data = {
+                    'rsi': analysis.get('rsi'),
+                    'ma_20': analysis.get('ma_20'),
+                    'ma_50': analysis.get('ma_50'),
+                    'volume_ratio': analysis.get('volume_ratio'),
+                    'volatility': analysis.get('volatility'),
+                    'trend': analysis.get('trend'),
+                    'btc_correlation': None,
+                    'sentiment': None
+                }
+            
+                journal_id = log_trade_to_journal(
+                    symbol=symbol,
+                    timeframe=timeframe,  # От best_signal
+                    signal_type=analysis['signal'],
+                    confidence=best_confidence,
+                    entry_price=price,
+                    tp_price=analysis['tp'],
+                    sl_price=analysis['sl'],
+                    analysis_data=analysis_data
+                )
+            
+                if journal_id:
+                    logger.info(f"📝 AUTO-SIGNAL logged to ML journal (ID: {journal_id}) - 24/7 data collection")
+            except Exception as e:
+                logger.error(f"Journal logging error in auto-signal: {e}")
+    
+        # === ГЕНЕРИРАЙ ГРАФИКА ===
+        chart_file = None
+        try:
+            luxalgo_ict_data = analysis.get('luxalgo_ict')
+            chart_file = generate_chart(
+                klines,
+                symbol,
+                analysis['signal'],
+                price,
+                analysis['tp'],
+                analysis['sl'],
+                timeframe,  # От best_signal
+                luxalgo_ict_data
+            )
+            if chart_file:
+                logger.info(f"📊 Графика генерирана успешно за {symbol}")
+            else:
+                logger.warning(f"⚠️ Графика не е генерирана за {symbol}")
+        except Exception as e:
+            logger.error(f"❌ Грешка при генериране на графика за {symbol}: {e}")
+            chart_file = None
+    
+        # === ОПРЕДЕЛИ ТИП НА ТРЕЙДА ===
+        # timeframe вече е взет от best_signal
+        if timeframe in ['1m', '5m', '15m', '30m']:
+            trade_type = "⚡ Краткосрочен"
+            trade_duration = "Минути до часове"
+        elif timeframe in ['1h', '2h', '4h']:
+            trade_type = "📊 Средносрочен"
+            trade_duration = "Часове до дни"
+        elif timeframe in ['1d', '1w', '1M']:
+            trade_type = "📈 Дългосрочен"
+            trade_duration = "Дни до седмици"
+        else:
+            trade_type = "📊 Средносрочен"
+            trade_duration = "Часове до дни"
+    
+        # === ПЪЛЕН АНАЛИЗ КАТО РЪЧНИТЕ СИГНАЛИ ===
+    
+        # Изчисли оптимални entry zones
+        entry_zones = calculate_entry_zones(
+            price, analysis['signal'], 
+            analysis['closes'], analysis['highs'], analysis['lows'],
+            analysis
+        )
+    
+        # Quality badge за entry zone
+        quality = entry_zones['quality']
+        if quality >= 75:
+            quality_badge = "💎"
+            quality_text = "Отлично качество"
+        elif quality >= 60:
+            quality_badge = "🟢"
+            quality_text = "Добро качество"
+        elif quality >= 45:
+            quality_badge = "🟡"
+            quality_text = "Средно качество"
+        else:
+            quality_badge = "🟠"
+            quality_text = "Ниско качество"
+    
+        # Създай съобщението
+        message = f"🤖 <b>АВТОМАТИЧЕН СИГНАЛ</b> 🤖\n"
+        message += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        message += f"{signal_emoji} <b>{symbol}: {analysis['signal']}</b>\n"
+        message += f"📊 Увереност: <b>{analysis['confidence']}%</b>\n"
+        message += f"💰 Цена: <b>${price:,.4f}</b>\n"
+        message += f"📈 24ч промяна: <b>{analysis['change_24h']:+.2f}%</b>\n"
+        message += f"⏰ Таймфрейм: <b>{timeframe}</b>\n"
+        message += f"🎯 Тип трейд: <b>{trade_type}</b>\n"
+        message += f"⏱️ Продължителност: <i>{trade_duration}</i>\n\n"
+    
+        # Entry zones
+        message += f"🎯 <b>Нива за търговия:</b>\n\n"
+        message += f"📍 <b>ENTRY ZONE</b> {quality_badge}:\n"
+        message += f"   Качество: <b>{quality_text} ({entry_zones['quality']}/100)</b>\n"
+        message += f"   Оптимален вход: <b>${entry_zones['best_entry']:,.4f}</b>\n"
+        message += f"   Зона: ${entry_zones['entry_zone_low']:,.4f} - ${entry_zones['entry_zone_high']:,.4f}\n"
+    
+        # Support/Resistance levels
+        if entry_zones.get('support_level'):
+            message += f"   Support: ${entry_zones['support_level']:,.4f}\n"
+        if entry_zones.get('resistance_level'):
+            message += f"   Resistance: ${entry_zones['resistance_level']:,.4f}\n"
+    
+        # Entry recommendation
+        if entry_zones.get('recommendation'):
+            message += f"\n   💡 {entry_zones['recommendation']}\n\n"
+        else:
+            message += "\n"
+    
+        # TP/SL
+        tp_pct = ((analysis['tp'] - price) / price) * 100
+        sl_pct = ((analysis['sl'] - price) / price) * 100
+    
+        message += f"🎯 <b>TAKE PROFIT:</b> ${analysis['tp']:,.4f} ({tp_pct:+.2f}%)\n"
+    
+        # TP вероятност и време
+        if 'tp_probability' in analysis:
+            tp_prob = analysis['tp_probability']
+            prob_interpretation = ""
+            if tp_prob >= 70:
+                prob_interpretation = "Много високо"
+            elif tp_prob >= 50:
+                prob_interpretation = "Високо"
+            elif tp_prob >= 30:
+                prob_interpretation = "Средно"
+            else:
+                prob_interpretation = "Ниско"
+            message += f"   🎲 Вероятност: {tp_prob:.0f}% ({prob_interpretation})\n"
+    
+        # Изчисли очаквано време за TP базирано на таймфрейм и волатилност
+        if 'expected_time_hours' in analysis:
+            expected_hours = analysis['expected_time_hours']
+        else:
+            # Изчисли базирано на таймфрейм и целева промяна
+            target_change_pct = abs(tp_pct)
+        
+            # Волатилност на база 24ч промяна
+            volatility_24h = abs(analysis.get('change_24h', 2.0))
+        
+            # Таймфрейм множители
+            tf_multipliers = {
+                '1m': 0.5, '5m': 1, '15m': 2, '30m': 4,
+                '1h': 8, '2h': 12, '4h': 24,
+                '1d': 48, '1w': 168, '1M': 720
+            }
+        
+            base_hours = tf_multipliers.get(timeframe, 12)
+        
+            # Изчисли очаквано време
+            if volatility_24h > 0:
+                # Колко време е нужно да се постигне целта при текуща волатилност
+                expected_hours = (target_change_pct / volatility_24h) * 24
+                # Коригирай според таймфрейма
+                expected_hours = min(expected_hours, base_hours * 3)
+                expected_hours = max(expected_hours, base_hours * 0.5)
+            else:
+                expected_hours = base_hours
+    
+        # Форматирай времето красиво
+        if expected_hours < 1:
+            time_str = f"{int(expected_hours * 60)} минути"
+        elif expected_hours < 24:
+            time_str = f"{expected_hours:.1f} часа"
+        elif expected_hours < 168:
+            days = expected_hours / 24
+            time_str = f"{days:.1f} дни"
+        else:
+            weeks = expected_hours / 168
+            time_str = f"{weeks:.1f} седмици"
+    
+        message += f"   ⏱️ Очаквано време за цел: <b>~{time_str}</b>\n"
+    
+        message += f"\n🛡️ <b>STOP LOSS:</b> ${analysis['sl']:,.4f} ({sl_pct:+.2f}%)\n"
+    
+        # Risk/Reward
+        risk = abs(price - analysis['sl'])
+        reward = abs(analysis['tp'] - price)
+        rr_ratio = reward / risk if risk > 0 else 0
+        message += f"⚖️ Risk/Reward: 1:{rr_ratio:.2f}\n\n"
+    
+        # Причини за сигнала
+        if analysis['reasons']:
+            message += "💡 <b>Причини:</b>\n"
+            for reason in analysis['reasons'][:3]:  # Първите 3 причини
+                message += f"   • {reason}\n"
+    
+        try:
+            # Изпрати съобщението С ГРАФИКА (ако е налична)
+            if chart_file:
+                try:
+                    if isinstance(chart_file, BytesIO):
+                        # BytesIO обект - изпрати директно с пълното съобщение
+                        chart_file.seek(0)
                         await context.bot.send_photo(
                             chat_id=chat_id,
-                            photo=photo,
+                            photo=chart_file,
                             caption=f"🔔🔊 {message}",
                             parse_mode='HTML',
-                            disable_notification=False
+                            disable_notification=False  # Със звук за важни сигнали
                         )
-                    # Изтрий временния файл
-                    try:
-                        os.remove(chart_file)
-                    except:
-                        pass
+                    elif isinstance(chart_file, str) and os.path.exists(chart_file):
+                        # Файлов път - отвори и изпрати
+                        with open(chart_file, 'rb') as photo:
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=photo,
+                                caption=f"🔔🔊 {message}",
+                                parse_mode='HTML',
+                                disable_notification=False
+                            )
+                        # Изтрий временния файл
+                        try:
+                            os.remove(chart_file)
+                        except:
+                            pass
                 
-                logger.info(f"🔔 Автоматичен сигнал изпратен С ГРАФИКА: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
-            except Exception as e:
-                logger.error(f"Грешка при изпращане на графика: {e}")
-                # Ако графиката не може да се изпрати, изпрати само текст
+                    logger.info(f"🔔 Автоматичен сигнал изпратен С ГРАФИКА: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
+                except Exception as e:
+                    logger.error(f"Грешка при изпращане на графика: {e}")
+                    # Ако графиката не може да се изпрати, изпрати само текст
+                    await context.bot.send_message(
+                        chat_id=chat_id, 
+                        text=f"🔔🔊 {message}", 
+                        parse_mode='HTML',
+                        disable_notification=False
+                    )
+            else:
+                # Няма графика - изпрати само текст
                 await context.bot.send_message(
                     chat_id=chat_id, 
                     text=f"🔔🔊 {message}", 
                     parse_mode='HTML',
                     disable_notification=False
                 )
-        else:
-            # Няма графика - изпрати само текст
-            await context.bot.send_message(
-                chat_id=chat_id, 
-                text=f"🔔🔊 {message}", 
-                parse_mode='HTML',
-                disable_notification=False
-            )
-            logger.info(f"🔔 Автоматичен сигнал изпратен БЕЗ ГРАФИКА: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
+                logger.info(f"🔔 Автоматичен сигнал изпратен БЕЗ ГРАФИКА: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
         
-    except Exception as e:
-        logger.error(f"Грешка при изпращане на alert: {e}")
+        except Exception as e:
+            logger.error(f"Грешка при изпращане на alert: {e}")
 
 
 async def send_auto_news(context: ContextTypes.DEFAULT_TYPE):
