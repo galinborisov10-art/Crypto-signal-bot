@@ -2603,9 +2603,13 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
                 unfilled = [f for f in fvgs if not f.get('filled')]
                 if unfilled:
                     if signal == 'BUY':
-                        tp_candidates.append(max(f['top'] for f in unfilled if f['type'] == 'BULLISH_FVG'))
+                        bullish_fvgs = [f['top'] for f in unfilled if f['type'] == 'BULLISH_FVG']
+                        if bullish_fvgs:
+                            tp_candidates.append(max(bullish_fvgs))
                     else:
-                        tp_candidates.append(min(f['bottom'] for f in unfilled if f['type'] == 'BEARISH_FVG'))
+                        bearish_fvgs = [f['bottom'] for f in unfilled if f['type'] == 'BEARISH_FVG']
+                        if bearish_fvgs:
+                            tp_candidates.append(min(bearish_fvgs))
             
             # Fibonacci penultimate level (1.618)
             if fib_data and fib_data.get('penultimate_tp'):
