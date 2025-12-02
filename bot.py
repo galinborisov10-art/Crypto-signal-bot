@@ -1368,6 +1368,65 @@ async def analyze_news_sentiment(symbol):
         return None
 
 
+def is_good_trading_time():
+    """
+    Time-based filters - избягва лоши периоди за търговия
+    Returns: (is_good_time, reason)
+    """
+    try:
+        from datetime import datetime, timezone
+        
+        now = datetime.now(timezone.utc)
+        hour = now.hour
+        day_of_week = now.weekday()  # 0=Monday, 6=Sunday
+        
+        # Викенд - ниска ликвидност
+        if day_of_week >= 5:  # Saturday or Sunday
+            return (False, "Викенд - ниска ликвидност")
+        
+        # Нощ (UTC 00:00-04:00) - Азиатска сесия с по-малко движение за BTC
+        if 0 <= hour < 4:
+            return (False, "Азиатска сесия - ниска волатилност")
+        
+        # Добри периоди:
+        # 08:00-12:00 UTC - Европейска сесия
+        # 13:00-21:00 UTC - Американска сесия (най-добра)
+        
+        return (True, "Добро време за търговия")
+        
+    except Exception as e:
+        logger.error(f"Грешка при time filter: {e}")
+        return (True, "Unknown")
+
+
+def calculate_volume_confidence_boost(current_volume, avg_volume, signal_type):
+    """
+    Volume analysis - дава confidence boost според обема
+    Returns: confidence_boost (0-20)
+    """
+    try:
+        if not current_volume or not avg_volume or avg_volume == 0:
+            return 0
+        
+        volume_ratio = current_volume / avg_volume
+        
+        # Breakout с висок обем = силен сигнал
+        if volume_ratio >= 2.0:
+            return 20  # Много висок обем
+        elif volume_ratio >= 1.5:
+            return 15  # Висок обем
+        elif volume_ratio >= 1.2:
+            return 10  # Умерен обем
+        elif volume_ratio >= 0.8:
+            return 5   # Нормален обем
+        else:
+            return -10  # Нисък обем - намали confidence!
+        
+    except Exception as e:
+        logger.error(f"Грешка при volume analysis: {e}")
+        return 0
+
+
 def calculate_adaptive_tp_sl(symbol, volatility, timeframe):
     """Изчисляване на адаптивен TP/SL според волатилност и символ"""
     try:
@@ -2384,12 +2443,96 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
             confidence += 10
         
         # === Volume confirmation ===
-        if volume_ratio > 1.5 and signal in ['BUY', 'SELL']:
-            confidence += 8
-            reasons.append(f"Volume surge: {volume_ratio:.1f}x")
+        volume_boost = calculate_volume_confidence_boost(current_volume, avg_volume, signal)
+        confidence += volume_boost
+        if volume_boost > 0:
+            reasons.append(f"Volume: {volume_ratio:.1f}x avg (+{volume_boost})")
+        elif volume_boost < 0:
+            reasons.append(f"⚠️ Low volume: {volume_ratio:.1f}x ({volume_boost})")
+        
+        # === Time-based filter ===
+        is_good_time, time_reason = is_good_trading_time()
+        if not is_good_time and signal in ['BUY', 'SELL']:
+            confidence -= 15  # Намали confidence в лошо време
+            reasons.append(f"⚠️ {time_reason} (-15)")
+        elif is_good_time and signal in ['BUY', 'SELL']:
+            confidence += 5
+            reasons.append(f"✅ {time_reason} (+5)")
+        
+        # === Machine Learning Validation ===
+        if ML_AVAILABLE and signal in ['BUY', 'SELL']:
+            try:
+                # Подготви features за ML модела
+                ml_features = {
+                    'rsi': rsi if rsi else 50,
+                    'macd_histogram': macd_hist if macd_hist else 0,
+                    'price_change_pct': price_change,
+                    'volume_ratio': volume_ratio,
+                    'volatility': volatility,
+                    'ma_20': ma_20 if ma_20 else current_price,
+                    'ma_50': ma_50 if ma_50 else current_price,
+                    'bb_position': ((current_price - bb_lower) / (bb_upper - bb_lower)) if bb_upper and bb_lower else 0.5
+                }
+                
+                # Предскажи с ML модела
+                ml_prediction = ml_engine.predict_signal(ml_features, symbol, timeframe)
+                
+                if ml_prediction:
+                    ml_signal = ml_prediction.get('signal')
+                    ml_confidence = ml_prediction.get('confidence', 50)
+                    
+                    # Ако ML се съгласява със сигнала
+                    if ml_signal == signal:
+                        # ML потвърждава - използвай weighted average
+                        ml_boost = (ml_confidence - 50) * 0.5  # ML има 50% тегло
+                        confidence = (confidence * 0.7) + (ml_confidence * 0.3)  # Weighted average
+                        reasons.append(f"🤖 ML confirms: {ml_confidence:.0f}% (+{ml_boost:.0f})")
+                    else:
+                        # ML не се съгласява - намали confidence
+                        confidence -= 20
+                        reasons.append(f"⚠️ ML disagrees: {ml_signal} vs {signal} (-20)")
+                        
+            except Exception as e:
+                logger.warning(f"ML validation failed: {e}")
+        
+        # === IMPROVED: Инвертирана логика за confidence ===
+        # ПРОБЛЕМ: Високата confidence даваше низък win rate
+        # РЕШЕНИЕ: Рекалибриране на confidence базирано на signal strength
+        
+        # Брой на alignment факторите
+        alignment_count = vote_buy + vote_sell
+        max_alignment = 3
+        
+        # Базов confidence според alignment (обратно на старата логика!)
+        if alignment_count == 3:
+            base_confidence = 85  # Всички 3 системи се съгласяват
+        elif alignment_count == 2:
+            base_confidence = 70  # 2 от 3 системи
+        else:
+            base_confidence = 55  # Слабо alignment
+        
+        # Добави бонуси от индикатори
+        indicator_bonus = 0
+        
+        # RSI extreme зони
+        if rsi:
+            if (signal == 'BUY' and rsi < 30) or (signal == 'SELL' and rsi > 70):
+                indicator_bonus += 10
+                reasons.append(f"RSI extreme: {rsi:.1f} (+10)")
+        
+        # Volume surge
+        if volume_boost >= 15:
+            indicator_bonus += 10
+        
+        # LuxAlgo/ICT special setups
+        if ote_confirmed:
+            indicator_bonus += 15
+            
+        # Пресметни финален confidence
+        confidence = base_confidence + indicator_bonus
         
         # === Cap confidence ===
-        confidence = max(0, min(confidence, 95))
+        confidence = max(50, min(confidence, 95))  # Range: 50-95
         
         # ========== TP/SL CALCULATION (NEW LOGIC) ==========
         tp_price = None
