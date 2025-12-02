@@ -1,0 +1,98 @@
+name: 🔄 Sync SSH Keys (DigitalOcean API)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔑 Generate New SSH Key
+      id: keygen
+      run: |
+        ssh-keygen -t ed25519 -f /tmp/deploy_key -N "" -C "github-actions-deploy-$(date +%s)"
+        
+        PUBLIC_KEY=$(cat /tmp/deploy_key.pub)
+        PRIVATE_KEY=$(cat /tmp/deploy_key)
+        
+        echo "PUBLIC_KEY=$PUBLIC_KEY" >> $GITHUB_OUTPUT
+        
+        echo "PRIVATE_KEY<<EOF" >> $GITHUB_OUTPUT
+        echo "$PRIVATE_KEY" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        echo "✅ Генериран нов SSH ключ"
+    
+    - name: 🌊 Add to DigitalOcean via API
+      id: do_api
+      continue-on-error: true
+      run: |
+        if [ -z "${{ secrets.DO_API_TOKEN }}" ]; then
+          echo "❌ DO_API_TOKEN не е настроен"
+          echo "api_success=false" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        echo "📡 Добавям SSH ключ в DigitalOcean чрез API..."
+        
+        RESPONSE=$(curl -s -X POST \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${{ secrets.DO_API_TOKEN }}" \
+          -d "{\"name\":\"github-actions-$(date +%s)\",\"public_key\":\"${{ steps.keygen.outputs.PUBLIC_KEY }}\"}" \
+          https://api.digitalocean.com/v2/account/keys)
+        
+        echo "$RESPONSE"
+        
+        if echo "$RESPONSE" | grep -q '"ssh_key"'; then
+          echo "✅ SSH ключ добавен в DigitalOcean!"
+          echo "api_success=true" >> $GITHUB_OUTPUT
+        else
+          echo "⚠️ Не можа да добави ключ през API"
+          echo "api_success=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: 🔐 Install via SSH Password (fallback)
+      if: steps.do_api.outputs.api_success != 'true'
+      continue-on-error: true
+      run: |
+        if [ -z "${{ secrets.DO_PASSWORD }}" ]; then
+          echo "⚠️ DO_PASSWORD също не е настроен"
+          echo "🔄 Ще трябва да инсталираш ключа ръчно"
+          exit 0
+        fi
+        
+        echo "🔄 Инсталирам чрез SSH парола..."
+        
+        sudo apt-get update -qq
+        sudo apt-get install -y sshpass
+        
+        sshpass -p "${{ secrets.DO_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
+          ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} \
+          "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${{ steps.keygen.outputs.PUBLIC_KEY }}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ SSH ключ инсталиран чрез парола!"
+        fi
+    
+    - name: 📋 Display Private Key for GitHub Secret
+      run: |
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🔐 КОПИРАЙ ТОЗИ PRIVATE KEY В GITHUB SECRET:"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "${{ steps.keygen.outputs.PRIVATE_KEY }}"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "📝 ИНСТРУКЦИИ:"
+        echo "1. GitHub → Settings → Secrets and variables → Actions"
+        echo "2. Намери DO_SSH_KEY → Update"
+        echo "3. Копирай ЦЕЛИЯ текст отгоре (с BEGIN/END)"
+        echo "4. Save"
+        echo ""
+        echo "5. След това направи тестов push за да тестваш auto-deploy"
+        echo ""
+        echo "✅ PUBLIC ключът вече е на сървъра!"
+        echo "   (или чрез DigitalOcean API, или чрез SSH парола)"
