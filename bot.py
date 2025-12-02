@@ -6936,7 +6936,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= DEPLOY КОМАНДА =================
 
 async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """🚀 Автоматичен deploy - само за owner"""
+    """🚀 Deploy на Digital Ocean - само за owner"""
     user_id = update.effective_chat.id
     
     # Само owner може да deploy-ва
@@ -6944,61 +6944,123 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Тази команда е достъпна само за owner-а на бота.")
         return
     
-    await update.message.reply_text("🚀 <b>СТАРТИРАНЕ НА AUTO-DEPLOY...</b>", parse_mode='HTML')
+    await update.message.reply_text("🚀 <b>DIGITAL OCEAN DEPLOY СТАРТИРА...</b>", parse_mode='HTML')
     
     import subprocess
     import os
+    import json
+    
+    # Зареди Digital Ocean конфигурация
+    config_path = os.path.join(os.path.dirname(__file__), 'admin', 'credentials.json')
     
     try:
-        # Определи пътя до скрипта
-        script_path = os.path.join(os.path.dirname(__file__), 'update_bot.sh')
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+            
+        server_ip = config.get('DIGITALOCEAN_IP', '')
+        ssh_key_path = config.get('SSH_KEY_PATH', '~/.ssh/id_rsa')
         
-        # Провери дали скриптът съществува
-        if not os.path.exists(script_path):
+        if not server_ip:
             await update.message.reply_text(
-                f"❌ <b>Грешка:</b> update_bot.sh не е намерен на:\n<code>{script_path}</code>",
+                "❌ <b>Грешка:</b> DIGITALOCEAN_IP не е конфигуриран в admin/credentials.json\n\n"
+                "Добави:\n<code>\"DIGITALOCEAN_IP\": \"YOUR_SERVER_IP\"</code>",
                 parse_mode='HTML'
             )
             return
+            
+    except FileNotFoundError:
+        await update.message.reply_text(
+            "❌ <b>Грешка:</b> admin/credentials.json не е намерен",
+            parse_mode='HTML'
+        )
+        return
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ <b>Грешка при четене на конфигурация:</b>\n<code>{str(e)}</code>",
+            parse_mode='HTML'
+        )
+        return
+    
+    try:
+        # Стъпка 1: Git push
+        await update.message.reply_text("📤 Стъпка 1/4: Push на промени към GitHub...", parse_mode='HTML')
         
-        # Направи скрипта executable
-        os.chmod(script_path, 0o755)
-        
-        # Изпълни скрипта
-        await update.message.reply_text("⏳ Изпълнява се update_bot.sh...", parse_mode='HTML')
-        
-        result = subprocess.run(
-            ['/bin/bash', script_path],
+        git_result = subprocess.run(
+            ['git', 'push', 'origin', 'main'],
             capture_output=True,
             text=True,
-            timeout=120  # 2 минути timeout
+            cwd=os.path.dirname(__file__),
+            timeout=30
         )
         
-        # Изпрати резултата
-        if result.returncode == 0:
-            success_msg = "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
-            success_msg += "📝 <b>Изход:</b>\n"
+        if git_result.returncode != 0:
+            await update.message.reply_text(
+                f"⚠️ Git push warning:\n<code>{git_result.stderr[:500]}</code>\n\nПродължаваме...",
+                parse_mode='HTML'
+            )
+        
+        # Стъпка 2: SSH команди за deploy
+        await update.message.reply_text("🔄 Стъпка 2/4: Свързване към Digital Ocean...", parse_mode='HTML')
+        
+        deploy_commands = f"""
+cd /root/Crypto-signal-bot && \
+git pull origin main && \
+source venv/bin/activate && \
+pip install -r requirements.txt && \
+sudo systemctl restart crypto-bot && \
+echo "✅ Deploy complete!" && \
+sleep 2 && \
+sudo systemctl status crypto-bot --no-pager
+"""
+        
+        ssh_result = subprocess.run(
+            ['ssh', '-i', os.path.expanduser(ssh_key_path), 
+             '-o', 'StrictHostKeyChecking=no',
+             f'root@{server_ip}', deploy_commands],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        
+        # Стъпка 3: Резултат
+        await update.message.reply_text("📊 Стъпка 3/4: Анализ на резултата...", parse_mode='HTML')
+        
+        if ssh_result.returncode == 0:
+            # Успех
+            output_lines = ssh_result.stdout.split('\n')
+            last_30_lines = '\n'.join(output_lines[-30:])
             
-            # Вземи последните 30 реда
-            output_lines = result.stdout.split('\n')
-            last_lines = '\n'.join(output_lines[-30:])
-            
-            success_msg += f"<pre>{last_lines}</pre>\n\n"
-            success_msg += "🎉 Ботът е обновен и рестартиран успешно!"
+            success_msg = "✅ <b>DIGITAL OCEAN DEPLOY УСПЕШЕН!</b>\n\n"
+            success_msg += f"🖥️ <b>Server:</b> {server_ip}\n"
+            success_msg += f"📝 <b>Изход:</b>\n<pre>{last_30_lines[:1500]}</pre>\n\n"
+            success_msg += "🎉 Ботът работи на Digital Ocean 24/7!"
             
             await update.message.reply_text(success_msg, parse_mode='HTML')
+            
         else:
+            # Грешка
             error_msg = "❌ <b>DEPLOY НЕУСПЕШЕН!</b>\n\n"
-            error_msg += f"🔴 <b>Exit Code:</b> {result.returncode}\n\n"
+            error_msg += f"🖥️ <b>Server:</b> {server_ip}\n"
+            error_msg += f"🔴 <b>Exit Code:</b> {ssh_result.returncode}\n\n"
             error_msg += "📝 <b>Грешка:</b>\n"
-            error_msg += f"<pre>{result.stderr[-1000:]}</pre>"
+            error_msg += f"<pre>{ssh_result.stderr[-1000:]}</pre>"
             
             await update.message.reply_text(error_msg, parse_mode='HTML')
+        
+        # Стъпка 4: Финал
+        await update.message.reply_text(
+            "🏁 Стъпка 4/4: Готово!\n\n"
+            "📋 Полезни команди:\n"
+            f"<code>ssh root@{server_ip}</code>\n"
+            "<code>systemctl status crypto-bot</code>\n"
+            "<code>journalctl -u crypto-bot -f</code>",
+            parse_mode='HTML'
+        )
             
     except subprocess.TimeoutExpired:
         await update.message.reply_text(
-            "⏱️ <b>Timeout!</b> Deploy скриптът отне повече от 2 минути.\n"
-            "Може да е успешен, но проверете статуса на бота.",
+            "⏱️ <b>Timeout!</b> SSH команда отне повече от 2 минути.\n"
+            f"Проверете ръчно: <code>ssh root@{server_ip}</code>",
             parse_mode='HTML'
         )
     except Exception as e:
@@ -7006,7 +7068,7 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ <b>Грешка при deploy:</b>\n<code>{str(e)}</code>",
             parse_mode='HTML'
         )
-        logger.error(f"Deploy грешка: {e}")
+        logger.error(f"Digital Ocean deploy грешка: {e}")
 
 
 # ================= АДМИН КОМАНДИ =================
