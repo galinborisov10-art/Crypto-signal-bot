@@ -1,23 +1,81 @@
-name: CI Build
+name: Auto Deploy
 
 on:
   push:
     branches: [ main ]
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     
     steps:
-    - name: ✅ Checkout Code
+    - name: ✅ Checkout
       uses: actions/checkout@v3
     
-    - name: ✅ Verify Python Syntax
+    - name: 🚀 Deploy to DigitalOcean
       run: |
-        python3 -m py_compile bot.py || echo "Syntax check completed"
-        echo "✅ Code pushed to GitHub successfully"
-        echo ""
-        echo "📱 To deploy to DigitalOcean:"
-        echo "   SSH to server and run: cd ~/Crypto-signal-bot && git pull && pkill -9 -f bot.py && nohup python3 bot.py > bot.log 2>&1 &"
-        echo ""
-        echo "   OR use /deploy command in Telegram bot"
+        echo "=== Starting Auto-Deploy ==="
+        
+        # Setup SSH
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        
+        # SSH config
+        cat > ~/.ssh/config << EOF
+        Host digitalocean
+          HostName ${{ secrets.DO_HOST }}
+          User ${{ secrets.DO_USERNAME }}
+          IdentityFile ~/.ssh/deploy_key
+          StrictHostKeyChecking no
+          UserKnownHostsFile /dev/null
+        EOF
+        
+        # Deploy
+        ssh digitalocean << 'ENDSSH'
+          set -x
+          
+          cd ~/Crypto-signal-bot || cd /root/Crypto-signal-bot || exit 1
+          
+          echo "Current commit: $(git rev-parse --short HEAD)"
+          
+          git fetch origin
+          git reset --hard origin/main
+          
+          echo "New commit: $(git rev-parse --short HEAD)"
+          
+          pip3 install -r requirements.txt --quiet --break-system-packages 2>/dev/null || true
+          
+          pkill -9 -f "python.*bot.py" || true
+          sleep 2
+          
+          nohup python3 bot.py > bot.log 2>&1 &
+          sleep 3
+          
+          if pgrep -f "python.*bot.py"; then
+            echo "✅ Bot restarted successfully"
+            tail -10 bot.log
+          else
+            echo "⚠️ Bot may still be starting..."
+            tail -20 bot.log
+          fi
+        ENDSSH
+        
+        RESULT=$?
+        
+        rm -f ~/.ssh/deploy_key ~/.ssh/config
+        
+        if [ $RESULT -eq 0 ]; then
+          echo ""
+          echo "✅✅✅ DEPLOY SUCCESSFUL ✅✅✅"
+        else
+          echo "❌ Deploy had issues (exit: $RESULT)"
+          exit 1
+        fi
+    
+    - name: ✅ Complete
+      run: |
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ AUTO-DEPLOY COMPLETED"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
