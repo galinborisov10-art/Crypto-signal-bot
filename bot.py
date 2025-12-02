@@ -2245,23 +2245,40 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
                     confidence += 8
         
         # ===  FINAL SIGNAL DETERMINATION ===
-        # All 3 must agree: LuxAlgo + ICT + Traditional
-        if luxalgo_says == ict_says == traditional_signal == 'BUY':
+        # IMPROVED: 2 out of 3 systems must agree (was too strict before)
+        vote_buy = 0
+        vote_sell = 0
+        
+        # Count votes from each system
+        if luxalgo_says == 'BUY': vote_buy += 1
+        if luxalgo_says == 'SELL': vote_sell += 1
+        if ict_says == 'BUY': vote_buy += 1
+        if ict_says == 'SELL': vote_sell += 1
+        if traditional_signal == 'BUY': vote_buy += 1
+        if traditional_signal == 'SELL': vote_sell += 1
+        
+        # Decision based on majority vote
+        if vote_buy >= 2:
             signal = 'BUY'
-            reasons.append("✅ ALL SYSTEMS ALIGNED: BUY")
-            confidence += 25
-        elif luxalgo_says == ict_says == traditional_signal == 'SELL':
+            if vote_buy == 3:
+                reasons.append("✅ ALL 3 SYSTEMS ALIGNED: BUY")
+                confidence += 25
+            else:
+                reasons.append(f"✅ MAJORITY VOTE: BUY ({vote_buy}/3)")
+                confidence += 15
+        elif vote_sell >= 2:
             signal = 'SELL'
-            reasons.append("✅ ALL SYSTEMS ALIGNED: SELL")
-            confidence += 25
-        elif luxalgo_says == ict_says and luxalgo_says in ['BUY', 'SELL']:
-            # 2 out of 3: LuxAlgo + ICT agree
-            signal = luxalgo_says
-            reasons.append(f"⚠️ LuxAlgo + ICT aligned: {signal}")
+            if vote_sell == 3:
+                reasons.append("✅ ALL 3 SYSTEMS ALIGNED: SELL")
+                confidence += 25
+            else:
+                reasons.append(f"✅ MAJORITY VOTE: SELL ({vote_sell}/3)")
+                confidence += 15
         elif ict_says and ote_confirmed:
-            # OTE overrides if strong
+            # OTE overrides if strong (high-probability setup)
             signal = ict_says
             reasons.append(f"🎯 OTE entry confirmed: {signal}")
+            confidence += 10
         
         # === Volume confirmation ===
         if volume_ratio > 1.5 and signal in ['BUY', 'SELL']:
@@ -2355,7 +2372,7 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
                     sl_price = current_price * (1 + sl_pct/100)
         
         # ========== HAS GOOD TRADE CHECK ==========
-        has_good_trade = signal in ['BUY', 'SELL'] and confidence >= 70  # Higher threshold
+        has_good_trade = signal in ['BUY', 'SELL'] and confidence >= 55  # Balanced threshold
         
         return {
             'signal': signal,
