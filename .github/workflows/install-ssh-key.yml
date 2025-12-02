@@ -1,0 +1,58 @@
+name: 🔐 Install SSH Key via DigitalOcean API
+
+on:
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔑 Generate SSH Key
+      id: keygen
+      run: |
+        ssh-keygen -t ed25519 -f /tmp/deploy_key -N "" -C "github-actions-deploy"
+        
+        PUBLIC_KEY=$(cat /tmp/deploy_key.pub)
+        PRIVATE_KEY=$(cat /tmp/deploy_key)
+        
+        echo "PUBLIC_KEY=$PUBLIC_KEY" >> $GITHUB_OUTPUT
+        echo "PRIVATE_KEY<<EOF" >> $GITHUB_OUTPUT
+        echo "$PRIVATE_KEY" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        echo "✅ SSH ключ генериран"
+        echo "PUBLIC: $PUBLIC_KEY"
+    
+    - name: 🌊 Add SSH Key to DigitalOcean (if DO_API_TOKEN exists)
+      if: ${{ secrets.DO_API_TOKEN != '' }}
+      run: |
+        echo "📡 Добавям SSH ключ в DigitalOcean чрез API..."
+        
+        RESPONSE=$(curl -X POST \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${{ secrets.DO_API_TOKEN }}" \
+          -d "{\"name\":\"github-actions-deploy-$(date +%s)\",\"public_key\":\"${{ steps.keygen.outputs.PUBLIC_KEY }}\"}" \
+          https://api.digitalocean.com/v2/account/keys)
+        
+        echo "$RESPONSE"
+        
+        if echo "$RESPONSE" | grep -q '"ssh_key"'; then
+          echo "✅ SSH ключ добавен в DigitalOcean акаунта!"
+        else
+          echo "⚠️ Възможна грешка при добавяне"
+        fi
+    
+    - name: 📋 Display Private Key for GitHub Secret
+      run: |
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🔐 PRIVATE KEY - Копирай в GitHub Secret DO_SSH_KEY:"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "${{ steps.keygen.outputs.PRIVATE_KEY }}"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "📝 ИНСТРУКЦИЯ:"
+        echo "1. GitHub → Settings → Secrets and variables → Actions"
+        echo "2. Намери DO_SSH_KEY → Update"
+        echo "3. Копирай целия PRIVATE KEY отгоре (включително BEGIN/END редовете)"
+        echo "4. Save → След това Auto Deploy ще работи! ✅"
