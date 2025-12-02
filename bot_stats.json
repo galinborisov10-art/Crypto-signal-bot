@@ -1,10 +1,10 @@
 {
-  "total_signals": 26,
+  "total_signals": 27,
   "by_symbol": {
     "BTCUSDT": {
-      "count": 21,
+      "count": 22,
       "BUY": 13,
-      "SELL": 8
+      "SELL": 9
     },
     "XRPUSDT": {
       "count": 5,
@@ -17,7 +17,7 @@
       "count": 5
     },
     "4h": {
-      "count": 12
+      "count": 13
     },
     "5m": {
       "count": 3
@@ -46,7 +46,7 @@
       "count": 10
     },
     "90-99": {
-      "count": 2
+      "count": 3
     }
   },
   "signals": [
@@ -677,6 +677,16 @@
       "entry_price": 86469.97,
       "tp_price": 89323.47901,
       "sl_price": 85380.448378
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "type": "SELL",
+      "confidence": 90,
+      "timestamp": "2025-12-02T01:08:06.323940",
+      "entry_price": 87071.56,
+      "tp_price": 84198.19851999999,
+      "sl_price": 88168.661656
     }
   ]
 }
