@@ -6650,75 +6650,117 @@ async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import subprocess
     import os
     
+    # Изпрати съобщение че започва
+    status_msg = await update.message.reply_text("🔄 <b>Започвам update...</b>", parse_mode='HTML')
+    
     try:
-        # Намери update_bot.sh скрипта
+        # Определи project directory
         project_dir = os.path.dirname(os.path.abspath(__file__))
-        script_path = os.path.join(project_dir, "update_bot.sh")
         
-        # Ако сме на сървър (DigitalOcean), опитай други пътища
-        if not os.path.exists(script_path):
-            possible_paths = [
-                "~/Crypto-signal-bot/update_bot.sh",
-                "/var/www/crypto-bot/update_bot.sh",
-                "/opt/crypto-bot/update_bot.sh",
-                "./update_bot.sh"
-            ]
-            for path in possible_paths:
-                expanded_path = os.path.expanduser(path)
-                if os.path.exists(expanded_path):
-                    script_path = expanded_path
-                    break
+        # Backup important files
+        await status_msg.edit_text("💾 Backup на данни...")
+        backup_files = ['bot_stats.json', 'trading_journal.json', 'copilot_tasks.json']
+        for f in backup_files:
+            try:
+                subprocess.run(['cp', f, f + '.backup'], cwd=project_dir, timeout=5)
+            except:
+                pass
         
-        if not os.path.exists(script_path):
-            await update.message.reply_text(
-                "❌ <b>ГРЕШКА</b>\n\n"
-                "update_bot.sh не е намерен!",
+        # Git pull
+        await status_msg.edit_text("📥 Изтегляне от GitHub...")
+        git_result = subprocess.run(
+            ['git', 'pull', 'origin', 'main'],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if git_result.returncode != 0:
+            await status_msg.edit_text(
+                f"❌ <b>Git pull failed:</b>\n<code>{git_result.stderr[:300]}</code>",
                 parse_mode='HTML'
             )
             return
         
-        # Изпълни update скрипта (тихо, без междинни съобщения)
-        result = subprocess.run(
-            [script_path],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            cwd=os.path.dirname(script_path)
+        # Check if venv exists
+        venv_python = os.path.join(project_dir, 'venv', 'bin', 'python')
+        venv_pip = os.path.join(project_dir, 'venv', 'bin', 'pip')
+        
+        if os.path.exists(venv_python):
+            # Update dependencies
+            await status_msg.edit_text("📦 Обновяване на dependencies...")
+            pip_result = subprocess.run(
+                [venv_pip, 'install', '-r', 'requirements.txt', '--quiet'],
+                cwd=project_dir,
+                capture_output=True,
+                timeout=60
+            )
+        
+        # Restart bot
+        await status_msg.edit_text("🔄 Рестартиране...")
+        
+        # Kill current process
+        subprocess.run(['pkill', '-f', 'bot.py'], timeout=5)
+        
+        # Wait a bit
+        await asyncio.sleep(2)
+        
+        # Start new process
+        if os.path.exists(venv_python):
+            subprocess.Popen(
+                [venv_python, 'bot.py'],
+                cwd=project_dir,
+                stdout=open('bot.log', 'w'),
+                stderr=subprocess.STDOUT,
+                start_new_session=True
+            )
+        else:
+            subprocess.Popen(
+                ['python3', 'bot.py'],
+                cwd=project_dir,
+                stdout=open('bot.log', 'w'),
+                stderr=subprocess.STDOUT,
+                start_new_session=True
+            )
+        
+        # Success message
+        commit_msg = "Updated to latest version"
+        if "Already up to date" not in git_result.stdout:
+            # Extract commit message
+            try:
+                log_result = subprocess.run(
+                    ['git', 'log', '-1', '--pretty=format:%s'],
+                    cwd=project_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if log_result.returncode == 0:
+                    commit_msg = log_result.stdout[:100]
+            except:
+                pass
+        
+        await status_msg.edit_text(
+            f"✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
+            f"📥 Последен commit:\n<code>{commit_msg}</code>\n\n"
+            f"🔄 Бот рестартиран\n"
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}\n\n"
+            f"<i>Работи с нова версия! 🚀</i>",
+            parse_mode='HTML'
         )
         
-        # Изпрати САМО финалния резултат
-        if result.returncode == 0:
-            success_msg = "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
-            
-            # Извлечи важна информация от output
-            if "✓ Backup създаден" in result.stdout:
-                success_msg += "💾 Backup създаден\n"
-            if "✓ Успешно обновяване от GitHub" in result.stdout:
-                success_msg += "📥 Код обновен от GitHub\n"
-            if "✓ Dependencies обновени" in result.stdout:
-                success_msg += "📦 Dependencies обновени\n"
-            if "✓ Бот рестартиран" in result.stdout or "✓ Бот стартиран" in result.stdout:
-                success_msg += "🔄 PM2 рестартиран\n"
-            
-            success_msg += "\n<i>Ботът работи с последната версия! 🚀</i>"
-            
-            await update.message.reply_text(success_msg, parse_mode='HTML')
-        else:
-            error_msg = "❌ <b>UPDATE FAILED</b>\n\n"
-            error_msg += f"<b>Error Code:</b> {result.returncode}\n\n"
-            error_msg += f"<b>Output:</b>\n<code>{result.stderr[:500]}</code>"
-            
-            await update.message.reply_text(error_msg, parse_mode='HTML')
-            
     except subprocess.TimeoutExpired:
-        await update.message.reply_text(
+        await status_msg.edit_text(
             "⏱️ <b>TIMEOUT</b>\n\n"
-            "Update скриптът отне твърде много време.\n"
-            "Моля, проверете ръчно статуса на сървъра.",
+            "Update отне твърде много време.",
             parse_mode='HTML'
         )
     except Exception as e:
-        await update.message.reply_text(
+        await status_msg.edit_text(
+            f"❌ <b>ГРЕШКА</b>\n\n<code>{str(e)[:300]}</code>",
+            parse_mode='HTML'
+        )
             f"❌ <b>ГРЕШКА</b>\n\n"
             f"<code>{str(e)}</code>",
             parse_mode='HTML'
