@@ -6074,53 +6074,22 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                 message += f"   • {reason}\n"
     
         try:
-            # Изпрати съобщението С ГРАФИКА (ако е налична)
-            if chart_file:
-                try:
-                    if isinstance(chart_file, BytesIO):
-                        # BytesIO обект - изпрати директно с пълното съобщение
-                        chart_file.seek(0)
-                        await context.bot.send_photo(
-                            chat_id=chat_id,
-                            photo=chart_file,
-                            caption=f"🔔🔊 {message}",
-                            parse_mode='HTML',
-                            disable_notification=False  # Със звук за важни сигнали
-                        )
-                    elif isinstance(chart_file, str) and os.path.exists(chart_file):
-                        # Файлов път - отвори и изпрати
-                        with open(chart_file, 'rb') as photo:
-                            await context.bot.send_photo(
-                                chat_id=chat_id,
-                                photo=photo,
-                                caption=f"🔔🔊 {message}",
-                                parse_mode='HTML',
-                                disable_notification=False
-                            )
-                        # Изтрий временния файл
-                        try:
-                            os.remove(chart_file)
-                        except:
-                            pass
-                
-                    logger.info(f"🔔 Автоматичен сигнал изпратен С ГРАФИКА: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
-                except Exception as e:
-                    logger.error(f"Грешка при изпращане на графика: {e}")
-                    # Ако графиката не може да се изпрати, изпрати само текст
-                    await context.bot.send_message(
-                        chat_id=chat_id, 
-                        text=f"🔔🔊 {message}", 
-                        parse_mode='HTML',
-                        disable_notification=False
-                    )
-            else:
-                # Няма графика - изпрати само текст
-                await context.bot.send_message(
-                    chat_id=chat_id, 
-                    text=f"🔔🔊 {message}", 
-                    parse_mode='HTML',
-                    disable_notification=False
-                )
+            # Генерирай TradingView chart линк
+            tradingview_url = generate_tradingview_chart_url(symbol, timeframe, None, None, analysis['signal'])
+            
+            # Изпрати съобщението с TradingView линк
+            full_message = f"🔔🔊 {message}\n\n"
+            full_message += f"📊 <b><a href='{tradingview_url}'>➡️ Виж графиката в TradingView</a></b>"
+            
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=full_message,
+                parse_mode='HTML',
+                disable_web_page_preview=False,  # Показва preview на TradingView графиката
+                disable_notification=False  # Със звук за важни сигнали
+            )
+            
+            logger.info(f"🔔 Автоматичен сигнал изпратен с TradingView chart: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
                 logger.info(f"🔔 Автоматичен сигнал изпратен БЕЗ ГРАФИКА: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
         
         except Exception as e:
@@ -6952,35 +6921,30 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # DEBUG: Има подходящ трейд, изпращаме резултата
             logger.info(f"✅ Good trade found! Sending signal for {symbol} {timeframe}")
-            logger.info(f"Chart buffer exists: {chart_buffer is not None}")
-            logger.info(f"Message length: {len(message)} chars")
             
-            # Изпрати графиката като снимка
+            # Генерирай TradingView chart линк
+            tradingview_url = generate_tradingview_chart_url(symbol, timeframe, tp_price, sl_price, analysis['signal'])
+            
+            # Изпрати съобщение със звукова аларма и TradingView линк
+            full_message = f"🔔🔊 {message}\n\n"
+            full_message += f"📊 <b><a href='{tradingview_url}'>➡️ Виж графиката в TradingView</a></b>"
+            
             try:
-                if chart_buffer:
-                    logger.info("Sending photo with caption...")
-                    await context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        photo=chart_buffer,
-                        caption=message,
-                        parse_mode='HTML'
-                    )
-                    logger.info("✅ Photo sent successfully!")
-                else:
-                    logger.warning("⚠️ No chart buffer, sending text only...")
-                    await context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text=message,
-                        parse_mode='HTML'
-                    )
-                    logger.info("✅ Text message sent successfully!")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=full_message,
+                    parse_mode='HTML',
+                    disable_web_page_preview=False,  # Показва preview на TradingView графиката
+                    disable_notification=False  # Включена звукова аларма
+                )
+                logger.info("✅ Signal with TradingView chart sent successfully!")
             except Exception as e:
                 logger.error(f"❌ Error sending signal: {e}")
-                # Fallback - изпрати поне текста
+                # Fallback - изпрати поне текста без линк
                 try:
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
-                        text=f"⚠️ Грешка при изпращане на графика:\n\n{message}",
+                        text=message,
                         parse_mode='HTML'
                     )
                 except Exception as e2:
