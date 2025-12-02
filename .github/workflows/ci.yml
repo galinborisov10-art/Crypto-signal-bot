@@ -13,8 +13,11 @@ jobs:
       uses: actions/checkout@v3
     
     - name: 🚀 Deploy via SSH
+      id: deploy_step
       continue-on-error: true
       run: |
+        set +e  # Don't exit on error
+        
         # Setup SSH with strict host key checking disabled
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
@@ -31,40 +34,121 @@ jobs:
           LogLevel ERROR
         EOF
         
+        echo "=== Attempting SSH connection to ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} ==="
+        
         # Try to connect and deploy
-        ssh -i ~/.ssh/deploy_key -o ConnectTimeout=10 ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} << 'ENDSSH' || echo "SSH failed but continuing..."
+        ssh -i ~/.ssh/deploy_key -o ConnectTimeout=10 ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} << 'ENDSSH'
+          set -x  # Enable debug output
+          
+          echo "=== SSH CONNECTION SUCCESSFUL ==="
+          echo "Connected as: $(whoami)"
+          echo "Home directory: $HOME"
+          echo "Current directory: $(pwd)"
+          
           # Find project directory
-          if [ -d ~/Crypto-signal-bot ]; then
-            cd ~/Crypto-signal-bot
-          elif [ -d /root/Crypto-signal-bot ]; then
-            cd /root/Crypto-signal-bot
-          elif [ -d /home/*/Crypto-signal-bot ]; then
-            cd /home/*/Crypto-signal-bot
-          else
-            echo "Project not found, skipping"
-            exit 0
+          PROJECT_DIR=""
+          for dir in ~/Crypto-signal-bot /root/Crypto-signal-bot /home/*/Crypto-signal-bot; do
+            if [ -d "$dir" ]; then
+              PROJECT_DIR="$dir"
+              break
+            fi
+          done
+          
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "❌ ERROR: Project directory not found!"
+            echo "Searched locations:"
+            echo "  ~/Crypto-signal-bot"
+            echo "  /root/Crypto-signal-bot"
+            echo "  /home/*/Crypto-signal-bot"
+            exit 1
           fi
           
-          echo "Deploying in: $(pwd)"
+          cd "$PROJECT_DIR"
+          echo "✅ Found project at: $PROJECT_DIR"
+          
+          # Check git status BEFORE update
+          echo ""
+          echo "=== GIT STATUS BEFORE UPDATE ==="
+          git log -1 --oneline
+          git status
           
           # Update code
-          git fetch origin 2>&1 || true
-          git reset --hard origin/main 2>&1 || true
+          echo ""
+          echo "=== UPDATING CODE ==="
+          git fetch origin
+          BEFORE_COMMIT=$(git rev-parse HEAD)
+          git reset --hard origin/main
+          AFTER_COMMIT=$(git rev-parse HEAD)
+          
+          if [ "$BEFORE_COMMIT" = "$AFTER_COMMIT" ]; then
+            echo "ℹ️ No new commits (already up to date)"
+          else
+            echo "✅ Updated from $BEFORE_COMMIT to $AFTER_COMMIT"
+            git log --oneline $BEFORE_COMMIT..$AFTER_COMMIT
+          fi
           
           # Update packages
-          pip3 install -r requirements.txt --quiet --break-system-packages 2>/dev/null || true
+          echo ""
+          echo "=== UPDATING DEPENDENCIES ==="
+          pip3 install -r requirements.txt --quiet --break-system-packages 2>&1 | head -20 || true
+          
+          # Check if bot is running BEFORE restart
+          echo ""
+          echo "=== CHECKING BOT STATUS ==="
+          OLD_PID=$(pgrep -f "python.*bot.py" || echo "none")
+          echo "Old bot PID: $OLD_PID"
           
           # Restart bot
+          echo ""
+          echo "=== RESTARTING BOT ==="
           pkill -9 -f "python.*bot.py" 2>/dev/null || true
           sleep 2
-          nohup python3 bot.py > bot.log 2>&1 &
-          sleep 2
           
-          echo "Deploy complete"
+          nohup python3 bot.py > bot.log 2>&1 &
+          NEW_PID=$!
+          echo "Started new bot process: $NEW_PID"
+          sleep 3
+          
+          # Verify bot started
+          if pgrep -f "python.*bot.py" > /dev/null; then
+            RUNNING_PID=$(pgrep -f "python.*bot.py")
+            echo "✅ Bot is running (PID: $RUNNING_PID)"
+            
+            # Show last few log lines
+            echo ""
+            echo "=== LAST 10 LINES OF BOT LOG ==="
+            tail -10 bot.log 2>/dev/null || echo "No logs yet"
+          else
+            echo "❌ ERROR: Bot is NOT running!"
+            echo ""
+            echo "=== LAST 20 LINES OF BOT LOG ==="
+            tail -20 bot.log 2>/dev/null || echo "No log file"
+            exit 1
+          fi
+          
+          echo ""
+          echo "=== DEPLOY SUCCESSFUL ==="
         ENDSSH
+        
+        DEPLOY_EXIT=$?
         
         # Cleanup
         rm -f ~/.ssh/deploy_key
+        
+        if [ $DEPLOY_EXIT -eq 0 ]; then
+          echo ""
+          echo "✅✅✅ DEPLOY COMPLETED SUCCESSFULLY ✅✅✅"
+          exit 0
+        else
+          echo ""
+          echo "❌ SSH connection or deploy failed (exit code: $DEPLOY_EXIT)"
+          echo "This might be due to:"
+          echo "  - Invalid SSH key"
+          echo "  - Wrong IP address"
+          echo "  - Firewall blocking connection"
+          echo "  - SSH not enabled on server"
+          exit 1
+        fi
     
     - name: 📋 Summary
       run: |
