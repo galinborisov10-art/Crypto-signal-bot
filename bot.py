@@ -4560,7 +4560,13 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Генерирай графика с luxalgo_ict данни
     luxalgo_ict_data = analysis.get('luxalgo_ict')
-    chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe, luxalgo_ict_data)
+    try:
+        chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe, luxalgo_ict_data)
+        if not chart_buffer:
+            logger.warning(f"⚠️ Chart generation returned None for {symbol} {timeframe}")
+    except Exception as e:
+        logger.error(f"❌ Chart generation failed for {symbol} {timeframe}: {e}")
+        chart_buffer = None
     
     # Изчисли вероятност за достигане на TP
     tp_probability = calculate_tp_probability(analysis, tp_price, analysis['signal'])
