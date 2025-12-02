@@ -2775,6 +2775,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /admin_weekly - Седмичен отчет
 /admin_monthly - Месечен отчет
 /admin_docs - Пълна документация
+/deploy - 🚀 Auto-deploy от GitHub (owner)
 /update - 🔄 Обновяване на бота от GitHub
 /restart - 🔄 Рестартиране на бота
 
@@ -6461,6 +6462,82 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
 
+# ================= DEPLOY КОМАНДА =================
+
+async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🚀 Автоматичен deploy - само за owner"""
+    user_id = update.effective_chat.id
+    
+    # Само owner може да deploy-ва
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("❌ Тази команда е достъпна само за owner-а на бота.")
+        return
+    
+    await update.message.reply_text("🚀 <b>СТАРТИРАНЕ НА AUTO-DEPLOY...</b>", parse_mode='HTML')
+    
+    import subprocess
+    import os
+    
+    try:
+        # Определи пътя до скрипта
+        script_path = os.path.join(os.path.dirname(__file__), 'update_bot.sh')
+        
+        # Провери дали скриптът съществува
+        if not os.path.exists(script_path):
+            await update.message.reply_text(
+                f"❌ <b>Грешка:</b> update_bot.sh не е намерен на:\n<code>{script_path}</code>",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Направи скрипта executable
+        os.chmod(script_path, 0o755)
+        
+        # Изпълни скрипта
+        await update.message.reply_text("⏳ Изпълнява се update_bot.sh...", parse_mode='HTML')
+        
+        result = subprocess.run(
+            ['/bin/bash', script_path],
+            capture_output=True,
+            text=True,
+            timeout=120  # 2 минути timeout
+        )
+        
+        # Изпрати резултата
+        if result.returncode == 0:
+            success_msg = "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
+            success_msg += "📝 <b>Изход:</b>\n"
+            
+            # Вземи последните 30 реда
+            output_lines = result.stdout.split('\n')
+            last_lines = '\n'.join(output_lines[-30:])
+            
+            success_msg += f"<pre>{last_lines}</pre>\n\n"
+            success_msg += "🎉 Ботът е обновен и рестартиран успешно!"
+            
+            await update.message.reply_text(success_msg, parse_mode='HTML')
+        else:
+            error_msg = "❌ <b>DEPLOY НЕУСПЕШЕН!</b>\n\n"
+            error_msg += f"🔴 <b>Exit Code:</b> {result.returncode}\n\n"
+            error_msg += "📝 <b>Грешка:</b>\n"
+            error_msg += f"<pre>{result.stderr[-1000:]}</pre>"
+            
+            await update.message.reply_text(error_msg, parse_mode='HTML')
+            
+    except subprocess.TimeoutExpired:
+        await update.message.reply_text(
+            "⏱️ <b>Timeout!</b> Deploy скриптът отне повече от 2 минути.\n"
+            "Може да е успешен, но проверете статуса на бота.",
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ <b>Грешка при deploy:</b>\n<code>{str(e)}</code>",
+            parse_mode='HTML'
+        )
+        logger.error(f"Deploy грешка: {e}")
+
+
 # ================= АДМИН КОМАНДИ =================
 
 async def admin_login_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7953,6 +8030,9 @@ def main():
     app.add_handler(CommandHandler("alerts", alerts_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("journal", journal_cmd))  # 📝 Trading Journal с ML
+    
+    # Deploy команда (само owner)
+    app.add_handler(CommandHandler("deploy", deploy_cmd))  # 🚀 Auto-deploy от GitHub
     
     # Админ команди
     app.add_handler(CommandHandler("admin_login", admin_login_cmd))
