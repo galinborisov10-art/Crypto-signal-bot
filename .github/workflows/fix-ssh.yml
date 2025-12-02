@@ -1,0 +1,81 @@
+name: 🔧 Auto-Fix SSH Key
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/fix-ssh.yml'
+
+jobs:
+  fix-ssh:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔑 Generate Fresh SSH Key
+      id: keygen
+      run: |
+        cd /tmp
+        ssh-keygen -t ed25519 -f deploy_key -N "" -C "github-actions-auto"
+        
+        echo "PUBLIC_KEY<<EOF" >> $GITHUB_OUTPUT
+        cat deploy_key.pub >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        echo "PRIVATE_KEY<<EOF" >> $GITHUB_OUTPUT
+        cat deploy_key >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        echo "✅ SSH ключ генериран"
+    
+    - name: 📋 Display Keys
+      run: |
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🔑 PUBLIC KEY (за сървъра):"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "${{ steps.keygen.outputs.PUBLIC_KEY }}"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🔐 PRIVATE KEY (за GitHub Secret DO_SSH_KEY):"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "${{ steps.keygen.outputs.PRIVATE_KEY }}"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "📝 ИНСТРУКЦИИ:"
+        echo "1. Копирай PUBLIC KEY и добави на сървъра:"
+        echo "   ssh root@SERVER 'echo PUBLIC_KEY >> ~/.ssh/authorized_keys'"
+        echo ""
+        echo "2. Копирай PRIVATE KEY и сложи в GitHub Secret:"
+        echo "   Settings → Secrets → DO_SSH_KEY → Update"
+        echo ""
+        echo "3. Re-run Auto Deploy workflow"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    - name: 🚀 Try Auto-Install (if DO_PASSWORD exists)
+      continue-on-error: true
+      run: |
+        if [ -z "${{ secrets.DO_PASSWORD }}" ]; then
+          echo "⚠️ DO_PASSWORD secret не е настроен - използвай ръчния метод горе"
+          exit 0
+        fi
+        
+        echo "🔄 Опит за автоматична инсталация с парола..."
+        
+        sudo apt-get update -qq
+        sudo apt-get install -y sshpass
+        
+        PUBLIC_KEY="${{ steps.keygen.outputs.PUBLIC_KEY }}"
+        
+        sshpass -p "${{ secrets.DO_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
+          ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} \
+          "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '$PUBLIC_KEY' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo '✅ SSH ключ инсталиран успешно!'"
+        
+        if [ $? -eq 0 ]; then
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅✅✅ SSH КЛЮЧ АВТОМАТИЧНО ИНСТАЛИРАН! ✅✅✅"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "🔐 Сега обнови GitHub Secret DO_SSH_KEY с PRIVATE KEY горе"
+          echo "   След това Auto Deploy ще работи автоматично!"
+        fi
