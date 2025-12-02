@@ -5428,8 +5428,8 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     best_signal = None
     best_confidence = 0
     
-    # Всички timeframes за проверка
-    timeframes_to_check = ['15m', '1h', '2h', '3h', '4h', '1d', '1w']
+    # Всички timeframes за проверка - САМО 3h
+    timeframes_to_check = ['3h']
     
     for symbol in SYMBOLS.values():
         for timeframe in timeframes_to_check:
