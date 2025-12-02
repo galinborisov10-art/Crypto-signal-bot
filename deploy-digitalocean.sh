@@ -24,9 +24,10 @@ ssh root@$SERVER_IP << 'ENDSSH'
 echo "📦 Updating system packages..."
 apt update && apt upgrade -y
 
-# Install Python 3.12
-echo "🐍 Installing Python 3.12..."
-apt install -y python3.12 python3.12-venv python3-pip git build-essential
+# Install Python 3.12 and dependencies
+echo "🐍 Installing Python 3.12 and system libraries..."
+apt install -y python3.12 python3.12-venv python3-pip git build-essential \
+    fonts-dejavu fonts-liberation libfreetype6-dev libpng-dev pkg-config
 
 # Clone repository
 echo "📥 Cloning repository..."
