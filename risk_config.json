@@ -1,0 +1,9 @@
+{
+  "max_position_size_pct": 20.0,
+  "max_daily_loss_pct": 6.0,
+  "max_concurrent_trades": 5,
+  "min_risk_reward_ratio": 2.0,
+  "risk_per_trade_pct": 2.0,
+  "portfolio_balance": 1000.0,
+  "stop_trading_on_daily_limit": true
+}

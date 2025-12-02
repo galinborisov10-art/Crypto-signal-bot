@@ -1003,6 +1003,133 @@
       "ml_signals_count": 0,
       "ml_completed": 0,
       "ml_accuracy": 0
+    },
+    {
+      "date": "2025-12-02",
+      "timestamp": "2025-12-02T09:04:59.809201",
+      "total_signals": 7,
+      "buy_signals": 5,
+      "sell_signals": 2,
+      "active_signals": 0,
+      "completed_signals": 0,
+      "wins": 0,
+      "losses": 0,
+      "breakeven": 0,
+      "accuracy": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "avg_win": 0,
+      "avg_loss": 0,
+      "best_trade": null,
+      "worst_trade": null,
+      "profit_factor": 0,
+      "avg_confidence": 76.85714285714286,
+      "confidence_accuracy": {},
+      "symbols_traded": [
+        "BTCUSDT"
+      ],
+      "symbols_stats": {
+        "BTCUSDT": {
+          "total": 7,
+          "completed": 0,
+          "wins": 0,
+          "accuracy": 0,
+          "profit": 0
+        }
+      },
+      "ml_signals_count": 0,
+      "ml_completed": 0,
+      "ml_accuracy": 0
+    },
+    {
+      "date": "2025-12-02",
+      "timestamp": "2025-12-02T12:11:12.614554",
+      "total_signals": 9,
+      "buy_signals": 6,
+      "sell_signals": 3,
+      "active_signals": 0,
+      "completed_signals": 0,
+      "wins": 0,
+      "losses": 0,
+      "breakeven": 0,
+      "accuracy": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "avg_win": 0,
+      "avg_loss": 0,
+      "best_trade": null,
+      "worst_trade": null,
+      "profit_factor": 0,
+      "avg_confidence": 78.97476747097926,
+      "confidence_accuracy": {},
+      "symbols_traded": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "symbols_stats": {
+        "ETHUSDT": {
+          "total": 1,
+          "completed": 0,
+          "wins": 0,
+          "accuracy": 0,
+          "profit": 0
+        },
+        "BTCUSDT": {
+          "total": 8,
+          "completed": 0,
+          "wins": 0,
+          "accuracy": 0,
+          "profit": 0
+        }
+      },
+      "ml_signals_count": 0,
+      "ml_completed": 0,
+      "ml_accuracy": 0
+    },
+    {
+      "date": "2025-12-02",
+      "timestamp": "2025-12-02T12:18:48.095417",
+      "total_signals": 9,
+      "buy_signals": 6,
+      "sell_signals": 3,
+      "active_signals": 0,
+      "completed_signals": 0,
+      "wins": 0,
+      "losses": 0,
+      "breakeven": 0,
+      "accuracy": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "avg_win": 0,
+      "avg_loss": 0,
+      "best_trade": null,
+      "worst_trade": null,
+      "profit_factor": 0,
+      "avg_confidence": 78.97476747097926,
+      "confidence_accuracy": {},
+      "symbols_traded": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "symbols_stats": {
+        "ETHUSDT": {
+          "total": 1,
+          "completed": 0,
+          "wins": 0,
+          "accuracy": 0,
+          "profit": 0
+        },
+        "BTCUSDT": {
+          "total": 8,
+          "completed": 0,
+          "wins": 0,
+          "accuracy": 0,
+          "profit": 0
+        }
+      },
+      "ml_signals_count": 0,
+      "ml_completed": 0,
+      "ml_accuracy": 0
     }
   ]
 }

@@ -8447,13 +8447,23 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+    # HTTPx клиент с persistent connection и retry логика
+    from httpx import Limits
+    
     app = (
         ApplicationBuilder()
         .token(TELEGRAM_BOT_TOKEN)
-        .get_updates_pool_timeout(30)
-        .get_updates_read_timeout(30)
-        .get_updates_write_timeout(30)
-        .get_updates_connect_timeout(30)
+        .get_updates_pool_timeout(3600)  # 1 час вместо 30 сек
+        .get_updates_read_timeout(3600)  # 1 час вместо 30 сек
+        .get_updates_write_timeout(3600)  # 1 час вместо 30 сек
+        .get_updates_connect_timeout(60)  # 1 минута вместо 30 сек
+        .pool_timeout(3600)  # HTTP pool timeout
+        .read_timeout(3600)  # HTTP read timeout
+        .write_timeout(3600)  # HTTP write timeout
+        .connect_timeout(60)  # HTTP connect timeout
+        .connection_pool_size(100)  # Повече connections
+        .get_updates_connection_pool_size(100)
+        .http_version("1.1")  # HTTP/1.1 за по-добра съвместимост
         .build()
     )
     
@@ -8708,9 +8718,21 @@ def main():
         async def send_startup_notification_task(context):
             await send_startup_notification()
         
+        # KEEPALIVE механизъм - пинг на всеки 30 мин за да предотврати timeout
+        async def keepalive_ping(context):
+            try:
+                # Прости ping към Telegram API за keepalive
+                await context.bot.get_me()
+                logger.info("💓 Keepalive ping изпратен успешно")
+            except Exception as e:
+                logger.warning(f"⚠️ Keepalive ping грешка: {e}")
+        
         app.job_queue.run_once(schedule_reports_task, 5)
         app.job_queue.run_once(enable_auto_alerts_task, 10)
         app.job_queue.run_once(send_startup_notification_task, 3)
+        
+        # Keepalive ping на всеки 30 минути (1800 секунди)
+        app.job_queue.run_repeating(keepalive_ping, interval=1800, first=1800)
     
     # Стартирай бота с error handling и БЕЗКРАЕН auto-recovery
     retry_count = 0
