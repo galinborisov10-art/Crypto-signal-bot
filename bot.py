@@ -207,6 +207,92 @@ SYMBOLS = {
 # Формат: {"BTCUSDT_BUY_4h": {'timestamp': datetime, 'confidence': 75}, ...}
 SENT_SIGNALS_CACHE = {}
 
+# ================= 3H TIMEFRAME CONVERSION =================
+def convert_1h_to_3h(klines_1h):
+    """
+    Конвертира 1h свещи към 3h свещи (точно както TradingView).
+    Binance не поддържа 3h директно, но може да се изчисли от 1h данни.
+    
+    Args:
+        klines_1h: List от 1h свещи от Binance API
+        
+    Returns:
+        List от 3h свещи в същия формат като Binance API
+    """
+    if not klines_1h or len(klines_1h) < 3:
+        return []
+    
+    klines_3h = []
+    
+    # Групирай по 3 свещи
+    for i in range(0, len(klines_1h) - 2, 3):
+        try:
+            # Вземи 3 последователни 1h свещи
+            candle_1 = klines_1h[i]
+            candle_2 = klines_1h[i + 1]
+            candle_3 = klines_1h[i + 2]
+            
+            # Създай 3h свещ комбинирайки трите 1h свещи
+            # Timestamp: от първата свещ
+            timestamp = candle_1[0]
+            
+            # Open: от първата свещ
+            open_price = float(candle_1[1])
+            
+            # High: максималната high от трите свещи
+            high_price = max(float(candle_1[2]), float(candle_2[2]), float(candle_3[2]))
+            
+            # Low: минималната low от трите свещи
+            low_price = min(float(candle_1[3]), float(candle_2[3]), float(candle_3[3]))
+            
+            # Close: от третата свещ
+            close_price = float(candle_3[4])
+            
+            # Volume: сума от трите свещи
+            volume = float(candle_1[5]) + float(candle_2[5]) + float(candle_3[5])
+            
+            # Close time: от третата свещ
+            close_time = candle_3[6]
+            
+            # Quote volume: сума от трите свещи
+            quote_volume = float(candle_1[7]) + float(candle_2[7]) + float(candle_3[7])
+            
+            # Trades: сума от трите свещи
+            trades = int(candle_1[8]) + int(candle_2[8]) + int(candle_3[8])
+            
+            # Taker buy base: сума от трите свещи
+            taker_buy_base = float(candle_1[9]) + float(candle_2[9]) + float(candle_3[9])
+            
+            # Taker buy quote: сума от трите свещи
+            taker_buy_quote = float(candle_1[10]) + float(candle_2[10]) + float(candle_3[10])
+            
+            # Ignore field
+            ignore = candle_1[11]
+            
+            # Формирай 3h свещта в Binance формат
+            kline_3h = [
+                timestamp,
+                str(open_price),
+                str(high_price),
+                str(low_price),
+                str(close_price),
+                str(volume),
+                close_time,
+                str(quote_volume),
+                trades,
+                str(taker_buy_base),
+                str(taker_buy_quote),
+                ignore
+            ]
+            
+            klines_3h.append(kline_3h)
+            
+        except (IndexError, ValueError, TypeError) as e:
+            logger.warning(f"Грешка при конвертиране на 1h към 3h свещ: {e}")
+            continue
+    
+    return klines_3h
+
 # ================= ПОМОЩНИ ФУНКЦИИ =================
 
 async def fetch_json(url: str, params: dict = None):
@@ -221,6 +307,42 @@ async def fetch_json(url: str, params: dict = None):
     except Exception as e:
         logger.error(f"Грешка при заявка към {url}: {e}")
         return None
+
+
+async def fetch_klines(symbol: str, interval: str, limit: int = 100):
+    """
+    Fetch klines data from Binance with automatic 3h conversion.
+    Ако interval='3h', автоматично взима 1h данни и ги конвертира към 3h.
+    """
+    try:
+        # Проверка дали е поискан 3h таймфрейм
+        if interval == '3h':
+            # Binance не поддържа 3h, използвай 1h и конвертирай
+            # За да получим достатъчно 3h свещи, трябват 3x повече 1h свещи
+            limit_1h = limit * 3
+            
+            params = {'symbol': symbol, 'interval': '1h', 'limit': limit_1h}
+            klines_1h = await fetch_json(BINANCE_KLINES_URL, params)
+            
+            if not klines_1h:
+                logger.error(f"❌ Не успях да извлека 1h данни за {symbol}")
+                return None
+            
+            # Конвертирай 1h към 3h
+            klines_3h = convert_1h_to_3h(klines_1h)
+            
+            logger.info(f"✅ Конвертирани {len(klines_1h)} x 1h свещи → {len(klines_3h)} x 3h свещи за {symbol}")
+            
+            return klines_3h
+        else:
+            # Стандартна заявка за всички други интервали
+            params = {'symbol': symbol, 'interval': interval, 'limit': limit}
+            return await fetch_json(BINANCE_KLINES_URL, params)
+            
+    except Exception as e:
+        logger.error(f"Грешка при fetch_klines за {symbol} {interval}: {e}")
+        return None
+
 
 
 async def translate_text(text: str, target_lang: str = 'bg') -> str:
@@ -1058,8 +1180,7 @@ async def get_higher_timeframe_confirmation(symbol, current_timeframe, signal):
         higher_tf = tf_hierarchy[higher_tf_idx]
         
         # Вземи данни за по-високия таймфрейм
-        params = {'symbol': symbol, 'interval': higher_tf, 'limit': 100}
-        klines = await fetch_json(BINANCE_KLINES_URL, params)
+        klines = await fetch_klines(symbol, higher_tf, limit=100)
         
         if not klines:
             return None
@@ -1319,12 +1440,7 @@ async def get_multi_timeframe_analysis(symbol, current_timeframe):
                 if not data_24h:
                     continue
                 
-                params_klines = {
-                    'symbol': symbol,
-                    'interval': tf,
-                    'limit': 100
-                }
-                klines = await fetch_json(BINANCE_KLINES_URL, params_klines)
+                klines = await fetch_klines(symbol, tf, limit=100)
                 
                 if not klines:
                     continue
@@ -1391,12 +1507,7 @@ async def analyze_btc_correlation(symbol, timeframe):
             return None  # BTC се анализира сам
         
         # Вземи BTC данни
-        params_btc = {
-            'symbol': 'BTCUSDT',
-            'interval': timeframe,
-            'limit': 50
-        }
-        btc_klines = await fetch_json(BINANCE_KLINES_URL, params_btc)
+        btc_klines = await fetch_klines('BTCUSDT', timeframe, limit=50)
         
         if not btc_klines or len(btc_klines) < 20:
             return None
@@ -4077,12 +4188,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Извлечи исторически данни (klines)
-    params_klines = {
-        'symbol': symbol,
-        'interval': timeframe,
-        'limit': 100
-    }
-    klines = await fetch_json(BINANCE_KLINES_URL, params_klines)
+    klines = await fetch_klines(symbol, timeframe, limit=100)
     
     if not klines:
         await update.message.reply_text("❌ Грешка при извличане на исторически данни")
@@ -5129,9 +5235,9 @@ async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("2ч", callback_data="tf_2h"),
             ],
             [
-                InlineKeyboardButton("3ч", callback_data="tf_3h"),
                 InlineKeyboardButton("4ч", callback_data="tf_4h"),
                 InlineKeyboardButton("1д", callback_data="tf_1d"),
+                InlineKeyboardButton("1с", callback_data="tf_1w"),
             ],
             [
                 InlineKeyboardButton("1с", callback_data="tf_1w"),
@@ -5145,7 +5251,7 @@ async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Директна промяна
     tf = context.args[0].lower()
-    valid_tfs = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+    valid_tfs = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
     
     if tf not in valid_tfs:
         await update.message.reply_text(f"❌ Невалиден таймфрейм. Избери от: {', '.join(valid_tfs)}")
@@ -5165,7 +5271,6 @@ async def timeframe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         'tf_15m': '15m',
         'tf_1h': '1h',
         'tf_2h': '2h',
-        'tf_3h': '3h',
         'tf_4h': '4h',
         'tf_1d': '1d',
         'tf_1w': '1w',
@@ -5428,8 +5533,8 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     best_signal = None
     best_confidence = 0
     
-    # Всички timeframes за проверка - САМО 3h
-    timeframes_to_check = ['3h']
+    # Всички timeframes за проверка - 4h (3h не е валиден в Binance)
+    timeframes_to_check = ['4h']
     
     for symbol in SYMBOLS.values():
         for timeframe in timeframes_to_check:
@@ -5443,12 +5548,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             if not data_24h:
                 continue
             
-            params_klines = {
-                'symbol': symbol,
-                'interval': timeframe,
-                'limit': 100
-            }
-            klines = await fetch_json(BINANCE_KLINES_URL, params_klines)
+            klines = await fetch_klines(symbol, timeframe, limit=100)
             
             if not klines:
                 continue
@@ -5506,12 +5606,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             if not data_24h:
                 continue
             
-            params_klines = {
-                'symbol': symbol,
-                'interval': timeframe,
-                'limit': 100
-            }
-            klines = await fetch_json(BINANCE_KLINES_URL, params_klines)
+            klines = await fetch_klines(symbol, timeframe, limit=100)
             
             if not klines:
                 continue
@@ -6291,12 +6386,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             
             # Извлечи исторически данни (klines)
-            params_klines = {
-                'symbol': symbol,
-                'interval': timeframe,
-                'limit': 100
-            }
-            klines = await fetch_json(BINANCE_KLINES_URL, params_klines)
+            klines = await fetch_klines(symbol, timeframe, limit=100)
             
             if not klines:
                 await context.bot.send_message(
@@ -6568,7 +6658,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message += f"━━━━━━━━━━━━━━━━━━━━\n"
                 
                 # Покажи сигналите от различните таймфреймове в ред
-                timeframe_order = ['15m', '1h', '2h', '3h', '4h', '1d', '1w']
+                timeframe_order = ['15m', '1h', '2h', '4h', '1d', '1w']
                 for tf in timeframe_order:
                     if tf in mtf_analysis['signals']:
                         sig = mtf_analysis['signals'][tf]
