@@ -4302,7 +4302,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     custom_timeframe = None
     if len(context.args) > 1:
         tf = context.args[1].lower()
-        valid_timeframes = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
+        valid_timeframes = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
         if tf in valid_timeframes:
             custom_timeframe = tf
         else:
