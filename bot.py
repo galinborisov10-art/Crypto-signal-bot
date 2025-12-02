@@ -2314,12 +2314,12 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
                     ict_aligned = True
                     ict_direction = 'BUY'
                     reasons.append(f"ICT MSS: Bullish structure shift")
-                    confidence += 20
+                    confidence += 30  # Increased from 20
                 elif 'BEARISH' in mss['type']:
                     ict_aligned = True
                     ict_direction = 'SELL'
                     reasons.append(f"ICT MSS: Bearish structure shift")
-                    confidence += 20
+                    confidence += 30  # Increased from 20
         
         # === 3. Liquidity Grab (reversal signal) ===
         if luxalgo_ict and luxalgo_ict.get('ict_liquidity_grab'):
@@ -2327,13 +2327,13 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
             if liq_grab and liq_grab.get('reversal_confirmed'):
                 if 'BULLISH' in liq_grab['type']:
                     reasons.append("ICT: Bullish liquidity grab")
-                    confidence += 18
+                    confidence += 25  # Increased from 18
                     if not ict_aligned:
                         ict_aligned = True
                         ict_direction = 'BUY'
                 elif 'BEARISH' in liq_grab['type']:
                     reasons.append("ICT: Bearish liquidity grab")
-                    confidence += 18
+                    confidence += 25  # Increased from 18
                     if not ict_aligned:
                         ict_aligned = True
                         ict_direction = 'SELL'
@@ -2348,11 +2348,11 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
                 if latest_fvg['type'] == 'BULLISH_FVG':
                     fvg_signal = 'BUY'
                     reasons.append(f"ICT: Bullish FVG at {latest_fvg['bottom']:.2f}")
-                    confidence += 12
+                    confidence += 18  # Increased from 12
                 elif latest_fvg['type'] == 'BEARISH_FVG':
                     fvg_signal = 'SELL'
                     reasons.append(f"ICT: Bearish FVG at {latest_fvg['top']:.2f}")
-                    confidence += 12
+                    confidence += 18  # Increased from 12
         
         # === 5. Displacement ===
         if luxalgo_ict and luxalgo_ict.get('ict_displacement'):
@@ -2382,29 +2382,50 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         luxalgo_says = sr_direction
         ict_says = ict_direction or fvg_signal
         
-        # Traditional confirmation
+        # Traditional confirmation (CONDITIONAL: only extreme or divergence)
         traditional_signal = None
-        if rsi and rsi < 40:
-            traditional_signal = 'BUY'
-            reasons.append(f"RSI oversold: {rsi:.1f}")
-            confidence += 10
-        elif rsi and rsi > 60:
-            traditional_signal = 'SELL'
-            reasons.append(f"RSI overbought: {rsi:.1f}")
-            confidence += 10
         
-        # MACD confirmation
-        if macd_line and macd_signal_line:
+        # RSI - only extreme zones (<30 or >70)
+        if rsi and rsi < 30:
+            traditional_signal = 'BUY'
+            reasons.append(f"RSI extreme oversold: {rsi:.1f}")
+            confidence += 5  # Reduced from 10
+        elif rsi and rsi > 70:
+            traditional_signal = 'SELL'
+            reasons.append(f"RSI extreme overbought: {rsi:.1f}")
+            confidence += 5  # Reduced from 10
+        
+        # MACD - check for divergence first
+        macd_divergence = False
+        if macd_line and macd_signal_line and len(closes) >= 20:
+            # Simple divergence detection
+            recent_price_trend = closes[-1] > closes[-10]
+            recent_macd_trend = macd_hist > (macd_hist if len(closes) < 10 else 0)
+            
+            if recent_price_trend != recent_macd_trend:
+                macd_divergence = True
+                # Divergence veto power
+                if recent_price_trend and not recent_macd_trend:
+                    traditional_signal = 'SELL'  # Bearish divergence
+                    reasons.append("⚠️ MACD bearish divergence (veto)")
+                    confidence -= 10  # Penalty for divergence
+                elif not recent_price_trend and recent_macd_trend:
+                    traditional_signal = 'BUY'  # Bullish divergence
+                    reasons.append("⚠️ MACD bullish divergence (veto)")
+                    confidence -= 10
+        
+        # MACD cross - only if no divergence
+        if not macd_divergence and macd_line and macd_signal_line:
             if macd_line > macd_signal_line and macd_hist > 0:
                 if traditional_signal == 'BUY' or not traditional_signal:
                     traditional_signal = 'BUY'
                     reasons.append("MACD bullish cross")
-                    confidence += 8
+                    confidence += 5  # Reduced from 8
             elif macd_line < macd_signal_line and macd_hist < 0:
                 if traditional_signal == 'SELL' or not traditional_signal:
                     traditional_signal = 'SELL'
                     reasons.append("MACD bearish cross")
-                    confidence += 8
+                    confidence += 5  # Reduced from 8
         
         # ===  FINAL SIGNAL DETERMINATION ===
         # IMPROVED: 2 out of 3 systems must agree (was too strict before)
