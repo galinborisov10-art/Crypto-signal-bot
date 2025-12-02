@@ -71,6 +71,117 @@ def check_missing_modules():
     return missing
 
 
+def check_syntax_errors():
+    """Проверява bot.py за syntax errors (IndentationError, SyntaxError и т.н.)"""
+    bot_file = f"{WORKSPACE}/bot.py"
+    
+    if not os.path.exists(bot_file):
+        logger.error(f"❌ Файлът {bot_file} не съществува!")
+        return None
+    
+    try:
+        # Компилирай файла за проверка на синтаксис
+        result = subprocess.run(
+            ["python3", "-m", "py_compile", bot_file],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode == 0:
+            logger.info("✅ Синтаксисът на bot.py е валиден")
+            return None
+        else:
+            error_msg = result.stderr.strip()
+            logger.error(f"❌ SYNTAX ERROR в bot.py:\n{error_msg}")
+            
+            # Опитай се да извлечеш номера на реда и типа грешка
+            match = re.search(r'File "([^"]+)", line (\d+)', error_msg)
+            if match:
+                line_num = int(match.group(2))
+                
+                # Определи типа грешка
+                if 'IndentationError' in error_msg:
+                    error_type = 'IndentationError'
+                elif 'SyntaxError' in error_msg:
+                    error_type = 'SyntaxError'
+                else:
+                    error_type = 'UnknownSyntaxError'
+                
+                return {
+                    'type': error_type,
+                    'line': line_num,
+                    'message': error_msg
+                }
+            
+            return {'type': 'UnknownError', 'message': error_msg}
+            
+    except Exception as e:
+        logger.error(f"❌ Грешка при проверка на синтаксис: {e}")
+        return None
+
+
+def fix_syntax_error(error_info):
+    """Опитва се да поправи автоматично syntax errors"""
+    if not error_info:
+        return False
+    
+    bot_file = f"{WORKSPACE}/bot.py"
+    error_type = error_info.get('type')
+    line_num = error_info.get('line')
+    
+    logger.warning(f"🔧 Опит за автоматично поправяне на {error_type} на ред {line_num}")
+    
+    try:
+        # Прочети файла
+        with open(bot_file, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        if line_num and 0 < line_num <= len(lines):
+            # Провери за дублирани редове около грешката
+            context_start = max(0, line_num - 5)
+            context_end = min(len(lines), line_num + 5)
+            context = lines[context_start:context_end]
+            
+            # Намери дублирани редове
+            seen = {}
+            duplicates = []
+            for i, line in enumerate(context):
+                line_stripped = line.strip()
+                if line_stripped and line_stripped in seen:
+                    actual_idx = context_start + i
+                    duplicates.append(actual_idx)
+                    logger.warning(f"   Намерен дубликат на ред {actual_idx}: {line_stripped[:50]}")
+                seen[line_stripped] = context_start + i
+            
+            # Премахни дубликати
+            if duplicates:
+                logger.info(f"🔧 Премахване на {len(duplicates)} дублирани реда...")
+                for idx in reversed(sorted(duplicates)):
+                    del lines[idx]
+                
+                # Запази поправения файл
+                with open(bot_file, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
+                
+                logger.info("✅ Дубликатите са премахнати!")
+                
+                # Провери отново синтаксиса
+                verification = check_syntax_errors()
+                if verification is None:
+                    logger.info("✅ Синтаксисът е коригиран успешно!")
+                    return True
+                else:
+                    logger.warning("⚠️ Все още има синтаксисни грешки")
+                    return False
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"❌ Грешка при поправяне на синтаксис: {e}")
+        return False
+
+
 def install_missing_modules(modules):
     """Инсталира липсващи модули"""
     if not modules:
@@ -210,6 +321,23 @@ def auto_fix():
     logger.info("=" * 60)
     
     fixed_issues = []
+    
+    # 0. КРИТИЧНО: Проверка за syntax errors ПЪРВО!
+    logger.info("🔍 Проверка на синтаксис...")
+    syntax_error = check_syntax_errors()
+    if syntax_error:
+        logger.error(f"❌ КРИТИЧНА ГРЕШКА: {syntax_error['type']} на ред {syntax_error.get('line', 'N/A')}")
+        logger.warning("🔧 Опит за автоматично поправяне...")
+        
+        if fix_syntax_error(syntax_error):
+            fixed_issues.append(f"Поправен {syntax_error['type']}")
+            logger.info("✅ Синтаксисът е коригиран! Продължаване с проверки...")
+        else:
+            logger.error("❌ НЕ МОЖЕ ДА ПОПРАВИ СИНТАКСИСА АВТОМАТИЧНО!")
+            logger.error("   Моля, поправи ръчно грешката в bot.py")
+            return
+    else:
+        logger.info("✅ Синтаксисът е валиден")
     
     # 1. Проверка дали ботът работи
     bot_pid = get_bot_pid()
