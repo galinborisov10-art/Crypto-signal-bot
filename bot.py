@@ -952,6 +952,42 @@ def calculate_ma(prices, period):
     return sum(prices[-period:]) / period
 
 
+def generate_tradingview_chart_url(symbol, timeframe, tp_price=None, sl_price=None, signal=None):
+    """
+    Генерира TradingView chart URL с автоматични S/R линии
+    Telegram показва preview на TradingView графиките автоматично
+    """
+    # Конвертирай символа за Binance формат
+    if not symbol.endswith('USDT'):
+        symbol = f"{symbol}USDT"
+    
+    # Конвертирай таймфрейма в TradingView формат
+    tf_map = {
+        '1m': '1',
+        '5m': '5', 
+        '15m': '15',
+        '30m': '30',
+        '1h': '60',
+        '2h': '120',
+        '3h': '180',
+        '4h': '240',
+        '1d': 'D',
+        '1w': 'W'
+    }
+    tv_timeframe = tf_map.get(timeframe, '60')
+    
+    # TradingView chart URL (Binance)
+    base_url = f"https://www.tradingview.com/chart/?symbol=BINANCE:{symbol}&interval={tv_timeframe}"
+    
+    # Добави индикатори (RSI, MACD, Volume)
+    indicators = "studies=%5B%7B%22id%22%3A%22RSI%40tv-basicstudies%22%7D%2C%7B%22id%22%3A%22MACD%40tv-basicstudies%22%7D%5D"
+    
+    # Пълен URL с индикатори
+    chart_url = f"{base_url}&{indicators}"
+    
+    return chart_url
+
+
 def calculate_macd(prices, fast=12, slow=26, signal=9):
     """Изчисляване на MACD индикатор"""
     if len(prices) < slow:
@@ -4750,40 +4786,20 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context
         )
     
-    # Изпрати графиката като снимка със звукова аларма
-    if chart_buffer:
-        # Telegram caption лимит е 1024 символа
-        # Направи кратък caption за графиката
-        short_caption = f"{signal_emoji} <b>{signal} {symbol}</b> ({timeframe})\n"
-        short_caption += f"💰 Цена: ${price:,.4f}\n"
-        short_caption += f"🎯 Confidence: {analysis['confidence']:.0f}%\n"
-        short_caption += f"✅ TP: ${tp_price:,.4f} (+{tp_pct:.2f}%)\n"
-        short_caption += f"🛑 SL: ${sl_price:,.4f} (-{sl_pct:.2f}%)\n"
-        short_caption += f"📊 R/R: 1:{rr_ratio:.2f}"
-        
-        # Изпрати графиката с кратък caption
-        await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=chart_buffer,
-            caption=f"🔔🔊 {short_caption}",
-            parse_mode='HTML',
-            disable_notification=False  # Включена звукова аларма
-        )
-        
-        # Изпрати пълното съобщение като текст след графиката
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=message,
-            parse_mode='HTML',
-            disable_notification=True  # Без втора звукова аларма
-        )
-    else:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"🔔🔊 {message}",
-            parse_mode='HTML',
-            disable_notification=False  # Включена звукова аларма
-        )
+    # Генерирай TradingView chart линк (показва се като preview в Telegram)
+    tradingview_url = generate_tradingview_chart_url(symbol, timeframe, tp_price, sl_price, analysis['signal'])
+    
+    # Изпрати съобщение със звукова аларма и TradingView линк
+    full_message = f"🔔🔊 {message}\n\n"
+    full_message += f"📊 <b><a href='{tradingview_url}'>➡️ Виж графиката в TradingView</a></b>"
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=full_message,
+        parse_mode='HTML',
+        disable_web_page_preview=False,  # Показва preview на TradingView графиката
+        disable_notification=False  # Включена звукова аларма
+    )
 
 
 async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
