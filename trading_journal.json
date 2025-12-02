@@ -2,8 +2,8 @@
   "metadata": {
     "created": "2025-11-25",
     "version": "1.0",
-    "total_trades": 94,
-    "last_updated": "2025-12-02T00:00:48.798014"
+    "total_trades": 95,
+    "last_updated": "2025-12-02T00:30:48.761583"
   },
   "trades": [
     {
@@ -2839,6 +2839,32 @@
         "ma_50": 867.3378,
         "volume_ratio": 0.0017232727110209998,
         "volatility": 3.252817499791336,
+        "trend": null,
+        "btc_correlation": null,
+        "sentiment": null
+      },
+      "notes": []
+    },
+    {
+      "id": 95,
+      "timestamp": "2025-12-02T00:30:48.761567",
+      "symbol": "ADAUSDT",
+      "timeframe": "4h",
+      "signal": "SELL",
+      "confidence": 82,
+      "entry_price": 0.3861,
+      "tp_price": 0.374517,
+      "sl_price": 0.393822,
+      "status": "PENDING",
+      "outcome": null,
+      "profit_loss_pct": null,
+      "closed_at": null,
+      "conditions": {
+        "rsi": 31.77215189873415,
+        "ma_20": 0.40600500000000006,
+        "ma_50": 0.416292,
+        "volume_ratio": 0.09614414142482185,
+        "volatility": 4.237771759800311,
         "trend": null,
         "btc_correlation": null,
         "sentiment": null

@@ -469,8 +469,8 @@ def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_
     return top_bullish + top_bearish
 
 
-def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_price, timeframe):
-    """Генерира графика със свещи, индикатори, Order Blocks и стрелка за тренда"""
+def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_price, timeframe, luxalgo_ict_data=None):
+    """Генерира графика със свещи, индикатори, Order Blocks, ликвидни зони и стрелка за тренда"""
     try:
         # Конвертирай klines data към DataFrame
         df = pd.DataFrame(klines_data, columns=[
@@ -510,26 +510,10 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         
         logger.info(f"📦 Detected {len(order_blocks)} high-quality Order Blocks for {symbol}")
         
-        # Изчисли MA за графиката - адаптивно според наличните данни
-        if len(df) >= 20:
-            df['MA20'] = df['close'].rolling(window=20).mean()
-        else:
-            df['MA20'] = None
-            
-        if len(df) >= 50:
-            df['MA50'] = df['close'].rolling(window=50).mean()
-        else:
-            df['MA50'] = None
-        
-        # Създай графика
-        fig, axes = plt.subplots(2, 1, figsize=(12, 8), gridspec_kw={'height_ratios': [3, 1]})
-        
-        # Главна графика с свещи
-        ax1 = axes[0]
+        # Създай графика - само главна (без RSI долу)
+        fig, ax1 = plt.subplots(1, 1, figsize=(14, 9))
         
         # Plot candlesticks
-        colors = ['green' if row['close'] >= row['open'] else 'red' for idx, row in df.iterrows()]
-        
         for idx, (timestamp, row) in enumerate(df.iterrows()):
             color = 'green' if row['close'] >= row['open'] else 'red'
             # Тяло на свещта
@@ -537,12 +521,6 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             height = abs(row['close'] - row['open'])
             bottom = min(row['open'], row['close'])
             ax1.add_patch(plt.Rectangle((idx-0.3, bottom), 0.6, height, facecolor=color, edgecolor='black', linewidth=0.5))
-        
-        # MA линии - покажи само ако са налични
-        if df.get('MA20') is not None and not df['MA20'].isna().all():
-            ax1.plot(range(len(df)), df['MA20'], label='MA(20)', color='blue', linewidth=1.5, alpha=0.7)
-        if df.get('MA50') is not None and not df['MA50'].isna().all():
-            ax1.plot(range(len(df)), df['MA50'], label='MA(50)', color='orange', linewidth=1.5, alpha=0.7)
         
         # 📦 ВИЗУАЛИЗИРАЙ САМО НАЙ-ВАЖНИТЕ ORDER BLOCKS
         for ob in order_blocks:
@@ -622,6 +600,85 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             ax1.axhline(y=ob['high'], color=edge_color, linestyle=':', linewidth=1, alpha=0.6,
                        xmin=xmin_val, xmax=xmax_val)
         
+        # 🎯 LUXALGO + ICT VISUALIZATION
+        if luxalgo_ict_data:
+            # === SUPPORT & RESISTANCE LINES ===
+            if luxalgo_ict_data.get('luxalgo_sr'):
+                sr_data = luxalgo_ict_data['luxalgo_sr']
+                
+                # Support - зелени плътни линии
+                for support_level in sr_data.get('support_levels', []):
+                    ax1.axhline(y=support_level, color='lime', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
+                    ax1.text(2, support_level, '  Support', fontsize=8, color='lime', weight='bold', va='bottom')
+                
+                # Resistance - червени плътни линии
+                for resistance_level in sr_data.get('resistance_levels', []):
+                    ax1.axhline(y=resistance_level, color='red', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
+                    ax1.text(2, resistance_level, '  Resistance', fontsize=8, color='red', weight='bold', va='top')
+                
+                # === BUY SIDE & SELL SIDE LIQUIDITY ===
+                liquidity_zones = sr_data.get('liquidity_zones', [])
+                for liq_price in liquidity_zones:
+                    zone_width = liq_price * 0.004
+                    zone_low = liq_price - zone_width
+                    zone_high = liq_price + zone_width
+                    
+                    if liq_price > current_price:
+                        # BUY SIDE liquidity (над цената) - червена зона
+                        ax1.axhspan(zone_low, zone_high, color='red', alpha=0.12, zorder=1)
+                        ax1.axhline(y=liq_price, color='darkred', linestyle=':', linewidth=1, alpha=0.6, zorder=2)
+                        ax1.text(1, liq_price, 'BSL', fontsize=7, color='darkred', weight='bold', ha='left', va='center')
+                    else:
+                        # SELL SIDE liquidity (под цената) - синя зона
+                        ax1.axhspan(zone_low, zone_high, color='blue', alpha=0.12, zorder=1)
+                        ax1.axhline(y=liq_price, color='darkblue', linestyle=':', linewidth=1, alpha=0.6, zorder=2)
+                        ax1.text(1, liq_price, 'SSL', fontsize=7, color='darkblue', weight='bold', ha='left', va='center')
+            
+            # === FAIR VALUE GAPS (FVG) ===
+            fvg_data = luxalgo_ict_data.get('ict_fvg', [])
+            if fvg_data:
+                for fvg in fvg_data[-5:]:  # Покажи последните 5 FVG
+                    fvg_low = fvg.get('gap_low')
+                    fvg_high = fvg.get('gap_high')
+                    fvg_type = fvg.get('type', 'BULLISH')
+                    
+                    if fvg_low and fvg_high:
+                        # Bullish FVG - зелен правоъгълник
+                        if 'BULLISH' in fvg_type:
+                            fvg_color = 'green'
+                            fvg_alpha = 0.25
+                        # Bearish FVG - червен правоъгълник
+                        else:
+                            fvg_color = 'red'
+                            fvg_alpha = 0.25
+                        
+                        # Нарисувай FVG зона през целия chart
+                        ax1.axhspan(fvg_low, fvg_high, color=fvg_color, alpha=fvg_alpha, zorder=2)
+                        ax1.text(len(df)-3, (fvg_low + fvg_high)/2, 'FVG', 
+                               fontsize=7, color='white', weight='bold', ha='center',
+                               bbox=dict(boxstyle='round,pad=0.3', facecolor=fvg_color, alpha=0.8))
+            
+            # === FIBONACCI LEVELS ===
+            fib_data = luxalgo_ict_data.get('fibonacci_extension')
+            if fib_data and fib_data.get('levels'):
+                fib_levels = fib_data['levels']
+                for level_name, level_price in fib_levels.items():
+                    if level_price and level_price > 0:
+                        # Различни цветове за различни нива
+                        if '0.618' in level_name or 'OTE' in level_name:
+                            fib_color = 'gold'
+                            fib_alpha = 0.8
+                        elif '1.618' in level_name:
+                            fib_color = 'purple'
+                            fib_alpha = 0.8
+                        else:
+                            fib_color = 'gray'
+                            fib_alpha = 0.5
+                        
+                        ax1.axhline(y=level_price, color=fib_color, linestyle='--', linewidth=1.5, alpha=fib_alpha, zorder=2)
+                        ax1.text(len(df)-8, level_price, f'  Fib {level_name}', 
+                               fontsize=7, color=fib_color, weight='bold', va='center', alpha=0.9)
+        
         # 📍 ENTRY ZONE - синя зона около текущата цена
         entry_zone_width = current_price * 0.005  # 0.5% зона около entry
         entry_low = current_price - entry_zone_width
@@ -689,73 +746,41 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                     fontsize=16, color='gray', weight='bold',
                     bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.7))
         
-        ax1.set_title(f'{symbol} - Таймфрейм: {timeframe} - {datetime.now().strftime("%Y-%m-%d %H:%M")}', 
+        ax1.set_title(f'{symbol} - {timeframe.upper()} - LuxAlgo + ICT Analysis - {datetime.now().strftime("%Y-%m-%d %H:%M")}', 
                      fontsize=14, weight='bold')
         ax1.set_ylabel('Цена (USDT)', fontsize=12)
+        ax1.set_xlabel('Време', fontsize=10)
+        ax1.grid(True, alpha=0.2, linestyle='--', linewidth=0.5)
+        ax1.set_xticks([])
         
-        # Добави информация за Order Blocks с качество
+        # Добави легенда само ако има Order Blocks
         if order_blocks:
             bullish_obs = [ob for ob in order_blocks if ob['type'] == 'bullish']
             bearish_obs = [ob for ob in order_blocks if ob['type'] == 'bearish']
             
-            # Изчисли средна сила
-            avg_score_bullish = sum(ob['score'] for ob in bullish_obs) / len(bullish_obs) if bullish_obs else 0
-            avg_score_bearish = sum(ob['score'] for ob in bearish_obs) / len(bearish_obs) if bearish_obs else 0
-            
-            ob_info = f'📦 Key Order Blocks: {len(bullish_obs)} Support, {len(bearish_obs)} Resistance'
-            
-            # Добави оценка на силата
-            if avg_score_bullish > 50 or avg_score_bearish > 50:
-                ob_info += ' (💎 Strong zones)'
-            elif avg_score_bullish > 35 or avg_score_bearish > 35:
-                ob_info += ' (⭐ Good zones)'
-            
+            ob_info = f'📦 Order Blocks: {len(bullish_obs)} Support | {len(bearish_obs)} Resistance'
             ax1.text(0.02, 0.98, ob_info,
                     transform=ax1.transAxes, fontsize=9, verticalalignment='top',
-                    bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.9, edgecolor='orange', linewidth=2))
-        
-        ax1.legend(loc='upper left', fontsize=9)
-        ax1.grid(True, alpha=0.3)
-        ax1.set_xticks([])
-        
-        # RSI панел - само ако има достатъчно данни
-        ax2 = axes[1]
-        closes = df['close'].values
-        
-        if len(closes) >= 15:
-            rsi_values = []
-            
-            for i in range(14, len(closes)):
-                rsi = calculate_rsi(closes[:i+1], 14)
-                rsi_values.append(rsi if rsi else 50)
-            
-            if rsi_values:
-                ax2.plot(range(14, len(df)), rsi_values, color='purple', linewidth=2)
-                ax2.axhline(y=70, color='red', linestyle='--', alpha=0.5)
-                ax2.axhline(y=30, color='green', linestyle='--', alpha=0.5)
-                ax2.axhline(y=50, color='gray', linestyle='-', alpha=0.3)
-        else:
-            # Недостатъчно данни за RSI - покажи съобщение
-            ax2.text(0.5, 0.5, 'Недостатъчно данни за RSI индикатор',
-                    ha='center', va='center', fontsize=10, color='gray',
-                    transform=ax2.transAxes)
-        
-        ax2.set_ylabel('RSI', fontsize=12)
-        ax2.set_ylim(0, 100)
-        ax2.grid(True, alpha=0.3)
-        ax2.set_xlabel('Време', fontsize=12)
-        ax2.set_xticks([])
+                    bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.85, edgecolor='orange', linewidth=1.5))
         
         plt.tight_layout()
         
-        # Запази в BytesIO buffer
+        # Save to buffer
         buf = BytesIO()
-        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
         buf.seek(0)
         plt.close(fig)
         
         return buf
         
+    except Exception as e:
+        logger.error(f"Грешка при генериране на графика: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# ================= ORDER BLOCKS =================
     except Exception as e:
         logger.error(f"Грешка при генериране на графика: {e}")
         return None
@@ -4226,8 +4251,9 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"❌ Грешка при ML прогноза: {e}")
     
     
-    # Генерирай графика
-    chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe)
+    # Генерирай графика с luxalgo_ict данни
+    luxalgo_ict_data = analysis.get('luxalgo_ict')
+    chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe, luxalgo_ict_data)
     
     # Изчисли вероятност за достигане на TP
     tp_probability = calculate_tp_probability(analysis, tp_price, analysis['signal'])
@@ -5377,6 +5403,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     # === ГЕНЕРИРАЙ ГРАФИКА ===
     chart_file = None
     try:
+        luxalgo_ict_data = analysis.get('luxalgo_ict')
         chart_file = generate_chart(
             klines,
             symbol,
@@ -5384,7 +5411,8 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             price,
             analysis['tp'],
             analysis['sl'],
-            settings['timeframe']
+            settings['timeframe'],
+            luxalgo_ict_data
         )
         if chart_file:
             logger.info(f"📊 Графика генерирана успешно за {symbol}")
@@ -6197,8 +6225,9 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     sl_price=sl_price
                 )
             
-            # Генерирай графика
-            chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe)
+            # Генерирай графика с luxalgo_ict данни
+            luxalgo_ict_data = analysis.get('luxalgo_ict')
+            chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe, luxalgo_ict_data)
             
             # Изчисли вероятност за достигане на TP
             tp_probability = calculate_tp_probability(analysis, tp_price, analysis['signal'])
