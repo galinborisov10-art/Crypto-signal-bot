@@ -5429,7 +5429,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     best_confidence = 0
     
     # Всички timeframes за проверка
-    timeframes_to_check = ['15m', '1h', '2h', '3h', '4h', '1d']
+    timeframes_to_check = ['15m', '1h', '2h', '3h', '4h', '1d', '1w']
     
     for symbol in SYMBOLS.values():
         for timeframe in timeframes_to_check:
@@ -6498,7 +6498,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message += f"━━━━━━━━━━━━━━━━━━━━\n"
                 
                 # Покажи сигналите от различните таймфреймове в ред
-                timeframe_order = ['15m', '1h', '2h', '3h', '4h', '1d']
+                timeframe_order = ['15m', '1h', '2h', '3h', '4h', '1d', '1w']
                 for tf in timeframe_order:
                     if tf in mtf_analysis['signals']:
                         sig = mtf_analysis['signals'][tf]
