@@ -6090,7 +6090,6 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             )
             
             logger.info(f"🔔 Автоматичен сигнал изпратен с TradingView chart: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
-                logger.info(f"🔔 Автоматичен сигнал изпратен БЕЗ ГРАФИКА: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
         
         except Exception as e:
             logger.error(f"Грешка при изпращане на alert: {e}")
