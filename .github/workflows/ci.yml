@@ -1,42 +1,85 @@
-name: ✅ CI Check
+name: 🚀 Auto Deploy
 
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
 jobs:
-  check:
+  deploy:
     runs-on: ubuntu-latest
     
     steps:
     - name: ✅ Checkout Code
       uses: actions/checkout@v3
     
-    - name: 🐍 Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    
-    - name: ✅ Check Syntax
-      run: |
-        python -m py_compile bot.py
-        echo "✅ Code syntax is valid"
-    
-    - name: 📦 Check Dependencies
-      run: |
-        pip install -r requirements.txt
-        echo "✅ All dependencies can be installed"
-    
-    - name: ✅ Build Success
+    - name: 🚀 Deploy to DigitalOcean
       run: |
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "✅ Code pushed successfully to GitHub!"
+        echo "🚀 Starting Auto-Deploy..."
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "📱 To deploy to DigitalOcean server:"
-        echo "   1. Use Telegram: /deploy"
-        echo "   2. OR SSH manually: cd ~/Crypto-signal-bot && git pull && ./update_bot.sh"
-        echo ""
-        echo "🤖 Bot will auto-update when you run /deploy in Telegram"
+        
+        # Setup SSH
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        
+        # SSH config
+        cat > ~/.ssh/config << 'EOF'
+        Host digitalocean
+          HostName ${{ secrets.DO_HOST }}
+          User ${{ secrets.DO_USERNAME }}
+          IdentityFile ~/.ssh/deploy_key
+          StrictHostKeyChecking no
+          UserKnownHostsFile /dev/null
+        EOF
+        
+        # Deploy
+        ssh digitalocean << 'ENDSSH'
+          set -e
+          
+          echo "📂 Navigating to project..."
+          cd ~/Crypto-signal-bot || cd /root/Crypto-signal-bot || exit 1
+          
+          echo "📊 Current commit: $(git rev-parse --short HEAD)"
+          
+          echo "🔄 Pulling latest code..."
+          git fetch origin
+          git reset --hard origin/main
+          
+          echo "✅ New commit: $(git rev-parse --short HEAD)"
+          
+          echo "📦 Installing dependencies..."
+          pip3 install -r requirements.txt --quiet --break-system-packages 2>/dev/null || pip3 install -r requirements.txt --quiet || true
+          
+          echo "🔄 Restarting bot..."
+          pkill -9 -f "python.*bot.py" || true
+          sleep 2
+          
+          nohup python3 bot.py > bot.log 2>&1 &
+          sleep 3
+          
+          if pgrep -f "python.*bot.py"; then
+            echo "✅ Bot restarted successfully!"
+            echo "📄 Last 10 lines of log:"
+            tail -10 bot.log
+          else
+            echo "⚠️ Bot may still be starting... Checking logs:"
+            tail -20 bot.log
+          fi
+        ENDSSH
+        
+        DEPLOY_STATUS=$?
+        
+        # Cleanup
+        rm -f ~/.ssh/deploy_key ~/.ssh/config
+        
+        if [ $DEPLOY_STATUS -eq 0 ]; then
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅✅✅ DEPLOY SUCCESSFUL! ✅✅✅"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        else
+          echo "❌ Deploy failed with exit code: $DEPLOY_STATUS"
+          exit 1
+        fi
