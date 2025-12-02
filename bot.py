@@ -4752,12 +4752,30 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Изпрати графиката като снимка със звукова аларма
     if chart_buffer:
+        # Telegram caption лимит е 1024 символа
+        # Направи кратък caption за графиката
+        short_caption = f"{signal_emoji} <b>{signal} {symbol}</b> ({timeframe})\n"
+        short_caption += f"💰 Цена: ${price:,.4f}\n"
+        short_caption += f"🎯 Confidence: {analysis['confidence']:.0f}%\n"
+        short_caption += f"✅ TP: ${tp_price:,.4f} (+{tp_pct:.2f}%)\n"
+        short_caption += f"🛑 SL: ${sl_price:,.4f} (-{sl_pct:.2f}%)\n"
+        short_caption += f"📊 R/R: 1:{rr_ratio:.2f}"
+        
+        # Изпрати графиката с кратък caption
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
             photo=chart_buffer,
-            caption=f"🔔🔊 {message}",
+            caption=f"🔔🔊 {short_caption}",
             parse_mode='HTML',
             disable_notification=False  # Включена звукова аларма
+        )
+        
+        # Изпрати пълното съобщение като текст след графиката
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=message,
+            parse_mode='HTML',
+            disable_notification=True  # Без втора звукова аларма
         )
     else:
         await context.bot.send_message(
