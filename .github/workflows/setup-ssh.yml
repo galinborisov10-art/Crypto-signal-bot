@@ -1,0 +1,50 @@
+name: Setup SSH Key
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔑 Generate New SSH Key
+      run: |
+        echo "=== GENERATING NEW SSH KEY FOR GITHUB ACTIONS ==="
+        
+        # Generate new SSH key
+        ssh-keygen -t ed25519 -f ~/.ssh/github_deploy -N "" -C "github-actions-$(date +%s)"
+        
+        echo "✅ New SSH key pair generated!"
+        echo ""
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "PUBLIC KEY (add this to DigitalOcean server)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        cat ~/.ssh/github_deploy.pub
+        echo ""
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "PRIVATE KEY (add this to GitHub Secret DO_SSH_KEY)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        cat ~/.ssh/github_deploy
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        
+        echo "📋 SETUP INSTRUCTIONS:"
+        echo ""
+        echo "1️⃣ SSH to DigitalOcean server:"
+        echo "   ssh root@YOUR_IP"
+        echo ""
+        echo "2️⃣ Add public key to authorized_keys:"
+        echo "   echo '$(cat ~/.ssh/github_deploy.pub)' >> ~/.ssh/authorized_keys"
+        echo "   chmod 600 ~/.ssh/authorized_keys"
+        echo ""
+        echo "3️⃣ In GitHub (this repo):"
+        echo "   Settings → Secrets → Actions → DO_SSH_KEY"
+        echo "   Paste the PRIVATE KEY from above (all lines including BEGIN/END)"
+        echo ""
+        echo "4️⃣ Test the connection:"
+        echo "   Actions → Test SSH Connection → Run workflow"
+        echo ""
+        echo "✅ After completing these steps, auto-deploy will work!"
