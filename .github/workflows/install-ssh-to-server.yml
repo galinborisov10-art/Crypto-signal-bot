@@ -1,0 +1,68 @@
+name: 🔧 Install SSH Key on Server
+
+on:
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔑 Install SSH Key via DigitalOcean Metadata
+      run: |
+        PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAVuikGhIXeO5UHmInzqK6dK55s3RSQIMbSHdr6XBEsb github-actions-permanent"
+        
+        echo "🔧 Опитвам се да инсталирам SSH ключ на сървъра..."
+        
+        # Метод 1: Използвай DigitalOcean API (ако има DO_API_TOKEN)
+        if [ -n "${{ secrets.DO_API_TOKEN }}" ]; then
+          echo "📡 Използвам DigitalOcean API..."
+          
+          RESPONSE=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.DO_API_TOKEN }}" \
+            -d "{\"name\":\"github-actions-permanent\",\"public_key\":\"$PUBLIC_KEY\"}" \
+            https://api.digitalocean.com/v2/account/keys)
+          
+          if echo "$RESPONSE" | grep -q '"ssh_key"'; then
+            echo "✅ SSH ключ добавен чрез DigitalOcean API!"
+            exit 0
+          else
+            echo "⚠️ API метод не сработи: $RESPONSE"
+          fi
+        fi
+        
+        # Метод 2: Използвай root парола (ако има DO_ROOT_PASSWORD)
+        if [ -n "${{ secrets.DO_ROOT_PASSWORD }}" ]; then
+          echo "🔐 Използвам root парола..."
+          
+          sudo apt-get update -qq
+          sudo apt-get install -y sshpass
+          
+          sshpass -p "${{ secrets.DO_ROOT_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} \
+            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '$PUBLIC_KEY' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys"
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ SSH ключ инсталиран чрез парола!"
+            exit 0
+          fi
+        fi
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "⚠️ АВТОМАТИЧНАТА ИНСТАЛАЦИЯ НЕ СРАБОТИ"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "Трябва РЪЧНО да добавиш public key на DigitalOcean сървъра:"
+        echo ""
+        echo "1. SSH към сървъра:"
+        echo "   ssh root@${{ secrets.DO_HOST }}"
+        echo ""
+        echo "2. Изпълни:"
+        echo "   echo '$PUBLIC_KEY' >> ~/.ssh/authorized_keys"
+        echo "   chmod 600 ~/.ssh/authorized_keys"
+        echo ""
+        echo "3. След това обнови GitHub Secret DO_SSH_KEY (виж SSH_KEYS_PERMANENT.md)"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
