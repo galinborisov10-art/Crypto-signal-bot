@@ -954,8 +954,13 @@ def calculate_ma(prices, period):
 
 def generate_tradingview_chart_url(symbol, timeframe, tp_price=None, sl_price=None, signal=None):
     """
-    Генерира TradingView chart URL с автоматични S/R линии
-    Telegram показва preview на TradingView графиките автоматично
+    Генерира TradingView chart URL с LuxAlgo индикатори
+    
+    Показва:
+    - LuxAlgo Smart Money Concepts (ICT) - Order Blocks, FVG, Liquidity
+    - LuxAlgo Support & Resistance
+    - Свещи (Candles) 
+    - Тъмна тема
     """
     # Конвертирай символа за Binance формат
     if not symbol.endswith('USDT'):
@@ -979,11 +984,29 @@ def generate_tradingview_chart_url(symbol, timeframe, tp_price=None, sl_price=No
     # TradingView chart URL (Binance)
     base_url = f"https://www.tradingview.com/chart/?symbol=BINANCE:{symbol}&interval={tv_timeframe}"
     
-    # Добави индикатори (RSI, MACD, Volume)
-    indicators = "studies=%5B%7B%22id%22%3A%22RSI%40tv-basicstudies%22%7D%2C%7B%22id%22%3A%22MACD%40tv-basicstudies%22%7D%5D"
+    # Основни настройки
+    settings = []
+    settings.append("theme=dark")  # Тъмна тема
+    settings.append("style=1")  # Candles
     
-    # Пълен URL с индикатори
-    chart_url = f"{base_url}&{indicators}"
+    # LuxAlgo индикатори (URL encoded)
+    indicators = []
+    
+    # LuxAlgo Smart Money Concepts (ICT) - Order Blocks, FVG, Liquidity, BOS, CHoCH
+    # ID: PUB;SmartMoneyConcepts от LuxAlgo
+    indicators.append("%7B%22id%22%3A%22PUB%3BSmartMoneyConcepts%22%2C%22version%22%3A%2244.0%22%7D")
+    
+    # LuxAlgo Support & Resistance Levels
+    # ID: PUB;SupportResistanceLevels от LuxAlgo
+    indicators.append("%7B%22id%22%3A%22PUB%3BSupportResistanceLevels%22%2C%22version%22%3A%2228.0%22%7D")
+    
+    # Съедини индикаторите
+    indicators_str = "%2C".join(indicators)
+    studies = f"studies=%5B{indicators_str}%5D"
+    
+    # Комбинирай всичко
+    settings_str = "&".join(settings)
+    chart_url = f"{base_url}&{settings_str}&{studies}"
     
     return chart_url
 
