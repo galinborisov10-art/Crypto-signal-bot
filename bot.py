@@ -1424,7 +1424,7 @@ async def get_multi_timeframe_analysis(symbol, current_timeframe):
     """Анализира сигнала на ВСИЧКИ таймфреймове за пълна картина"""
     try:
         # ВСИЧКИ таймфреймове за анализ
-        all_timeframes = ['15m', '1h', '2h', '3h', '4h', '1d']
+        all_timeframes = ['1m', '5m', '15m', '1h', '2h', '3h', '4h', '1d', '1w']
         
         mtf_signals = {}
         
@@ -5230,17 +5230,19 @@ async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Покажи текущ и опции
         keyboard = [
             [
-                InlineKeyboardButton("15м", callback_data="tf_15m"),
-                InlineKeyboardButton("1ч", callback_data="tf_1h"),
-                InlineKeyboardButton("2ч", callback_data="tf_2h"),
+                InlineKeyboardButton("⚡ 1м", callback_data="tf_1m"),
+                InlineKeyboardButton("⚡ 5м", callback_data="tf_5m"),
+                InlineKeyboardButton("📊 15м", callback_data="tf_15m"),
             ],
             [
-                InlineKeyboardButton("4ч", callback_data="tf_4h"),
-                InlineKeyboardButton("1д", callback_data="tf_1d"),
-                InlineKeyboardButton("1с", callback_data="tf_1w"),
+                InlineKeyboardButton("📊 1ч", callback_data="tf_1h"),
+                InlineKeyboardButton("📊 2ч", callback_data="tf_2h"),
+                InlineKeyboardButton("📊 3ч", callback_data="tf_3h"),
             ],
             [
-                InlineKeyboardButton("1с", callback_data="tf_1w"),
+                InlineKeyboardButton("📈 4ч", callback_data="tf_4h"),
+                InlineKeyboardButton("📈 1д", callback_data="tf_1d"),
+                InlineKeyboardButton("📈 1с", callback_data="tf_1w"),
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -6658,7 +6660,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message += f"━━━━━━━━━━━━━━━━━━━━\n"
                 
                 # Покажи сигналите от различните таймфреймове в ред
-                timeframe_order = ['15m', '1h', '2h', '4h', '1d', '1w']
+                timeframe_order = ['1m', '5m', '15m', '1h', '2h', '3h', '4h', '1d', '1w']
                 for tf in timeframe_order:
                     if tf in mtf_analysis['signals']:
                         sig = mtf_analysis['signals'][tf]
