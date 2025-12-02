@@ -8,108 +8,92 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: 🔍 Diagnose SSH Connection
+    - name: 🔍 Test ALL Possible SSH Keys
       run: |
-        echo "=== SSH Configuration Diagnostics ==="
+        echo "=== AUTO-DISCOVER SSH KEYS ON SERVER ==="
         echo ""
         
-        # Check if secrets are set
-        echo "1. Checking GitHub Secrets:"
-        if [ -n "${{ secrets.DO_HOST }}" ]; then
-          echo "   ✅ DO_HOST is set: ${{ secrets.DO_HOST }}"
-        else
-          echo "   ❌ DO_HOST is MISSING"
+        if [ -z "${{ secrets.DO_HOST }}" ] || [ -z "${{ secrets.DO_USERNAME }}" ]; then
+          echo "❌ DO_HOST or DO_USERNAME not set in secrets"
+          exit 1
         fi
         
-        if [ -n "${{ secrets.DO_USERNAME }}" ]; then
-          echo "   ✅ DO_USERNAME is set: ${{ secrets.DO_USERNAME }}"
-        else
-          echo "   ❌ DO_USERNAME is MISSING"
-        fi
+        HOST="${{ secrets.DO_HOST }}"
+        USER="${{ secrets.DO_USERNAME }}"
         
+        echo "Target: $USER@$HOST"
+        echo ""
+        
+        # Test with GitHub Secret key first
         if [ -n "${{ secrets.DO_SSH_KEY }}" ]; then
-          echo "   ✅ DO_SSH_KEY is set (length: ${#DO_SSH_KEY} chars)"
-          
-          # Check key format
-          echo "${{ secrets.DO_SSH_KEY }}" > /tmp/key
-          
-          if grep -q "BEGIN.*PRIVATE KEY" /tmp/key; then
-            echo "   ✅ SSH key has proper header"
-          else
-            echo "   ❌ SSH key is missing proper header (should start with -----BEGIN)"
-          fi
-          
-          if grep -q "END.*PRIVATE KEY" /tmp/key; then
-            echo "   ✅ SSH key has proper footer"
-          else
-            echo "   ❌ SSH key is missing proper footer (should end with -----END)"
-          fi
-          
-          # Try to validate key
-          chmod 600 /tmp/key
-          if ssh-keygen -l -f /tmp/key 2>/dev/null; then
-            echo "   ✅ SSH key is valid"
-          else
-            echo "   ❌ SSH key is INVALID or corrupted"
-          fi
-          
-          rm -f /tmp/key
-        else
-          echo "   ❌ DO_SSH_KEY is MISSING"
-        fi
-        
-        echo ""
-        echo "2. Testing network connectivity:"
-        if [ -n "${{ secrets.DO_HOST }}" ]; then
-          if ping -c 2 ${{ secrets.DO_HOST }} >/dev/null 2>&1; then
-            echo "   ✅ Host is reachable (ping successful)"
-          else
-            echo "   ⚠️ Host ping failed (may be blocking ICMP)"
-          fi
-          
-          if nc -zv ${{ secrets.DO_HOST }} 22 2>&1 | grep -q succeeded; then
-            echo "   ✅ SSH port 22 is open"
-          else
-            echo "   ❌ SSH port 22 is CLOSED or unreachable"
-          fi
-        fi
-        
-        echo ""
-        echo "3. Attempting SSH connection:"
-        if [ -n "${{ secrets.DO_HOST }}" ] && [ -n "${{ secrets.DO_USERNAME }}" ] && [ -n "${{ secrets.DO_SSH_KEY }}" ]; then
+          echo "=== TESTING GITHUB SECRET KEY ==="
           mkdir -p ~/.ssh
-          echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/test_key
-          chmod 600 ~/.ssh/test_key
+          echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/github_key
+          chmod 600 ~/.ssh/github_key
           
-          ssh -v -i ~/.ssh/test_key \
+          if ssh -v -i ~/.ssh/github_key \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=10 \
             -o BatchMode=yes \
-            ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} \
-            "echo 'SSH CONNECTION SUCCESSFUL'; whoami; pwd" 2>&1 | tail -30
-          
-          SSH_EXIT=$?
-          
-          if [ $SSH_EXIT -eq 0 ]; then
+            $USER@$HOST \
+            "echo '✅ GITHUB KEY WORKS'; ls -la ~/.ssh/" 2>&1 | grep -q "GITHUB KEY WORKS"; then
+            
+            echo "✅✅✅ GITHUB SECRET KEY WORKS! ✅✅✅"
             echo ""
-            echo "✅✅✅ SSH CONNECTION WORKS! ✅✅✅"
+            echo "Available SSH keys on server:"
+            ssh -i ~/.ssh/github_key \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              $USER@$HOST \
+              "ls -lh ~/.ssh/id_* ~/.ssh/*_rsa ~/.ssh/*_ed25519 2>/dev/null || echo 'No standard keys found'"
+            
+            rm -f ~/.ssh/github_key
+            exit 0
           else
+            echo "❌ GitHub secret key FAILED"
             echo ""
-            echo "❌ SSH connection failed (exit code: $SSH_EXIT)"
-            echo ""
-            echo "Common issues:"
-            echo "  - Wrong SSH key (use: ssh-keygen -t ed25519 on server)"
-            echo "  - Key not added to ~/.ssh/authorized_keys on server"
-            echo "  - Wrong username (try 'root' or check DigitalOcean console)"
-            echo "  - Firewall blocking port 22"
-            echo "  - Wrong IP address"
           fi
           
-          rm -f ~/.ssh/test_key
-        else
-          echo "❌ Cannot test - secrets are missing"
+          rm -f ~/.ssh/github_key
         fi
         
+        echo "=== TRYING PASSWORD-LESS SSH ==="
+        # Try without key (in case password auth or agent forwarding works)
+        if ssh -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o PasswordAuthentication=no \
+          -o ConnectTimeout=10 \
+          $USER@$HOST \
+          "echo '✅ KEYLESS WORKS'; find ~/.ssh -type f -name 'id_*' -o -name '*_rsa' -o -name '*_ed25519' 2>/dev/null" 2>&1 | grep -q "KEYLESS WORKS"; then
+          
+          echo "✅ Password-less SSH works!"
+          echo ""
+          echo "SSH keys found on server:"
+          ssh -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            $USER@$HOST \
+            "ls -lh ~/.ssh/"
+          exit 0
+        fi
+        
+        echo "❌ No working SSH method found"
         echo ""
-        echo "=== Diagnostics Complete ==="
+        echo "=== TROUBLESHOOTING ==="
+        echo ""
+        echo "1. Check if SSH port is open:"
+        nc -zv $HOST 22 2>&1
+        echo ""
+        
+        echo "2. Ping server:"
+        ping -c 2 $HOST 2>&1 | head -5
+        echo ""
+        
+        echo "3. To fix, run on DigitalOcean server:"
+        echo "   ssh root@$HOST"
+        echo "   ssh-keygen -t ed25519 -f ~/.ssh/github_deploy -N \"\""
+        echo "   cat ~/.ssh/github_deploy.pub >> ~/.ssh/authorized_keys"
+        echo "   cat ~/.ssh/github_deploy"
+        echo ""
+        echo "   Copy the output and add to GitHub Secrets as DO_SSH_KEY"
+
