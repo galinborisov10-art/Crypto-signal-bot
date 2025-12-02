@@ -51,6 +51,23 @@ try:
 except ImportError:
     DIAGNOSTICS_AVAILABLE = False
 
+# Импорт на LuxAlgo + ICT Analysis
+try:
+    from luxalgo_ict_analysis import (
+        combined_luxalgo_ict_analysis,
+        calculate_luxalgo_sr_levels,
+        detect_market_structure_shift,
+        detect_liquidity_grab,
+        detect_fair_value_gaps,
+        calculate_optimal_trade_entry,
+        calculate_fibonacci_extension
+    )
+    LUXALGO_ICT_AVAILABLE = True
+    logger.info("✅ LuxAlgo + ICT Analysis loaded successfully")
+except ImportError as e:
+    LUXALGO_ICT_AVAILABLE = False
+    logger.warning(f"⚠️ LuxAlgo + ICT module not available: {e}")
+
 # RSS и HTML парсинг за новини
 try:
     import feedparser
@@ -2009,9 +2026,15 @@ def get_daily_signals_report():
 
 
 def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
-    """Технически анализ и генериране на сигнал с напреднали индикатори"""
+    """
+    🔥 NEW: LuxAlgo + ICT Combined Analysis
+    Professional trading signals using:
+    - LuxAlgo Support/Resistance MTF
+    - ICT Concepts (MSS, FVG, Liquidity Grabs, OTE)
+    - Fibonacci Extensions (auto-calculated, penultimate TP)
+    """
     try:
-        # Вземи цените за затваряне
+        # Extract price data
         closes = [float(k[4]) for k in klines_data]
         highs = [float(k[2]) for k in klines_data]
         lows = [float(k[3]) for k in klines_data]
@@ -2019,198 +2042,287 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         volumes = [float(k[5]) for k in klines_data]
         current_price = closes[-1]
         
-        # ========== ОСНОВНИ ИНДИКАТОРИ ==========
+        # ========== LUXALGO + ICT ANALYSIS ==========
+        luxalgo_ict = {}
+        if LUXALGO_ICT_AVAILABLE:
+            luxalgo_ict = combined_luxalgo_ict_analysis(opens, highs, lows, closes, volumes)
+        
+        # ========== TRADITIONAL INDICATORS (for ML compatibility) ==========
         rsi = calculate_rsi(closes)
         ma_20 = calculate_ma(closes, 20)
         ma_50 = calculate_ma(closes, 50)
-        
-        # ========== НОВИ ИНДИКАТОРИ ==========
         macd_line, macd_signal_line, macd_hist = calculate_macd(closes)
         bb_upper, bb_middle, bb_lower = calculate_bollinger_bands(closes)
-        
-        # Candlestick patterns
-        patterns = detect_candlestick_patterns(klines_data)
-        
-        # Support/Resistance
-        sr_data = calculate_support_resistance(highs, lows, closes)
-        
-        # Market regime
-        market_regime = detect_market_regime(closes, highs, lows)
         
         # Volume analysis
         avg_volume = sum(volumes[-20:]) / 20 if len(volumes) >= 20 else sum(volumes) / len(volumes)
         current_volume = volumes[-1]
         volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
         
-        # ========== НОВИ ПОДОБРЕНИЯ ==========
-        
-        # Изчисли волатилност за adaptive TP/SL
+        # Volatility
         recent_closes = closes[-20:]
         avg_price = sum(recent_closes) / len(recent_closes)
         variance = sum((p - avg_price) ** 2 for p in recent_closes) / len(recent_closes)
         volatility = (variance ** 0.5) / avg_price * 100
         
-        # Time-of-day фактор
-        tod_factor = get_time_of_day_factor()
-        
-        # Liquidity check
+        # Market data
+        price_change = float(symbol_data.get('priceChangePercent', 0))
         volume_24h = float(symbol_data.get('quoteVolume', 0))
-        liquidity_check = check_liquidity(volume_24h, avg_volume, volume_ratio)
         
-        # ========== АНАЛИЗ И SCORING ==========
+        # ========== NEW SIGNAL LOGIC ==========
         signal = "NEUTRAL"
         confidence = 50
         reasons = []
         
-        # 24h данни
-        price_change = float(symbol_data.get('priceChangePercent', 0))
+        # === 1. LuxAlgo S/R Alignment ===
+        sr_aligned = False
+        sr_direction = None
         
-        # === RSI Analysis ===
-        if rsi is not None:
-            if rsi < 30:
-                signal = "BUY"
-                confidence += 20
-                reasons.append(f"RSI презакупен ({rsi:.1f})")
-            elif rsi > 70:
-                signal = "SELL"
-                confidence += 20
-                reasons.append(f"RSI препродаден ({rsi:.1f})")
-            elif 30 <= rsi <= 40:
-                confidence += 5
-                reasons.append(f"RSI влиза в зона за покупка ({rsi:.1f})")
-            elif 60 <= rsi <= 70:
-                confidence += 5
-                reasons.append(f"RSI влиза в зона за продажба ({rsi:.1f})")
+        if luxalgo_ict and luxalgo_ict.get('luxalgo_sr'):
+            sr_data = luxalgo_ict['luxalgo_sr']
+            breakout = sr_data.get('breakout_status', 'NONE')
+            
+            # Bullish: Retest support or breakout above resistance
+            if breakout in ['RETEST_SUPPORT', 'BREAKOUT_RESISTANCE']:
+                sr_aligned = True
+                sr_direction = 'BUY'
+                reasons.append(f"LuxAlgo: {breakout}")
+                confidence += 15
+            
+            # Bearish: Retest resistance or breakout below support
+            elif breakout in ['RETEST_RESISTANCE', 'BREAKOUT_SUPPORT']:
+                sr_aligned = True
+                sr_direction = 'SELL'
+                reasons.append(f"LuxAlgo: {breakout}")
+                confidence += 15
         
-        # === Moving Average Analysis ===
-        if ma_20 and ma_50:
-            if ma_20 > ma_50 and current_price > ma_20:
-                if signal == "BUY" or signal == "NEUTRAL":
+        # === 2. ICT Market Structure Shift ===
+        ict_aligned = False
+        ict_direction = None
+        
+        if luxalgo_ict and luxalgo_ict.get('ict_mss'):
+            mss = luxalgo_ict['ict_mss']
+            if mss and mss.get('confirmed'):
+                if 'BULLISH' in mss['type']:
+                    ict_aligned = True
+                    ict_direction = 'BUY'
+                    reasons.append(f"ICT MSS: Bullish structure shift")
+                    confidence += 20
+                elif 'BEARISH' in mss['type']:
+                    ict_aligned = True
+                    ict_direction = 'SELL'
+                    reasons.append(f"ICT MSS: Bearish structure shift")
+                    confidence += 20
+        
+        # === 3. Liquidity Grab (reversal signal) ===
+        if luxalgo_ict and luxalgo_ict.get('ict_liquidity_grab'):
+            liq_grab = luxalgo_ict['ict_liquidity_grab']
+            if liq_grab and liq_grab.get('reversal_confirmed'):
+                if 'BULLISH' in liq_grab['type']:
+                    reasons.append("ICT: Bullish liquidity grab")
+                    confidence += 18
+                    if not ict_aligned:
+                        ict_aligned = True
+                        ict_direction = 'BUY'
+                elif 'BEARISH' in liq_grab['type']:
+                    reasons.append("ICT: Bearish liquidity grab")
+                    confidence += 18
+                    if not ict_aligned:
+                        ict_aligned = True
+                        ict_direction = 'SELL'
+        
+        # === 4. Fair Value Gaps ===
+        fvg_signal = None
+        if luxalgo_ict and luxalgo_ict.get('ict_fvgs'):
+            fvgs = luxalgo_ict['ict_fvgs']
+            unfilled_fvgs = [f for f in fvgs if not f.get('filled')]
+            if unfilled_fvgs:
+                latest_fvg = unfilled_fvgs[-1]
+                if latest_fvg['type'] == 'BULLISH_FVG':
+                    fvg_signal = 'BUY'
+                    reasons.append(f"ICT: Bullish FVG at {latest_fvg['bottom']:.2f}")
+                    confidence += 12
+                elif latest_fvg['type'] == 'BEARISH_FVG':
+                    fvg_signal = 'SELL'
+                    reasons.append(f"ICT: Bearish FVG at {latest_fvg['top']:.2f}")
+                    confidence += 12
+        
+        # === 5. Displacement ===
+        if luxalgo_ict and luxalgo_ict.get('ict_displacement'):
+            disp = luxalgo_ict['ict_displacement']
+            if disp and disp.get('confirmed'):
+                if 'BULLISH' in disp['type']:
+                    reasons.append(f"ICT: Bullish displacement (strength: {disp['strength']:.1f}x)")
                     confidence += 15
-                    signal = "BUY"
-                    reasons.append("Bullish MA кръст")
-            elif ma_20 < ma_50 and current_price < ma_20:
-                if signal == "SELL" or signal == "NEUTRAL":
+                elif 'BEARISH' in disp['type']:
+                    reasons.append(f"ICT: Bearish displacement (strength: {disp['strength']:.1f}x)")
                     confidence += 15
-                    signal = "SELL"
-                    reasons.append("Bearish MA кръст")
         
-        # === MACD Analysis ===
-        if macd_line is not None and macd_signal_line is not None:
+        # === 6. Optimal Trade Entry (OTE) ===
+        ote_confirmed = False
+        if luxalgo_ict and luxalgo_ict.get('ict_ote'):
+            ote = luxalgo_ict['ict_ote']
+            if ote and ote.get('optimal_entry'):
+                ote_confirmed = True
+                reasons.append("ICT: In OTE zone with FVG confluence")
+                confidence += 20
+        
+        # === ENTRY RULE: All 3 must align ===
+        # 1. LuxAlgo S/R
+        # 2. ICT Concepts (MSS/Liquidity/FVG)
+        # 3. Signal confirmation (RSI/MACD)
+        
+        luxalgo_says = sr_direction
+        ict_says = ict_direction or fvg_signal
+        
+        # Traditional confirmation
+        traditional_signal = None
+        if rsi and rsi < 40:
+            traditional_signal = 'BUY'
+            reasons.append(f"RSI oversold: {rsi:.1f}")
+            confidence += 10
+        elif rsi and rsi > 60:
+            traditional_signal = 'SELL'
+            reasons.append(f"RSI overbought: {rsi:.1f}")
+            confidence += 10
+        
+        # MACD confirmation
+        if macd_line and macd_signal_line:
             if macd_line > macd_signal_line and macd_hist > 0:
-                if signal == "BUY" or signal == "NEUTRAL":
-                    confidence += 12
-                    signal = "BUY"
-                    reasons.append("MACD бичи кръст")
+                if traditional_signal == 'BUY' or not traditional_signal:
+                    traditional_signal = 'BUY'
+                    reasons.append("MACD bullish cross")
+                    confidence += 8
             elif macd_line < macd_signal_line and macd_hist < 0:
-                if signal == "SELL" or signal == "NEUTRAL":
-                    confidence += 12
-                    signal = "SELL"
-                    reasons.append("MACD мечи кръст")
+                if traditional_signal == 'SELL' or not traditional_signal:
+                    traditional_signal = 'SELL'
+                    reasons.append("MACD bearish cross")
+                    confidence += 8
         
-        # === Bollinger Bands Analysis ===
-        if bb_upper and bb_lower:
-            if current_price <= bb_lower:
-                if signal == "BUY" or signal == "NEUTRAL":
-                    confidence += 10
-                    signal = "BUY"
-                    reasons.append("Цена на долна BB лента")
-            elif current_price >= bb_upper:
-                if signal == "SELL" or signal == "NEUTRAL":
-                    confidence += 10
-                    signal = "SELL"
-                    reasons.append("Цена на горна BB лента")
+        # ===  FINAL SIGNAL DETERMINATION ===
+        # All 3 must agree: LuxAlgo + ICT + Traditional
+        if luxalgo_says == ict_says == traditional_signal == 'BUY':
+            signal = 'BUY'
+            reasons.append("✅ ALL SYSTEMS ALIGNED: BUY")
+            confidence += 25
+        elif luxalgo_says == ict_says == traditional_signal == 'SELL':
+            signal = 'SELL'
+            reasons.append("✅ ALL SYSTEMS ALIGNED: SELL")
+            confidence += 25
+        elif luxalgo_says == ict_says and luxalgo_says in ['BUY', 'SELL']:
+            # 2 out of 3: LuxAlgo + ICT agree
+            signal = luxalgo_says
+            reasons.append(f"⚠️ LuxAlgo + ICT aligned: {signal}")
+        elif ict_says and ote_confirmed:
+            # OTE overrides if strong
+            signal = ict_says
+            reasons.append(f"🎯 OTE entry confirmed: {signal}")
         
-        # === Candlestick Patterns ===
-        for pattern_name, pattern_signal, pattern_weight in patterns:
-            if pattern_signal == signal or signal == "NEUTRAL":
-                confidence += pattern_weight
-                signal = pattern_signal
-                pattern_bg = {
-                    'HAMMER': 'Hammer (бичи)',
-                    'SHOOTING_STAR': 'Shooting Star (мечи)',
-                    'BULLISH_ENGULFING': 'Bullish Engulfing',
-                    'BEARISH_ENGULFING': 'Bearish Engulfing',
-                    'DOJI': 'Doji (неутрално)'
-                }.get(pattern_name, pattern_name)
-                reasons.append(f"Модел: {pattern_bg}")
-        
-        # === Volume Analysis ===
-        if volume_ratio > 2:
+        # === Volume confirmation ===
+        if volume_ratio > 1.5 and signal in ['BUY', 'SELL']:
             confidence += 8
-            reasons.append(f"Висок обем ({volume_ratio:.1f}x средно)")
-        elif volume_ratio < 0.5:
-            confidence -= 5
-            reasons.append(f"Нисък обем ({volume_ratio:.1f}x средно)")
+            reasons.append(f"Volume surge: {volume_ratio:.1f}x")
         
-        # === Market Regime Analysis ===
-        if market_regime == 'STRONG_UPTREND' and signal == 'BUY':
-            confidence += 10
-            reasons.append("Силен възходящ тренд")
-        elif market_regime == 'STRONG_DOWNTREND' and signal == 'SELL':
-            confidence += 10
-            reasons.append("Силен низходящ тренд")
-        elif market_regime == 'RANGING':
-            confidence -= 10
-            reasons.append("Странично движение (избягвай)")
-        
-        # === Support/Resistance Analysis ===
-        if sr_data:
-            if sr_data['position'] == 'near_support' and signal == 'BUY':
-                confidence += 12
-                reasons.append("Цена близо до support")
-            elif sr_data['position'] == 'near_resistance' and signal == 'SELL':
-                confidence += 12
-                reasons.append("Цена близо до resistance")
-        
-        # === Price Change Analysis ===
-        if price_change > 5:
-            if signal == 'BUY':
-                confidence += 5
-            reasons.append(f"Силен ръст +{price_change:.1f}%")
-        elif price_change < -5:
-            if signal == 'SELL':
-                confidence += 5
-            reasons.append(f"Силен спад {price_change:.1f}%")
-        
-        # ========== НОВИ ПРОВЕРКИ ==========
-        
-        # === Time-of-day фактор ===
-        confidence += tod_factor['boost']
-        if tod_factor['boost'] != 0:
-            reasons.append(tod_factor['description'])
-        
-        # === Liquidity Check ===
-        if not liquidity_check['adequate']:
-            confidence += liquidity_check['penalty']
-            reasons.append(f"⚠️ {liquidity_check['reason']}")
-        elif liquidity_check['bonus'] > 0:
-            confidence += liquidity_check['bonus']
-            reasons.append(liquidity_check['reason'])
-        
-        # === FINAL CONFIDENCE ADJUSTMENT ===
-        # Ограничи confidence между 0 и 95
+        # === Cap confidence ===
         confidence = max(0, min(confidence, 95))
         
-        # Провери дали има подходящ трейд (само BUY или SELL с confidence >= 65)
-        has_good_trade = signal in ['BUY', 'SELL'] and confidence >= 65
+        # ========== TP/SL CALCULATION (NEW LOGIC) ==========
+        tp_price = None
+        sl_price = None
         
-        # Ако е RANGING пазар и confidence < 70, не давай сигнал
-        if market_regime == 'RANGING' and confidence < 70:
-            has_good_trade = False
+        if signal in ['BUY', 'SELL'] and luxalgo_ict:
+            # === Stop-Loss Logic ===
+            # SL below/above nearest S/R or liquidity sweep (conservative)
+            sr_data = luxalgo_ict.get('luxalgo_sr', {})
+            liq_grab = luxalgo_ict.get('ict_liquidity_grab')
+            
+            if signal == 'BUY':
+                # SL below support or liquidity sweep
+                sl_candidates = []
+                if sr_data.get('dynamic_support'):
+                    sl_candidates.append(sr_data['dynamic_support'][0])
+                if liq_grab and liq_grab.get('swept_level'):
+                    sl_candidates.append(liq_grab['swept_level'])
+                
+                if sl_candidates:
+                    sl_price = min(sl_candidates) * 0.998  # 0.2% below (conservative)
+                else:
+                    sl_price = current_price * 0.98  # Fallback: 2% SL
+            
+            else:  # SELL
+                # SL above resistance or liquidity sweep
+                sl_candidates = []
+                if sr_data.get('dynamic_resistance'):
+                    sl_candidates.append(sr_data['dynamic_resistance'][0])
+                if liq_grab and liq_grab.get('swept_level'):
+                    sl_candidates.append(liq_grab['swept_level'])
+                
+                if sl_candidates:
+                    sl_price = max(sl_candidates) * 1.002  # 0.2% above (conservative)
+                else:
+                    sl_price = current_price * 1.02  # Fallback: 2% SL
+            
+            # === Take-Profit Logic ===
+            # TP from: 1) ICT targets (FVG close, liquidity pools), 2) Fibonacci penultimate level
+            fib_data = luxalgo_ict.get('fibonacci')
+            fvgs = luxalgo_ict.get('ict_fvgs', [])
+            
+            tp_candidates = []
+            
+            # ICT target: FVG close
+            if fvgs:
+                unfilled = [f for f in fvgs if not f.get('filled')]
+                if unfilled:
+                    if signal == 'BUY':
+                        tp_candidates.append(max(f['top'] for f in unfilled if f['type'] == 'BULLISH_FVG'))
+                    else:
+                        tp_candidates.append(min(f['bottom'] for f in unfilled if f['type'] == 'BEARISH_FVG'))
+            
+            # Fibonacci penultimate level (1.618)
+            if fib_data and fib_data.get('penultimate_tp'):
+                tp_candidates.append(fib_data['penultimate_tp'])
+            
+            # Choose closest safe target
+            if tp_candidates:
+                if signal == 'BUY':
+                    tp_price = min(tp_candidates)  # Closest target above
+                else:
+                    tp_price = max(tp_candidates)  # Closest target below
+            else:
+                # Fallback: Adaptive TP/SL
+                adaptive = calculate_adaptive_tp_sl(symbol, volatility, timeframe)
+                if adaptive:
+                    tp_pct = adaptive.get('tp_pct', 2.5)
+                    tp_price = current_price * (1 + tp_pct/100) if signal == 'BUY' else current_price * (1 - tp_pct/100)
+        
+        # Fallback for traditional TP/SL
+        if not tp_price or not sl_price:
+            adaptive = calculate_adaptive_tp_sl(symbol, volatility, timeframe)
+            if adaptive:
+                tp_pct = adaptive.get('tp_pct', 2.5)
+                sl_pct = adaptive.get('sl_pct', 1.0)
+                
+                if signal == 'BUY':
+                    tp_price = current_price * (1 + tp_pct/100)
+                    sl_price = current_price * (1 - sl_pct/100)
+                elif signal == 'SELL':
+                    tp_price = current_price * (1 - tp_pct/100)
+                    sl_price = current_price * (1 + sl_pct/100)
+        
+        # ========== HAS GOOD TRADE CHECK ==========
+        has_good_trade = signal in ['BUY', 'SELL'] and confidence >= 70  # Higher threshold
         
         return {
             'signal': signal,
             'confidence': confidence,
             'price': current_price,
+            'tp_price': tp_price,
+            'sl_price': sl_price,
             'rsi': rsi,
             'ma_20': ma_20,
             'ma_50': ma_50,
             'macd': {'line': macd_line, 'signal': macd_signal_line, 'histogram': macd_hist},
             'bollinger': {'upper': bb_upper, 'middle': bb_middle, 'lower': bb_lower},
-            'patterns': patterns,
-            'support_resistance': sr_data,
-            'market_regime': market_regime,
             'volume_ratio': volume_ratio,
             'volatility': volatility,
             'change_24h': price_change,
@@ -2221,12 +2333,14 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
             'lows': lows,
             'closes': closes,
             'adaptive_tp_sl': calculate_adaptive_tp_sl(symbol, volatility, timeframe),
-            'time_factor': tod_factor,
-            'liquidity': liquidity_check
+            'luxalgo_ict': luxalgo_ict,  # Full analysis data
+            'time_factor': get_time_of_day_factor(),
+            'liquidity': check_liquidity(volume_24h, avg_volume, volume_ratio)
         }
     
     except Exception as e:
-        logger.error(f"Грешка при анализ: {e}")
+        logger.error(f"Error in analyze_signal: {e}")
+        logger.exception(e)
         return None
 
 
