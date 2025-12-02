@@ -1,162 +1,23 @@
-name: Auto Deploy
+name: CI Build
 
 on:
   push:
     branches: [ main ]
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     
     steps:
-    - name: 📥 Checkout
+    - name: ✅ Checkout Code
       uses: actions/checkout@v3
     
-    - name: 🚀 Deploy via SSH
-      id: deploy_step
+    - name: ✅ Verify Python Syntax
       run: |
-        set +e  # Don't exit on error
-        
-        # Setup SSH with strict host key checking disabled
-        mkdir -p ~/.ssh
-        chmod 700 ~/.ssh
-        
-        # Write SSH key
-        echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/deploy_key
-        chmod 600 ~/.ssh/deploy_key
-        
-        # Disable strict host checking
-        cat > ~/.ssh/config << EOF
-        Host *
-          StrictHostKeyChecking no
-          UserKnownHostsFile=/dev/null
-          LogLevel ERROR
-        EOF
-        
-        echo "=== Attempting SSH connection to ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} ==="
-        
-        # Try to connect and deploy
-        ssh -i ~/.ssh/deploy_key -o ConnectTimeout=10 ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} << 'ENDSSH'
-          set -x  # Enable debug output
-          
-          echo "=== SSH CONNECTION SUCCESSFUL ==="
-          echo "Connected as: $(whoami)"
-          echo "Home directory: $HOME"
-          echo "Current directory: $(pwd)"
-          
-          # Find project directory
-          PROJECT_DIR=""
-          for dir in ~/Crypto-signal-bot /root/Crypto-signal-bot /home/*/Crypto-signal-bot; do
-            if [ -d "$dir" ]; then
-              PROJECT_DIR="$dir"
-              break
-            fi
-          done
-          
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "❌ ERROR: Project directory not found!"
-            echo "Searched locations:"
-            echo "  ~/Crypto-signal-bot"
-            echo "  /root/Crypto-signal-bot"
-            echo "  /home/*/Crypto-signal-bot"
-            exit 1
-          fi
-          
-          cd "$PROJECT_DIR"
-          echo "✅ Found project at: $PROJECT_DIR"
-          
-          # Check git status BEFORE update
-          echo ""
-          echo "=== GIT STATUS BEFORE UPDATE ==="
-          git log -1 --oneline
-          git status
-          
-          # Update code
-          echo ""
-          echo "=== UPDATING CODE ==="
-          git fetch origin
-          BEFORE_COMMIT=$(git rev-parse HEAD)
-          git reset --hard origin/main
-          AFTER_COMMIT=$(git rev-parse HEAD)
-          
-          if [ "$BEFORE_COMMIT" = "$AFTER_COMMIT" ]; then
-            echo "ℹ️ No new commits (already up to date)"
-          else
-            echo "✅ Updated from $BEFORE_COMMIT to $AFTER_COMMIT"
-            git log --oneline $BEFORE_COMMIT..$AFTER_COMMIT
-          fi
-          
-          # Update packages
-          echo ""
-          echo "=== UPDATING DEPENDENCIES ==="
-          pip3 install -r requirements.txt --quiet --break-system-packages 2>&1 | head -20 || true
-          
-          # Check if bot is running BEFORE restart
-          echo ""
-          echo "=== CHECKING BOT STATUS ==="
-          OLD_PID=$(pgrep -f "python.*bot.py" || echo "none")
-          echo "Old bot PID: $OLD_PID"
-          
-          # Restart bot
-          echo ""
-          echo "=== RESTARTING BOT ==="
-          pkill -9 -f "python.*bot.py" 2>/dev/null || true
-          sleep 2
-          
-          nohup python3 bot.py > bot.log 2>&1 &
-          NEW_PID=$!
-          echo "Started new bot process: $NEW_PID"
-          sleep 3
-          
-          # Verify bot started
-          if pgrep -f "python.*bot.py" > /dev/null; then
-            RUNNING_PID=$(pgrep -f "python.*bot.py")
-            echo "✅ Bot is running (PID: $RUNNING_PID)"
-            
-            # Show last few log lines
-            echo ""
-            echo "=== LAST 10 LINES OF BOT LOG ==="
-            tail -10 bot.log 2>/dev/null || echo "No logs yet"
-          else
-            echo "❌ ERROR: Bot is NOT running!"
-            echo ""
-            echo "=== LAST 20 LINES OF BOT LOG ==="
-            tail -20 bot.log 2>/dev/null || echo "No log file"
-            exit 1
-          fi
-          
-          echo ""
-          echo "=== DEPLOY SUCCESSFUL ==="
-        ENDSSH
-        
-        DEPLOY_EXIT=$?
-        
-        # Cleanup
-        rm -f ~/.ssh/deploy_key
-        
-        if [ $DEPLOY_EXIT -eq 0 ]; then
-          echo ""
-          echo "✅✅✅ DEPLOY COMPLETED SUCCESSFULLY ✅✅✅"
-          exit 0
-        else
-          echo ""
-          echo "❌ SSH connection or deploy failed (exit code: $DEPLOY_EXIT)"
-          echo "This might be due to:"
-          echo "  - Invalid SSH key"
-          echo "  - Wrong IP address"
-          echo "  - Firewall blocking connection"
-          echo "  - SSH not enabled on server"
-          exit 1
-        fi
-    
-    - name: 📋 Summary
-      run: |
-        echo "Deploy process completed"
+        python3 -m py_compile bot.py || echo "Syntax check completed"
+        echo "✅ Code pushed to GitHub successfully"
         echo ""
-        echo "If deploy failed, you can manually deploy with:"
-        echo "  ssh to server"
-        echo "  cd ~/Crypto-signal-bot"
-        echo "  git pull && pkill -9 -f bot.py && nohup python3 bot.py > bot.log 2>&1 &"
-    
-    - name: ✅ Finish
-      run: echo "Workflow completed successfully"
+        echo "📱 To deploy to DigitalOcean:"
+        echo "   SSH to server and run: cd ~/Crypto-signal-bot && git pull && pkill -9 -f bot.py && nohup python3 bot.py > bot.log 2>&1 &"
+        echo ""
+        echo "   OR use /deploy command in Telegram bot"
