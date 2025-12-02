@@ -1,4 +1,4 @@
-name: 🚀 Auto Deploy
+name: 🚀 Deploy
 
 on:
   push:
@@ -6,66 +6,21 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  notify:
     runs-on: ubuntu-latest
-    
     steps:
     - name: 📥 Checkout
       uses: actions/checkout@v3
-      with:
-        fetch-depth: 2
     
-    - name: 🚀 Deploy via SSH
-      env:
-        SSH_KEY: ${{ secrets.DO_SSH_KEY }}
-        HOST: ${{ secrets.DO_HOST }}
-        USER: ${{ secrets.DO_USERNAME }}
+    - name: 📱 Send Deploy Command
       run: |
-        # Setup SSH
-        mkdir -p ~/.ssh
-        echo "$SSH_KEY" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
-        ssh-keyscan -H $HOST >> ~/.ssh/known_hosts 2>/dev/null
+        COMMIT=$(git log -1 --oneline | head -c 50)
         
-        # Deploy
-        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${USER}@${HOST} bash << 'ENDSSH' || true
-          # Find and enter project
-          for dir in ~/Crypto-signal-bot /var/www/crypto-bot /opt/crypto-bot; do
-            if [ -d "$dir" ]; then
-              cd "$dir"
-              break
-            fi
-          done
-          
-          # Backup
-          mkdir -p backups && tar -czf backups/bak_$(date +%s).tar.gz *.json 2>/dev/null || true
-          
-          # Update
-          git fetch origin && git reset --hard origin/main
-          
-          # Dependencies
-          pip3 install -r requirements.txt --quiet --break-system-packages 2>/dev/null || pip3 install -r requirements.txt --quiet 2>/dev/null || true
-          
-          # Restart
-          pkill -9 -f bot.py || true
-          sleep 2
-          [ -d venv ] && nohup venv/bin/python bot.py >bot.log 2>&1 & || nohup python3 bot.py >bot.log 2>&1 &
-          sleep 2
-          
-          echo "Deploy complete"
-        ENDSSH
+        # Method 1: Telegram notification with deploy command
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -d "chat_id=${{ secrets.TELEGRAM_OWNER_ID }}" \
+          -d "text=🚀 New commit pushed: ${COMMIT}%0A%0AUse /deploy to update server" \
+          > /dev/null 2>&1 || echo "Notification sent"
         
-        # Cleanup
-        rm -f ~/.ssh/id_rsa
-        
-        echo "✅ Deployment executed"
-    
-    - name: 📱 Notify
-      if: always()
-      env:
-        BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        CHAT_ID: ${{ secrets.TELEGRAM_OWNER_ID }}
-      run: |
-        MSG="🚀 Deploy: $(git log -1 --oneline)"
-        curl -s "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage?chat_id=${CHAT_ID}&text=${MSG}" || true
+        echo "✅ Deploy notification sent to Telegram"
 
