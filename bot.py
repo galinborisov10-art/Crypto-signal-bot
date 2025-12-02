@@ -5181,6 +5181,8 @@ async def timeframe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     tf_map = {
         'tf_15m': '15m',
         'tf_1h': '1h',
+        'tf_2h': '2h',
+        'tf_3h': '3h',
         'tf_4h': '4h',
         'tf_1d': '1d',
         'tf_1w': '1w',
@@ -5433,74 +5435,72 @@ async def monitor_active_trades(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
-    """Изпраща автоматичен сигнал с пълен анализ - проверява всички монети"""
+    """Изпраща автоматичен сигнал с пълен анализ - проверява всички монети и timeframes"""
     chat_id = context.job.data['chat_id']
     settings = get_user_settings(context.application.bot_data, chat_id)
     
-    logger.info("🔍 Започвам проверка на всички монети...")
+    logger.info("🔍 Започвам проверка на всички монети и timeframes...")
     
-    # Проверява всички символи и избира най-добрия сигнал
+    # Проверява всички символи И всички timeframes
     best_signal = None
     best_confidence = 0
     
+    # Всички timeframes за проверка
+    timeframes_to_check = ['15m', '1h', '2h', '3h', '4h', '1d']
+    
     for symbol in SYMBOLS.values():
-        # Извлечи данни
-        params_24h = {'symbol': symbol}
-        data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
-        
-        if isinstance(data_24h, list):
-            data_24h = next((s for s in data_24h if s['symbol'] == symbol), None)
-        
-        if not data_24h:
-            logger.info(f"🔍 {symbol}: Няма 24ч данни")
-            continue
-        
-        params_klines = {
-            'symbol': symbol,
-            'interval': settings['timeframe'],
-            'limit': 100
-        }
-        klines = await fetch_json(BINANCE_KLINES_URL, params_klines)
-        
-        if not klines:
-            logger.info(f"🔍 {symbol}: Няма klines данни")
-            continue
-        
-        # Анализирай
-        analysis = analyze_signal(data_24h, klines)
-        
-        if not analysis or analysis['signal'] == 'NEUTRAL':
-            logger.info(f"🔍 {symbol}: NEUTRAL")
-            continue
-        
-        # ⚡ ПРОВЕРКА ЗА ДУБЛИРАНЕ - ТУК, ПРЕДИ да го кандидатстваме!
-        if is_signal_already_sent(symbol, analysis['signal'], settings['timeframe'], analysis['confidence'], cooldown_minutes=60):
-            logger.info(f"⏭️ ПРОПУСКАМ: {symbol} {analysis['signal']} вече е изпратен наскоро - не участва в избора")
-            continue
-        
-        # Ако липсват TP/SL, изчисли прости нива
-        if 'tp' not in analysis or 'sl' not in analysis:
-            price = analysis['price']
-            if analysis['signal'] == 'BUY':
-                analysis['tp'] = price * 1.03  # +3%
-                analysis['sl'] = price * 0.98  # -2%
-            else:  # SELL
-                analysis['tp'] = price * 0.97  # -3%
-                analysis['sl'] = price * 1.02  # +2%
-            logger.info(f"🔍 {symbol}: Добавени default TP/SL")
-        
-        # Запомни най-добрия сигнал
-        if analysis['confidence'] >= 60 and analysis['confidence'] > best_confidence:
-            best_confidence = analysis['confidence']
-            best_signal = {
+        for timeframe in timeframes_to_check:
+            # Извлечи данни
+            params_24h = {'symbol': symbol}
+            data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
+            
+            if isinstance(data_24h, list):
+                data_24h = next((s for s in data_24h if s['symbol'] == symbol), None)
+            
+            if not data_24h:
+                continue
+            
+            params_klines = {
                 'symbol': symbol,
-                'analysis': analysis,
-                'data_24h': data_24h,
-                'klines': klines  # Запази klines за графиката
+                'interval': timeframe,
+                'limit': 100
             }
-            logger.info(f"🔍 {symbol}: {analysis['signal']} ({analysis['confidence']}%) - НОВ НАЙ-ДОБЪР")
-        else:
-            logger.info(f"🔍 {symbol}: {analysis['signal']} ({analysis['confidence']}%)")
+            klines = await fetch_json(BINANCE_KLINES_URL, params_klines)
+            
+            if not klines:
+                continue
+            
+            # Анализирай
+            analysis = analyze_signal(data_24h, klines)
+            
+            if not analysis or analysis['signal'] == 'NEUTRAL':
+                continue
+            
+            # ⚡ ПРОВЕРКА ЗА ДУБЛИРАНЕ
+            if is_signal_already_sent(symbol, analysis['signal'], timeframe, analysis['confidence'], cooldown_minutes=60):
+                continue
+            
+            # Ако липсват TP/SL, изчисли прости нива
+            if 'tp' not in analysis or 'sl' not in analysis:
+                price = analysis['price']
+                if analysis['signal'] == 'BUY':
+                    analysis['tp'] = price * 1.03  # +3%
+                    analysis['sl'] = price * 0.98  # -2%
+                else:  # SELL
+                    analysis['tp'] = price * 0.97  # -3%
+                    analysis['sl'] = price * 1.02  # +2%
+            
+            # Запомни най-добрия сигнал (включи timeframe в сравнението)
+            if analysis['confidence'] >= 60 and analysis['confidence'] > best_confidence:
+                best_confidence = analysis['confidence']
+                best_signal = {
+                    'symbol': symbol,
+                    'timeframe': timeframe,
+                    'analysis': analysis,
+                    'data_24h': data_24h,
+                    'klines': klines
+                }
+                logger.info(f"🔍 {symbol} ({timeframe}): {analysis['signal']} ({analysis['confidence']}%) - НОВ НАЙ-ДОБЪР")
     
     # Ако няма добър сигнал, не изпращай нищо
     if not best_signal:
@@ -5509,6 +5509,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     
     # Изпрати най-добрия сигнал
     symbol = best_signal['symbol']
+    timeframe = best_signal['timeframe']
     analysis = best_signal['analysis']
     klines = best_signal['klines']
     price = analysis['price']
@@ -5532,7 +5533,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             
             journal_id = log_trade_to_journal(
                 symbol=symbol,
-                timeframe=settings['timeframe'],
+                timeframe=timeframe,  # От best_signal
                 signal_type=analysis['signal'],
                 confidence=best_confidence,
                 entry_price=price,
@@ -5557,7 +5558,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             price,
             analysis['tp'],
             analysis['sl'],
-            settings['timeframe'],
+            timeframe,  # От best_signal
             luxalgo_ict_data
         )
         if chart_file:
@@ -5569,7 +5570,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         chart_file = None
     
     # === ОПРЕДЕЛИ ТИП НА ТРЕЙДА ===
-    timeframe = settings['timeframe']
+    # timeframe вече е взет от best_signal
     if timeframe in ['1m', '5m', '15m', '30m']:
         trade_type = "⚡ Краткосрочен"
         trade_duration = "Минути до часове"
