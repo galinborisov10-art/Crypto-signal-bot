@@ -6882,10 +6882,6 @@ async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ <b>ГРЕШКА</b>\n\n<code>{str(e)[:300]}</code>",
             parse_mode='HTML'
         )
-            f"❌ <b>ГРЕШКА</b>\n\n"
-            f"<code>{str(e)}</code>",
-            parse_mode='HTML'
-        )
 
 
 async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
