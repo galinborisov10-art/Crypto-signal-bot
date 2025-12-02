@@ -2,8 +2,8 @@
   "metadata": {
     "created": "2025-11-25",
     "version": "1.0",
-    "total_trades": 93,
-    "last_updated": "2025-12-01T23:50:48.792583"
+    "total_trades": 94,
+    "last_updated": "2025-12-02T00:00:48.798014"
   },
   "trades": [
     {
@@ -2813,6 +2813,32 @@
         "ma_50": 2947.0676000000003,
         "volume_ratio": 1.5787769847525819,
         "volatility": 3.430264678947544,
+        "trend": null,
+        "btc_correlation": null,
+        "sentiment": null
+      },
+      "notes": []
+    },
+    {
+      "id": 94,
+      "timestamp": "2025-12-02T00:00:48.798000",
+      "symbol": "BNBUSDT",
+      "timeframe": "4h",
+      "signal": "SELL",
+      "confidence": 87,
+      "entry_price": 826.71,
+      "tp_price": 801.9087000000001,
+      "sl_price": 843.2442000000001,
+      "status": "PENDING",
+      "outcome": null,
+      "profit_loss_pct": null,
+      "closed_at": null,
+      "conditions": {
+        "rsi": 31.8746581229976,
+        "ma_20": 860.691,
+        "ma_50": 867.3378,
+        "volume_ratio": 0.0017232727110209998,
+        "volatility": 3.252817499791336,
         "trend": null,
         "btc_correlation": null,
         "sentiment": null

@@ -5574,9 +5574,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка на текстови бутони от клавиатурата"""
     text = update.message.text
     
-    # Провери дали потребителят въвежда парола за обновяване или е в admin режим
-    if context.user_data.get('awaiting_update_password') or context.user_data.get('admin_command_mode'):
-        await update_bot_cmd(update, context)
+    # Провери дали потребителят е в admin режим или въвежда парола
+    if context.user_data.get('admin_command_mode') or context.user_data.get('awaiting_update_password'):
+        await admin_mode_handler(update, context)
         return
     
     if text == "📊 Пазар":
@@ -5594,7 +5594,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🏠 Меню":
         await start_cmd(update, context)
     elif text == "🔄 Обновяване":
-        await update_bot_cmd(update, context)
+        # Redirect to /auto_update for owner
+        if user_id == OWNER_CHAT_ID:
+            await auto_update_cmd(update, context)
+        else:
+            await update.message.reply_text("🔐 Тази функция е само за owner-а.")
     elif text == "📋 Отчети":
         await reports_cmd(update, context)
     elif text == "🤖 ML Status":
@@ -6970,8 +6974,8 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка при тестване: {str(e)}", parse_mode='HTML')
 
 
-async def update_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обновява бота от GitHub репозиторието - изисква admin парола"""
+async def admin_mode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command mode handler - изисква admin парола"""
     user_id = update.effective_user.id
     username = update.effective_user.username or "Unknown"
     
