@@ -1300,31 +1300,14 @@ def calculate_adaptive_tp_sl(symbol, volatility, timeframe):
 
 
 async def get_multi_timeframe_analysis(symbol, current_timeframe):
-    """Анализира сигнала на множество таймфреймове за консенсус"""
+    """Анализира сигнала на ВСИЧКИ таймфреймове за пълна картина"""
     try:
-        # Дефинирай всички възможни таймфреймове
-        timeframe_order = {'1m': 0, '5m': 1, '15m': 2, '30m': 3, '1h': 4, '2h': 5, '3h': 6, '4h': 7, '1d': 8, '1w': 9}
-        current_index = timeframe_order.get(current_timeframe, 3)
-        
-        # Избери таймфреймове за анализ (включително текущия и по-големи)
-        # Винаги анализираме поне 2-3 таймфрейма
-        all_available_tfs = ['15m', '1h', '3h', '4h', '1d', '1w']
-        
-        # Вземи таймфреймове >= текущия
-        relevant_tfs = [tf for tf in all_available_tfs if timeframe_order.get(tf, 0) >= current_index]
-        
-        # Ако няма достатъчно по-големи, вземи и по-малки
-        if len(relevant_tfs) < 2:
-            # Вземи текущия + 2-3 по-малки таймфрейма
-            smaller_tfs = [tf for tf in all_available_tfs if timeframe_order.get(tf, 0) < current_index]
-            relevant_tfs = smaller_tfs[-2:] + relevant_tfs  # Последните 2 по-малки + текущия и по-големи
-        
-        # Ограничи до максимум 4 таймфрейма
-        relevant_tfs = relevant_tfs[:4]
+        # ВСИЧКИ таймфреймове за анализ
+        all_timeframes = ['15m', '1h', '2h', '3h', '4h', '1d']
         
         mtf_signals = {}
         
-        for tf in relevant_tfs:
+        for tf in all_timeframes:
             try:
                 # Извлечи данни за този таймфрейм
                 params_24h = {'symbol': symbol}
@@ -1357,14 +1340,14 @@ async def get_multi_timeframe_analysis(symbol, current_timeframe):
                     }
                 
                 # Малка пауза между заявки
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.2)
                 
             except Exception as e:
                 logger.error(f"MTF analysis error for {tf}: {e}")
                 continue
         
         # Анализирай консенсуса
-        if len(mtf_signals) < 1:  # Поне 1 таймфрейм трябва да има
+        if len(mtf_signals) < 1:
             logger.warning(f"MTF: Not enough signals ({len(mtf_signals)}) for {symbol}")
             return None
         
@@ -1378,7 +1361,7 @@ async def get_multi_timeframe_analysis(symbol, current_timeframe):
             consensus_strength = 'Силен'
         elif sell_count / total >= 0.66:
             consensus = 'SELL'
-            consensus_strength = 'Силен'  # Поправка: SELL консенсус също може да е силен!
+            consensus_strength = 'Силен'
         elif buy_count > sell_count:
             consensus = 'BUY'
             consensus_strength = 'Слаб'
@@ -6511,17 +6494,39 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"MTF Analysis Debug: {mtf_analysis}")
             
             if mtf_analysis and mtf_analysis.get('signals') and len(mtf_analysis['signals']) >= 1:
-                message += f"🔍 <b>Multi-Timeframe Анализ:</b>\n"
+                message += f"🔍 <b>Multi-Timeframe Анализ (ВСИЧКИ TIMEFRAMES):</b>\n"
+                message += f"━━━━━━━━━━━━━━━━━━━━\n"
                 
-                # Покажи сигналите от различните таймфреймове
-                for tf, sig in mtf_analysis['signals'].items():
-                    sig_emoji = "🟢" if sig['signal'] == 'BUY' else "🔴" if sig['signal'] == 'SELL' else "⚪"
-                    current_marker = " ← текущ" if tf == timeframe else ""
-                    message += f"{tf}: {sig['signal']} {sig_emoji} ({sig['confidence']:.0f}%){current_marker}\n"
+                # Покажи сигналите от различните таймфреймове в ред
+                timeframe_order = ['15m', '1h', '2h', '3h', '4h', '1d']
+                for tf in timeframe_order:
+                    if tf in mtf_analysis['signals']:
+                        sig = mtf_analysis['signals'][tf]
+                        sig_emoji = "🟢" if sig['signal'] == 'BUY' else "🔴" if sig['signal'] == 'SELL' else "⚪"
+                        current_marker = " ← ИЗБРАН" if tf == timeframe else ""
+                        
+                        # Confidence bar visualization
+                        conf = sig['confidence']
+                        if conf >= 75:
+                            conf_bar = "█████"
+                        elif conf >= 65:
+                            conf_bar = "████░"
+                        elif conf >= 55:
+                            conf_bar = "███░░"
+                        elif conf >= 45:
+                            conf_bar = "██░░░"
+                        else:
+                            conf_bar = "█░░░░"
+                        
+                        message += f"{tf:>4}: {sig['signal']:>4} {sig_emoji} {conf_bar} {conf:.0f}%{current_marker}\n"
+                    else:
+                        message += f"{tf:>4}: ---  ⚪ ░░░░░   -  \n"
+                
+                message += f"━━━━━━━━━━━━━━━━━━━━\n"
                 
                 # Консенсус
                 consensus_emoji = "🟢" if mtf_analysis['consensus'] == 'BUY' else "🔴" if mtf_analysis['consensus'] == 'SELL' else "⚪"
-                message += f"\n💎 <b>Консенсус:</b> {mtf_analysis['consensus']} {consensus_emoji}\n"
+                message += f"💎 <b>Консенсус:</b> {mtf_analysis['consensus']} {consensus_emoji}\n"
                 message += f"💪 <b>Сила:</b> {mtf_analysis['consensus_strength']} ({mtf_analysis['agreement']:.0f}% съгласие)\n"
                 
                 # Препоръка според консенсуса
