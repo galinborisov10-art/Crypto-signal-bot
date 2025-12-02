@@ -1,4 +1,4 @@
-name: 🚀 Auto Deploy to DigitalOcean
+name: 🚀 Auto Deploy
 
 on:
   push:
@@ -10,73 +10,62 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: 📥 Checkout Code
+    - name: 📥 Checkout
       uses: actions/checkout@v3
+      with:
+        fetch-depth: 2
     
-    - name: 🔐 Setup SSH Key
+    - name: 🚀 Deploy via SSH
+      env:
+        SSH_KEY: ${{ secrets.DO_SSH_KEY }}
+        HOST: ${{ secrets.DO_HOST }}
+        USER: ${{ secrets.DO_USERNAME }}
       run: |
+        # Setup SSH
         mkdir -p ~/.ssh
-        echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/deploy_key
-        chmod 600 ~/.ssh/deploy_key
-        ssh-keyscan -H ${{ secrets.DO_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-    
-    - name: 🚀 Deploy to DigitalOcean
-      continue-on-error: true
-      id: deploy
-      run: |
-        ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} << 'EOF'
-          echo "🚀 Starting deploy..."
+        echo "$SSH_KEY" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H $HOST >> ~/.ssh/known_hosts 2>/dev/null
+        
+        # Deploy
+        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${USER}@${HOST} bash << 'ENDSSH' || true
+          # Find and enter project
+          for dir in ~/Crypto-signal-bot /var/www/crypto-bot /opt/crypto-bot; do
+            if [ -d "$dir" ]; then
+              cd "$dir"
+              break
+            fi
+          done
           
-          cd ~/Crypto-signal-bot 2>/dev/null || cd /var/www/crypto-bot 2>/dev/null || cd /opt/crypto-bot 2>/dev/null || exit 1
-          echo "✅ In $(pwd)"
+          # Backup
+          mkdir -p backups && tar -czf backups/bak_$(date +%s).tar.gz *.json 2>/dev/null || true
           
-          mkdir -p backups
-          tar -czf backups/backup_$(date +%Y%m%d_%H%M%S).tar.gz *.json 2>/dev/null || true
+          # Update
+          git fetch origin && git reset --hard origin/main
           
-          git fetch origin 2>&1 | head -5
-          git pull origin main 2>&1 | head -10
+          # Dependencies
+          pip3 install -r requirements.txt --quiet --break-system-packages 2>/dev/null || pip3 install -r requirements.txt --quiet 2>/dev/null || true
           
-          pip3 install -r requirements.txt --quiet --break-system-packages 2>&1 | grep -i "error" || true
-          
-          pkill -9 -f bot.py 2>/dev/null || true
+          # Restart
+          pkill -9 -f bot.py || true
+          sleep 2
+          [ -d venv ] && nohup venv/bin/python bot.py >bot.log 2>&1 & || nohup python3 bot.py >bot.log 2>&1 &
           sleep 2
           
-          if [ -d venv ]; then
-            nohup venv/bin/python bot.py > bot.log 2>&1 &
-          else
-            nohup python3 bot.py > bot.log 2>&1 &
-          fi
-          
-          sleep 3
-          pgrep -f bot.py && echo "✅ Bot started" || echo "⚠️ Bot starting..."
-          
-          echo "✅ Deploy complete"
-          exit 0
-        EOF
+          echo "Deploy complete"
+        ENDSSH
+        
+        # Cleanup
+        rm -f ~/.ssh/id_rsa
+        
+        echo "✅ Deployment executed"
     
-    - name: 🧹 Cleanup
+    - name: 📱 Notify
       if: always()
-      run: rm -f ~/.ssh/deploy_key
-    
-    - name: 📱 Telegram Notification
-      if: always()
+      env:
+        BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        CHAT_ID: ${{ secrets.TELEGRAM_OWNER_ID }}
       run: |
-        COMMIT_MSG=$(git log -1 --pretty=format:"%s" | sed 's/"/\\"/g')
-        COMMIT_HASH=$(git log -1 --pretty=format:"%h")
-        
-        if [ "${{ steps.deploy.outcome }}" == "success" ]; then
-          STATUS="✅ УСПЕШЕН"
-          EMOJI="🚀"
-        else
-          STATUS="⚠️ ЗАВЪРШЕН"
-          EMOJI="🔄"
-        fi
-        
-        MESSAGE="${EMOJI} <b>AUTO-DEPLOY ${STATUS}</b>%0A%0A"
-        MESSAGE="${MESSAGE}📝 ${COMMIT_HASH} - ${COMMIT_MSG}%0A"
-        MESSAGE="${MESSAGE}⏰ $(date '+%d.%m %H:%M')"
-        
-        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-          -d "chat_id=${{ secrets.TELEGRAM_OWNER_ID }}" \
-          -d "parse_mode=HTML" \
-          -d "text=${MESSAGE}" > /dev/null 2>&1 || true
+        MSG="🚀 Deploy: $(git log -1 --oneline)"
+        curl -s "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage?chat_id=${CHAT_ID}&text=${MSG}" || true
+
