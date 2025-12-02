@@ -7973,34 +7973,7 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Няма back-test резултати. Използвай /backtest")
         except Exception as e:
             await query.edit_message_text(f"❌ Грешка: {e}")
-    
-            # ДНЕВЕН ОТЧЕТ СЪС СТАТИСТИКА НА СИГНАЛИТЕ - Всеки ден в 08:00 BG време (06:00 UTC)
-            async def send_daily_signals_report():
-                """Изпраща автоматичен дневен отчет със статистика на сигналите за предходния ден"""
-                try:
-                    report = get_daily_signals_report()
-                    if report:
-                        await app.bot.send_message(
-                            chat_id=OWNER_CHAT_ID,
-                            text=report,
-                            parse_mode='HTML',
-                            disable_notification=False  # Със звук за важно съобщение
-                        )
-                        logger.info("✅ Daily signals report sent for previous day (08:00 BG time)")
-                    else:
-                        logger.warning("⚠️ No daily signals report generated")
-                except Exception as e:
-                    logger.error(f"❌ Daily signals report error: {e}")
-            
-            scheduler.add_job(
-                send_daily_signals_report,
-                'cron',
-                hour=6,  # 08:00 BG = 06:00 UTC (България е UTC+2)
-                minute=0
-            )
-            logger.info("✅ Daily signals report scheduled at 08:00 BG time (summary of previous day)")
-            
-            # Автоматична диагностика всеки ден в 01:00 UTC (03:00 BG време)
+
 
 def main():
     app = (
