@@ -3123,17 +3123,21 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"✅ Deploy authorized for owner {user_id}")
     
     try:
+        logger.info("📤 Sending status message...")
         status_msg = await update.message.reply_text(
             "🚀 <b>DEPLOY ЗАПОЧВА...</b>\n\n"
             "⏳ Изтегляне на промени от GitHub...",
             parse_mode='HTML'
         )
+        logger.info("✅ Status message sent")
         
         import subprocess
         
         # Download updated files from GitHub
         bot_dir = '/root/Crypto-signal-bot'
         github_url = 'https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main'
+        
+        logger.info(f"📥 Starting file downloads from {github_url}...")
         
         files_to_update = ['bot.py', 'luxalgo_sr_mtf.py', 'luxalgo_ict_concepts.py', 
                           'luxalgo_chart_generator.py', 'luxalgo_ict_analysis.py',
@@ -3144,6 +3148,7 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         for filename in files_to_update:
             try:
+                logger.info(f"⬇️ Downloading {filename}...")
                 result = subprocess.run(
                     ['wget', '-q', f'{github_url}/{filename}', '-O', f'{bot_dir}/{filename}'],
                     timeout=15,
@@ -3153,11 +3158,15 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 if result.returncode == 0:
                     updated_files.append(filename)
+                    logger.info(f"✅ {filename} downloaded")
                 else:
                     failed_files.append(filename)
+                    logger.error(f"❌ {filename} failed: {result.stderr}")
             except Exception as e:
                 failed_files.append(filename)
-                logger.error(f"Failed to download {filename}: {e}")
+                logger.error(f"❌ Failed to download {filename}: {e}")
+        
+        logger.info(f"📊 Download complete: {len(updated_files)} success, {len(failed_files)} failed")
         
         # Update status
         status_text = "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
@@ -3171,15 +3180,13 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if failed_files:
             status_text += f"\n⚠️ Пропуснати ({len(failed_files)}): {', '.join(failed_files[:3])}\n"
         
-        status_text += "\n🔄 Рестартирам бота...\n⏳ 5 секунди..."
+        status_text += "\n✅ <b>Файловете са обновени!</b>\n\n"
+        status_text += "🔄 <b>За да приложиш промените:</b>\n"
+        status_text += "Изпрати: <code>/restart</code>\n\n"
+        status_text += "<i>Или рестартирай ръчно на сървъра.</i>"
         
+        logger.info("📝 Updating status message...")
         await status_msg.edit_text(status_text, parse_mode='HTML')
-        
-        # Restart systemd service
-        subprocess.run(
-            ['sudo', 'systemctl', 'restart', 'crypto-bot.service'],
-            timeout=10
-        )
         
         logger.info(f"✅ Bot deployed successfully by {user_id} - {len(updated_files)} files updated")
             
