@@ -630,14 +630,14 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         
         # 🔍 ДЕТЕКТИРАЙ САМО НАЙ-ВАЖНИТЕ ORDER BLOCKS
         # Подавай текущата цена за филтриране по близост
-        # Намали lookback и max_obs ако има малко данни
-        lookback_period = min(5, len(df) - 2)
-        max_obs_count = 3 if len(df) >= 30 else 2
+        # Увеличаваме lookback и max_obs за по-добра детекция
+        lookback_period = min(10, len(df) - 2)  # По-голям период
+        max_obs_count = 5 if len(df) >= 50 else 3  # Повече OB
         
         order_blocks = detect_order_blocks(
             df.reset_index(drop=True), 
             lookback=lookback_period, 
-            threshold=0.02,  # 2% threshold - по-строг
+            threshold=0.015,  # 1.5% threshold - по-либерален
             current_price=current_price,
             max_obs=max_obs_count
         )
@@ -925,7 +925,7 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         
         # Save to buffer
         buf = BytesIO()
-        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        plt.savefig(buf, format='png', dpi=300, bbox_inches='tight')  # Високо качество
         buf.seek(0)
         plt.close(fig)
         
