@@ -1879,8 +1879,6 @@ def log_trade_to_journal(symbol, timeframe, signal_type, confidence, entry_price
             'closed_at': None,
             'conditions': {
                 'rsi': analysis_data.get('rsi') if analysis_data else None,
-                'ma_20': analysis_data.get('ma_20') if analysis_data else None,
-                'ma_50': analysis_data.get('ma_50') if analysis_data else None,
                 'volume_ratio': analysis_data.get('volume_ratio') if analysis_data else None,
                 'volatility': analysis_data.get('volatility') if analysis_data else None,
                 'trend': analysis_data.get('trend') if analysis_data else None,
@@ -2857,14 +2855,6 @@ def calculate_entry_zones(price, signal, closes, highs, lows, analysis):
         
         # Изчисли quality score на entry zone
         quality_score = 0
-        
-        # По-добре ако е близо до MA20
-        if analysis.get('ma_20'):
-            ma_distance = abs(best_entry - analysis['ma_20']) / analysis['ma_20'] * 100
-            if ma_distance < 2:
-                quality_score += 30
-            elif ma_distance < 5:
-                quality_score += 15
         
         # По-добре ако е близо до важно Fibonacci ниво
         for fib_price in fib_levels.values():
@@ -4626,11 +4616,9 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Запиши сигнала в статистиката с trading параметри + ML Journal
     signal_id = None
     if analysis['has_good_trade']:
-        # Подготви analysis_data за ML журнала
+        # Подготви analysis_data за ML журнала (pure ICT strategy)
         analysis_data = {
             'rsi': analysis.get('rsi'),
-            'ma_20': analysis.get('ma_20'),
-            'ma_50': analysis.get('ma_50'),
             'volume_ratio': analysis.get('volume_ratio'),
             'volatility': analysis.get('volatility'),
             'trend': analysis.get('trend'),
@@ -4860,10 +4848,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message += f"📊 <b>Индикатори:</b>\n"
     if analysis['rsi']:
         message += f"RSI(14): {analysis['rsi']:.1f}\n"
-    if analysis['ma_20']:
-        message += f"MA(20): ${analysis['ma_20']:.2f}\n"
-    if analysis['ma_50']:
-        message += f"MA(50): ${analysis['ma_50']:.2f}\n"
+    # MA removed - pure ICT strategy without moving averages
     
     if analysis['reasons']:
         message += f"\n💡 <b>Причини:</b>\n"
@@ -4882,10 +4867,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         no_trade_message += f"📊 <b>Индикатори:</b>\n"
         if analysis['rsi']:
             no_trade_message += f"RSI(14): {analysis['rsi']:.1f}\n"
-        if analysis['ma_20']:
-            no_trade_message += f"MA(20): ${analysis['ma_20']:.2f}\n"
-        if analysis['ma_50']:
-            no_trade_message += f"MA(50): ${analysis['ma_50']:.2f}\n"
+        # MA removed - pure ICT strategy
         no_trade_message += f"\nСигнал: {analysis['signal']}\n"
         no_trade_message += f"Увереност: {analysis['confidence']}%\n\n"
         no_trade_message += f"⚠️ <i>Пазарните условия не са подходящи за трейд в момента.</i>"
@@ -6366,8 +6348,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             try:
                 analysis_data = {
                     'rsi': analysis.get('rsi'),
-                    'ma_20': analysis.get('ma_20'),
-                    'ma_50': analysis.get('ma_50'),
+                    # MA removed - ICT only
                     'volume_ratio': analysis.get('volume_ratio'),
                     'volatility': analysis.get('volatility'),
                     'trend': analysis.get('trend'),
@@ -7418,10 +7399,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message += f"📊 <b>Индикатори:</b>\n"
             if analysis['rsi']:
                 message += f"RSI(14): {analysis['rsi']:.1f}\n"
-            if analysis['ma_20']:
-                message += f"MA(20): ${analysis['ma_20']:.2f}\n"
-            if analysis['ma_50']:
-                message += f"MA(50): ${analysis['ma_50']:.2f}\n"
+            # MA removed - pure ICT strategy
             
             if analysis['reasons']:
                 message += f"\n💡 <b>Причини:</b>\n"
@@ -7440,10 +7418,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 no_trade_message += f"📊 <b>Индикатори:</b>\n"
                 if analysis['rsi']:
                     no_trade_message += f"RSI(14): {analysis['rsi']:.1f}\n"
-                if analysis['ma_20']:
-                    no_trade_message += f"MA(20): ${analysis['ma_20']:.2f}\n"
-                if analysis['ma_50']:
-                    no_trade_message += f"MA(50): ${analysis['ma_50']:.2f}\n"
+                # MA removed - pure ICT strategy
                 no_trade_message += f"\nСигнал: {analysis['signal']}\n"
                 no_trade_message += f"Увереност: {analysis['confidence']}%\n\n"
                 no_trade_message += f"⚠️ <i>Пазарните условия не са подходящи за трейд в момента.</i>"
