@@ -641,8 +641,10 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         
         logger.info(f"📦 Detected {len(order_blocks)} high-quality Order Blocks for {symbol}")
         
-        # Създай графика - само главна (без RSI долу)
-        fig, ax1 = plt.subplots(1, 1, figsize=(14, 9))
+        # Създай графика - само главна (БЕЗ RSI, MACD панели)
+        # По-малък размер за Telegram
+        fig, ax1 = plt.subplots(1, 1, figsize=(12, 7), facecolor='#0e1117')
+        ax1.set_facecolor('#0e1117')  # Тъмен фон
         
         # Plot candlesticks
         for idx, (timestamp, row) in enumerate(df.iterrows()):
@@ -954,13 +956,17 @@ def calculate_ma(prices, period):
 
 def generate_tradingview_chart_url(symbol, timeframe, tp_price=None, sl_price=None, signal=None):
     """
-    Генерира TradingView chart URL с LuxAlgo индикатори
+    Генерира TradingView chart URL с вградени индикатори
     
     Показва:
-    - LuxAlgo Smart Money Concepts (ICT) - Order Blocks, FVG, Liquidity
-    - LuxAlgo Support & Resistance
+    - Volume Profile (показва важни зони)
+    - Pivot Points High Low (S/R нива)
+    - Volume (обем)
     - Свещи (Candles) 
     - Тъмна тема
+    
+    Забележка: LuxAlgo индикаторите не могат да се заредят автоматично през URL,
+    защото са community скриптове. Трябва да се добавят ръчно след отваряне.
     """
     # Конвертирай символа за Binance формат
     if not symbol.endswith('USDT'):
@@ -989,16 +995,17 @@ def generate_tradingview_chart_url(symbol, timeframe, tp_price=None, sl_price=No
     settings.append("theme=dark")  # Тъмна тема
     settings.append("style=1")  # Candles
     
-    # LuxAlgo индикатори (URL encoded)
+    # Вградени индикатори (които работят в URL)
     indicators = []
     
-    # LuxAlgo Smart Money Concepts (ICT) - Order Blocks, FVG, Liquidity, BOS, CHoCH
-    # ID: PUB;SmartMoneyConcepts от LuxAlgo
-    indicators.append("%7B%22id%22%3A%22PUB%3BSmartMoneyConcepts%22%2C%22version%22%3A%2244.0%22%7D")
+    # Volume (обем) - показва силата на движенията
+    indicators.append("%7B%22id%22%3A%22Volume%40tv-basicstudies%22%7D")
     
-    # LuxAlgo Support & Resistance Levels
-    # ID: PUB;SupportResistanceLevels от LuxAlgo
-    indicators.append("%7B%22id%22%3A%22PUB%3BSupportResistanceLevels%22%2C%22version%22%3A%2228.0%22%7D")
+    # Pivot Points High Low - показва swing highs/lows (подобно на ICT)
+    indicators.append("%7B%22id%22%3A%22PivotPointsHighLow%40tv-basicstudies%22%7D")
+    
+    # VWAP - важна зона за институционални търговци
+    indicators.append("%7B%22id%22%3A%22VWAP%40tv-basicstudies%22%7D")
     
     # Съедини индикаторите
     indicators_str = "%2C".join(indicators)
@@ -4809,20 +4816,37 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context
         )
     
-    # Генерирай TradingView chart линк (показва се като preview в Telegram)
-    tradingview_url = generate_tradingview_chart_url(symbol, timeframe, tp_price, sl_price, analysis['signal'])
-    
-    # Изпрати съобщение със звукова аларма и TradingView линк
-    full_message = f"🔔🔊 {message}\n\n"
-    full_message += f"📊 <b><a href='{tradingview_url}'>➡️ Виж графиката в TradingView</a></b>"
-    
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=full_message,
-        parse_mode='HTML',
-        disable_web_page_preview=False,  # Показва preview на TradingView графиката
-        disable_notification=False  # Включена звукова аларма
-    )
+    # Изпрати графиката като снимка (ако се генерира успешно)
+    if chart_buffer:
+        # Кратък caption (Telegram лимит 1024 символа)
+        short_caption = f"{signal_emoji} <b>{signal} {symbol}</b> ({timeframe})\n"
+        short_caption += f"💰 ${price:,.4f} | 🎯 {analysis['confidence']:.0f}%\n"
+        short_caption += f"✅ TP: ${tp_price:,.4f} (+{tp_pct:.2f}%)\n"
+        short_caption += f"🛑 SL: ${sl_price:,.4f} (-{sl_pct:.2f}%)"
+        
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=chart_buffer,
+            caption=f"🔔🔊 {short_caption}",
+            parse_mode='HTML',
+            disable_notification=False
+        )
+        
+        # Изпрати пълното съобщение като текст
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=message,
+            parse_mode='HTML',
+            disable_notification=True
+        )
+    else:
+        # Няма графика - изпрати само текст
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"🔔🔊 {message}",
+            parse_mode='HTML',
+            disable_notification=False
+        )
 
 
 async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6097,22 +6121,50 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                 message += f"   • {reason}\n"
     
         try:
-            # Генерирай TradingView chart линк
-            tradingview_url = generate_tradingview_chart_url(symbol, timeframe, None, None, analysis['signal'])
-            
-            # Изпрати съобщението с TradingView линк
-            full_message = f"🔔🔊 {message}\n\n"
-            full_message += f"📊 <b><a href='{tradingview_url}'>➡️ Виж графиката в TradingView</a></b>"
-            
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=full_message,
-                parse_mode='HTML',
-                disable_web_page_preview=False,  # Показва preview на TradingView графиката
-                disable_notification=False  # Със звук за важни сигнали
-            )
-            
-            logger.info(f"🔔 Автоматичен сигнал изпратен с TradingView chart: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
+            # Изпрати графиката като снимка (ако има)
+            if chart_file:
+                short_caption = f"🔔🔊 {symbol} {analysis['signal']} ({analysis['confidence']:.0f}%)"
+                
+                if isinstance(chart_file, BytesIO):
+                    chart_file.seek(0)
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=chart_file,
+                        caption=short_caption,
+                        parse_mode='HTML',
+                        disable_notification=False
+                    )
+                elif isinstance(chart_file, str) and os.path.exists(chart_file):
+                    with open(chart_file, 'rb') as photo:
+                        await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=photo,
+                            caption=short_caption,
+                            parse_mode='HTML',
+                            disable_notification=False
+                        )
+                    try:
+                        os.remove(chart_file)
+                    except:
+                        pass
+                
+                # Изпрати пълното съобщение
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode='HTML',
+                    disable_notification=True
+                )
+                logger.info(f"🔔 Автоматичен сигнал изпратен с графика: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
+            else:
+                # Няма графика - само текст
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🔔🔊 {message}",
+                    parse_mode='HTML',
+                    disable_notification=False
+                )
+                logger.info(f"🔔 Автоматичен сигнал изпратен без графика: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
         
         except Exception as e:
             logger.error(f"Грешка при изпращане на alert: {e}")
@@ -6944,33 +6996,45 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # DEBUG: Има подходящ трейд, изпращаме резултата
             logger.info(f"✅ Good trade found! Sending signal for {symbol} {timeframe}")
             
-            # Генерирай TradingView chart линк
-            tradingview_url = generate_tradingview_chart_url(symbol, timeframe, tp_price, sl_price, analysis['signal'])
-            
-            # Изпрати съобщение със звукова аларма и TradingView линк
-            full_message = f"🔔🔊 {message}\n\n"
-            full_message += f"📊 <b><a href='{tradingview_url}'>➡️ Виж графиката в TradingView</a></b>"
-            
-            try:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=full_message,
-                    parse_mode='HTML',
-                    disable_web_page_preview=False,  # Показва preview на TradingView графиката
-                    disable_notification=False  # Включена звукова аларма
-                )
-                logger.info("✅ Signal with TradingView chart sent successfully!")
-            except Exception as e:
-                logger.error(f"❌ Error sending signal: {e}")
-                # Fallback - изпрати поне текста без линк
+            # Изпрати графиката като снимка (ако има)
+            if chart_buffer:
+                # Кратък caption
+                short_caption = f"{signal_emoji} <b>{analysis['signal']} {symbol}</b> ({timeframe})\n"
+                short_caption += f"💰 ${price:,.4f} | 🎯 {analysis['confidence']:.0f}%"
+                
                 try:
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=chart_buffer,
+                        caption=f"🔔🔊 {short_caption}",
+                        parse_mode='HTML',
+                        disable_notification=False
+                    )
+                    
+                    # Изпрати пълното съобщение
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=message,
+                        parse_mode='HTML',
+                        disable_notification=True
+                    )
+                    logger.info("✅ Signal with chart sent successfully!")
+                except Exception as e:
+                    logger.error(f"❌ Error sending signal: {e}")
+                    # Fallback - само текст
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
                         text=message,
                         parse_mode='HTML'
                     )
-                except Exception as e2:
-                    logger.error(f"❌ Failed to send fallback message: {e2}")
+            else:
+                # Няма графика - изпрати само текст
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=message,
+                    parse_mode='HTML',
+                    disable_notification=False
+                )
         
         except Exception as main_error:
             logger.error(f"❌ CRITICAL ERROR in signal_callback: {main_error}", exc_info=True)
