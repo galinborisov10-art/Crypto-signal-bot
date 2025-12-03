@@ -9238,7 +9238,7 @@ def main():
         
         # Изпълни след инициализация на app
         async def schedule_reports_task(context):
-            await schedule_reports()
+            await schedule_reports(context.application)
         
         async def enable_auto_alerts_task(context):
             await enable_auto_alerts()
