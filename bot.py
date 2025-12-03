@@ -3009,7 +3009,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ================= FORWARD DETECTION =================
     # Провери дали съобщението е препратено (forward)
-    if update.message.forward_date or update.message.forward_from or update.message.forward_from_chat:
+    if hasattr(update.message, 'forward_origin') and update.message.forward_origin:
         # Ако НЕ Е owner-а - блокирай препращането
         if user_id != OWNER_CHAT_ID:
             # Запиши опита за препращане

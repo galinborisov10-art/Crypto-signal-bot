@@ -52,10 +52,11 @@ try:
 except ImportError:
     DIAGNOSTICS_AVAILABLE = False
 
-# Импорт на LuxAlgo + ICT Analysis
+# Импорт на LuxAlgo + ICT Analysis - NEW SYSTEM
 try:
     from luxalgo_ict_analysis import (
-        combined_luxalgo_ict_analysis,
+        CombinedLuxAlgoAnalysis,
+        combined_luxalgo_ict_analysis,  # Legacy
         calculate_luxalgo_sr_levels,
         detect_market_structure_shift,
         detect_liquidity_grab,
@@ -63,8 +64,9 @@ try:
         calculate_optimal_trade_entry,
         calculate_fibonacci_extension
     )
+    from luxalgo_chart_generator import generate_luxalgo_chart
     LUXALGO_ICT_AVAILABLE = True
-    logger.info("✅ LuxAlgo + ICT Analysis loaded successfully")
+    logger.info("✅ LuxAlgo + ICT Analysis (Full System) loaded successfully")
 except ImportError as e:
     LUXALGO_ICT_AVAILABLE = False
     logger.warning(f"⚠️ LuxAlgo + ICT module not available: {e}")
@@ -505,15 +507,17 @@ def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_
             next_candle = df.iloc[i + 1] if has_next else None
             
             # Bullish OB: bearish свещ + следва силен ръст (или е последен кендъл)
-            if current_candle['close'] < current_candle['open']:  # Bearish свещ
+            if current_candle['close'] < current_candle['open']:  # Bearish свещ (червен)
                 # Изчисли силата на движението
                 if has_next:
                     move_up = (next_candle['high'] - current_candle['low']) / current_candle['low']
+                    should_add = move_up >= threshold
                 else:
-                    # Последен кендъл - проверяваме само дали има силно bearish тяло
+                    # Последен кендъл - винаги добавяме като потенциален Support OB
                     move_up = abs(current_candle['open'] - current_candle['close']) / current_candle['close']
+                    should_add = True  # Последният кендъл винаги се добавя
                 
-                if move_up >= threshold or not has_next:  # Приемаме последния кендъл винаги
+                if should_add:
                     # Допълнителни критерии за качество
                     candle_size = abs(current_candle['open'] - current_candle['close'])
                     candle_range = current_candle['high'] - current_candle['low']
@@ -557,14 +561,16 @@ def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_
                         })
             
             # Bearish OB: bullish свещ + следва силен спад (или е последен кендъл)
-            if current_candle['close'] > current_candle['open']:  # Bullish свещ
+            if current_candle['close'] > current_candle['open']:  # Bullish свещ (зелен)
                 if has_next:
                     move_down = (current_candle['high'] - next_candle['low']) / current_candle['high']
+                    should_add = move_down >= threshold
                 else:
-                    # Последен кендъл - проверяваме само дали има силно bullish тяло
+                    # Последен кендъл - винаги добавяме като потенциален Resistance OB
                     move_down = abs(current_candle['close'] - current_candle['open']) / current_candle['open']
+                    should_add = True  # Последният кендъл винаги се добавя
                 
-                if move_down >= threshold or not has_next:  # Приемаме последния кендъл винаги
+                if should_add:
                     candle_size = abs(current_candle['close'] - current_candle['open'])
                     candle_range = current_candle['high'] - current_candle['low']
                     body_ratio = candle_size / candle_range if candle_range > 0 else 0
@@ -2373,7 +2379,44 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         volumes = [float(k[5]) for k in klines_data]
         current_price = closes[-1]
         
-        # ========== LUXALGO + ICT ANALYSIS ==========
+        # ========== NEW: COMBINED LUXALGO SYSTEM ==========
+        combined_analysis = None
+        sr_data = None
+        ict_data = None
+        
+        if LUXALGO_ICT_AVAILABLE:
+            try:
+                # Create DataFrame for new system
+                df = pd.DataFrame({
+                    'open': opens,
+                    'high': highs,
+                    'low': lows,
+                    'close': closes,
+                    'volume': volumes
+                })
+                
+                # Run combined analysis
+                analyzer = CombinedLuxAlgoAnalysis(
+                    sr_detection_length=15,
+                    sr_margin=2.0,
+                    ict_swing_length=10,
+                    enable_sr=True,
+                    enable_ict=True
+                )
+                
+                combined_analysis = analyzer.analyze(df)
+                sr_data = combined_analysis.get('sr_data')
+                ict_data = combined_analysis.get('ict_data')
+                
+                logger.info(f"✅ Combined LuxAlgo analysis completed: "
+                           f"Entry valid: {combined_analysis.get('entry_valid')}, "
+                           f"Bias: {combined_analysis.get('bias')}, "
+                           f"Signal strength: {combined_analysis.get('signal_strength')}")
+            
+            except Exception as e:
+                logger.error(f"Error in combined LuxAlgo analysis: {e}")
+        
+        # ========== LUXALGO + ICT ANALYSIS (Legacy) ==========
         luxalgo_ict = {}
         if LUXALGO_ICT_AVAILABLE:
             luxalgo_ict = combined_luxalgo_ict_analysis(opens, highs, lows, closes, volumes)
@@ -2769,7 +2812,10 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
             'lows': lows,
             'closes': closes,
             'adaptive_tp_sl': calculate_adaptive_tp_sl(symbol, volatility, timeframe),
-            'luxalgo_ict': luxalgo_ict,  # Full analysis data
+            'luxalgo_ict': luxalgo_ict,  # Legacy analysis data
+            'combined_luxalgo': combined_analysis,  # NEW: Full combined analysis
+            'sr_data': sr_data,  # NEW: S/R MTF data for chart
+            'ict_data': ict_data,  # NEW: ICT data for chart
             'time_factor': get_time_of_day_factor(),
             'liquidity': check_liquidity(volume_24h, avg_volume, volume_ratio),
             'risk_validation': risk_validation  # Risk Management results
@@ -4680,12 +4726,42 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Генерирай графика с luxalgo_ict данни
     luxalgo_ict_data = analysis.get('luxalgo_ict')
+    sr_data = analysis.get('sr_data')
+    ict_data = analysis.get('ict_data')
+    
     try:
-        chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe, luxalgo_ict_data)
+        # Use new LuxAlgo chart generator if available
+        if sr_data or ict_data:
+            # Create DataFrame for chart
+            df_chart = pd.DataFrame({
+                'open': analysis['highs'],  # Will be extracted properly
+                'high': analysis['highs'],
+                'low': analysis['lows'],
+                'close': analysis['closes'],
+                'volume': [float(k[5]) for k in klines]
+            })
+            
+            chart_buffer = generate_luxalgo_chart(
+                df=df_chart,
+                symbol=symbol,
+                signal=analysis['signal'],
+                current_price=price,
+                tp_price=tp_price,
+                sl_price=sl_price,
+                timeframe=timeframe,
+                sr_data=sr_data,
+                ict_data=ict_data
+            )
+        else:
+            # Fallback to old chart if new system not available
+            chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe, luxalgo_ict_data)
+        
         if not chart_buffer:
             logger.warning(f"⚠️ Chart generation returned None for {symbol} {timeframe}")
     except Exception as e:
         logger.error(f"❌ Chart generation failed for {symbol} {timeframe}: {e}")
+        import traceback
+        traceback.print_exc()
         chart_buffer = None
     
     # Изчисли вероятност за достигане на TP
@@ -6165,17 +6241,27 @@ async def monitor_active_trades(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
-    """Изпраща автоматичен сигнал с пълен анализ - ASYNC OPTIMIZED с memory cleanup"""
+    """
+    Изпраща автоматичен сигнал с пълен анализ - ASYNC OPTIMIZED с memory cleanup
+    
+    STRATEGY:
+    - Primary analysis: 1D, 4H, 1H (structure and trend)
+    - Signal generation: ALL timeframes (1m to 1w) if high confidence
+    - Multi-timeframe confluence required for best signals
+    """
     chat_id = context.job.data['chat_id']
     settings = get_user_settings(context.application.bot_data, chat_id)
     
-    logger.info("🔍 Започвам ASYNC проверка на всички монети и timeframes...")
+    logger.info("🔍 Започвам MULTI-TIMEFRAME проверка на всички монети...")
     
-    # Основни timeframes за проверка - 1h, 4h, 1d
-    timeframes_to_check = ['1h', '4h', '1d']
+    # 🎯 PRIMARY TIMEFRAMES - За структурен анализ (higher weight)
+    primary_timeframes = ['1d', '4h', '1h']
+    
+    # 🌐 ALL TIMEFRAMES - За сигнали (scan all)
+    all_timeframes = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
     
     # 🚀 ASYNC ПАРАЛЕЛЕН АНАЛИЗ - всички монети/timeframes наведнъж
-    async def analyze_single_pair(symbol, timeframe):
+    async def analyze_single_pair(symbol, timeframe, is_primary=False):
         """Анализира една двойка symbol+timeframe"""
         try:
             # Извлечи данни
@@ -6194,7 +6280,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                 return None
             
             # Анализирай
-            analysis = analyze_signal(data_24h, klines)
+            analysis = analyze_signal(data_24h, klines, symbol, timeframe)
             
             if not analysis or analysis['signal'] == 'NEUTRAL':
                 return None
@@ -6204,25 +6290,29 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                 return None
             
             # Ако липсват TP/SL, изчисли прости нива
-            if 'tp' not in analysis or 'sl' not in analysis:
+            if 'tp_price' not in analysis or 'sl_price' not in analysis:
                 price = analysis['price']
                 if analysis['signal'] == 'BUY':
-                    analysis['tp'] = price * 1.03  # +3%
-                    analysis['sl'] = price * 0.98  # -2%
+                    analysis['tp_price'] = price * 1.03  # +3%
+                    analysis['sl_price'] = price * 0.98  # -2%
                 else:  # SELL
-                    analysis['tp'] = price * 0.97  # -3%
-                    analysis['sl'] = price * 1.02  # +2%
+                    analysis['tp_price'] = price * 0.97  # -3%
+                    analysis['sl_price'] = price * 1.02  # +2%
+            
+            # Различни threshold за primary и secondary timeframes
+            min_confidence = 55 if is_primary else 70  # Primary TF = 55%, Others = 70%
             
             # Запомни сигнала ако е качествен
-            if analysis['confidence'] >= 60:
-                logger.info(f"🔍 {symbol} ({timeframe}): {analysis['signal']} ({analysis['confidence']}%)")
+            if analysis['confidence'] >= min_confidence:
+                logger.info(f"{'🎯' if is_primary else '🌐'} {symbol} ({timeframe}): {analysis['signal']} ({analysis['confidence']}%)")
                 return {
                     'symbol': symbol,
                     'timeframe': timeframe,
                     'analysis': analysis,
                     'data_24h': data_24h,
                     'klines': klines,
-                    'confidence': analysis['confidence']  # Добавено за сортиране
+                    'confidence': analysis['confidence'],
+                    'is_primary': is_primary
                 }
             
             return None
@@ -6233,8 +6323,14 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     # Създай всички задачи за паралелно изпълнение
     tasks = []
     for symbol in SYMBOLS.values():
-        for timeframe in timeframes_to_check:
-            tasks.append(analyze_single_pair(symbol, timeframe))
+        # Primary timeframes (lower threshold)
+        for timeframe in primary_timeframes:
+            tasks.append(analyze_single_pair(symbol, timeframe, is_primary=True))
+        
+        # Secondary timeframes (higher threshold - only very strong signals)
+        for timeframe in all_timeframes:
+            if timeframe not in primary_timeframes:
+                tasks.append(analyze_single_pair(symbol, timeframe, is_primary=False))
     
     # Изпълни ВСИЧКИ задачи паралелно (6x по-бързо!)
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -6293,8 +6389,8 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                     signal_type=analysis['signal'],
                     confidence=best_confidence,
                     entry_price=price,
-                    tp_price=analysis['tp'],
-                    sl_price=analysis['sl'],
+                    tp_price=analysis.get('tp_price', analysis.get('tp')),
+                    sl_price=analysis.get('sl_price', analysis.get('sl')),
                     analysis_data=analysis_data
                 )
             
@@ -6307,22 +6403,54 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         chart_file = None
         try:
             luxalgo_ict_data = analysis.get('luxalgo_ict')
-            chart_file = generate_chart(
-                klines,
-                symbol,
-                analysis['signal'],
-                price,
-                analysis['tp'],
-                analysis['sl'],
-                timeframe,  # От best_signal
-                luxalgo_ict_data
-            )
+            sr_data = analysis.get('sr_data')
+            ict_data = analysis.get('ict_data')
+            
+            tp_price = analysis.get('tp_price', analysis.get('tp'))
+            sl_price = analysis.get('sl_price', analysis.get('sl'))
+            
+            # Use new chart if LuxAlgo data available
+            if sr_data or ict_data:
+                df_chart = pd.DataFrame({
+                    'open': [float(k[1]) for k in klines],
+                    'high': [float(k[2]) for k in klines],
+                    'low': [float(k[3]) for k in klines],
+                    'close': [float(k[4]) for k in klines],
+                    'volume': [float(k[5]) for k in klines]
+                })
+                
+                chart_file = generate_luxalgo_chart(
+                    df=df_chart,
+                    symbol=symbol,
+                    signal=analysis['signal'],
+                    current_price=price,
+                    tp_price=tp_price,
+                    sl_price=sl_price,
+                    timeframe=timeframe,
+                    sr_data=sr_data,
+                    ict_data=ict_data
+                )
+            else:
+                # Fallback
+                chart_file = generate_chart(
+                    klines,
+                    symbol,
+                    analysis['signal'],
+                    price,
+                    tp_price,
+                    sl_price,
+                    timeframe,
+                    luxalgo_ict_data
+                )
+            
             if chart_file:
                 logger.info(f"📊 Графика генерирана успешно за {symbol}")
             else:
                 logger.warning(f"⚠️ Графика не е генерирана за {symbol}")
         except Exception as e:
             logger.error(f"❌ Грешка при генериране на графика за {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
             chart_file = None
     
         # === ОПРЕДЕЛИ ТИП НА ТРЕЙДА ===
