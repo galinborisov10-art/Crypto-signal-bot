@@ -496,17 +496,24 @@ def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_
     
     all_order_blocks = []
     
-    for i in range(lookback, len(df) - 1):
+    for i in range(lookback, len(df)):  # Включва и последния кендъл
         if i >= lookback:
             current_candle = df.iloc[i]
-            next_candle = df.iloc[i + 1]
             
-            # Bullish OB: bearish свещ + следва силен ръст
+            # За последния кендъл няма next_candle - проверяваме само формата
+            has_next = i < len(df) - 1
+            next_candle = df.iloc[i + 1] if has_next else None
+            
+            # Bullish OB: bearish свещ + следва силен ръст (или е последен кендъл)
             if current_candle['close'] < current_candle['open']:  # Bearish свещ
                 # Изчисли силата на движението
-                move_up = (next_candle['high'] - current_candle['low']) / current_candle['low']
+                if has_next:
+                    move_up = (next_candle['high'] - current_candle['low']) / current_candle['low']
+                else:
+                    # Последен кендъл - проверяваме само дали има силно bearish тяло
+                    move_up = abs(current_candle['open'] - current_candle['close']) / current_candle['close']
                 
-                if move_up >= threshold:
+                if move_up >= threshold or not has_next:  # Приемаме последния кендъл винаги
                     # Допълнителни критерии за качество
                     candle_size = abs(current_candle['open'] - current_candle['close'])
                     candle_range = current_candle['high'] - current_candle['low']
@@ -549,11 +556,15 @@ def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_
                             'body_ratio': body_ratio
                         })
             
-            # Bearish OB: bullish свещ + следва силен спад
+            # Bearish OB: bullish свещ + следва силен спад (или е последен кендъл)
             if current_candle['close'] > current_candle['open']:  # Bullish свещ
-                move_down = (current_candle['high'] - next_candle['low']) / current_candle['high']
+                if has_next:
+                    move_down = (current_candle['high'] - next_candle['low']) / current_candle['high']
+                else:
+                    # Последен кендъл - проверяваме само дали има силно bullish тяло
+                    move_down = abs(current_candle['close'] - current_candle['open']) / current_candle['open']
                 
-                if move_down >= threshold:
+                if move_down >= threshold or not has_next:  # Приемаме последния кендъл винаги
                     candle_size = abs(current_candle['close'] - current_candle['open'])
                     candle_range = current_candle['high'] - current_candle['low']
                     body_ratio = candle_size / candle_range if candle_range > 0 else 0
