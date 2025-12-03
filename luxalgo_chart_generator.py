@@ -220,8 +220,13 @@ def generate_luxalgo_chart(
                             label, fontsize=6, color=edge, weight='bold',
                             ha='center', va='bottom' if ob.is_bullish else 'top')
             
-            # === FAIR VALUE GAPS ===
-            for fvg in ict_data.get('fvgs', []):
+            # === FAIR VALUE GAPS - ONLY SIGNIFICANT ONES ===
+            # Filter only non-mitigated FVG with minimum size
+            significant_fvgs = [fvg for fvg in ict_data.get('fvgs', []) 
+                               if not fvg.mitigated and 
+                               (fvg.top - fvg.bottom) / fvg.bottom >= 0.003]  # Min 0.3% size
+            
+            for fvg in significant_fvgs[-10:]:
                 fvg_idx_start = fvg.start_idx - (len(df) - 100)
                 fvg_idx_end = min(fvg.end_idx - (len(df) - 100), len(df))
                 
@@ -233,23 +238,26 @@ def generate_luxalgo_chart(
                         color = '#ef5350'
                         label = 'FVG-'
                     
-                    # FVG zone (dotted lines)
+                    # FVG zone - more visible
                     ax1.plot([fvg_idx_start, fvg_idx_end], 
                             [fvg.top, fvg.top],
-                            color=color, linestyle='--', linewidth=1, alpha=0.6)
+                            color=color, linestyle=':', linewidth=1.5, alpha=0.7)
                     ax1.plot([fvg_idx_start, fvg_idx_end], 
                             [fvg.bottom, fvg.bottom],
-                            color=color, linestyle='--', linewidth=1, alpha=0.6)
+                            color=color, linestyle=':', linewidth=1.5, alpha=0.7)
                     
                     # Shaded area
                     ax1.fill_between([fvg_idx_start, fvg_idx_end],
                                     fvg.bottom, fvg.top,
-                                    color=color, alpha=0.08, zorder=1)
+                                    color=color, alpha=0.12, zorder=2)
                     
-                    # Label
-                    mid_price = (fvg.top + fvg.bottom) / 2
-                    ax1.text(fvg_idx_end + 0.5, mid_price, label,
-                            fontsize=6, color=color, weight='bold')
+                    # Label only for recent FVG
+                    if fvg_idx_end >= len(df) - 30:
+                        mid_price = (fvg.top + fvg.bottom) / 2
+                        ax1.text(fvg_idx_end + 0.5, mid_price, label,
+                                fontsize=7, color=color, weight='bold',
+                                bbox=dict(boxstyle='round,pad=0.2',
+                                        facecolor='#0d1117', alpha=0.8))
             
             # === MARKET STRUCTURE (MSS/BOS) ===
             for struct in ict_data.get('structures', [])[-5:]:
@@ -282,37 +290,41 @@ def generate_luxalgo_chart(
                                     facecolor=color, alpha=0.9,
                                     edgecolor='white', linewidth=1.5))
             
-            # === LIQUIDITY LEVELS (BSL/SSL) ===
+            # === LIQUIDITY LEVELS (BSL/SSL) - ENHANCED ===
             for liq in ict_data.get('liquidity_levels', [])[-8:]:
                 liq_idx = liq.index - (len(df) - 100)
                 
                 if liq_idx >= 0:
                     if liq.is_buy_side:
-                        color = '#ff9800'
+                        color = '#ff6b00'  # Bright orange
                         label = 'BSL'
+                        marker_symbol = '▲'
                     else:
-                        color = '#2962ff'
+                        color = '#00bcd4'  # Bright cyan
                         label = 'SSL'
+                        marker_symbol = '▼'
                     
-                    # Liquidity line
+                    # Liquidity line - thicker and more visible
                     ax1.axhline(y=liq.price,
-                               color=color, linestyle=':', 
-                               linewidth=0.8, alpha=0.6,
+                               color=color, linestyle='--', 
+                               linewidth=1.8, alpha=0.8,
                                xmin=max(0, liq_idx / len(df)),
-                               xmax=1)
+                               xmax=1, zorder=6)
                     
-                    # Small label
-                    ax1.text(len(df) - 2, liq.price, label,
-                            fontsize=5, color=color, weight='normal',
+                    # Label with marker
+                    ax1.text(len(df) - 1, liq.price, f'{marker_symbol} {label}',
+                            fontsize=7, color='white', weight='bold',
                             ha='left', va='center',
-                            bbox=dict(boxstyle='round,pad=0.1',
-                                    facecolor='#0d1117', alpha=0.7))
+                            bbox=dict(boxstyle='round,pad=0.3',
+                                    facecolor=color, alpha=0.95,
+                                    edgecolor='white', linewidth=1.2))
                     
-                    # Swept marker
+                    # Swept marker - larger and more visible
                     if liq.swept and liq_idx < len(df):
                         ax1.scatter(liq_idx, liq.price,
-                                  marker='x', s=50, color=color, 
-                                  linewidth=2, zorder=10)
+                                  marker='X', s=120, color=color, 
+                                  linewidth=2.5, zorder=10,
+                                  edgecolors='white')
             
             # === SWING POINTS ===
             for swing in ict_data.get('swing_highs', []):

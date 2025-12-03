@@ -182,36 +182,38 @@ class LuxAlgoICT:
             return None
         
         if is_bullish:
-            # Bullish OB: Last red candle before bullish displacement
+            # Bullish OB: Last GREEN candle before bullish displacement (buy orders)
             for i in range(idx - 1, max(idx - 5, 0), -1):
                 candle = df.iloc[i]
-                if candle['close'] < candle['open']:  # Red candle
-                    # Check if followed by bullish move
+                if candle['close'] > candle['open']:  # GREEN candle (bullish)
+                    # Check if followed by strong bullish move
                     next_candle = df.iloc[i + 1]
-                    if next_candle['close'] > candle['high']:
+                    displacement = (next_candle['close'] - candle['high']) / candle['high']
+                    if next_candle['close'] > candle['high'] and displacement > 0.005:  # 0.5% min displacement
                         return OrderBlock(
                             start_idx=i,
                             end_idx=i,
                             top=candle['high'],
                             bottom=candle['low'],
                             is_bullish=True,
-                            strength=abs(next_candle['close'] - candle['low']) / candle['low']
+                            strength=displacement
                         )
         else:
-            # Bearish OB: Last green candle before bearish displacement
+            # Bearish OB: Last RED candle before bearish displacement (sell orders)
             for i in range(idx - 1, max(idx - 5, 0), -1):
                 candle = df.iloc[i]
-                if candle['close'] > candle['open']:  # Green candle
-                    # Check if followed by bearish move
+                if candle['close'] < candle['open']:  # RED candle (bearish)
+                    # Check if followed by strong bearish move
                     next_candle = df.iloc[i + 1]
-                    if next_candle['close'] < candle['low']:
+                    displacement = (candle['low'] - next_candle['close']) / candle['low']
+                    if next_candle['close'] < candle['low'] and displacement > 0.005:  # 0.5% min displacement
                         return OrderBlock(
                             start_idx=i,
                             end_idx=i,
                             top=candle['high'],
                             bottom=candle['low'],
                             is_bullish=False,
-                            strength=abs(candle['high'] - next_candle['close']) / candle['high']
+                            strength=displacement
                         )
         
         return None
@@ -231,23 +233,29 @@ class LuxAlgoICT:
         
         # Bullish FVG
         if prev2['high'] < curr['low']:
-            return FairValueGap(
-                start_idx=idx - 1,
-                end_idx=idx,
-                top=curr['low'],
-                bottom=prev2['high'],
-                is_bullish=True
-            )
+            gap_size = (curr['low'] - prev2['high']) / prev2['high']
+            # Ignore small FVG (< 0.3%)
+            if gap_size >= 0.003:
+                return FairValueGap(
+                    start_idx=idx - 1,
+                    end_idx=idx,
+                    top=curr['low'],
+                    bottom=prev2['high'],
+                    is_bullish=True
+                )
         
         # Bearish FVG
         if prev2['low'] > curr['high']:
-            return FairValueGap(
-                start_idx=idx - 1,
-                end_idx=idx,
-                top=prev2['low'],
-                bottom=curr['high'],
-                is_bullish=False
-            )
+            gap_size = (prev2['low'] - curr['high']) / curr['high']
+            # Ignore small FVG (< 0.3%)
+            if gap_size >= 0.003:
+                return FairValueGap(
+                    start_idx=idx - 1,
+                    end_idx=idx,
+                    top=prev2['low'],
+                    bottom=curr['high'],
+                    is_bullish=False
+                )
         
         return None
     
