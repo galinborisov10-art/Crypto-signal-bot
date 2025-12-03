@@ -20,12 +20,45 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USERNAME }}
           key: ${{ secrets.DO_SSH_KEY }}
+          port: 22
+          timeout: 30s
+          command_timeout: 10m
           script: |
-            cd /root/Crypto-signal-bot
-            git pull origin main
-            pip install -r requirements.txt
-            systemctl restart crypto-bot
-            echo "✅ Bot deployed and restarted successfully!"
+            set -e
+            echo "🔍 Starting deployment..."
+            
+            # Find bot directory (може да е на различно място)
+            if [ -d "/root/Crypto-signal-bot" ]; then
+              BOT_DIR="/root/Crypto-signal-bot"
+            elif [ -d "/home/ubuntu/Crypto-signal-bot" ]; then
+              BOT_DIR="/home/ubuntu/Crypto-signal-bot"
+            elif [ -d "$HOME/Crypto-signal-bot" ]; then
+              BOT_DIR="$HOME/Crypto-signal-bot"
+            else
+              echo "❌ Bot directory not found!"
+              exit 1
+            fi
+            
+            echo "📁 Bot directory: $BOT_DIR"
+            cd "$BOT_DIR"
+            
+            echo "📥 Pulling latest changes..."
+            git pull origin main || exit 1
+            
+            echo "📦 Installing dependencies..."
+            pip3 install -r requirements.txt || pip install -r requirements.txt
+            
+            echo "🔄 Restarting bot..."
+            if systemctl is-active --quiet crypto-bot; then
+              systemctl restart crypto-bot
+            else
+              # Ако няма systemd service, рестартирай директно
+              pkill -f "python.*bot.py" || true
+              nohup python3 bot.py > bot.log 2>&1 &
+            fi
+            
+            sleep 2
+            echo "✅ Deployment complete!"
       
       - name: Send Telegram Notification
         if: success()
