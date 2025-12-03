@@ -215,10 +215,13 @@ def generate_luxalgo_chart(
                         edgecolor=edge, linewidth=1.5, zorder=4
                     ))
                     
-                    # Label
+                    # Label - more visible
                     ax1.text(ob_idx, ob.top if ob.is_bullish else ob.bottom,
-                            label, fontsize=6, color=edge, weight='bold',
-                            ha='center', va='bottom' if ob.is_bullish else 'top')
+                            label, fontsize=7, color='white', weight='bold',
+                            ha='center', va='bottom' if ob.is_bullish else 'top',
+                            bbox=dict(boxstyle='round,pad=0.25',
+                                    facecolor=edge, alpha=0.9,
+                                    edgecolor='white', linewidth=0.8))
             
             # === FAIR VALUE GAPS - ONLY SIGNIFICANT ONES ===
             # Filter only non-mitigated FVG with minimum size
@@ -232,32 +235,40 @@ def generate_luxalgo_chart(
                 
                 if fvg_idx_end > 0 and fvg_idx_start < len(df):
                     if fvg.is_bullish:
-                        color = '#66bb6a'
-                        label = 'FVG+'
+                        color = '#81c784'  # Soft green
+                        edge_color = '#66bb6a'
+                        label = '📈 FVG'
                     else:
-                        color = '#ef5350'
-                        label = 'FVG-'
+                        color = '#e57373'  # Soft red
+                        edge_color = '#ef5350'
+                        label = '📉 FVG'
                     
-                    # FVG zone - more visible
+                    # FVG zone - more visible with dotted borders
                     ax1.plot([fvg_idx_start, fvg_idx_end], 
                             [fvg.top, fvg.top],
-                            color=color, linestyle=':', linewidth=1.5, alpha=0.7)
+                            color=edge_color, linestyle=':', linewidth=1.8, alpha=0.9)
                     ax1.plot([fvg_idx_start, fvg_idx_end], 
                             [fvg.bottom, fvg.bottom],
-                            color=color, linestyle=':', linewidth=1.5, alpha=0.7)
+                            color=edge_color, linestyle=':', linewidth=1.8, alpha=0.9)
                     
-                    # Shaded area
+                    # Shaded area with vertical lines
                     ax1.fill_between([fvg_idx_start, fvg_idx_end],
                                     fvg.bottom, fvg.top,
-                                    color=color, alpha=0.12, zorder=2)
+                                    color=color, alpha=0.15, zorder=2)
                     
-                    # Label only for recent FVG
-                    if fvg_idx_end >= len(df) - 30:
-                        mid_price = (fvg.top + fvg.bottom) / 2
-                        ax1.text(fvg_idx_end + 0.5, mid_price, label,
-                                fontsize=7, color=color, weight='bold',
-                                bbox=dict(boxstyle='round,pad=0.2',
-                                        facecolor='#0d1117', alpha=0.8))
+                    # Vertical boundaries
+                    ax1.plot([fvg_idx_start, fvg_idx_start], [fvg.bottom, fvg.top],
+                            color=edge_color, linestyle=':', linewidth=1.5, alpha=0.7)
+                    ax1.plot([fvg_idx_end, fvg_idx_end], [fvg.bottom, fvg.top],
+                            color=edge_color, linestyle=':', linewidth=1.5, alpha=0.7)
+                    
+                    # Label - always show for clarity
+                    mid_price = (fvg.top + fvg.bottom) / 2
+                    ax1.text(fvg_idx_end + 1, mid_price, label,
+                            fontsize=7, color='white', weight='bold',
+                            bbox=dict(boxstyle='round,pad=0.3',
+                                    facecolor=edge_color, alpha=0.9,
+                                    edgecolor='white', linewidth=1))
             
             # === MARKET STRUCTURE (MSS/BOS) ===
             for struct in ict_data.get('structures', [])[-5:]:
@@ -296,28 +307,30 @@ def generate_luxalgo_chart(
                 
                 if liq_idx >= 0:
                     if liq.is_buy_side:
-                        color = '#ff6b00'  # Bright orange
-                        label = 'BSL'
+                        color = '#ff9800'  # Soft orange
+                        edge_color = '#f57c00'
+                        label = '🔺 BUY SIDE'
                         marker_symbol = '▲'
                     else:
-                        color = '#00bcd4'  # Bright cyan
-                        label = 'SSL'
+                        color = '#26c6da'  # Soft cyan
+                        edge_color = '#00acc1'
+                        label = '🔻 SELL SIDE'
                         marker_symbol = '▼'
                     
-                    # Liquidity line - thicker and more visible
+                    # Liquidity line - dashed for elegance
                     ax1.axhline(y=liq.price,
                                color=color, linestyle='--', 
-                               linewidth=1.8, alpha=0.8,
+                               linewidth=2, alpha=0.85,
                                xmin=max(0, liq_idx / len(df)),
                                xmax=1, zorder=6)
                     
-                    # Label with marker
-                    ax1.text(len(df) - 1, liq.price, f'{marker_symbol} {label}',
+                    # Label with marker - more elegant
+                    ax1.text(len(df) - 2, liq.price, f' {label} ',
                             fontsize=7, color='white', weight='bold',
                             ha='left', va='center',
-                            bbox=dict(boxstyle='round,pad=0.3',
-                                    facecolor=color, alpha=0.95,
-                                    edgecolor='white', linewidth=1.2))
+                            bbox=dict(boxstyle='round,pad=0.35',
+                                    facecolor=color, alpha=0.92,
+                                    edgecolor=edge_color, linewidth=1.5))
                     
                     # Swept marker - larger and more visible
                     if liq.swept and liq_idx < len(df):
