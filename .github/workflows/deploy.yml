@@ -14,20 +14,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DO_HOST }} >> ~/.ssh/known_hosts
+      
       - name: Deploy to Digital Ocean
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.DO_HOST }}
-          username: ${{ secrets.DO_USERNAME }}
-          key: ${{ secrets.DO_SSH_KEY }}
-          port: 22
-          timeout: 30s
-          command_timeout: 10m
-          script: |
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} << 'EOF'
             set -e
             echo "🔍 Starting deployment..."
             
-            # Find bot directory (може да е на различно място)
+            # Find bot directory
             if [ -d "/root/Crypto-signal-bot" ]; then
               BOT_DIR="/root/Crypto-signal-bot"
             elif [ -d "/home/ubuntu/Crypto-signal-bot" ]; then
@@ -43,22 +43,24 @@ jobs:
             cd "$BOT_DIR"
             
             echo "📥 Pulling latest changes..."
-            git pull origin main || exit 1
+            git pull origin main
             
             echo "📦 Installing dependencies..."
-            pip3 install -r requirements.txt || pip install -r requirements.txt
+            pip3 install -r requirements.txt
             
             echo "🔄 Restarting bot..."
-            if systemctl is-active --quiet crypto-bot; then
-              systemctl restart crypto-bot
+            if systemctl is-active --quiet crypto-bot 2>/dev/null; then
+              sudo systemctl restart crypto-bot
+            elif systemctl is-active --quiet crypto-bot.service 2>/dev/null; then
+              sudo systemctl restart crypto-bot.service
             else
-              # Ако няма systemd service, рестартирай директно
               pkill -f "python.*bot.py" || true
               nohup python3 bot.py > bot.log 2>&1 &
             fi
             
             sleep 2
             echo "✅ Deployment complete!"
+          EOF
       
       - name: Send Telegram Notification
         if: success()
