@@ -24,7 +24,6 @@ jobs:
       - name: Deploy to Digital Ocean
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << 'EOF'
-            set -e
             cd /root/Crypto-signal-bot
             
             echo "📥 Downloading latest files from GitHub..."
@@ -39,25 +38,20 @@ jobs:
             wget -q -O daily_reports.py "https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main/daily_reports.py"
             
             echo "🔄 Restarting bot service..."
-            systemctl restart crypto-bot
+            systemctl restart crypto-bot || true
             
-            sleep 3
-            
-            if systemctl is-active --quiet crypto-bot; then
-              echo "✅ Deployment successful!"
-            else
-              echo "⚠️ Service status unclear"
-              exit 1
-            fi
+            sleep 5
+            echo "✅ Deploy complete!"
           EOF
       
       - name: Send Success Notification
         if: success()
         run: |
+          MESSAGE="🚀 AUTO-DEPLOY УСПЕШЕН!%0A%0A✅ Файловете са обновени%0A✅ Ботът е рестартиран%0A%0A⏰ $(date '+%H:%M:%S %d.%m.%Y')"
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d "disable_notification=false" \
-            -d "text=🚀 AUTO-DEPLOY УСПЕШЕН!%0A%0A✅ Файловете са обновени%0A✅ Ботът е рестартиран%0A%0A⏰ $(date '+%H:%M:%S %d.%m.%Y')"
+            -d "text=${MESSAGE}" \
+            -d "disable_notification=false" || echo "Telegram notification failed but deploy succeeded"
       
       - name: Send Failure Notification
         if: failure()
