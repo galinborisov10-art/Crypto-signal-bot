@@ -17,70 +17,52 @@ jobs:
       - name: Setup SSH Key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.DO_SSH_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.DO_HOST }} >> ~/.ssh/known_hosts
-          
-          # Verify key format
-          echo "🔍 Checking SSH key..."
-          if ssh-keygen -l -f ~/.ssh/deploy_key 2>&1 | grep -q "is not a public key"; then
-            echo "✅ Private key detected"
-          else
-            echo "⚠️ Key validation output:"
-            ssh-keygen -l -f ~/.ssh/deploy_key || true
-          fi
+          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
       
       - name: Deploy to Digital Ocean
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.DO_USERNAME }}@${{ secrets.DO_HOST }} << 'EOF'
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@${{ secrets.SERVER_IP }} << 'EOF'
             set -e
-            echo "🔍 Starting deployment..."
+            cd /root/Crypto-signal-bot
             
-            # Find bot directory
-            if [ -d "/root/Crypto-signal-bot" ]; then
-              BOT_DIR="/root/Crypto-signal-bot"
-            elif [ -d "/home/ubuntu/Crypto-signal-bot" ]; then
-              BOT_DIR="/home/ubuntu/Crypto-signal-bot"
-            elif [ -d "$HOME/Crypto-signal-bot" ]; then
-              BOT_DIR="$HOME/Crypto-signal-bot"
+            echo "📥 Downloading latest files from GitHub..."
+            wget -q -O bot.py "https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main/bot.py"
+            wget -q -O luxalgo_sr_mtf.py "https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main/luxalgo_sr_mtf.py"
+            wget -q -O luxalgo_ict_concepts.py "https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main/luxalgo_ict_concepts.py"
+            wget -q -O luxalgo_chart_generator.py "https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main/luxalgo_chart_generator.py"
+            wget -q -O luxalgo_ict_analysis.py "https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main/luxalgo_ict_analysis.py"
+            wget -q -O ml_engine.py "https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main/ml_engine.py"
+            wget -q -O ml_predictor.py "https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main/ml_predictor.py"
+            wget -q -O backtesting.py "https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main/backtesting.py"
+            wget -q -O daily_reports.py "https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main/daily_reports.py"
+            
+            echo "🔄 Restarting bot service..."
+            systemctl restart crypto-bot
+            
+            sleep 3
+            
+            if systemctl is-active --quiet crypto-bot; then
+              echo "✅ Deployment successful!"
             else
-              echo "❌ Bot directory not found!"
+              echo "⚠️ Service status unclear"
               exit 1
             fi
-            
-            echo "📁 Bot directory: $BOT_DIR"
-            cd "$BOT_DIR"
-            
-            echo "📥 Pulling latest changes..."
-            git pull origin main
-            
-            echo "📦 Installing dependencies..."
-            pip3 install -r requirements.txt
-            
-            echo "🔄 Restarting bot..."
-            if systemctl is-active --quiet crypto-bot 2>/dev/null; then
-              sudo systemctl restart crypto-bot
-            elif systemctl is-active --quiet crypto-bot.service 2>/dev/null; then
-              sudo systemctl restart crypto-bot.service
-            else
-              pkill -f "python.*bot.py" || true
-              nohup python3 bot.py > bot.log 2>&1 &
-            fi
-            
-            sleep 2
-            echo "✅ Deployment complete!"
           EOF
       
-      - name: Send Telegram Notification
+      - name: Send Success Notification
         if: success()
         run: |
-          curl -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.OWNER_CHAT_ID }}" \
-            -d "text=✅ Auto-deploy successful! Bot restarted on Digital Ocean."
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "disable_notification=false" \
+            -d "text=🚀 AUTO-DEPLOY УСПЕШЕН!%0A%0A✅ Файловете са обновени%0A✅ Ботът е рестартиран%0A%0A⏰ $(date '+%H:%M:%S %d.%m.%Y')"
       
       - name: Send Failure Notification
         if: failure()
         run: |
-          curl -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.OWNER_CHAT_ID }}" \
-            -d "text=❌ Auto-deploy FAILED! Check GitHub Actions logs."
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "disable_notification=false" \
+            -d "text=❌ AUTO-DEPLOY НЕУСПЕШЕН!%0A%0AПровери GitHub Actions логовете:%0Ahttps://github.com/galinborisov10-art/Crypto-signal-bot/actions"
