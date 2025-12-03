@@ -175,8 +175,9 @@ BINANCE_DEPTH_URL = "https://api.binance.com/api/v3/depth"
 STATS_FILE = "/workspaces/Crypto-signal-bot/bot_stats.json"
 
 # CoinMarketCap API ключ (опционално - за повече новини)
-CMC_API_KEY = ""  # Може да добавите CoinMarketCap API ключ тук
-CMC_NEWS_URL = "https://api.coinmarketcap.com/data-api/v3/headlines/latest"
+CMC_API_KEY = ""  # Може да добавите CoinMarketCap API ключ тук (безплатен на coinmarketcap.com/api)
+CMC_NEWS_URL = "https://coinmarketcap.com/api/headlines/latest"  # Public endpoint (no key needed)
+CMC_PUBLIC_NEWS = "https://api.coinmarketcap.com/data-api/v3/headlines/latest"  # Free public API
 
 # Google Translate API (безплатна) за превод
 TRANSLATE_API_URL = "https://translate.googleapis.com/translate_a/single"
@@ -2499,83 +2500,55 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         # Traditional confirmation (CONDITIONAL: only extreme or divergence)
         traditional_signal = None
         
-        # RSI - only extreme zones (<30 or >70)
-        if rsi and rsi < 30:
+        # RSI - only extreme zones (<25 or >75) for confluence
+        if rsi and rsi < 25:
             traditional_signal = 'BUY'
             reasons.append(f"RSI extreme oversold: {rsi:.1f}")
-            confidence += 5  # Reduced from 10
-        elif rsi and rsi > 70:
+            confidence += 10
+        elif rsi and rsi > 75:
             traditional_signal = 'SELL'
             reasons.append(f"RSI extreme overbought: {rsi:.1f}")
-            confidence += 5  # Reduced from 10
+            confidence += 10
         
-        # MACD - check for divergence first
-        macd_divergence = False
-        if macd_line and macd_signal_line and len(closes) >= 20:
-            # Simple divergence detection
-            recent_price_trend = closes[-1] > closes[-10]
-            recent_macd_trend = macd_hist > (macd_hist if len(closes) < 10 else 0)
-            
-            if recent_price_trend != recent_macd_trend:
-                macd_divergence = True
-                # Divergence veto power
-                if recent_price_trend and not recent_macd_trend:
-                    traditional_signal = 'SELL'  # Bearish divergence
-                    reasons.append("⚠️ MACD bearish divergence (veto)")
-                    confidence -= 10  # Penalty for divergence
-                elif not recent_price_trend and recent_macd_trend:
-                    traditional_signal = 'BUY'  # Bullish divergence
-                    reasons.append("⚠️ MACD bullish divergence (veto)")
-                    confidence -= 10
-        
-        # MACD cross - only if no divergence
-        if not macd_divergence and macd_line and macd_signal_line:
-            if macd_line > macd_signal_line and macd_hist > 0:
-                if traditional_signal == 'BUY' or not traditional_signal:
-                    traditional_signal = 'BUY'
-                    reasons.append("MACD bullish cross")
-                    confidence += 5  # Reduced from 8
-            elif macd_line < macd_signal_line and macd_hist < 0:
-                if traditional_signal == 'SELL' or not traditional_signal:
-                    traditional_signal = 'SELL'
-                    reasons.append("MACD bearish cross")
-                    confidence += 5  # Reduced from 8
+        # MACD/EMA REMOVED - Pure ICT strategy (Order Blocks, FVG, Liquidity only)
         
         # ===  FINAL SIGNAL DETERMINATION ===
-        # IMPROVED: 2 out of 3 systems must agree (was too strict before)
+        # ICT-FIRST STRATEGY: ICT + S/R confluence (RSI only for extreme confirmation)
         vote_buy = 0
         vote_sell = 0
         
-        # Count votes from each system
-        if luxalgo_says == 'BUY': vote_buy += 1
-        if luxalgo_says == 'SELL': vote_sell += 1
-        if ict_says == 'BUY': vote_buy += 1
-        if ict_says == 'SELL': vote_sell += 1
+        # Primary systems (ICT + LuxAlgo S/R)
+        if luxalgo_says == 'BUY': vote_buy += 2  # Stronger weight
+        if luxalgo_says == 'SELL': vote_sell += 2
+        if ict_says == 'BUY': vote_buy += 2  # ICT is primary
+        if ict_says == 'SELL': vote_sell += 2
+        
+        # RSI extreme (confirmatory only)
         if traditional_signal == 'BUY': vote_buy += 1
         if traditional_signal == 'SELL': vote_sell += 1
         
-        # Decision based on majority vote
-        if vote_buy >= 2:
+        # Decision: ICT + S/R must align (at least 3 votes)
+        if vote_buy >= 3:
             signal = 'BUY'
-            if vote_buy == 3:
-                reasons.append("✅ ALL 3 SYSTEMS ALIGNED: BUY")
-                confidence += 25
+            if vote_buy >= 5:
+                reasons.append("✅ PERFECT ICT + S/R + RSI SETUP: BUY")
+                confidence += 30
             else:
-                reasons.append(f"✅ MAJORITY VOTE: BUY ({vote_buy}/3)")
-                confidence += 15
-        elif vote_sell >= 2:
+                reasons.append(f"✅ ICT + S/R ALIGNED: BUY")
+                confidence += 20
+        elif vote_sell >= 3:
             signal = 'SELL'
-            if vote_sell == 3:
-                reasons.append("✅ ALL 3 SYSTEMS ALIGNED: SELL")
-                confidence += 25
+            if vote_sell >= 5:
+                reasons.append("✅ PERFECT ICT + S/R + RSI SETUP: SELL")
+                confidence += 30
             else:
-                reasons.append(f"✅ MAJORITY VOTE: SELL ({vote_sell}/3)")
-                confidence += 15
+                reasons.append(f"✅ ICT + S/R ALIGNED: SELL")
+                confidence += 20
         elif ict_says and ote_confirmed:
-            # OTE overrides if strong (high-probability setup)
+            # OTE with FVG confluence = high-probability setup
             signal = ict_says
-            reasons.append(f"🎯 OTE entry confirmed: {signal}")
-            confidence += 10
+            reasons.append(f"🎯 ICT OTE + FVG OPTIMAL ENTRY: {signal}")
+            confidence += 25
         
         # === Volume confirmation ===
         volume_boost = calculate_volume_confidence_boost(current_volume, avg_volume, signal)
