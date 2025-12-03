@@ -717,45 +717,31 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                     label = f"🔴 Weak Resistance"
                     linewidth = 1.5
             
-            # Нарисувай правоъгълник от low до high на OB свещта
-            width = 0.8
+            # Нарисувай само тънка хоризонтална линия на горната граница на OB
             height = ob['high'] - ob['low']
+            ob_price = ob['high'] if ob_type == 'bullish' else ob['low']
             
-            rect = plt.Rectangle(
-                (idx - width/2, ob['low']),
-                width,
-                height,
-                facecolor=color,
-                edgecolor=edge_color,
-                alpha=alpha,
-                linewidth=linewidth,
-                linestyle='--'
-            )
-            ax1.add_patch(rect)
+            # Малка линийка (10% от графиката)
+            line_start = max(0, idx - len(df) * 0.05)
+            line_end = min(len(df), idx + len(df) * 0.05)
             
-            # Добави текст маркер с важност
-            marker_text = f"OB\n{ob['strength']:.1f}%"
+            ax1.plot([line_start, line_end], [ob_price, ob_price], 
+                    color=edge_color, linestyle='-', linewidth=1.5, alpha=0.8, zorder=4)
+            
+            # Тикетче "+OB" или "-OB" като на снимката
+            ob_label = '+OB' if ob_type == 'bullish' else '-OB'
             
             ax1.text(
-                idx,
-                ob['high'] + (height * 0.15),
-                marker_text,
-                fontsize=6,  # ПО-МАЛЪК шрифт
-                color='white',
-                weight='normal',  # Не bold
-                ha='center',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor=edge_color, alpha=0.7, edgecolor='white', linewidth=1)
+                line_end + 1,
+                ob_price,
+                ob_label,
+                fontsize=7,
+                color=edge_color,
+                weight='bold',
+                ha='left',
+                va='center',
+                bbox=dict(boxstyle='round,pad=0.2', facecolor='#0d1117', alpha=0.8, edgecolor=edge_color, linewidth=1)
             )
-            
-            # Добави хоризонтална линия за по-добра видимост на зоната
-            # Ограничи xmax да не надвишава дължината на данните
-            xmin_val = max(0, (idx - 2) / len(df))
-            xmax_val = min(1.0, (idx + 10) / len(df))
-            
-            ax1.axhline(y=ob['low'], color=edge_color, linestyle=':', linewidth=1, alpha=0.6, 
-                       xmin=xmin_val, xmax=xmax_val)
-            ax1.axhline(y=ob['high'], color=edge_color, linestyle=':', linewidth=1, alpha=0.6,
-                       xmin=xmin_val, xmax=xmax_val)
         
         # 🎯 LUXALGO + ICT VISUALIZATION
         if luxalgo_ict_data:
@@ -798,22 +784,38 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                     fvg_low = fvg.get('gap_low')
                     fvg_high = fvg.get('gap_high')
                     fvg_type = fvg.get('type', 'BULLISH')
+                    fvg_strength = fvg.get('strength', 50)  # Сила на FVG (ако има)
                     
                     if fvg_low and fvg_high:
-                        # Bullish FVG - мек зелен правоъгълник
+                        # Цвят според типа
                         if 'BULLISH' in fvg_type:
-                            fvg_color = '#66bb6a'
-                            fvg_alpha = 0.15
-                        # Bearish FVG - мек червен правоъгълник
+                            fvg_color = '#66bb6a'  # Зелено
+                            fvg_label = 'FVG+'
                         else:
-                            fvg_color = '#ef5350'
-                            fvg_alpha = 0.15
+                            fvg_color = '#ef5350'  # Червено
+                            fvg_label = 'FVG-'
                         
-                        # Нарисувай FVG зона през целия chart
-                        ax1.axhspan(fvg_low, fvg_high, color=fvg_color, alpha=fvg_alpha, zorder=2)
-                        ax1.text(len(df)-3, (fvg_low + fvg_high)/2, 'FVG', 
-                               fontsize=5, color='white', weight='normal', ha='center',
-                               bbox=dict(boxstyle='round,pad=0.2', facecolor=fvg_color, alpha=0.6))
+                        # Линия стил според силата
+                        if fvg_strength >= 60 or (fvg_high - fvg_low) / fvg_low > 0.005:  # Силна FVG (>0.5% gap)
+                            linestyle = '-'  # Плътна линия
+                            linewidth = 1.5
+                            alpha = 0.8
+                        else:  # Слаба FVG
+                            linestyle = '--'  # Пунктир
+                            linewidth = 1
+                            alpha = 0.5
+                        
+                        # Нарисувай горна и долна граница с линии
+                        ax1.axhline(y=fvg_low, color=fvg_color, linestyle=linestyle, linewidth=linewidth, alpha=alpha, zorder=3)
+                        ax1.axhline(y=fvg_high, color=fvg_color, linestyle=linestyle, linewidth=linewidth, alpha=alpha, zorder=3)
+                        
+                        # Малка прозрачна зона между линиите
+                        ax1.axhspan(fvg_low, fvg_high, color=fvg_color, alpha=0.08, zorder=2)
+                        
+                        # Етикет на края
+                        ax1.text(len(df)-2, (fvg_low + fvg_high)/2, fvg_label, 
+                               fontsize=6, color=fvg_color, weight='bold', ha='left', va='center',
+                               bbox=dict(boxstyle='round,pad=0.2', facecolor='#0d1117', alpha=0.8, edgecolor=fvg_color, linewidth=1))
             
             # === FIBONACCI LEVELS ===
             fib_data = luxalgo_ict_data.get('fibonacci_extension')
@@ -836,7 +838,7 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                         ax1.text(len(df)-8, level_price, f'  Fib {level_name}', 
                                fontsize=5, color=fib_color, weight='normal', va='center', alpha=0.8)
         
-        # 📍 ENTRY ZONE - мека синя зона
+        # 📍 ENTRY ZONE - мека синя зона БЕЗ стрелка
         entry_zone_width = current_price * 0.003  # ПО-ТЪНКА зона (0.3%)
         entry_low = current_price - entry_zone_width
         entry_high = current_price + entry_zone_width
@@ -844,20 +846,12 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         ax1.axhspan(entry_low, entry_high, color='#42a5f5', alpha=0.15, zorder=3)
         ax1.axhline(y=current_price, color='#1e88e5', linestyle='-', linewidth=2, alpha=0.8, zorder=4)
         
-        # ПО-МАЛЪК текстов етикет (fontsize 8)
-        ax1.text(len(df)*0.15, current_price, f'  📍 ENTRY\n  ${current_price:.2f}', 
+        # ПО-МАЛЪК текстов етикет БЕЗ стрелка (fontsize 8)
+        ax1.text(len(df)*0.15, current_price, f'  📍 ENTRY ${current_price:.2f}', 
                 fontsize=8, color='white', weight='normal', va='center',
                 bbox=dict(boxstyle='round,pad=0.4', facecolor='#1976d2', alpha=0.85, edgecolor='white', linewidth=1.5))
         
-        # ПО-МАЛКА стрелка към ENTRY
-        if signal == 'BUY':
-            ax1.annotate('', xy=(len(df)*0.13, current_price), xytext=(len(df)*0.05, current_price - current_price*0.02),
-                        arrowprops=dict(arrowstyle='->', color='#42a5f5', lw=2, alpha=0.7))
-        else:
-            ax1.annotate('', xy=(len(df)*0.13, current_price), xytext=(len(df)*0.05, current_price + current_price*0.02),
-                        arrowprops=dict(arrowstyle='->', color='#42a5f5', lw=2, alpha=0.7))
-        
-        # 🎯 TAKE PROFIT - мека зелена зона
+        # 🎯 TAKE PROFIT - мека зелена зона БЕЗ стрелка
         tp_zone_width = tp_price * 0.003  # ПО-ТЪНКА зона
         tp_low = tp_price - tp_zone_width
         tp_high = tp_price + tp_zone_width
@@ -865,17 +859,13 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         ax1.axhspan(tp_low, tp_high, color='#81c784', alpha=0.18, zorder=3)
         ax1.axhline(y=tp_price, color='#388e3c', linestyle='--', linewidth=2, alpha=0.8, zorder=4)
         
-        # ПО-МАЛЪК текстов етикет с процент (fontsize 8)
+        # ПО-МАЛЪК текстов етикет с процент БЕЗ стрелка (fontsize 8)
         tp_pct_display = ((tp_price - current_price) / current_price) * 100
-        ax1.text(len(df)*0.15, tp_price, f'  🎯 TP\n  ${tp_price:.2f}\n  {tp_pct_display:+.1f}%', 
+        ax1.text(len(df)*0.15, tp_price, f'  🎯 TP ${tp_price:.2f} ({tp_pct_display:+.1f}%)', 
                 fontsize=8, color='white', weight='normal', va='center',
                 bbox=dict(boxstyle='round,pad=0.4', facecolor='#2e7d32', alpha=0.85, edgecolor='white', linewidth=1.5))
         
-        # ПО-МАЛКА стрелка към TP
-        ax1.annotate('', xy=(len(df)*0.13, tp_price), xytext=(len(df)*0.05, tp_price - (tp_price - current_price)*0.25),
-                    arrowprops=dict(arrowstyle='->', color='#66bb6a', lw=2, alpha=0.7))
-        
-        # 🛑 STOP LOSS - мека червена зона
+        # 🛑 STOP LOSS - мека червена зона БЕЗ стрелка
         sl_zone_width = sl_price * 0.003  # ПО-ТЪНКА зона
         sl_low = sl_price - sl_zone_width
         sl_high = sl_price + sl_zone_width
@@ -883,36 +873,24 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         ax1.axhspan(sl_low, sl_high, color='#e57373', alpha=0.18, zorder=3)
         ax1.axhline(y=sl_price, color='#c62828', linestyle='--', linewidth=2, alpha=0.8, zorder=4)
         
-        # ПО-МАЛЪК текстов етикет с процент (fontsize 8)
+        # ПО-МАЛЪК текстов етикет с процент БЕЗ стрелка (fontsize 8)
         sl_pct_display = ((sl_price - current_price) / current_price) * 100
-        ax1.text(len(df)*0.15, sl_price, f'  🛑 SL\n  ${sl_price:.2f}\n  {sl_pct_display:.1f}%', 
+        ax1.text(len(df)*0.15, sl_price, f'  🛑 SL ${sl_price:.2f} ({sl_pct_display:.1f}%)', 
                 fontsize=8, color='white', weight='normal', va='center',
                 bbox=dict(boxstyle='round,pad=0.4', facecolor='#c62828', alpha=0.85, edgecolor='white', linewidth=1.5))
         
-        # ПО-МАЛКА стрелка към SL
-        ax1.annotate('', xy=(len(df)*0.13, sl_price), xytext=(len(df)*0.05, sl_price + abs(current_price - sl_price)*0.25),
-                    arrowprops=dict(arrowstyle='->', color='#ef5350', lw=2, alpha=0.7))
-        
-        # ПО-МАЛКА стрелка за посоката на тренда
-        arrow_x = len(df) - 5
-        arrow_y = current_price
+        # Сигнал етикет БЕЗ стрелка (компактен)
+        signal_x = len(df) - 8
+        signal_y = current_price
         
         if signal == 'BUY':
-            # Мека зелена стрелка нагоре
-            ax1.annotate('', xy=(arrow_x, arrow_y + (current_price * 0.015)), 
-                        xytext=(arrow_x, arrow_y),
-                        arrowprops=dict(arrowstyle='->', color='#66bb6a', lw=4, alpha=0.7))
-            ax1.text(arrow_x + 2, arrow_y + (current_price * 0.018), '▲ BUY', 
-                    fontsize=10, color='white', weight='normal',
-                    bbox=dict(boxstyle='round', facecolor='#388e3c', alpha=0.75, edgecolor='white', linewidth=1))
+            ax1.text(signal_x, signal_y, '▲ BUY', 
+                    fontsize=10, color='white', weight='bold',
+                    bbox=dict(boxstyle='round,pad=0.5', facecolor='#388e3c', alpha=0.85, edgecolor='white', linewidth=1.5))
         elif signal == 'SELL':
-            # Мека червена стрелка надолу
-            ax1.annotate('', xy=(arrow_x, arrow_y - (current_price * 0.015)), 
-                        xytext=(arrow_x, arrow_y),
-                        arrowprops=dict(arrowstyle='->', color='#ef5350', lw=4, alpha=0.7))
-            ax1.text(arrow_x + 2, arrow_y - (current_price * 0.018), '▼ SELL', 
-                    fontsize=10, color='white', weight='normal',
-                    bbox=dict(boxstyle='round', facecolor='#c62828', alpha=0.75, edgecolor='white', linewidth=1))
+            ax1.text(signal_x, signal_y, '▼ SELL', 
+                    fontsize=10, color='white', weight='bold',
+                    bbox=dict(boxstyle='round,pad=0.5', facecolor='#c62828', alpha=0.85, edgecolor='white', linewidth=1.5))
         
         # Watermark като AzCryptoBot
         ax1.text(len(df)/2, (ax1.get_ylim()[0] + ax1.get_ylim()[1])/2, '@CryptoSignalBot',
