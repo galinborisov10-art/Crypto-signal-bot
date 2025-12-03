@@ -5881,63 +5881,8 @@ async def explain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 💡 <b>Съвет:</b> Започни с OB, FVG и MSS!
 """
-
-<b>📊 ПОДДРЪЖКА & СЪПРОТИВА:</b>
-• <code>/explain Support</code> - Support нива
-• <code>/explain Resistance</code> - Resistance нива
-
-<b>🎯 RISK MANAGEMENT:</b>
-• <code>/explain TP</code> - Take Profit
-• <code>/explain SL</code> - Stop Loss
-• <code>/explain RR</code> - Risk/Reward Ratio
-
-<b>📈 ПАЗАРНИ УСЛОВИЯ:</b>
-• <code>/explain Ranging</code> - Странично движение
-• <code>/explain Trending</code> - Трендиращ пазар
-
-<b>💡 Пример:</b>
-<code>/explain FVG</code>
-
-За детайли за конкретен термин, просто го напиши след командата!
-"""
     
     await update.message.reply_text(message, parse_mode='HTML')
-            rm.config[config_key] = setting_value
-            rm.save_config(rm.config)
-            
-            await update.message.reply_text(
-                f"✅ <b>Настройката е обновена!</b>\n\n"
-                f"{setting_name} = {setting_value}\n\n"
-                f"Използвай /risk за преглед на всички настройки.",
-                parse_mode='HTML'
-            )
-            return
-        
-        # Покажи настройки и текущ статус
-        settings_text = rm.get_settings_summary()
-        
-        # Добави текущ дневен P/L и активни trades
-        can_trade, daily_pnl, daily_msg = rm.check_daily_loss_limit('trading_journal.json')
-        can_open, active_count, active_msg = rm.check_concurrent_trades('trading_journal.json')
-        
-        status_text = "\n📊 <b>ТЕКУЩ СТАТУС:</b>\n\n"
-        status_text += f"{daily_msg}\n"
-        status_text += f"{active_msg}\n"
-        
-        if not can_trade:
-            status_text += f"\n🛑 <b>ТЪРГОВИЯТА Е СПРЯНА - дневният лимит е достигнат!</b>\n"
-        elif not can_open:
-            status_text += f"\n⚠️ <b>Не можеш да отвориш нови trades - лимитът е достигнат!</b>\n"
-        else:
-            status_text += f"\n✅ <b>Можеш да търгуваш</b>\n"
-        
-        full_message = settings_text + status_text
-        
-        await update.message.reply_text(full_message, parse_mode='HTML')
-    
-    except Exception as e:
-        logger.error(f"Грешка в /risk: {e}")
-        await update.message.reply_text("❌ Грешка при зареждане на Risk Management")
 
 
 async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
