@@ -3105,7 +3105,7 @@ BTC, ETH, XRP, SOL, BNB, ADA
 
 
 async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """🚀 Deploy на бота - Git pull и restart"""
+    """🚀 Deploy на бота - Download от GitHub и restart"""
     user_id = update.effective_user.id
     
     # Проверка за admin права
@@ -3124,56 +3124,64 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='HTML'
         )
         
-        # Git pull
         import subprocess
-        result = subprocess.run(
-            ['git', 'pull', 'origin', 'main'],
-            cwd='/root/Crypto-signal-bot',
-            capture_output=True,
-            text=True,
-            timeout=30
+        
+        # Download updated files from GitHub
+        bot_dir = '/root/Crypto-signal-bot'
+        github_url = 'https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main'
+        
+        files_to_update = ['bot.py', 'luxalgo_sr_mtf.py', 'luxalgo_ict_concepts.py', 
+                          'luxalgo_chart_generator.py', 'luxalgo_ict_analysis.py',
+                          'ml_engine.py', 'ml_predictor.py', 'backtesting.py', 'daily_reports.py']
+        
+        updated_files = []
+        failed_files = []
+        
+        for filename in files_to_update:
+            try:
+                result = subprocess.run(
+                    ['wget', '-q', f'{github_url}/{filename}', '-O', f'{bot_dir}/{filename}'],
+                    timeout=15,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    updated_files.append(filename)
+                else:
+                    failed_files.append(filename)
+            except Exception as e:
+                failed_files.append(filename)
+                logger.error(f"Failed to download {filename}: {e}")
+        
+        # Update status
+        status_text = "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
+        status_text += f"📥 Обновени файлове ({len(updated_files)}):\n"
+        for f in updated_files[:5]:
+            status_text += f"   ✓ {f}\n"
+        
+        if len(updated_files) > 5:
+            status_text += f"   ... и още {len(updated_files) - 5}\n"
+        
+        if failed_files:
+            status_text += f"\n⚠️ Пропуснати ({len(failed_files)}): {', '.join(failed_files[:3])}\n"
+        
+        status_text += "\n🔄 Рестартирам бота...\n⏳ 5 секунди..."
+        
+        await status_msg.edit_text(status_text, parse_mode='HTML')
+        
+        # Restart systemd service
+        subprocess.run(
+            ['sudo', 'systemctl', 'restart', 'crypto-bot.service'],
+            timeout=10
         )
         
-        if result.returncode == 0:
-            output = result.stdout.strip()
-            
-            if "Already up to date" in output:
-                await status_msg.edit_text(
-                    "ℹ️ <b>НЯМА НОВИ ПРОМЕНИ</b>\n\n"
-                    f"<code>{output}</code>\n\n"
-                    "Ботът е с последната версия.",
-                    parse_mode='HTML'
-                )
-            else:
-                await status_msg.edit_text(
-                    "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
-                    f"<code>{output}</code>\n\n"
-                    "🔄 Рестартирам бота за прилагане на промените...\n"
-                    "⏳ Ще се върна след 5 секунди.",
-                    parse_mode='HTML'
-                )
-                
-                # Restart systemd service
-                subprocess.run(
-                    ['sudo', 'systemctl', 'restart', 'crypto-bot.service'],
-                    timeout=10
-                )
-                
-                logger.info(f"✅ Bot deployed successfully by {user_id}")
-        else:
-            error_msg = result.stderr.strip()
-            await status_msg.edit_text(
-                "❌ <b>DEPLOY ГРЕШКА!</b>\n\n"
-                f"<code>{error_msg}</code>\n\n"
-                "Използвай ръчен deploy на сървъра.",
-                parse_mode='HTML'
-            )
-            logger.error(f"Deploy failed: {error_msg}")
+        logger.info(f"✅ Bot deployed successfully by {user_id} - {len(updated_files)} files updated")
             
     except subprocess.TimeoutExpired:
         await status_msg.edit_text(
             "⏱️ <b>TIMEOUT!</b>\n\n"
-            "Git pull отне твърде дълго време.\n"
+            "Download отне твърде дълго време.\n"
             "Провери мрежата или използвай ръчен deploy.",
             parse_mode='HTML'
         )
@@ -3181,7 +3189,8 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Deploy error: {e}")
         await update.message.reply_text(
             f"❌ <b>ГРЕШКА ПРИ DEPLOY:</b>\n\n"
-            f"<code>{str(e)}</code>",
+            f"<code>{str(e)}</code>\n\n"
+            "Използвай ръчен deploy на сървъра.",
             parse_mode='HTML'
         )
 
@@ -8649,21 +8658,41 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Back-testing модул не е наличен")
         return
     
-    await update.message.reply_text("📊 Стартирам back-test... (това може да отнеме 30-60 сек)")
-    
     # Параметри
     symbol = context.args[0] if context.args else 'BTCUSDT'
     timeframe = context.args[1] if len(context.args) > 1 else '4h'
     days = int(context.args[2]) if len(context.args) > 2 else 90
     
+    # Progress message
+    status_msg = await update.message.reply_text(
+        f"📊 <b>BACKTEST СТАРТИРА...</b>\n\n"
+        f"💰 Символ: {symbol}\n"
+        f"⏰ Timeframe: {timeframe}\n"
+        f"📅 Период: {days} дни\n\n"
+        f"⏳ Изтеглям данни от Binance...",
+        parse_mode='HTML'
+    )
+    
+    await asyncio.sleep(0.5)
+    
+    # Update progress
+    await status_msg.edit_text(
+        f"📊 <b>BACKTEST В ХОД...</b>\n\n"
+        f"💰 Символ: {symbol}\n"
+        f"⏰ Timeframe: {timeframe}\n"
+        f"📅 Период: {days} дни\n\n"
+        f"🔄 Симулирам трейдове... (30-60 сек)",
+        parse_mode='HTML'
+    )
+    
     # Изпълни back-test
     results = await backtest_engine.run_backtest(symbol, timeframe, None, days)
     
     if not results:
-        await update.message.reply_text("❌ Грешка при back-testing")
+        await status_msg.edit_text("❌ Грешка при back-testing\n\nПроверете символа и опитайте отново.", parse_mode='HTML')
         return
     
-    # Форматирай резултатите
+    # Финално съобщение с резултати
     message = f"""📊 <b>BACK-TEST РЕЗУЛТАТИ</b>
 
 💰 <b>Символ:</b> {results['symbol']}
@@ -8678,16 +8707,17 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
    💰 Обща печалба: {results['total_profit_pct']:+.2f}%
    📊 Средно на trade: {results['avg_profit_per_trade']:+.2f}%
 
-⚠️ <i>Това е симулация базирана на исторически данни</i>
+⚠️ <i>Симулация базирана на исторически данни</i>
 """
     
-    await update.message.reply_text(message, parse_mode='HTML')
+    await status_msg.edit_text(message, parse_mode='HTML')
     
     # Оптимизирай параметри
-    optimized = backtest_engine.optimize_parameters(results)
-    
-    if optimized:
-        opt_msg = f"""✅ <b>ПАРАМЕТРИ ОПТИМИЗИРАНИ</b>
+    try:
+        optimized = backtest_engine.optimize_parameters(results)
+        
+        if optimized:
+            opt_msg = f"""✅ <b>ПАРАМЕТРИ ОПТИМИЗИРАНИ</b>
 
 🎯 Препоръчан TP: {optimized['optimized_tp_pct']:.2f}%
 🛡️ Препоръчан SL: {optimized['optimized_sl_pct']:.2f}%
@@ -8695,7 +8725,10 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 💡 <i>Използвай тези параметри за по-добри резултати!</i>
 """
-        await update.message.reply_text(opt_msg, parse_mode='HTML')
+            await update.message.reply_text(opt_msg, parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"Optimization error: {e}")
+        # Don't fail the whole command if optimization fails
 
 
 async def ml_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
