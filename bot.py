@@ -972,17 +972,8 @@ def calculate_ma(prices, period):
 
 def generate_tradingview_chart_url(symbol, timeframe, tp_price=None, sl_price=None, signal=None):
     """
-    Генерира TradingView chart URL с вградени индикатори
-    
-    Показва:
-    - Volume Profile (показва важни зони)
-    - Pivot Points High Low (S/R нива)
-    - Volume (обем)
-    - Свещи (Candles) 
-    - Тъмна тема
-    
-    Забележка: LuxAlgo индикаторите не могат да се заредят автоматично през URL,
-    защото са community скриптове. Трябва да се добавят ръчно след отваряне.
+    Генерира TradingView chart snapshot URL
+    Използва TradingView API за snapshot на графиката
     """
     # Конвертирай символа за Binance формат
     if not symbol.endswith('USDT'):
@@ -1003,35 +994,59 @@ def generate_tradingview_chart_url(symbol, timeframe, tp_price=None, sl_price=No
     }
     tv_timeframe = tf_map.get(timeframe, '60')
     
-    # TradingView chart URL (Binance)
-    base_url = f"https://www.tradingview.com/chart/?symbol=BINANCE:{symbol}&interval={tv_timeframe}"
+    # TradingView snapshot URL - генерира снимка на графиката
+    # Това е публично API, което TradingView използва за preview
+    snapshot_url = f"https://s3.tradingview.com/snapshots/u/BINANCE_{symbol}_{tv_timeframe}.png"
     
-    # Основни настройки
-    settings = []
-    settings.append("theme=dark")  # Тъмна тема
-    settings.append("style=1")  # Candles
+    # Алтернативен вариант - TradingView widget screenshot
+    widget_url = f"https://www.tradingview.com/x/{symbol.replace('USDT', 'USD')}/{tv_timeframe}/"
     
-    # Вградени индикатори (които работят в URL)
-    indicators = []
+    return snapshot_url
+
+
+async def fetch_tradingview_chart_image(symbol, timeframe):
+    """
+    Взима snapshot на TradingView графика
+    Връща BytesIO обект със снимката
+    """
+    import aiohttp
+    from io import BytesIO
     
-    # Volume (обем) - показва силата на движенията
-    indicators.append("%7B%22id%22%3A%22Volume%40tv-basicstudies%22%7D")
+    # Конвертирай символа
+    if not symbol.endswith('USDT'):
+        symbol = f"{symbol}USDT"
     
-    # Pivot Points High Low - показва swing highs/lows (подобно на ICT)
-    indicators.append("%7B%22id%22%3A%22PivotPointsHighLow%40tv-basicstudies%22%7D")
+    # Конвертирай таймфрейма
+    tf_map = {
+        '1m': '1',
+        '5m': '5', 
+        '15m': '15',
+        '30m': '30',
+        '1h': '60',
+        '2h': '120',
+        '3h': '180',
+        '4h': '240',
+        '1d': 'D',
+        '1w': 'W'
+    }
+    tv_timeframe = tf_map.get(timeframe, '60')
     
-    # VWAP - важна зона за институционални търговци
-    indicators.append("%7B%22id%22%3A%22VWAP%40tv-basicstudies%22%7D")
+    # TradingView chart image API endpoint
+    # Това е unofficial API, което може да не работи винаги
+    chart_url = f"https://api.chart-img.com/v1/tradingview/advanced-chart?symbol=BINANCE:{symbol}&interval={tv_timeframe}&studies=RSI@tv-basicstudies,MACD@tv-basicstudies&theme=dark&width=1200&height=600"
     
-    # Съедини индикаторите
-    indicators_str = "%2C".join(indicators)
-    studies = f"studies=%5B{indicators_str}%5D"
-    
-    # Комбинирай всичко
-    settings_str = "&".join(settings)
-    chart_url = f"{base_url}&{settings_str}&{studies}"
-    
-    return chart_url
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(chart_url, timeout=15) as response:
+                if response.status == 200:
+                    image_data = await response.read()
+                    return BytesIO(image_data)
+                else:
+                    logger.warning(f"Failed to fetch TradingView chart: {response.status}")
+                    return None
+    except Exception as e:
+        logger.error(f"Error fetching TradingView chart image: {e}")
+        return None
 
 
 def calculate_macd(prices, fast=12, slow=26, signal=9):
@@ -4832,9 +4847,33 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context
         )
     
-    # Изпрати графиката като снимка (ако се генерира успешно)
-    if chart_buffer:
-        # Кратък caption (Telegram лимит 1024 символа)
+    # Опитай се да вземеш TradingView chart snapshot
+    tradingview_chart = await fetch_tradingview_chart_image(symbol, timeframe)
+    
+    # Ако имаме TradingView snapshot, използвай го
+    if tradingview_chart:
+        short_caption = f"{signal_emoji} <b>{signal} {symbol}</b> ({timeframe})\n"
+        short_caption += f"💰 ${price:,.4f} | 🎯 {analysis['confidence']:.0f}%\n"
+        short_caption += f"✅ TP: ${tp_price:,.4f} (+{tp_pct:.2f}%)\n"
+        short_caption += f"🛑 SL: ${sl_price:,.4f} (-{sl_pct:.2f}%)"
+        
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=tradingview_chart,
+            caption=f"🔔🔊 {short_caption}",
+            parse_mode='HTML',
+            disable_notification=False
+        )
+        
+        # Изпрати пълното съобщение като текст
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=message,
+            parse_mode='HTML',
+            disable_notification=True
+        )
+    # Fallback - използвай matplotlib графиката
+    elif chart_buffer:
         short_caption = f"{signal_emoji} <b>{signal} {symbol}</b> ({timeframe})\n"
         short_caption += f"💰 ${price:,.4f} | 🎯 {analysis['confidence']:.0f}%\n"
         short_caption += f"✅ TP: ${tp_price:,.4f} (+{tp_pct:.2f}%)\n"
