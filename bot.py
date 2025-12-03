@@ -642,8 +642,8 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         logger.info(f"📦 Detected {len(order_blocks)} high-quality Order Blocks for {symbol}")
         
         # Създай графика - ПРОФЕСИОНАЛЕН СТИЛ като AzCryptoBot (подобрена версия)
-        # ФОРМАТ 1:1 (квадратна снимка 12x12) + ТЪМЕН ФОН + Volume панел
-        fig = plt.figure(figsize=(12, 12), facecolor='#0d1117')
+        # ФОРМАТ 1:1 (квадратна снимка 16x16 - ПО-ГОЛЯМА) + ТЪМЕН ФОН + Volume панел
+        fig = plt.figure(figsize=(16, 16), facecolor='#0d1117')
         
         # 2 панела: Главна графика (80%), Volume (20%) - БЕЗ RSI
         gs = fig.add_gridspec(2, 1, height_ratios=[8, 2], hspace=0.05)
@@ -1296,18 +1296,19 @@ async def get_higher_timeframe_confirmation(symbol, current_timeframe, signal):
         if not klines:
             return None
         
-        # Бърз анализ на тренда
+        # Бърз анализ на тренда с RSI
         closes = [float(k[4]) for k in klines]
-        ma_20 = calculate_ma(closes, 20)
-        ma_50 = calculate_ma(closes, 50)
         current_price = closes[-1]
+        rsi = calculate_rsi(closes)
         
         higher_tf_signal = "NEUTRAL"
         
-        if ma_20 and ma_50:
-            if ma_20 > ma_50 and current_price > ma_20:
+        # Използваме RSI и ценово движение вместо MA
+        if rsi:
+            price_change = (current_price - closes[-20]) / closes[-20] * 100 if len(closes) >= 20 else 0
+            if rsi < 40 and price_change > 2:  # Bullish
                 higher_tf_signal = "BUY"
-            elif ma_20 < ma_50 and current_price < ma_20:
+            elif rsi > 60 and price_change < -2:  # Bearish
                 higher_tf_signal = "SELL"
         
         # Потвърждение ако сигналите съвпадат
@@ -1343,26 +1344,23 @@ def detect_market_regime(closes, highs, lows):
         
         atr = sum(true_ranges) / len(true_ranges) if true_ranges else 0
         
-        # Направление на тренда
-        ma_short = calculate_ma(recent_closes, 10)
-        ma_long = calculate_ma(recent_closes, 30)
-        
-        if not ma_short or not ma_long:
-            return 'UNKNOWN'
+        # Направление на тренда - използваме ценова динамика
+        price_momentum = (recent_closes[-1] - recent_closes[0]) / recent_closes[0] * 100
         
         # Волатилност спрямо цената
         volatility_pct = (atr / recent_closes[-1]) * 100
         
-        # Strength of trend
-        trend_strength = abs(ma_short - ma_long) / ma_long * 100
+        # Направление на тренда БЕЗ MA - използваме ценова динамика
+        price_momentum = (recent_closes[-1] - recent_closes[0]) / recent_closes[0] * 100
         
-        if trend_strength > 2 and volatility_pct > 1:
-            if ma_short > ma_long:
+        # Strength of trend БЕЗ MA
+        if abs(price_momentum) > 5 and volatility_pct > 1:
+            if price_momentum > 0:
                 return 'STRONG_UPTREND'
             else:
                 return 'STRONG_DOWNTREND'
-        elif trend_strength > 1:
-            if ma_short > ma_long:
+        elif abs(price_momentum) > 2:
+            if price_momentum > 0:
                 return 'WEAK_UPTREND'
             else:
                 return 'WEAK_DOWNTREND'
@@ -1683,14 +1681,9 @@ async def analyze_btc_correlation(symbol, timeframe):
             return None
         
         btc_closes = [float(k[4]) for k in btc_klines]
-        
-        # Определи BTC тренд
-        btc_ma_20 = calculate_ma(btc_closes, 20)
         btc_current = btc_closes[-1]
         
-        if not btc_ma_20:
-            return None
-        
+        # Определи BTC тренд БЕЗ MA - директно от ценова динамика
         btc_change = ((btc_current - btc_closes[0]) / btc_closes[0]) * 100
         
         if btc_change > 2:
@@ -2365,11 +2358,8 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         if LUXALGO_ICT_AVAILABLE:
             luxalgo_ict = combined_luxalgo_ict_analysis(opens, highs, lows, closes, volumes)
         
-        # ========== TRADITIONAL INDICATORS (for ML compatibility) ==========
+        # ========== TRADITIONAL INDICATORS (само RSI и Bollinger Bands) ==========
         rsi = calculate_rsi(closes)
-        ma_20 = calculate_ma(closes, 20)
-        ma_50 = calculate_ma(closes, 50)
-        macd_line, macd_signal_line, macd_hist = calculate_macd(closes)
         bb_upper, bb_middle, bb_lower = calculate_bollinger_bands(closes)
         
         # Volume analysis
