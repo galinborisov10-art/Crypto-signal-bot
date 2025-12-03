@@ -812,46 +812,62 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                         ax1.text(len(df)-8, level_price, f'  Fib {level_name}', 
                                fontsize=7, color=fib_color, weight='bold', va='center', alpha=0.9)
         
-        # 📍 ENTRY ZONE - синя зона около текущата цена
+        # 📍 ENTRY ZONE - синя зона с ГОЛЯМА стрелка
         entry_zone_width = current_price * 0.005  # 0.5% зона около entry
         entry_low = current_price - entry_zone_width
         entry_high = current_price + entry_zone_width
         
-        ax1.axhspan(entry_low, entry_high, color='cyan', alpha=0.2)
-        ax1.axhline(y=current_price, color='cyan', linestyle='-', linewidth=2.5, alpha=0.9)
+        ax1.axhspan(entry_low, entry_high, color='cyan', alpha=0.3, zorder=3)
+        ax1.axhline(y=current_price, color='cyan', linestyle='-', linewidth=4, alpha=1.0, zorder=4)
         
-        # Текстов етикет върху линията на ENTRY
-        ax1.text(5, current_price, f'  📍 ENTRY ${current_price:.2f}', 
-                fontsize=10, color='white', weight='bold', va='center',
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='dodgerblue', alpha=0.95, edgecolor='white', linewidth=2))
+        # ГОЛЯМ текстов етикет с цена и стрелка
+        ax1.text(len(df)*0.15, current_price, f'  📍 ENTRY\n  ${current_price:.2f}', 
+                fontsize=12, color='white', weight='bold', va='center',
+                bbox=dict(boxstyle='round,pad=0.7', facecolor='dodgerblue', alpha=1.0, edgecolor='white', linewidth=3))
         
-        # 🎯 TAKE PROFIT - зелена зона
-        tp_zone_width = tp_price * 0.003  # 0.3% зона omkring TP
+        # Стрелка към ENTRY
+        if signal == 'BUY':
+            ax1.annotate('', xy=(len(df)*0.13, current_price), xytext=(len(df)*0.05, current_price - current_price*0.03),
+                        arrowprops=dict(arrowstyle='->', color='cyan', lw=4, alpha=0.8))
+        else:
+            ax1.annotate('', xy=(len(df)*0.13, current_price), xytext=(len(df)*0.05, current_price + current_price*0.03),
+                        arrowprops=dict(arrowstyle='->', color='cyan', lw=4, alpha=0.8))
+        
+        # 🎯 TAKE PROFIT - зелена зона с ГОЛЯМА стрелка
+        tp_zone_width = tp_price * 0.005  # 0.5% зона
         tp_low = tp_price - tp_zone_width
         tp_high = tp_price + tp_zone_width
         
-        ax1.axhspan(tp_low, tp_high, color='lime', alpha=0.25)
-        ax1.axhline(y=tp_price, color='green', linestyle='--', linewidth=2.5, alpha=0.9)
+        ax1.axhspan(tp_low, tp_high, color='lime', alpha=0.35, zorder=3)
+        ax1.axhline(y=tp_price, color='green', linestyle='--', linewidth=4, alpha=1.0, zorder=4)
         
-        # Текстов етикет върху линията на TP
+        # ГОЛЯМ текстов етикет с процент
         tp_pct_display = ((tp_price - current_price) / current_price) * 100
-        ax1.text(5, tp_price, f'  🎯 TAKE PROFIT ${tp_price:.2f} ({tp_pct_display:+.1f}%)', 
-                fontsize=10, color='white', weight='bold', va='center',
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='green', alpha=0.95, edgecolor='white', linewidth=2))
+        ax1.text(len(df)*0.15, tp_price, f'  🎯 TAKE PROFIT\n  ${tp_price:.2f}\n  {tp_pct_display:+.1f}%', 
+                fontsize=12, color='white', weight='bold', va='center',
+                bbox=dict(boxstyle='round,pad=0.7', facecolor='green', alpha=1.0, edgecolor='white', linewidth=3))
         
-        # 🛡️ STOP LOSS - червена зона
-        sl_zone_width = sl_price * 0.003  # 0.3% зона около SL
+        # Стрелка към TP
+        ax1.annotate('', xy=(len(df)*0.13, tp_price), xytext=(len(df)*0.05, tp_price - (tp_price - current_price)*0.3),
+                    arrowprops=dict(arrowstyle='->', color='lime', lw=4, alpha=0.8))
+        
+        # 🛑 STOP LOSS - червена зона с ГОЛЯМА стрелка
+        sl_zone_width = sl_price * 0.005  # 0.5% зона
         sl_low = sl_price - sl_zone_width
         sl_high = sl_price + sl_zone_width
         
-        ax1.axhspan(sl_low, sl_high, color='red', alpha=0.25)
-        ax1.axhline(y=sl_price, color='red', linestyle='--', linewidth=2.5, alpha=0.9)
+        ax1.axhspan(sl_low, sl_high, color='red', alpha=0.35, zorder=3)
+        ax1.axhline(y=sl_price, color='darkred', linestyle='--', linewidth=4, alpha=1.0, zorder=4)
         
-        # Текстов етикет върху линията на SL
+        # ГОЛЯМ текстов етикет с процент
         sl_pct_display = ((sl_price - current_price) / current_price) * 100
-        ax1.text(5, sl_price, f'  🛡️ STOP LOSS ${sl_price:.2f} ({sl_pct_display:.1f}%)', 
-                fontsize=10, color='white', weight='bold', va='center',
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='darkred', alpha=0.95, edgecolor='white', linewidth=2))
+        ax1.text(len(df)*0.15, sl_price, f'  🛑 STOP LOSS\n  ${sl_price:.2f}\n  {sl_pct_display:.1f}%', 
+                fontsize=12, color='white', weight='bold', va='center',
+                bbox=dict(boxstyle='round,pad=0.7', facecolor='darkred', alpha=1.0, edgecolor='white', linewidth=3))
+        
+        # Стрелка към SL
+        ax1.annotate('', xy=(len(df)*0.13, sl_price), xytext=(len(df)*0.05, sl_price + abs(current_price - sl_price)*0.3),
+                    arrowprops=dict(arrowstyle='->', color='red', lw=4, alpha=0.8))
         
         # Добави ГОЛЯМА СТРЕЛКА за посоката на тренда
         arrow_x = len(df) - 5
