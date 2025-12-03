@@ -512,12 +512,15 @@ def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_
                     candle_range = current_candle['high'] - current_candle['low']
                     body_ratio = candle_size / candle_range if candle_range > 0 else 0
                     
-                    # Проверка дали OB зоната не е пробита (validnost)
+                    # Проверка дали OB зоната не е пробита (validnost) - само за стари OB
                     is_valid = True
-                    for j in range(i + 1, min(i + 10, len(df))):
-                        if df.iloc[j]['low'] < current_candle['low'] * 0.998:  # Пробита с 0.2%
-                            is_valid = False
-                            break
+                    validation_range = min(i + 5, len(df))  # Проверка само на следващите 5 кендъла ако има
+                    if validation_range > i + 1:  # Ако има поне 1 следващ кендъл
+                        for j in range(i + 1, validation_range):
+                            if df.iloc[j]['low'] < current_candle['low'] * 0.998:  # Пробита с 0.2%
+                                is_valid = False
+                                break
+                    # Последните 5 кендъла винаги са валидни (няма как да знаем бъдещето)
                     
                     if is_valid:
                         strength = move_up * 100
@@ -555,12 +558,15 @@ def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_
                     candle_range = current_candle['high'] - current_candle['low']
                     body_ratio = candle_size / candle_range if candle_range > 0 else 0
                     
-                    # Проверка за validност
+                    # Проверка за validност - само за стари OB
                     is_valid = True
-                    for j in range(i + 1, min(i + 10, len(df))):
-                        if df.iloc[j]['high'] > current_candle['high'] * 1.002:
-                            is_valid = False
-                            break
+                    validation_range = min(i + 5, len(df))
+                    if validation_range > i + 1:
+                        for j in range(i + 1, validation_range):
+                            if df.iloc[j]['high'] > current_candle['high'] * 1.002:
+                                is_valid = False
+                                break
+                    # Последните 5 кендъла винаги са валидни
                     
                     if is_valid:
                         strength = move_down * 100
