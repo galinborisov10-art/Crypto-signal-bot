@@ -3108,14 +3108,19 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🚀 Deploy на бота - Download от GitHub и restart"""
     user_id = update.effective_user.id
     
+    logger.info(f"🚀 deploy_cmd called by user {user_id}")
+    
     # Проверка за admin права
     if user_id != OWNER_CHAT_ID:
+        logger.warning(f"❌ Deploy denied for user {user_id} (not owner)")
         await update.message.reply_text(
             "❌ <b>Достъп отказан!</b>\n\n"
             "Само owner може да deploy-ва бота.",
             parse_mode='HTML'
         )
         return
+    
+    logger.info(f"✅ Deploy authorized for owner {user_id}")
     
     try:
         status_msg = await update.message.reply_text(
@@ -6747,6 +6752,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start_cmd(update, context)
     elif text == "🚀 Deploy":
         # Deploy на бота от GitHub
+        logger.info(f"🚀 Deploy button pressed by user {update.effective_user.id}")
         await deploy_cmd(update, context)
     elif text == "📋 Отчети":
         await reports_cmd(update, context)
