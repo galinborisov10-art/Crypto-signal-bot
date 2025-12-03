@@ -3094,6 +3094,36 @@ BTC, ETH, XRP, SOL, BNB, ADA
     await update.message.reply_text(welcome_text, parse_mode='HTML', reply_markup=get_main_keyboard())
 
 
+async def refresh_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🔄 Обновява интерфейса и бутоните (fix за неактивни бутони след рестарт)"""
+    try:
+        # Първо премахни стари бутони
+        await update.message.reply_text(
+            "🔄 <b>Обновяване на интерфейса...</b>",
+            parse_mode='HTML',
+            reply_markup=ReplyKeyboardRemove()
+        )
+        
+        await asyncio.sleep(0.3)  # Кратка пауза
+        
+        # Изпрати нови бутони
+        await update.message.reply_text(
+            "✅ <b>Интерфейсът е обновен!</b>\n\n"
+            "Бутоните вече са активни и работят нормално.\n"
+            "Използвай менюто отдолу или команди.",
+            parse_mode='HTML',
+            reply_markup=get_main_keyboard()
+        )
+        
+        logger.info(f"✅ Interface refreshed for user {update.effective_user.id}")
+    except Exception as e:
+        logger.error(f"Грешка при refresh: {e}")
+        await update.message.reply_text(
+            "❌ Грешка при обновяване. Опитай /start",
+            reply_markup=get_main_keyboard()
+        )
+
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Помощна информация"""
     help_text = """
@@ -3101,6 +3131,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 <b>1. Основни команди:</b>
 /start - Стартиране на бота
+/refresh - 🔄 Обнови интерфейса (fix за неактивни бутони)
 /help - Тази помощна информация
 /market - Преглед на пазара
 
@@ -6662,12 +6693,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🏠 Меню":
         await start_cmd(update, context)
     elif text == "🔄 Обновяване":
-        # Redirect to /auto_update for owner
-        user_id = update.effective_user.id
-        if user_id == OWNER_CHAT_ID:
-            await auto_update_cmd(update, context)
-        else:
-            await update.message.reply_text("🔐 Тази функция е само за owner-а.")
+        # Обнови интерфейса (fix за неактивни бутони)
+        await refresh_cmd(update, context)
     elif text == "📋 Отчети":
         await reports_cmd(update, context)
     elif text == "🤖 ML Status":
@@ -9050,6 +9077,7 @@ def main():
     
     # Регистрирай команди
     app.add_handler(CommandHandler("start", start_cmd))
+    app.add_handler(CommandHandler("refresh", refresh_cmd))  # 🔄 Обнови интерфейса
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("market", market_cmd))
     app.add_handler(CommandHandler("signal", signal_cmd))
@@ -9259,6 +9287,19 @@ def main():
         async def send_startup_notification():
             """Изпраща нотификация при рестарт на бота"""
             try:
+                # 🧹 ПОЧИСТИ СТАРИ INLINE БУТОНИ (ако има)
+                try:
+                    # Изпрати съобщение което "затваря" старите бутони
+                    await app.bot.send_message(
+                        chat_id=OWNER_CHAT_ID,
+                        text="🔄 <b>Актуализиране на интерфейса...</b>",
+                        parse_mode='HTML',
+                        reply_markup=ReplyKeyboardRemove()  # Премахва стари бутони
+                    )
+                    await asyncio.sleep(0.5)  # Кратка пауза
+                except Exception as e:
+                    logger.warning(f"Cleanup на стари бутони: {e}")
+                
                 # Изпрати потвърждение за успешен рестарт
                 await send_bot_status_notification(app.bot, "restarted", "")
                 
