@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: '0 2 * * *'  # 04:00 Bulgarian time (UTC+2)
   workflow_dispatch:  # Ръчно пускане
 
 jobs:
@@ -47,7 +49,11 @@ jobs:
       - name: Send Success Notification
         if: success()
         run: |
-          MESSAGE="🚀 AUTO-DEPLOY УСПЕШЕН!%0A%0A✅ Файловете са обновени%0A✅ Ботът е рестартиран%0A%0A⏰ $(date '+%H:%M:%S %d.%m.%Y')"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            MESSAGE="🌅 ДНЕВЕН AUTO-DEPLOY!%0A%0A✅ Файловете са обновени%0A✅ Ботът е рестартиран%0A✅ ML моделът се преобучава%0A%0A⏰ $(date '+%H:%M:%S %d.%m.%Y')"
+          else
+            MESSAGE="🚀 AUTO-DEPLOY УСПЕШЕН!%0A%0A✅ Файловете са обновени%0A✅ Ботът е рестартиран%0A%0A⏰ $(date '+%H:%M:%S %d.%m.%Y')"
+          fi
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
             -d "text=${MESSAGE}" \
