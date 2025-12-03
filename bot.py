@@ -2753,9 +2753,6 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
             'tp_price': tp_price,
             'sl_price': sl_price,
             'rsi': rsi,
-            'ma_20': ma_20,
-            'ma_50': ma_50,
-            'macd': {'line': macd_line, 'signal': macd_signal_line, 'histogram': macd_hist},
             'bollinger': {'upper': bb_upper, 'middle': bb_middle, 'lower': bb_lower},
             'volume_ratio': volume_ratio,
             'volatility': volatility,
@@ -2767,7 +2764,7 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
             'lows': lows,
             'closes': closes,
             'adaptive_tp_sl': calculate_adaptive_tp_sl(symbol, volatility, timeframe),
-            'luxalgo_ict': luxalgo_ict,  # Full analysis data
+            'luxalgo_ict': luxalgo_ict,  # Full ICT analysis data
             'time_factor': get_time_of_day_factor(),
             'liquidity': check_liquidity(volume_24h, avg_volume, volume_ratio),
             'risk_validation': risk_validation  # Risk Management results
