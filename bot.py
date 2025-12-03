@@ -3,6 +3,7 @@ import json
 import asyncio
 import logging
 import hashlib
+import gc
 from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -296,8 +297,10 @@ def convert_1h_to_3h(klines_1h):
 # ================= ПОМОЩНИ ФУНКЦИИ =================
 
 async def fetch_json(url: str, params: dict = None):
-    """Асинхронно извличане на JSON данни"""
+    """Асинхронно извличане на JSON данни с rate limiting"""
     try:
+        # Rate limiting - 0.1 сек между заявки
+        await asyncio.sleep(0.1)
         resp = await asyncio.to_thread(requests.get, url, params=params, timeout=10)
         if resp.status_code == 200:
             return resp.json()
@@ -6209,21 +6212,19 @@ async def monitor_active_trades(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
-    """Изпраща автоматичен сигнал с пълен анализ - проверява всички монети и timeframes"""
+    """Изпраща автоматичен сигнал с пълен анализ - ASYNC OPTIMIZED с memory cleanup"""
     chat_id = context.job.data['chat_id']
     settings = get_user_settings(context.application.bot_data, chat_id)
     
-    logger.info("🔍 Започвам проверка на всички монети и timeframes...")
+    logger.info("🔍 Започвам ASYNC проверка на всички монети и timeframes...")
     
-    # Проверява всички символи И всички timeframes
-    best_signal = None
-    best_confidence = 0
+    # Основни timeframes за проверка - 1h, 4h, 1d
+    timeframes_to_check = ['1h', '4h', '1d']
     
-    # Всички timeframes за проверка - 4h (3h не е валиден в Binance)
-    timeframes_to_check = ['4h']
-    
-    for symbol in SYMBOLS.values():
-        for timeframe in timeframes_to_check:
+    # 🚀 ASYNC ПАРАЛЕЛЕН АНАЛИЗ - всички монети/timeframes наведнъж
+    async def analyze_single_pair(symbol, timeframe):
+        """Анализира една двойка symbol+timeframe"""
+        try:
             # Извлечи данни
             params_24h = {'symbol': symbol}
             data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
@@ -6232,22 +6233,22 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                 data_24h = next((s for s in data_24h if s['symbol'] == symbol), None)
             
             if not data_24h:
-                continue
+                return None
             
             klines = await fetch_klines(symbol, timeframe, limit=100)
             
             if not klines:
-                continue
+                return None
             
             # Анализирай
             analysis = analyze_signal(data_24h, klines)
             
             if not analysis or analysis['signal'] == 'NEUTRAL':
-                continue
+                return None
             
             # ⚡ ПРОВЕРКА ЗА ДУБЛИРАНЕ
             if is_signal_already_sent(symbol, analysis['signal'], timeframe, analysis['confidence'], cooldown_minutes=60):
-                continue
+                return None
             
             # Ако липсват TP/SL, изчисли прости нива
             if 'tp' not in analysis or 'sl' not in analysis:
@@ -6259,73 +6260,41 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                     analysis['tp'] = price * 0.97  # -3%
                     analysis['sl'] = price * 1.02  # +2%
             
-            # Запомни най-добрия сигнал (включи timeframe в сравнението)
-            if analysis['confidence'] >= 60 and analysis['confidence'] > best_confidence:
-                best_confidence = analysis['confidence']
-                best_signal = {
-                    'symbol': symbol,
-                    'timeframe': timeframe,
-                    'analysis': analysis,
-                    'data_24h': data_24h,
-                    'klines': klines
-                }
-                logger.info(f"🔍 {symbol} ({timeframe}): {analysis['signal']} ({analysis['confidence']}%) - НОВ НАЙ-ДОБЪР")
-    
-    # Ако няма добър сигнал, не изпращай нищо
-    if not best_signal:
-        logger.info("⚠️ Няма сигнали с увереност ≥60% (или всички вече изпратени)")
-        return
-    
-    # 🎯 ИЗПРАТИ ТОП 3 СИГНАЛА (независимо от монета/timeframe)
-    # Сортирай всички добри сигнали по confidence
-    all_good_signals = []
-    
-    # Събери ВСИЧКИ сигнали ≥60% от цикъла по-горе
-    for symbol in SYMBOLS.values():
-        for timeframe in timeframes_to_check:
-            params_24h = {'symbol': symbol}
-            data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
-            
-            if isinstance(data_24h, list):
-                data_24h = next((s for s in data_24h if s['symbol'] == symbol), None)
-            
-            if not data_24h:
-                continue
-            
-            klines = await fetch_klines(symbol, timeframe, limit=100)
-            
-            if not klines:
-                continue
-            
-            analysis = analyze_signal(data_24h, klines)
-            
-            if not analysis or analysis['signal'] == 'NEUTRAL':
-                continue
-            
-            if is_signal_already_sent(symbol, analysis['signal'], timeframe, analysis['confidence'], cooldown_minutes=60):
-                continue
-            
-            if 'tp' not in analysis or 'sl' not in analysis:
-                price = analysis['price']
-                if analysis['signal'] == 'BUY':
-                    analysis['tp'] = price * 1.03
-                    analysis['sl'] = price * 0.98
-                else:
-                    analysis['tp'] = price * 0.97
-                    analysis['sl'] = price * 1.02
-            
+            # Запомни сигнала ако е качествен
             if analysis['confidence'] >= 60:
-                all_good_signals.append({
+                logger.info(f"🔍 {symbol} ({timeframe}): {analysis['signal']} ({analysis['confidence']}%)")
+                return {
                     'symbol': symbol,
                     'timeframe': timeframe,
                     'analysis': analysis,
                     'data_24h': data_24h,
                     'klines': klines,
-                    'confidence': analysis['confidence']
-                })
+                    'confidence': analysis['confidence']  # Добавено за сортиране
+                }
+            
+            return None
+        except Exception as e:
+            logger.error(f"❌ Грешка при анализ на {symbol} {timeframe}: {e}")
+            return None
     
+    # Създай всички задачи за паралелно изпълнение
+    tasks = []
+    for symbol in SYMBOLS.values():
+        for timeframe in timeframes_to_check:
+            tasks.append(analyze_single_pair(symbol, timeframe))
+    
+    # Изпълни ВСИЧКИ задачи паралелно (6x по-бързо!)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Филтрирай валидните сигнали
+    all_good_signals = [r for r in results if r is not None and not isinstance(r, Exception)]
+    
+    # Ако няма добри сигнали, cleanup и излез
     if not all_good_signals:
-        logger.info("⚠️ Няма добри сигнали за изпращане")
+        logger.info("⚠️ Няма сигнали с увереност ≥60% (или всички вече изпратени)")
+        # 🧹 MEMORY CLEANUP
+        plt.close('all')
+        gc.collect()
         return
     
     # Сортирай по confidence (най-високите първи)
@@ -6597,6 +6566,12 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         
         except Exception as e:
             logger.error(f"Грешка при изпращане на alert: {e}")
+    
+    # 🧹 ФИНАЛЕН MEMORY CLEANUP след всички сигнали
+    logger.info("🧹 Memory cleanup след изпращане на сигнали...")
+    plt.close('all')
+    gc.collect()
+    logger.info("✅ Memory cleanup завършен")
 
 
 async def send_auto_news(context: ContextTypes.DEFAULT_TYPE):

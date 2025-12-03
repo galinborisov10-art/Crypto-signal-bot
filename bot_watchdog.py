@@ -101,9 +101,9 @@ def check_recent_activity():
                     timestamp_str = ' '.join(line.split()[:2])
                     last_activity = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S,%f')
                     
-                    # Ако има активност в последните 5 минути
+                    # Ако има активност в последните 10 минути
                     time_diff = datetime.now() - last_activity
-                    if time_diff.total_seconds() < 300:  # 5 минути
+                    if time_diff.total_seconds() < 600:  # 10 минути
                         logger.debug(f"✅ Скорошна активност: {time_diff.total_seconds():.0f}s ago")
                         return True
                     else:
@@ -127,7 +127,7 @@ def restart_bot():
             [BOT_MANAGER, "restart"],
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=120
         )
         
         if result.returncode == 0:
