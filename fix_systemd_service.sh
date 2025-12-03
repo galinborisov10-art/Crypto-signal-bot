@@ -20,15 +20,15 @@ User=root
 WorkingDirectory=/root/Crypto-signal-bot
 Environment="PATH=/root/Crypto-signal-bot/venv/bin"
 
-# Убий стари процеси преди старт
-ExecStartPre=/bin/sh -c '/usr/bin/pkill -9 -f "python.*bot.py" || true'
-ExecStartPre=/bin/sleep 3
+# Не използвай ExecStartPre - причинява проблеми
 
 # Стартирай бота
 ExecStart=/root/Crypto-signal-bot/venv/bin/python3 bot.py
 
 # Убий процеси при спиране
-ExecStop=/bin/sh -c '/usr/bin/pkill -9 -f "python.*bot.py" || true'
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=15
 
 # Рестарт настройки
 Restart=always
