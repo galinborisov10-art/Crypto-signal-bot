@@ -1,0 +1,28 @@
+name: Codespace Keepalive
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # Всеки 30 минути
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Ping Codespace
+        run: |
+          echo "🏓 Keeping Codespace alive..."
+          curl -X GET https://api.github.com/repos/${{ github.repository }}
+      
+      - name: Dummy commit to keep active
+        uses: actions/checkout@v3
+      
+      - name: Keep alive
+        run: |
+          date >> .keepalive
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add .keepalive
+          git diff --staged --quiet || git commit -m "🏓 Keepalive ping"
+          git push || echo "No changes to push"

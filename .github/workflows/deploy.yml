@@ -1,0 +1,42 @@
+name: Auto-Deploy to Digital Ocean
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Ръчно пускане
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Deploy to Digital Ocean
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USERNAME }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            cd /root/Crypto-signal-bot
+            git pull origin main
+            pip install -r requirements.txt
+            systemctl restart crypto-bot
+            echo "✅ Bot deployed and restarted successfully!"
+      
+      - name: Send Telegram Notification
+        if: success()
+        run: |
+          curl -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.OWNER_CHAT_ID }}" \
+            -d "text=✅ Auto-deploy successful! Bot restarted on Digital Ocean."
+      
+      - name: Send Failure Notification
+        if: failure()
+        run: |
+          curl -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.OWNER_CHAT_ID }}" \
+            -d "text=❌ Auto-deploy FAILED! Check GitHub Actions logs."
