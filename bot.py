@@ -388,8 +388,8 @@ def get_main_keyboard():
         [KeyboardButton("📰 Новини"), KeyboardButton("📋 Отчети")],
         [KeyboardButton("📚 ML Анализ"), KeyboardButton("⚙️ Настройки")],
         [KeyboardButton("🔔 Alerts"), KeyboardButton("ℹ️ Помощ")],
-        [KeyboardButton("💻 Workspace"), KeyboardButton("🚀 Deploy")],
-        [KeyboardButton("🏠 Меню")]
+        [KeyboardButton("🚀 Deploy"), KeyboardButton("🔄 Рестарт")],
+        [KeyboardButton("💻 Workspace"), KeyboardButton("🏠 Меню")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -6803,6 +6803,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Deploy на бота от GitHub
         logger.info(f"🚀 Deploy button pressed by user {update.effective_user.id}")
         await deploy_cmd(update, context)
+    elif text == "🔄 Рестарт":
+        # Рестарт на бота
+        logger.info(f"🔄 Restart button pressed by user {update.effective_user.id}")
+        await restart_cmd(update, context)
     elif text == "📋 Отчети":
         await reports_cmd(update, context)
     elif text == "📚 ML Анализ":
