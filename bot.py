@@ -2570,16 +2570,14 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         # === Machine Learning Validation ===
         if ML_AVAILABLE and signal in ['BUY', 'SELL']:
             try:
-                # Подготви features за ML модела
+                # Подготви features за ML модела (ICT-compatible)
                 ml_features = {
                     'rsi': rsi if rsi else 50,
-                    'macd_histogram': macd_hist if macd_hist else 0,
                     'price_change_pct': price_change,
                     'volume_ratio': volume_ratio,
                     'volatility': volatility,
-                    'ma_20': ma_20 if ma_20 else current_price,
-                    'ma_50': ma_50 if ma_50 else current_price,
-                    'bb_position': ((current_price - bb_lower) / (bb_upper - bb_lower)) if bb_upper and bb_lower else 0.5
+                    'bb_position': ((current_price - bb_lower) / (bb_upper - bb_lower)) if bb_upper and bb_lower else 0.5,
+                    'ict_confidence': confidence / 100.0  # Normalized ICT confidence
                 }
                 
                 # Предскажи с ML модела
@@ -2603,21 +2601,19 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
             except Exception as e:
                 logger.warning(f"ML validation failed: {e}")
         
-        # === IMPROVED: Инвертирана логика за confidence ===
-        # ПРОБЛЕМ: Високата confidence даваше низък win rate
-        # РЕШЕНИЕ: Рекалибриране на confidence базирано на signal strength
+        # === Confidence recalibration ===
+        # Базов confidence според alignment strength
+        max_votes = 5  # ICT(2) + S/R(2) + RSI(1)
+        total_votes = vote_buy if vote_buy > vote_sell else vote_sell
         
-        # Брой на alignment факторите
-        alignment_count = vote_buy + vote_sell
-        max_alignment = 3
-        
-        # Базов confidence според alignment (обратно на старата логика!)
-        if alignment_count == 3:
-            base_confidence = 85  # Всички 3 системи се съгласяват
-        elif alignment_count == 2:
-            base_confidence = 70  # 2 от 3 системи
+        if total_votes >= 5:
+            base_confidence = 85  # Perfect alignment
+        elif total_votes >= 4:
+            base_confidence = 75  # Strong alignment  
+        elif total_votes >= 3:
+            base_confidence = 65  # Good alignment
         else:
-            base_confidence = 55  # Слабо alignment
+            base_confidence = 50  # Weak signal
         
         # Добави бонуси от индикатори
         indicator_bonus = 0
@@ -3931,8 +3927,6 @@ async def fetch_market_news():
     except Exception as e:
         logger.error(f"Грешка при Cointelegraph: {e}")
     
-    return all_news[:6] if all_news else []  # Връщаме до 6 най-важни новини
-    
     # === Decrypt RSS Feed (Технологична перспектива) ===
     try:
         decrypt_rss = "https://decrypt.co/feed"
@@ -4028,6 +4022,34 @@ async def fetch_market_news():
             })
     except Exception as e:
         logger.error(f"Грешка при CoinJournal: {e}")
+    
+    # === CoinMarketCap API (Public - NO KEY NEEDED!) ===
+    try:
+        cmc_api_url = "https://api.coinmarketcap.com/data-api/v3/headlines/latest"
+        resp = await asyncio.to_thread(requests.get, cmc_api_url, timeout=10)
+        
+        if resp.status_code == 200:
+            cmc_data = resp.json()
+            if 'data' in cmc_data and cmc_data['data']:
+                for article in cmc_data['data'][:3]:  # Top 3 от CMC
+                    title = article.get('title', 'No title')
+                    description = article.get('subtitle', '')
+                    link = f"https://coinmarketcap.com/headlines/news/{article.get('slug', '')}"
+                    
+                    # Автоматичен превод
+                    title_bg = await translate_text(title)
+                    desc_bg = await translate_text(description[:500]) if description else ''
+                    
+                    all_news.append({
+                        'title': title,
+                        'title_bg': title_bg,
+                        'description': description,
+                        'description_bg': desc_bg,
+                        'link': link,
+                        'source': '💎 CoinMarketCap'
+                    })
+    except Exception as e:
+        logger.error(f"Грешка при CoinMarketCap: {e}")
     
     return all_news[:12] if all_news else []  # Връщаме до 12 най-важни новини
 
