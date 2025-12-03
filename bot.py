@@ -938,15 +938,48 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                      fontsize=11, weight='normal', color='#c9d1d9')
         ax1.set_ylabel('Price (USDT)', fontsize=9, color='#8b949e')
         
-        # Добави легенда само ако има Order Blocks
+        # ЛЕГЕНДА с индикатори (горен ляв ъгъл като на снимката)
+        from matplotlib.patches import Rectangle
+        legend_items = []
+        
+        # Order Blocks
         if order_blocks:
             bullish_obs = [ob for ob in order_blocks if ob['type'] == 'bullish']
             bearish_obs = [ob for ob in order_blocks if ob['type'] == 'bearish']
-            
-            ob_info = f'📦 Order Blocks: {len(bullish_obs)} Support | {len(bearish_obs)} Resistance'
-            ax1.text(0.02, 0.98, ob_info,
-                    transform=ax1.transAxes, fontsize=9, verticalalignment='top',
-                    bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.85, edgecolor='orange', linewidth=1.5))
+            legend_items.append(('▮', '#81c784', f'Order Block Support ({len(bullish_obs)})'))
+            legend_items.append(('▮', '#e57373', f'Order Block Resistance ({len(bearish_obs)})'))
+        
+        # Support/Resistance
+        if luxalgo_ict_data and luxalgo_ict_data.get('luxalgo_sr'):
+            sr_data = luxalgo_ict_data['luxalgo_sr']
+            if sr_data.get('support_levels'):
+                legend_items.append(('─', '#66bb6a', f'Support Levels ({len(sr_data["support_levels"])})'))
+            if sr_data.get('resistance_levels'):
+                legend_items.append(('─', '#ef5350', f'Resistance Levels ({len(sr_data["resistance_levels"])})'))
+        
+        # FVG
+        if luxalgo_ict_data and luxalgo_ict_data.get('ict_fvg'):
+            fvg_count = len(luxalgo_ict_data['ict_fvg'][-5:])
+            legend_items.append(('▬', '#66bb6a', f'Fair Value Gaps ({fvg_count})'))
+        
+        # Liquidity
+        if luxalgo_ict_data and luxalgo_ict_data.get('luxalgo_sr', {}).get('liquidity_zones'):
+            liq_count = len(luxalgo_ict_data['luxalgo_sr']['liquidity_zones'])
+            legend_items.append(('⋯', '#42a5f5', f'Liquidity Zones ({liq_count})'))
+        
+        # Entry/TP/SL
+        legend_items.append(('─', '#1e88e5', 'Entry'))
+        legend_items.append(('─', '#388e3c', 'Take Profit'))
+        legend_items.append(('─', '#c62828', 'Stop Loss'))
+        
+        # Нарисувай легендата
+        y_offset = 0.98
+        for symbol_char, color, label in legend_items:
+            ax1.text(0.02, y_offset, f'{symbol_char} {label}',
+                    transform=ax1.transAxes, fontsize=7, verticalalignment='top',
+                    color=color, weight='bold',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='#0d1117', alpha=0.8, edgecolor=color, linewidth=1))
+            y_offset -= 0.04
         
         plt.tight_layout()
         
