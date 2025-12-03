@@ -5491,24 +5491,66 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Само owner-ът може да рестартира бота!")
         return
     
-    await update.message.reply_text(
-        "🔄 <b>РЕСТАРТИРАМ БОТА...</b>\n\n"
-        "⏳ Ще се върна след 5 секунди!\n"
-        "💡 Ще получиш потвърждение когато съм онлайн.",
+    status_msg = await update.message.reply_text(
+        "🔄 <b>РЕСТАРТ ЗАПОЧВА!</b>\n\n"
+        "⏳ Рестартирам бота...\n"
+        "⌛ Timeout: 30 секунди\n\n"
+        "<i>Изчакай за потвърждение...</i>",
         parse_mode='HTML'
     )
     
     logger.info(f"🔄 Bot restart requested by user {update.effective_user.id}")
     
-    # Изпрати нотификация
-    await send_bot_status_notification(context.bot, "stopping", "Ръчен рестарт от потребител")
-    
-    # Спри бота и рестартирай процеса
-    import os
-    import sys
-    
-    # Изпрати команда за рестарт
-    os.execv(sys.executable, ['python3'] + sys.argv)
+    try:
+        # Изпрати нотификация
+        await send_bot_status_notification(context.bot, "stopping", "Ръчен рестарт от потребител")
+        
+        # Рестарт чрез systemd
+        import subprocess
+        import asyncio
+        
+        # Стартирай рестарта в отделен процес
+        subprocess.Popen(['sudo', 'systemctl', 'restart', 'crypto-bot.service'])
+        
+        # Изчакай 15 секунди
+        await asyncio.sleep(15)
+        
+        # Провери статуса
+        result = subprocess.run(
+            ['sudo', 'systemctl', 'is-active', 'crypto-bot.service'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result.returncode == 0 and 'active' in result.stdout:
+            await status_msg.edit_text(
+                "✅ <b>РЕСТАРТ УСПЕШЕН!</b>\n\n"
+                "🟢 Ботът е онлайн\n"
+                "⏱️ Време: 15 секунди\n\n"
+                "💡 Изпрати /start за да проверим всичко.",
+                parse_mode='HTML'
+            )
+        else:
+            await status_msg.edit_text(
+                "⚠️ <b>РЕСТАРТ ЗАВЪРШИ, НО...</b>\n\n"
+                "🔴 Статус не е ясен\n"
+                "💡 Провери ръчно:\n"
+                "<code>sudo systemctl status crypto-bot.service</code>",
+                parse_mode='HTML'
+            )
+            
+    except Exception as e:
+        logger.error(f"Restart error: {e}")
+        try:
+            await status_msg.edit_text(
+                "❌ <b>ГРЕШКА ПРИ РЕСТАРТ!</b>\n\n"
+                f"<code>{str(e)}</code>\n\n"
+                "💡 Рестартирай ръчно на сървъра.",
+                parse_mode='HTML'
+            )
+        except:
+            pass  # Bot already restarted, can't edit message
 
 
 async def workspace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
