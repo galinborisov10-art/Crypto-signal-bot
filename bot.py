@@ -7550,8 +7550,8 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= DEPLOY КОМАНДА =================
 
-async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """🚀 Deploy на Digital Ocean - само за owner"""
+async def deploy_digitalocean_old_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🚀 OLD Deploy function (deprecated - uses git push via SSH)"""
     user_id = update.effective_chat.id
     
     # Само owner може да deploy-ва
@@ -9238,9 +9238,6 @@ def main():
     app.add_handler(CommandHandler("journal", journal_cmd))  # 📝 Trading Journal с ML
     app.add_handler(CommandHandler("risk", risk_cmd))  # 🛡️ Risk Management
     app.add_handler(CommandHandler("explain", explain_cmd))  # 📖 ICT/LuxAlgo речник
-    
-    # Deploy команда (само owner)
-    app.add_handler(CommandHandler("deploy", deploy_cmd))  # 🚀 Auto-deploy от GitHub
     
     # Админ команди
     app.add_handler(CommandHandler("admin_login", admin_login_cmd))
