@@ -620,8 +620,8 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = df[col].astype(float)
         
-        # Вземи последните 50 свещи за по-добра визуализация
-        df = df.tail(50)
+        # Вземи последните 100 свещи за по-добра визуализация (като TradingView)
+        df = df.tail(100)
         
         # Провери дали има достатъчно данни
         if len(df) < 10:
@@ -644,9 +644,9 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         
         logger.info(f"📦 Detected {len(order_blocks)} high-quality Order Blocks for {symbol}")
         
-        # Създай графика - ПРОФЕСИОНАЛЕН СТИЛ като AzCryptoBot (подобрена версия)
-        # ФОРМАТ 1:1 (квадратна снимка 16x16 - ПО-ГОЛЯМА) + ТЪМЕН ФОН + Volume панел
-        fig = plt.figure(figsize=(16, 16), facecolor='#0d1117')
+        # Създай графика - ПРОФЕСИОНАЛЕН СТИЛ като LuxAlgo TradingView
+        # ФОРМАТ 16:9 (широка графика) + ТЪМЕН ФОН + Volume панел
+        fig = plt.figure(figsize=(20, 11), facecolor='#0d1117')
         
         # 2 панела: Главна графика (80%), Volume (20%) - БЕЗ RSI
         gs = fig.add_gridspec(2, 1, height_ratios=[8, 2], hspace=0.05)
