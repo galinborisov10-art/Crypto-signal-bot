@@ -3899,12 +3899,12 @@ async def fetch_market_news():
     """Извлича последни крипто новини от най-надеждните източници"""
     all_news = []
     
-    # === Cointelegraph RSS Feed (Работи БЕЗ блокировки!) ===
+    # === 1. Cointelegraph RSS Feed (Най-надежден!) ===
     try:
         cointelegraph_rss = "https://cointelegraph.com/rss"
         feed = await asyncio.to_thread(feedparser.parse, cointelegraph_rss)
         
-        for entry in feed.entries[:6]:  # Вземаме 6 новини вместо 2
+        for entry in feed.entries[:5]:  # Top 5 от Cointelegraph
             clean_title = BeautifulSoup(entry.title, 'html.parser').get_text()
             clean_desc = BeautifulSoup(entry.get('summary', ''), 'html.parser').get_text()
             
@@ -3920,110 +3920,15 @@ async def fetch_market_news():
                 'title_bg': title_bg,
                 'description': clean_desc,
                 'description_bg': desc_bg,
-                'link': entry.link,  # Оригинален линк
-                'translate_link': translate_url,  # Google Translate версия на български
+                'link': entry.link,
+                'translate_link': translate_url,
                 'source': '📊 Cointelegraph'
             })
+            logger.info(f"✅ Cointelegraph: {clean_title[:50]}")
     except Exception as e:
-        logger.error(f"Грешка при Cointelegraph: {e}")
+        logger.error(f"❌ Грешка при Cointelegraph: {e}")
     
-    # === Decrypt RSS Feed (Технологична перспектива) ===
-    try:
-        decrypt_rss = "https://decrypt.co/feed"
-        feed = await asyncio.to_thread(feedparser.parse, decrypt_rss)
-        
-        for entry in feed.entries[:2]:
-            clean_title = BeautifulSoup(entry.title, 'html.parser').get_text()
-            clean_desc = BeautifulSoup(entry.get('summary', ''), 'html.parser').get_text()
-            
-            # Автоматичен превод на български
-            title_bg = await translate_text(clean_title)
-            desc_bg = await translate_text(clean_desc[:500]) if clean_desc else ''
-            
-            all_news.append({
-                'title': clean_title,
-                'title_bg': title_bg,
-                'description': clean_desc,
-                'description_bg': desc_bg,
-                'link': entry.link,  # Директен линк
-                'source': '🔐 Decrypt'
-            })
-    except Exception as e:
-        logger.error(f"Грешка при Decrypt: {e}")
-    
-    # === The Block RSS Feed (Институционални новини и анализи) ===
-    try:
-        theblock_rss = "https://www.theblock.co/rss.xml"
-        feed = await asyncio.to_thread(feedparser.parse, theblock_rss)
-        
-        for entry in feed.entries[:2]:
-            clean_title = BeautifulSoup(entry.title, 'html.parser').get_text()
-            clean_desc = BeautifulSoup(entry.get('summary', ''), 'html.parser').get_text()
-            
-            # Автоматичен превод на български
-            title_bg = await translate_text(clean_title)
-            desc_bg = await translate_text(clean_desc[:500]) if clean_desc else ''
-            
-            all_news.append({
-                'title': clean_title,
-                'title_bg': title_bg,
-                'description': clean_desc,
-                'description_bg': desc_bg,
-                'link': entry.link,  # Директен линк
-                'source': '📰 The Block'
-            })
-    except Exception as e:
-        logger.error(f"Грешка при The Block: {e}")
-    
-    # === Bitcoin.com News RSS Feed (Глобални крипто новини) ===
-    try:
-        bitcoincom_rss = "https://news.bitcoin.com/feed/"
-        feed = await asyncio.to_thread(feedparser.parse, bitcoincom_rss)
-        
-        for entry in feed.entries[:2]:
-            clean_title = BeautifulSoup(entry.title, 'html.parser').get_text()
-            clean_desc = BeautifulSoup(entry.get('summary', ''), 'html.parser').get_text()
-            
-            # Автоматичен превод на български
-            title_bg = await translate_text(clean_title)
-            desc_bg = await translate_text(clean_desc[:500]) if clean_desc else ''
-            
-            all_news.append({
-                'title': clean_title,
-                'title_bg': title_bg,
-                'description': clean_desc,
-                'description_bg': desc_bg,
-                'link': entry.link,  # Директен линк
-                'source': '₿ Bitcoin.com'
-            })
-    except Exception as e:
-        logger.error(f"Грешка при Bitcoin.com: {e}")
-    
-    # === CoinJournal RSS Feed (Пазарни данни и ETF потоци) ===
-    try:
-        coinjournal_rss = "https://coinjournal.net/feed/"
-        feed = await asyncio.to_thread(feedparser.parse, coinjournal_rss)
-        
-        for entry in feed.entries[:2]:
-            clean_title = BeautifulSoup(entry.title, 'html.parser').get_text()
-            clean_desc = BeautifulSoup(entry.get('summary', ''), 'html.parser').get_text()
-            
-            # Автоматичен превод на български
-            title_bg = await translate_text(clean_title)
-            desc_bg = await translate_text(clean_desc[:500]) if clean_desc else ''
-            
-            all_news.append({
-                'title': clean_title,
-                'title_bg': title_bg,
-                'description': clean_desc,
-                'description_bg': desc_bg,
-                'link': entry.link,  # Директен линк
-                'source': '📊 CoinJournal'
-            })
-    except Exception as e:
-        logger.error(f"Грешка при CoinJournal: {e}")
-    
-    # === CoinMarketCap API (Public - NO KEY NEEDED!) ===
+    # === 2. CoinMarketCap API (Public - NO KEY!) ===
     try:
         cmc_api_url = "https://api.coinmarketcap.com/data-api/v3/headlines/latest"
         resp = await asyncio.to_thread(requests.get, cmc_api_url, timeout=10)
@@ -4031,7 +3936,7 @@ async def fetch_market_news():
         if resp.status_code == 200:
             cmc_data = resp.json()
             if 'data' in cmc_data and cmc_data['data']:
-                for article in cmc_data['data'][:3]:  # Top 3 от CMC
+                for article in cmc_data['data'][:5]:  # Top 5 от CMC
                     title = article.get('title', 'No title')
                     description = article.get('subtitle', '')
                     link = f"https://coinmarketcap.com/headlines/news/{article.get('slug', '')}"
@@ -4040,18 +3945,24 @@ async def fetch_market_news():
                     title_bg = await translate_text(title)
                     desc_bg = await translate_text(description[:500]) if description else ''
                     
+                    # Google Translate wrapper
+                    translate_url = f"https://translate.google.com/translate?sl=en&tl=bg&u={link}"
+                    
                     all_news.append({
                         'title': title,
                         'title_bg': title_bg,
                         'description': description,
                         'description_bg': desc_bg,
                         'link': link,
+                        'translate_link': translate_url,
                         'source': '💎 CoinMarketCap'
                     })
+                    logger.info(f"✅ CoinMarketCap: {title[:50]}")
     except Exception as e:
-        logger.error(f"Грешка при CoinMarketCap: {e}")
+        logger.error(f"❌ Грешка при CoinMarketCap: {e}")
     
-    return all_news[:12] if all_news else []  # Връщаме до 12 най-важни новини
+    logger.info(f"📰 Total news fetched: {len(all_news)}")
+    return all_news[:10] if all_news else []  # Top 10 новини общо
 
 
 async def analyze_coin_performance(coin_data, include_external=True):
