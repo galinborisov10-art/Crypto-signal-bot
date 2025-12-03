@@ -2481,7 +2481,7 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         # === ENTRY RULE: All 3 must align ===
         # 1. LuxAlgo S/R
         # 2. ICT Concepts (MSS/Liquidity/FVG)
-        # 3. Signal confirmation (RSI/MACD)
+        # 3. Signal confirmation (RSI only)
         
         luxalgo_says = sr_direction
         ict_says = ict_direction or fvg_signal
@@ -2498,38 +2498,6 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
             traditional_signal = 'SELL'
             reasons.append(f"RSI extreme overbought: {rsi:.1f}")
             confidence += 5  # Reduced from 10
-        
-        # MACD - check for divergence first
-        macd_divergence = False
-        if macd_line and macd_signal_line and len(closes) >= 20:
-            # Simple divergence detection
-            recent_price_trend = closes[-1] > closes[-10]
-            recent_macd_trend = macd_hist > (macd_hist if len(closes) < 10 else 0)
-            
-            if recent_price_trend != recent_macd_trend:
-                macd_divergence = True
-                # Divergence veto power
-                if recent_price_trend and not recent_macd_trend:
-                    traditional_signal = 'SELL'  # Bearish divergence
-                    reasons.append("⚠️ MACD bearish divergence (veto)")
-                    confidence -= 10  # Penalty for divergence
-                elif not recent_price_trend and recent_macd_trend:
-                    traditional_signal = 'BUY'  # Bullish divergence
-                    reasons.append("⚠️ MACD bullish divergence (veto)")
-                    confidence -= 10
-        
-        # MACD cross - only if no divergence
-        if not macd_divergence and macd_line and macd_signal_line:
-            if macd_line > macd_signal_line and macd_hist > 0:
-                if traditional_signal == 'BUY' or not traditional_signal:
-                    traditional_signal = 'BUY'
-                    reasons.append("MACD bullish cross")
-                    confidence += 5  # Reduced from 8
-            elif macd_line < macd_signal_line and macd_hist < 0:
-                if traditional_signal == 'SELL' or not traditional_signal:
-                    traditional_signal = 'SELL'
-                    reasons.append("MACD bearish cross")
-                    confidence += 5  # Reduced from 8
         
         # ===  FINAL SIGNAL DETERMINATION ===
         # IMPROVED: 2 out of 3 systems must agree (was too strict before)
@@ -2590,12 +2558,10 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
                 # Подготви features за ML модела
                 ml_features = {
                     'rsi': rsi if rsi else 50,
-                    'macd_histogram': macd_hist if macd_hist else 0,
+                    'macd_histogram': 0,
                     'price_change_pct': price_change,
                     'volume_ratio': volume_ratio,
                     'volatility': volatility,
-                    'ma_20': ma_20 if ma_20 else current_price,
-                    'ma_50': ma_50 if ma_50 else current_price,
                     'bb_position': ((current_price - bb_lower) / (bb_upper - bb_lower)) if bb_upper and bb_lower else 0.5
                 }
                 
@@ -2774,9 +2740,7 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
             'tp_price': tp_price,
             'sl_price': sl_price,
             'rsi': rsi,
-            'ma_20': ma_20,
-            'ma_50': ma_50,
-            'macd': {'line': macd_line, 'signal': macd_signal_line, 'histogram': macd_hist},
+            'macd': {'line': 0, 'signal': 0, 'histogram': 0},
             'bollinger': {'upper': bb_upper, 'middle': bb_middle, 'lower': bb_lower},
             'volume_ratio': volume_ratio,
             'volatility': volatility,
@@ -4837,10 +4801,6 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message += f"📊 <b>Индикатори:</b>\n"
     if analysis['rsi']:
         message += f"RSI(14): {analysis['rsi']:.1f}\n"
-    if analysis['ma_20']:
-        message += f"MA(20): ${analysis['ma_20']:.2f}\n"
-    if analysis['ma_50']:
-        message += f"MA(50): ${analysis['ma_50']:.2f}\n"
     
     if analysis['reasons']:
         message += f"\n💡 <b>Причини:</b>\n"
