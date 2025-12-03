@@ -4817,11 +4817,11 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         no_trade_message += f"💰 Цена: ${price:,.4f}\n"
         no_trade_message += f"📈 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
         no_trade_message += f"📊 <b>Индикатори:</b>\n"
-        if analysis['rsi']:
+        if analysis.get('rsi'):
             no_trade_message += f"RSI(14): {analysis['rsi']:.1f}\n"
-        if analysis['ma_20']:
+        if analysis.get('ma_20'):
             no_trade_message += f"MA(20): ${analysis['ma_20']:.2f}\n"
-        if analysis['ma_50']:
+        if analysis.get('ma_50'):
             no_trade_message += f"MA(50): ${analysis['ma_50']:.2f}\n"
         no_trade_message += f"\nСигнал: {analysis['signal']}\n"
         no_trade_message += f"Увереност: {analysis['confidence']}%\n\n"
@@ -7290,11 +7290,11 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"MTF analysis не се показва: mtf_analysis={mtf_analysis}")
             
             message += f"📊 <b>Индикатори:</b>\n"
-            if analysis['rsi']:
+            if analysis.get('rsi'):
                 message += f"RSI(14): {analysis['rsi']:.1f}\n"
-            if analysis['ma_20']:
+            if analysis.get('ma_20'):
                 message += f"MA(20): ${analysis['ma_20']:.2f}\n"
-            if analysis['ma_50']:
+            if analysis.get('ma_50'):
                 message += f"MA(50): ${analysis['ma_50']:.2f}\n"
             
             if analysis['reasons']:
@@ -7312,11 +7312,11 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 no_trade_message += f"💰 Цена: ${price:,.4f}\n"
                 no_trade_message += f"📈 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
                 no_trade_message += f"📊 <b>Индикатори:</b>\n"
-                if analysis['rsi']:
+                if analysis.get('rsi'):
                     no_trade_message += f"RSI(14): {analysis['rsi']:.1f}\n"
-                if analysis['ma_20']:
+                if analysis.get('ma_20'):
                     no_trade_message += f"MA(20): ${analysis['ma_20']:.2f}\n"
-                if analysis['ma_50']:
+                if analysis.get('ma_50'):
                     no_trade_message += f"MA(50): ${analysis['ma_50']:.2f}\n"
                 no_trade_message += f"\nСигнал: {analysis['signal']}\n"
                 no_trade_message += f"Увереност: {analysis['confidence']}%\n\n"
