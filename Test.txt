@@ -1,1 +1,5 @@
-
+cd /workspaces/Crypto-signal-bot
+echo "# Test auto-deploy" > TEST_DEPLOY.txt
+git add TEST_DEPLOY.txt
+git commit -m "🧪 Test auto-deploy"
+git push
