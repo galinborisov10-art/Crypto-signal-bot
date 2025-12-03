@@ -641,23 +641,43 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         
         logger.info(f"📦 Detected {len(order_blocks)} high-quality Order Blocks for {symbol}")
         
-        # Създай графика - професионален стил като Binance/AzCryptoBot
-        # Размер 12x8 (правилни пропорции, не разтеглена)
-        fig, ax1 = plt.subplots(1, 1, figsize=(12, 8), facecolor='#fafafa')
-        ax1.set_facecolor('#fafafa')
+        # Създай графика - ПРОФЕСИОНАЛЕН СТИЛ като AzCryptoBot (подобрена версия)
+        # ФОРМАТ 1:1 (квадратна снимка 12x12) + ТЪМЕН ФОН + Volume панел
+        fig = plt.figure(figsize=(12, 12), facecolor='#0d1117')
         
-        # Тънък grid за професионален вид
-        ax1.grid(True, alpha=0.15, linestyle=':', linewidth=0.5, color='gray')
+        # 2 панела: Главна графика (80%), Volume (20%) - БЕЗ RSI
+        gs = fig.add_gridspec(2, 1, height_ratios=[8, 2], hspace=0.05)
         
-        # Plot candlesticks - МАЛКИ и реалистични
+        # Главна графика
+        ax1 = fig.add_subplot(gs[0])
+        ax1.set_facecolor('#161b22')
+        
+        # Volume панел
+        ax_volume = fig.add_subplot(gs[1], sharex=ax1)
+        ax_volume.set_facecolor('#161b22')
+        
+        # Тънък grid за професионален вид (като AzCryptoBot)
+        ax1.grid(True, alpha=0.1, linestyle=':', linewidth=0.4, color='#30363d')
+        ax_volume.grid(True, alpha=0.1, linestyle=':', linewidth=0.4, color='#30363d')
+        
+        # Plot candlesticks - МАЛКИ и реалистични като AzCryptoBot
         for idx, (timestamp, row) in enumerate(df.iterrows()):
-            # Меки цветове вместо ярки
-            color = '#26a69a' if row['close'] >= row['open'] else '#ef5350'  # Teal/Red
-            # Тяло на свещта - ПО-ТЪНКО (0.4 вместо 0.6)
-            ax1.plot([idx, idx], [row['low'], row['high']], color='#37474f', linewidth=0.4, alpha=0.8)
+            # Teal/Red цветове като Binance/TradingView
+            color = '#26a69a' if row['close'] >= row['open'] else '#ef5350'
+            # Тънки свещи за професионален вид
+            ax1.plot([idx, idx], [row['low'], row['high']], color=color, linewidth=0.6, alpha=0.9)
             height = abs(row['close'] - row['open'])
             bottom = min(row['open'], row['close'])
-            ax1.add_patch(plt.Rectangle((idx-0.2, bottom), 0.4, height, facecolor=color, edgecolor='#37474f', linewidth=0.3, alpha=0.9))
+            ax1.add_patch(plt.Rectangle((idx-0.25, bottom), 0.5, height, facecolor=color, edgecolor=color, linewidth=0.8, alpha=1.0))
+        
+        # VOLUME панел (зелени/червени барове)
+        for idx, (timestamp, row) in enumerate(df.iterrows()):
+            vol_color = '#26a69a' if row['close'] >= row['open'] else '#ef5350'
+            ax_volume.bar(idx, row['volume'], color=vol_color, alpha=0.6, width=0.8)
+        
+        ax_volume.set_ylabel('Volume', color='#8b949e', fontsize=8)
+        ax_volume.tick_params(axis='y', labelcolor='#8b949e', labelsize=7)
+        plt.setp(ax1.get_xticklabels(), visible=False)  # Скрий x-labels от горния панел
         
         # 📦 ВИЗУАЛИЗИРАЙ САМО НАЙ-ВАЖНИТЕ ORDER BLOCKS
         for ob in order_blocks:
@@ -893,18 +913,30 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             ax1.text(arrow_x + 2, arrow_y - (current_price * 0.018), '▼ SELL', 
                     fontsize=10, color='white', weight='normal',
                     bbox=dict(boxstyle='round', facecolor='#c62828', alpha=0.75, edgecolor='white', linewidth=1))
-        else:
-            # Неутрална стрелка
-            ax1.text(arrow_x + 2, arrow_y, '● NEUTRAL', 
-                    fontsize=16, color='gray', weight='bold',
-                    bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.7))
         
+        # Watermark като AzCryptoBot
+        ax1.text(len(df)/2, (ax1.get_ylim()[0] + ax1.get_ylim()[1])/2, '@CryptoSignalBot',
+                fontsize=20, color='#30363d', alpha=0.25, ha='center', va='center',
+                rotation=0, weight='bold')
+        
+        # Axis styling за тъмен фон
+        ax1.tick_params(axis='x', colors='#8b949e', labelsize=8)
+        ax1.tick_params(axis='y', colors='#8b949e', labelsize=9)
+        ax1.spines['bottom'].set_color('#30363d')
+        ax1.spines['top'].set_color('#30363d')
+        ax1.spines['left'].set_color('#30363d')
+        ax1.spines['right'].set_color('#30363d')
+        
+        ax_volume.tick_params(axis='x', colors='#8b949e', labelsize=8)
+        ax_volume.spines['bottom'].set_color('#30363d')
+        ax_volume.spines['top'].set_color('#30363d')
+        ax_volume.spines['left'].set_color('#30363d')
+        ax_volume.spines['right'].set_color('#30363d')
+        
+        # Титла с контраст на тъмен фон
         ax1.set_title(f'{symbol} - {timeframe.upper()} - LuxAlgo + ICT Analysis - {datetime.now().strftime("%Y-%m-%d %H:%M")}', 
-                     fontsize=14, weight='bold')
-        ax1.set_ylabel('Цена (USDT)', fontsize=12)
-        ax1.set_xlabel('Време', fontsize=10)
-        ax1.grid(True, alpha=0.2, linestyle='--', linewidth=0.5)
-        ax1.set_xticks([])
+                     fontsize=11, weight='normal', color='#c9d1d9')
+        ax1.set_ylabel('Price (USDT)', fontsize=9, color='#8b949e')
         
         # Добави легенда само ако има Order Blocks
         if order_blocks:
