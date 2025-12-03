@@ -5536,6 +5536,233 @@ async def risk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Грешка при зареждане на Risk Management")
 
 
+async def explain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📖 Речник с ICT/LuxAlgo термини"""
+    logger.info(f"User {update.effective_user.id} executed /explain")
+    
+    # Ако има аргумент - покажи конкретен термин
+    if context.args:
+        term = ' '.join(context.args).upper()
+        
+        explanations = {
+            'OB': "📦 <b>ORDER BLOCK (OB)</b>\n\n"
+                  "Зона където институционални играчи (banks, hedge funds) са влезли с големи позиции.\n\n"
+                  "<b>+OB (Bullish):</b> Support зона - очаква се цената да отскочи нагоре\n"
+                  "<b>-OB (Bearish):</b> Resistance зона - очаква се цената да отскочи надолу\n\n"
+                  "💡 <b>Как да използваш:</b>\n"
+                  "• Влизай при retest на силен OB\n"
+                  "• По-силният OB има по-голям шанс за реакция\n"
+                  "• Комбинирай с FVG за по-добър entry",
+            
+            'FVG': "🔲 <b>FAIR VALUE GAP (FVG)</b>\n\n"
+                   "Ценова празнина (gap) между 3 свещи, където липсва ликвидност.\n\n"
+                   "<b>FVG+ (Bullish):</b> Празнина при покачване - магнит за цената\n"
+                   "<b>FVG- (Bearish):</b> Празнина при спадане - магнит за цената\n\n"
+                   "📊 <b>Визуализация:</b>\n"
+                   "• Плътна линия ━ = Силна FVG (>0.5% gap)\n"
+                   "• Пунктир ╌ = Слаба FVG (<0.5% gap)\n\n"
+                   "💡 <b>Как да използваш:</b>\n"
+                   "• Цената често се връща да запълни FVG\n"
+                   "• Силните FVG са по-надеждни\n"
+                   "• Entry на долната граница (bullish) или горна (bearish)",
+            
+            'MSS': "🔄 <b>MARKET STRUCTURE SHIFT (MSS)</b>\n\n"
+                   "Промяна в структурата на пазара - важен сигнал за смяна на тренда.\n\n"
+                   "<b>Bullish MSS:</b> Цената пробива последния higher high\n"
+                   "<b>Bearish MSS:</b> Цената пробива последния lower low\n\n"
+                   "💡 <b>Как да използваш:</b>\n"
+                   "• Ранен сигнал за нов тренд\n"
+                   "• Влизай след потвърждение (retest)\n"
+                   "• Висока вероятност за продължение в посоката на MSS",
+            
+            'BSL': "💧 <b>BUY SIDE LIQUIDITY (BSL)</b>\n\n"
+                   "Зона НАД цената с натрупани Stop Loss ордери на SHORT позиции.\n\n"
+                   "🎯 <b>Как работи:</b>\n"
+                   "• Smart Money \"хваща\" тези stops\n"
+                   "• След grab очаква се обрат надолу\n"
+                   "• Често се вижда като fakeout над resistance\n\n"
+                   "💡 <b>Как да използваш:</b>\n"
+                   "• Не гонѝ breakout над BSL\n"
+                   "• Изчакай grab + reversal pattern\n"
+                   "• Entry при confirmation за обрат",
+            
+            'SSL': "💧 <b>SELL SIDE LIQUIDITY (SSL)</b>\n\n"
+                   "Зона ПОД цената с натрупани Stop Loss ордери на LONG позиции.\n\n"
+                   "🎯 <b>Как работи:</b>\n"
+                   "• Smart Money \"хваща\" тези stops\n"
+                   "• След grab очаква се обрат нагоре\n"
+                   "• Често се вижда като fakeout под support\n\n"
+                   "💡 <b>Как да използваш:</b>\n"
+                   "• Не панкирай при breakdown под SSL\n"
+                   "• Изчакай grab + reversal pattern\n"
+                   "• Entry при confirmation за обрат",
+            
+            'SUPPORT': "🟢 <b>SUPPORT (Подкрепа)</b>\n\n"
+                       "Ценово ниво където купувачите са по-силни от продавачите.\n\n"
+                       "📊 <b>Как се определя:</b>\n"
+                       "• LuxAlgo automatic detection\n"
+                       "• Исторически test zones\n"
+                       "• Volume confirmation\n\n"
+                       "💡 <b>Как да използваш:</b>\n"
+                       "• Long entry при retest на support\n"
+                       "• Stop loss под support\n"
+                       "• Breakdown = bearish signal",
+            
+            'RESISTANCE': "🔴 <b>RESISTANCE (Съпротива)</b>\n\n"
+                          "Ценово ниво където продавачите са по-силни от купувачите.\n\n"
+                          "📊 <b>Как се определя:</b>\n"
+                          "• LuxAlgo automatic detection\n"
+                          "• Исторически rejection zones\n"
+                          "• Volume confirmation\n\n"
+                          "💡 <b>Как да използваш:</b>\n"
+                          "• Short entry при retest на resistance\n"
+                          "• Stop loss над resistance\n"
+                          "• Breakout = bullish signal",
+            
+            'TP': "🎯 <b>TAKE PROFIT (TP)</b>\n\n"
+                  "Целева цена къде да затвориш позицията с печалба.\n\n"
+                  "📊 <b>Как се калкулира:</b>\n"
+                  "• Базиран на FVG зони\n"
+                  "• Support/Resistance нива\n"
+                  "• Fibonacci extension\n"
+                  "• Risk/Reward ratio >= 1.5:1\n\n"
+                  "💡 <b>Съвет:</b>\n"
+                  "• Затвори 50% при TP1\n"
+                  "• Move SL to breakeven\n"
+                  "• Остави 50% за TP2",
+            
+            'SL': "🛑 <b>STOP LOSS (SL)</b>\n\n"
+                  "Защитна цена къде да затвориш позицията при грешка.\n\n"
+                  "📊 <b>Как се калкулира:</b>\n"
+                  "• Базиран на ATR (волатилност)\n"
+                  "• Под/над Order Block\n"
+                  "• Зад Support/Resistance\n"
+                  "• Обикновено 1-2% риск\n\n"
+                  "💡 <b>Важно:</b>\n"
+                  "• НЕ премествай SL надолу (long) или нагоре (short)\n"
+                  "• По-добре да ти излезе SL отколкото да губиш повече",
+            
+            'RR': "⚖️ <b>RISK/REWARD RATIO (RR)</b>\n\n"
+                  "Съотношение между потенциална печалба и риск.\n\n"
+                  "📊 <b>Пример:</b>\n"
+                  "• Entry: $100\n"
+                  "• TP: $103 (+3%)\n"
+                  "• SL: $99 (-1%)\n"
+                  "• RR = 3:1 (отличен!)\n\n"
+                  "💡 <b>Минимум:</b>\n"
+                  "• Никога под 1.5:1\n"
+                  "• Оптимално 2:1 или повече\n"
+                  "• С 2:1 RR, 40% win rate = profit!",
+            
+            'RANGING': "📊 <b>RANGING MARKET (Странично движение)</b>\n\n"
+                       "Пазар който се движи в ограничен диапазон без ясна посока.\n\n"
+                       "⚠️ <b>Признаци:</b>\n"
+                       "• Ниска волатилност\n"
+                       "• Цената между support/resistance\n"
+                       "• Много false breakouts\n\n"
+                       "💡 <b>Стратегия:</b>\n"
+                       "• НЕ търгувай breakouts\n"
+                       "• Търгувай от краищата (range границите)\n"
+                       "• Или изчакай излизане от range",
+            
+            'TRENDING': "📈 <b>TRENDING MARKET (Трендиращ пазар)</b>\n\n"
+                        "Пазар с ясна посока - нагоре (uptrend) или надолу (downtrend).\n\n"
+                        "✅ <b>Признаци:</b>\n"
+                        "• Последователни higher highs/lows (uptrend)\n"
+                        "• Последователни lower highs/lows (downtrend)\n"
+                        "• Силен momentum\n\n"
+                        "💡 <b>Стратегия:</b>\n"
+                        "• Търгувай В посоката на тренда\n"
+                        "• Entry на pullbacks (retracements)\n"
+                        "• НЕ влизай срещу тренда"
+        }
+        
+        # Търси термина
+        found = False
+        for key, explanation in explanations.items():
+            if key in term or term in key:
+                await update.message.reply_text(explanation, parse_mode='HTML')
+                found = True
+                break
+        
+        if not found:
+            await update.message.reply_text(
+                f"❌ Непознат термин: {term}\n\n"
+                f"Използвай /explain без аргументи за пълен списък."
+            )
+        return
+    
+    # Покажи пълен списък
+    message = """
+📖 <b>ICT/LUXALGO РЕЧНИК</b>
+
+Използвай: /explain <термин>
+
+<b>📦 SMART MONEY CONCEPTS:</b>
+• <code>/explain OB</code> - Order Blocks (+OB/-OB)
+• <code>/explain FVG</code> - Fair Value Gaps
+• <code>/explain MSS</code> - Market Structure Shift
+• <code>/explain BSL</code> - Buy Side Liquidity
+• <code>/explain SSL</code> - Sell Side Liquidity
+
+<b>📊 ПОДДРЪЖКА & СЪПРОТИВА:</b>
+• <code>/explain Support</code> - Support нива
+• <code>/explain Resistance</code> - Resistance нива
+
+<b>🎯 RISK MANAGEMENT:</b>
+• <code>/explain TP</code> - Take Profit
+• <code>/explain SL</code> - Stop Loss
+• <code>/explain RR</code> - Risk/Reward Ratio
+
+<b>📈 ПАЗАРНИ УСЛОВИЯ:</b>
+• <code>/explain Ranging</code> - Странично движение
+• <code>/explain Trending</code> - Трендиращ пазар
+
+<b>💡 Пример:</b>
+<code>/explain FVG</code>
+
+За детайли за конкретен термин, просто го напиши след командата!
+"""
+    
+    await update.message.reply_text(message, parse_mode='HTML')
+            rm.config[config_key] = setting_value
+            rm.save_config(rm.config)
+            
+            await update.message.reply_text(
+                f"✅ <b>Настройката е обновена!</b>\n\n"
+                f"{setting_name} = {setting_value}\n\n"
+                f"Използвай /risk за преглед на всички настройки.",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Покажи настройки и текущ статус
+        settings_text = rm.get_settings_summary()
+        
+        # Добави текущ дневен P/L и активни trades
+        can_trade, daily_pnl, daily_msg = rm.check_daily_loss_limit('trading_journal.json')
+        can_open, active_count, active_msg = rm.check_concurrent_trades('trading_journal.json')
+        
+        status_text = "\n📊 <b>ТЕКУЩ СТАТУС:</b>\n\n"
+        status_text += f"{daily_msg}\n"
+        status_text += f"{active_msg}\n"
+        
+        if not can_trade:
+            status_text += f"\n🛑 <b>ТЪРГОВИЯТА Е СПРЯНА - дневният лимит е достигнат!</b>\n"
+        elif not can_open:
+            status_text += f"\n⚠️ <b>Не можеш да отвориш нови trades - лимитът е достигнат!</b>\n"
+        else:
+            status_text += f"\n✅ <b>Можеш да търгуваш</b>\n"
+        
+        full_message = settings_text + status_text
+        
+        await update.message.reply_text(full_message, parse_mode='HTML')
+    
+    except Exception as e:
+        logger.error(f"Грешка в /risk: {e}")
+        await update.message.reply_text("❌ Грешка при зареждане на Risk Management")
+
+
 async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Избор на таймфрейм"""
     settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
@@ -8721,6 +8948,7 @@ def main():
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("journal", journal_cmd))  # 📝 Trading Journal с ML
     app.add_handler(CommandHandler("risk", risk_cmd))  # 🛡️ Risk Management
+    app.add_handler(CommandHandler("explain", explain_cmd))  # 📖 ICT/LuxAlgo речник
     
     # Deploy команда (само owner)
     app.add_handler(CommandHandler("deploy", deploy_cmd))  # 🚀 Auto-deploy от GitHub
