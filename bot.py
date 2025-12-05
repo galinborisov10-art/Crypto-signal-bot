@@ -1894,6 +1894,15 @@ def log_trade_to_journal(symbol, timeframe, signal_type, confidence, entry_price
         save_journal(journal)
         logger.info(f"📝 Trade #{trade_id} logged: {symbol} {signal_type} @ ${entry_price}")
         
+        # 🤖 Auto-train ML модела на всеки 20 trades
+        if ML_AVAILABLE and journal['metadata']['total_trades'] % 20 == 0:
+            try:
+                logger.info(f"🤖 Auto-training ML model (trade #{journal['metadata']['total_trades']})")
+                ml_engine.train_model()
+                logger.info("✅ ML model trained successfully!")
+            except Exception as ml_error:
+                logger.error(f"ML training error: {ml_error}")
+        
         return trade_id
         
     except Exception as e:
@@ -9220,6 +9229,25 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
     
     logger.info("🚀 Crypto Signal Bot стартира...")
+    
+    # 🤖 Initial ML training при старт (ако има достатъчно данни)
+    if ML_AVAILABLE:
+        try:
+            logger.info("🤖 Checking ML model status...")
+            status = ml_engine.get_status()
+            
+            if not status['model_trained'] and status['ready_for_training']:
+                logger.info(f"🤖 Training ML model with {status['training_samples']} samples...")
+                if ml_engine.train_model():
+                    logger.info("✅ ML model trained successfully on startup!")
+                else:
+                    logger.warning("⚠️ ML training failed - insufficient data")
+            elif status['model_trained']:
+                logger.info(f"✅ ML model already trained ({status['training_samples']} samples)")
+            else:
+                logger.info(f"⏳ ML model waiting for more data ({status['training_samples']}/{status['min_samples_needed']} samples)")
+        except Exception as ml_error:
+            logger.error(f"❌ ML initialization error: {ml_error}")
     
     # APScheduler за автоматични отчети (стартира СЛЕД app.run_polling)
     if ADMIN_MODULE_AVAILABLE:
