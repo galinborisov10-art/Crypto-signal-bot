@@ -22,24 +22,25 @@ class DailyReportEngine:
             with open(self.stats_path, 'r') as f:
                 stats = json.load(f)
             
-            # Филтрирай днешни сигнали
+            # Филтрирай ВЧЕРАШНИ сигнали (не днешни!)
             today = datetime.now().date()
-            today_signals = [
+            yesterday = today - timedelta(days=1)
+            yesterday_signals = [
                 s for s in stats['signals']
-                if datetime.fromisoformat(s['timestamp']).date() == today
+                if datetime.fromisoformat(s['timestamp']).date() == yesterday
             ]
             
-            if not today_signals:
-                return self._generate_no_signals_report()
+            if not yesterday_signals:
+                return self._generate_no_signals_report(yesterday)
             
             # === ОСНОВНИ СТАТИСТИКИ ===
-            total = len(today_signals)
-            buy_signals = len([s for s in today_signals if s['type'] == 'BUY'])
-            sell_signals = len([s for s in today_signals if s['type'] == 'SELL'])
+            total = len(yesterday_signals)
+            buy_signals = len([s for s in yesterday_signals if s['type'] == 'BUY'])
+            sell_signals = len([s for s in yesterday_signals if s['type'] == 'SELL'])
             
             # === АНАЛИЗ НА ТОЧНОСТ ===
-            completed_signals = [s for s in today_signals if s.get('status') == 'COMPLETED']
-            active_signals = [s for s in today_signals if s.get('status') == 'ACTIVE']
+            completed_signals = [s for s in yesterday_signals if s.get('status') == 'COMPLETED']
+            active_signals = [s for s in yesterday_signals if s.get('status') == 'ACTIVE']
             
             # Точност (Accuracy) - колко сигнала са завършени успешно
             if completed_signals:
@@ -77,7 +78,7 @@ class DailyReportEngine:
                     worst_trade = min(losing_trades, key=lambda x: x['profit_pct'])
             
             # === СТАТИСТИКА ПО CONFIDENCE ===
-            avg_confidence = sum([s['confidence'] for s in today_signals]) / total if total > 0 else 0
+            avg_confidence = sum([s['confidence'] for s in yesterday_signals]) / total if total > 0 else 0
             
             # Точност по confidence ranges
             confidence_accuracy = {}
@@ -94,10 +95,10 @@ class DailyReportEngine:
             
             # === СТАТИСТИКА ПО СИМВОЛИ ===
             symbols_stats = {}
-            symbols_traded = list(set([s['symbol'] for s in today_signals]))
+            symbols_traded = list(set([s['symbol'] for s in yesterday_signals]))
             
             for symbol in symbols_traded:
-                symbol_signals = [s for s in today_signals if s['symbol'] == symbol]
+                symbol_signals = [s for s in yesterday_signals if s['symbol'] == symbol]
                 symbol_completed = [s for s in symbol_signals if s.get('status') == 'COMPLETED']
                 
                 if symbol_completed:
@@ -118,7 +119,7 @@ class DailyReportEngine:
                 }
             
             # === ML СТАТИСТИКА ===
-            ml_signals = [s for s in today_signals if s.get('ml_mode')]
+            ml_signals = [s for s in yesterday_signals if s.get('ml_mode')]
             ml_completed = [s for s in ml_signals if s.get('status') == 'COMPLETED']
             
             if ml_completed:
@@ -129,7 +130,7 @@ class DailyReportEngine:
                 ml_accuracy = 0
             
             report = {
-                'date': today.isoformat(),
+                'date': yesterday.isoformat(),  # Вчерашна дата!
                 'timestamp': datetime.now().isoformat(),
                 
                 # Основни данни
@@ -191,14 +192,16 @@ class DailyReportEngine:
             return 90 <= confidence <= 100
         return False
     
-    def _generate_no_signals_report(self):
+    def _generate_no_signals_report(self, report_date=None):
         """Генерира отчет без сигнали"""
-        today = datetime.now().date()
+        if report_date is None:
+            report_date = (datetime.now().date() - timedelta(days=1))
+        
         report = {
-            'date': today.isoformat(),
+            'date': report_date.isoformat(),
             'timestamp': datetime.now().isoformat(),
             'total_signals': 0,
-            'message': 'Няма сигнали за днес'
+            'message': f'Няма сигнали за {report_date.strftime("%d.%m.%Y")}'
         }
         self._save_report(report)
         return report
