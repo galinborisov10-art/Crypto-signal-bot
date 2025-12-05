@@ -17,7 +17,7 @@ class MLTradingEngine:
         self.scaler = StandardScaler()
         self.model_path = '/workspaces/Crypto-signal-bot/ml_model.pkl'
         self.scaler_path = '/workspaces/Crypto-signal-bot/ml_scaler.pkl'
-        self.training_data_path = '/workspaces/Crypto-signal-bot/ml_training_data.json'
+        self.trading_journal_path = '/workspaces/Crypto-signal-bot/trading_journal.json'  # Използва trading_journal!
         self.min_training_samples = 50  # Минимум данни за обучение
         self.hybrid_mode = True  # Стартира в хибриден режим
         self.ml_weight = 0.3  # Първоначално 30% ML, 70% класически
@@ -139,47 +139,54 @@ class MLTradingEngine:
             print(f"❌ Record outcome error: {e}")
     
     def train_model(self):
-        """Обучава ML модела с наличните данни"""
+        """Обучава ML модела с данни от trading_journal.json"""
         try:
-            # Зареди training data
-            if not os.path.exists(self.training_data_path):
-                print("⚠️ No training data available")
+            # Зареди trading journal
+            if not os.path.exists(self.trading_journal_path):
+                print("⚠️ No trading journal available")
                 return False
             
-            with open(self.training_data_path, 'r') as f:
-                data = json.load(f)
+            with open(self.trading_journal_path, 'r') as f:
+                journal = json.load(f)
             
-            if len(data['samples']) < self.min_training_samples:
-                print(f"⚠️ Not enough samples ({len(data['samples'])} / {self.min_training_samples})")
+            trades = journal.get('trades', [])
+            
+            if len(trades) < self.min_training_samples:
+                print(f"⚠️ Not enough trades ({len(trades)} / {self.min_training_samples})")
                 return False
             
             # Подготви features и labels
             X = []
             y = []
             
-            for sample in data['samples']:
-                X.append(sample['features'])
+            for trade in trades:
+                # Пропусни trades без outcome
+                if not trade.get('outcome'):
+                    continue
                 
-                # Mapping: BUY=1, SELL=2, HOLD=0
-                signal = sample['signal']
-                success = sample['success']
+                conditions = trade.get('conditions', {})
                 
-                # Ако сигналът е успешен - запомни го
-                if success:
-                    if signal == 'BUY':
-                        y.append(1)
-                    elif signal == 'SELL':
-                        y.append(2)
-                    else:
-                        y.append(0)
+                # Извлечи features (само ICT-compatible)
+                features = [
+                    conditions.get('rsi', 50),
+                    conditions.get('volume_ratio', 1),
+                    conditions.get('volatility', 5),
+                    conditions.get('btc_correlation', 0),
+                    trade.get('confidence', 50),
+                ]
+                
+                X.append(features)
+                
+                # Label: WIN=1, LOSS=0
+                outcome = trade.get('outcome')
+                if outcome == 'WIN':
+                    y.append(1)
                 else:
-                    # Ако сигналът FAIL - обърни го (учи от грешки)
-                    if signal == 'BUY':
-                        y.append(2)  # Трябваше да е SELL
-                    elif signal == 'SELL':
-                        y.append(1)  # Трябваше да е BUY
-                    else:
-                        y.append(0)
+                    y.append(0)
+            
+            if len(X) < self.min_training_samples:
+                print(f"⚠️ Not enough completed trades ({len(X)} / {self.min_training_samples})")
+                return False
             
             X = np.array(X)
             y = np.array(y)
@@ -254,10 +261,11 @@ class MLTradingEngine:
     def get_status(self):
         """Връща статус на ML системата"""
         try:
-            if os.path.exists(self.training_data_path):
-                with open(self.training_data_path, 'r') as f:
-                    data = json.load(f)
-                num_samples = len(data['samples'])
+            # Брой trades от trading_journal
+            if os.path.exists(self.trading_journal_path):
+                with open(self.trading_journal_path, 'r') as f:
+                    journal = json.load(f)
+                num_samples = journal.get('metadata', {}).get('total_trades', 0)
             else:
                 num_samples = 0
             
