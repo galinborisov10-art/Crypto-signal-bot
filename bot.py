@@ -10349,28 +10349,26 @@ def main():
         
         async def send_startup_notification():
             """Изпраща нотификация при рестарт на бота"""
-            # ОПИТ 1 - след 1 секунда
-            await asyncio.sleep(1)
+            # ОПИТ 1 - след 2 секунди (повече време за инициализация)
+            await asyncio.sleep(2)
             
             # ПРОВЕРИ ДАЛИ Е БИЛ РЕСТАРТ
             restart_flag_file = f"{BASE_PATH}/.restart_requested"
             was_restart = os.path.exists(restart_flag_file)
             
+            logger.info(f"🔍 Проверка за restart flag: {restart_flag_file}")
+            logger.info(f"🔍 Flag file exists: {was_restart}")
+            logger.info(f"🔍 BASE_PATH: {BASE_PATH}")
+            
             # ИЗТРИЙ ФЛАГА
             if was_restart:
                 try:
                     os.remove(restart_flag_file)
-                except:
-                    pass
+                    logger.info(f"✅ Restart flag изтрит")
+                except Exception as e:
+                    logger.error(f"❌ Грешка при изтриване на flag: {e}")
             
             try:
-                # Тествай дали всички callback handlers работят
-                test_callbacks = [
-                    'signal_BTCUSDT', 'signal_ETHUSDT', 'signal_SOLUSDT',
-                    'timeframe_15m', 'timeframe_1h', 'reports_daily',
-                    'ml_train', 'backtest_run'
-                ]
-                
                 # РАЗЛИЧНО СЪОБЩЕНИЕ според дали е бил рестарт
                 if was_restart:
                     # 🔔 РЕСТАРТ ПОТВЪРЖДЕНИЕ - СЪС ЗВУК И КЛАВИАТУРА
@@ -10378,10 +10376,9 @@ def main():
                     startup_msg += f"🟢 <b>Бота е отново онлайн!</b>\n"
                     startup_msg += f"⏱️ <b>Време:</b> {datetime.now().strftime('%H:%M:%S')}\n\n"
                     startup_msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                    startup_msg += f"✅ Handlers: {len(test_callbacks)} активни\n"
+                    startup_msg += f"✅ Всички системи: Онлайн\n"
                     startup_msg += f"✅ Auto-alerts: Включени\n"
-                    startup_msg += f"✅ ML Engine: Готов\n"
-                    startup_msg += f"✅ Всички системи: Онлайн\n\n"
+                    startup_msg += f"✅ ML Engine: Готов\n\n"
                     startup_msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
                     startup_msg += f"🎯 <i>Рестартът беше успешен!</i>"
                 else:
@@ -10390,6 +10387,8 @@ def main():
                     startup_msg += f"🟢 Статус: Онлайн\n"
                     startup_msg += f"⏱️ Време: {datetime.now().strftime('%H:%M:%S')}\n\n"
                     startup_msg += f"✅ Всички системи активни"
+                
+                logger.info(f"📤 Изпращам startup съобщение... (was_restart={was_restart})")
                 
                 await app.bot.send_message(
                     chat_id=OWNER_CHAT_ID,
@@ -10402,6 +10401,7 @@ def main():
                 
             except Exception as e:
                 logger.error(f"❌ Грешка при startup notification (опит 1): {e}")
+                logger.error(f"❌ Traceback: {traceback.format_exc()}")
                 
                 # ОПИТ 2 - след още 3 секунди
                 try:
@@ -10420,6 +10420,7 @@ def main():
                     logger.info("✅ Startup notification изпратена (опит 2)")
                 except Exception as e2:
                     logger.error(f"❌ Грешка при startup notification (опит 2): {e2}")
+                    logger.error(f"❌ Traceback 2: {traceback.format_exc()}")
         
         # Изпълни след инициализация на app
         async def schedule_reports_task(context):
@@ -10442,7 +10443,7 @@ def main():
         
         app.job_queue.run_once(schedule_reports_task, 5)
         app.job_queue.run_once(enable_auto_alerts_task, 10)
-        app.job_queue.run_once(send_startup_notification_task, 1)  # ПО-БЪРЗО - след 1 секунда!
+        app.job_queue.run_once(send_startup_notification_task, 2)  # След 2 секунди (вместо 1)
         
         # Keepalive ping на всеки 30 минути (1800 секунди)
         app.job_queue.run_repeating(keepalive_ping, interval=1800, first=1800)
