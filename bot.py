@@ -3100,80 +3100,49 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import os
         
         bot_dir = '/root/Crypto-signal-bot'
-        github_url = 'https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main'
         
-        logger.info(f"📥 Starting deploy from GitHub...")
-        
-        # ВСИЧКИ файлове за обновяване
-        files_to_update = [
-            'bot.py',
-            'ml_engine.py', 
-            'ml_predictor.py',
-            'backtesting.py',
-            'daily_reports.py',
-            'luxalgo_sr_mtf.py',
-            'luxalgo_ict_concepts.py',
-            'luxalgo_chart_generator.py',
-            'luxalgo_ict_analysis.py',
-            'bot_watchdog.py',
-            'auto_fixer.py',
-            'requirements.txt'
-        ]
+        logger.info(f"📥 Starting git pull deploy...")
         
         await status_msg.edit_text(
             "🚀 <b>DEPLOY ЗАПОЧВА...</b>\n\n"
-            f"📥 Изтегляне на {len(files_to_update)} файла...",
+            "📥 Git pull от GitHub...",
             parse_mode='HTML'
         )
         
-        updated_files = []
-        failed_files = []
+        # Git pull (същото като в GitHub Actions)
+        pull_result = subprocess.run(
+            ['git', 'pull', 'origin', 'main'],
+            cwd=bot_dir,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
         
-        for filename in files_to_update:
-            try:
-                logger.info(f"⬇️ Downloading {filename}...")
-                result = subprocess.run(
-                    ['wget', '-q', f'{github_url}/{filename}', '-O', f'{bot_dir}/{filename}'],
-                    timeout=15,
-                    capture_output=True,
-                    text=True
-                )
-                
-                if result.returncode == 0:
-                    updated_files.append(filename)
-                    logger.info(f"✅ {filename} downloaded")
-                else:
-                    failed_files.append(filename)
-                    logger.error(f"❌ {filename} failed: {result.stderr}")
-            except Exception as e:
-                failed_files.append(filename)
-                logger.error(f"❌ Failed to download {filename}: {e}")
+        if pull_result.returncode != 0:
+            logger.error(f"❌ Git pull failed: {pull_result.stderr}")
+            await status_msg.edit_text(
+                f"❌ <b>DEPLOY ГРЕШКА!</b>\n\n"
+                f"Git pull неуспешен:\n<code>{pull_result.stderr[:300]}</code>\n\n"
+                f"Опитай пак или използвай GitHub Actions.",
+                parse_mode='HTML'
+            )
+            return
         
-        logger.info(f"📊 Download complete: {len(updated_files)} success, {len(failed_files)} failed")
+        logger.info(f"✅ Git pull successful: {pull_result.stdout}")
+        logger.info(f"✅ Git pull successful: {pull_result.stdout}")
         
         # Update status
         status_text = "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
-        status_text += f"📥 <b>Обновени {len(updated_files)} файла:</b>\n"
-        
-        for f in updated_files[:6]:
-            status_text += f"   ✓ {f}\n"
-        
-        if len(updated_files) > 6:
-            status_text += f"   ... и още {len(updated_files) - 6}\n"
-        
-        if failed_files:
-            status_text += f"\n⚠️ <b>Пропуснати ({len(failed_files)}):</b>\n"
-            for f in failed_files[:3]:
-                status_text += f"   • {f}\n"
-        
-        status_text += f"\n🔄 <b>За да приложиш промените:</b>\n"
+        status_text += "📥 <b>ВСИЧКИ файлове обновени от GitHub</b>\n\n"
+        status_text += f"📝 Git output:\n<code>{pull_result.stdout[:150]}</code>\n\n"
+        status_text += "🔄 <b>За да приложиш промените:</b>\n"
         status_text += "Изпрати: <code>/restart</code>\n\n"
         status_text += "<i>Промените ще влезат в сила след restart.</i>"
         
         logger.info("📝 Updating status message...")
         await status_msg.edit_text(status_text, parse_mode='HTML')
         
-        logger.info(f"✅ Bot deployed successfully by {user_id} - ALL files updated via git pull")
+        logger.info(f"✅ Bot deployed successfully by {user_id} via git pull")
             
     except subprocess.TimeoutExpired:
         await status_msg.edit_text(
