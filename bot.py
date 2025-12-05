@@ -8642,25 +8642,48 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await asyncio.sleep(0.5)
     
-    # Update progress
-    await status_msg.edit_text(
-        f"📊 <b>BACKTEST В ХОД...</b>\n\n"
-        f"💰 Символ: {symbol}\n"
-        f"⏰ Timeframe: {timeframe}\n"
-        f"📅 Период: {days} дни\n\n"
-        f"🔄 Симулирам трейдове... (30-60 сек)",
-        parse_mode='HTML'
-    )
-    
-    # Изпълни back-test
-    results = await backtest_engine.run_backtest(symbol, timeframe, None, days)
-    
-    if not results:
-        await status_msg.edit_text("❌ Грешка при back-testing\n\nПроверете символа и опитайте отново.", parse_mode='HTML')
-        return
-    
-    # Финално съобщение с резултати
-    message = f"""📊 <b>BACK-TEST РЕЗУЛТАТИ</b>
+    try:
+        # Update progress
+        await status_msg.edit_text(
+            f"📊 <b>BACKTEST В ХОД...</b>\n\n"
+            f"💰 Символ: {symbol}\n"
+            f"⏰ Timeframe: {timeframe}\n"
+            f"📅 Период: {days} дни\n\n"
+            f"🔄 Симулирам трейдове...\n"
+            f"⏱️ Може да отнеме 30-60 секунди\n\n"
+            f"<i>Моля изчакайте...</i>",
+            parse_mode='HTML'
+        )
+        
+        # Изпълни back-test с timeout
+        try:
+            results = await asyncio.wait_for(
+                backtest_engine.run_backtest(symbol, timeframe, None, days),
+                timeout=120.0  # 2 минути максимум
+            )
+        except asyncio.TimeoutError:
+            await status_msg.edit_text(
+                "⏱️ <b>TIMEOUT!</b>\n\n"
+                "Backtest отне твърде дълго време.\n"
+                "Опитайте с по-кратък период (напр. 30 дни).",
+                parse_mode='HTML'
+            )
+            return
+        
+        if not results:
+            await status_msg.edit_text(
+                "❌ <b>ГРЕШКА ПРИ BACKTEST</b>\n\n"
+                "Възможни причини:\n"
+                "• Невалиден символ\n"
+                "• Binance API не отговаря\n"
+                "• Няма достатъчно данни\n\n"
+                "Опитайте: <code>/backtest BTCUSDT 4h 30</code>",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Финално съобщение с резултати
+        message = f"""📊 <b>BACK-TEST РЕЗУЛТАТИ</b>
 
 💰 <b>Символ:</b> {results['symbol']}
 ⏰ <b>Таймфрейм:</b> {results['timeframe']}
@@ -8676,15 +8699,15 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ⚠️ <i>Симулация базирана на исторически данни</i>
 """
-    
-    await status_msg.edit_text(message, parse_mode='HTML')
-    
-    # Оптимизирай параметри
-    try:
-        optimized = backtest_engine.optimize_parameters(results)
         
-        if optimized:
-            opt_msg = f"""✅ <b>ПАРАМЕТРИ ОПТИМИЗИРАНИ</b>
+        await status_msg.edit_text(message, parse_mode='HTML')
+        
+        # Оптимизирай параметри
+        try:
+            optimized = backtest_engine.optimize_parameters(results)
+            
+            if optimized:
+                opt_msg = f"""✅ <b>ПАРАМЕТРИ ОПТИМИЗИРАНИ</b>
 
 🎯 Препоръчан TP: {optimized['optimized_tp_pct']:.2f}%
 🛡️ Препоръчан SL: {optimized['optimized_sl_pct']:.2f}%
@@ -8692,10 +8715,19 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 💡 <i>Използвай тези параметри за по-добри резултати!</i>
 """
-            await update.message.reply_text(opt_msg, parse_mode='HTML')
+                await update.message.reply_text(opt_msg, parse_mode='HTML')
+        except Exception as e:
+            logger.error(f"Optimization error: {e}")
+            # Don't fail the whole command if optimization fails
+    
     except Exception as e:
-        logger.error(f"Optimization error: {e}")
-        # Don't fail the whole command if optimization fails
+        logger.error(f"❌ Backtest error: {e}")
+        await status_msg.edit_text(
+            f"❌ <b>ГРЕШКА!</b>\n\n"
+            f"<code>{str(e)[:200]}</code>\n\n"
+            f"Опитайте отново или с различни параметри.",
+            parse_mode='HTML'
+        )
 
 
 async def ml_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
