@@ -6119,62 +6119,61 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Само owner-ът може да рестартира бота!")
         return
     
-    status_msg = await update.message.reply_text(
-        "🔄 <b>РЕСТАРТ ЗАПОЧВА!</b>\n\n"
-        "⏳ Рестартирам бота...\n"
-        "⌛ Очаквано време: 10-15 секунди\n\n"
-        "💡 <i>Ще получиш потвърждение със ЗВУК след рестарта!</i>",
-        parse_mode='HTML'
-    )
-    
     logger.info(f"🔄 Bot restart requested by user {update.effective_user.id}")
     
+    # Изпрати ФИНАЛНО съобщение ПРЕДИ рестарт (със звук и клавиатура)
+    await context.bot.send_message(
+        chat_id=OWNER_CHAT_ID,
+        text=(
+            "🔄 <b>РЕСТАРТИРАМ БОТА СЕГА!</b>\n\n"
+            "⏱️ Време за рестарт: ~10-15 секунди\n\n"
+            "🔔 <b>ВНИМАНИЕ:</b>\n"
+            "След рестарта ще получиш ново съобщение\n"
+            "със ЗВУК и възстановена клавиатура!\n\n"
+            "💡 Изчакай 15 секунди..."
+        ),
+        parse_mode='HTML',
+        disable_notification=False,  # СЪС ЗВУК
+        reply_markup=ReplyKeyboardRemove()  # Премахни клавиатурата временно
+    )
+    
     try:
-        # Рестарт чрез bot-manager.sh (работи на Codespace И Server)
-        import subprocess
+        # Използвай ДИРЕКТЕН Python restart (най-надежден метод)
+        import sys
         import asyncio
         
-        # Използвай bot-manager.sh за рестарт
-        bot_manager_script = f"{BASE_PATH}/bot-manager.sh"
+        # Изчакай малко да се изпрати съобщението
+        await asyncio.sleep(1)
         
-        if os.path.exists(bot_manager_script):
-            # Стартирай рестарта в отделен процес
-            subprocess.Popen([bot_manager_script, 'restart'])
-            
-            await status_msg.edit_text(
-                "✅ <b>РЕСТАРТ КОМАНДА ИЗПРАТЕНА!</b>\n\n"
-                "🔄 Ботът се рестартира сега...\n"
-                "⏱️ Времетраене: ~10-15 секунди\n\n"
-                "🔔 <b>ВАЖНО:</b> Ще получиш съобщение със ЗВУК\n"
-                "когато ботът е рестартиран успешно!\n\n"
-                "💡 Клавиатурата ще бъде възстановена автоматично.",
-                parse_mode='HTML'
-            )
-        else:
-            # Fallback към direct Python restart
-            await status_msg.edit_text(
-                "🔄 <b>РЕСТАРТ...</b>\n\n"
-                "Ботът ще се рестартира след 3 секунди.",
-                parse_mode='HTML'
-            )
-            
-            await asyncio.sleep(3)
-            
-            # Спри текущия процес и го рестартирай
-            import sys
-            os.execv(sys.executable, ['python3'] + sys.argv)
+        # ДИРЕКТЕН РЕСТАРТ - най-надежден
+        logger.info("🔄 Executing direct bot restart...")
+        os.execv(sys.executable, ['python3'] + sys.argv)
+        # Използвай ДИРЕКТЕН Python restart (най-надежден метод)
+        import sys
+        import asyncio
+        
+        # Изчакай малко да се изпрати съобщението
+        await asyncio.sleep(1)
+        
+        # ДИРЕКТЕН РЕСТАРТ - най-надежден
+        logger.info("🔄 Executing direct bot restart...")
+        os.execv(sys.executable, ['python3'] + sys.argv)
             
     except Exception as e:
         logger.error(f"Restart error: {e}")
         try:
-            await status_msg.edit_text(
-                "❌ <b>ГРЕШКА ПРИ РЕСТАРТ!</b>\n\n"
-                f"<code>{str(e)}</code>\n\n"
-                "💡 Рестартирай ръчно на сървъра.",
-                parse_mode='HTML'
+            await context.bot.send_message(
+                chat_id=OWNER_CHAT_ID,
+                text=(
+                    "❌ <b>ГРЕШКА ПРИ РЕСТАРТ!</b>\n\n"
+                    f"<code>{str(e)}</code>\n\n"
+                    "💡 Опитай отново или рестартирай ръчно."
+                ),
+                parse_mode='HTML',
+                reply_markup=get_main_keyboard()
             )
         except:
-            pass  # Bot already restarted, can't edit message
+            pass
 
 
 async def workspace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -10355,6 +10354,9 @@ def main():
         
         async def send_startup_notification():
             """Изпраща нотификация при рестарт на бота"""
+            # ОПИТ 1 - след 1 секунда
+            await asyncio.sleep(1)
+            
             try:
                 # Тествай дали всички callback handlers работят
                 test_callbacks = [
@@ -10385,8 +10387,27 @@ def main():
                     reply_markup=get_main_keyboard()  # Изпрати клавиатурата
                 )
                 logger.info("✅ Startup notification изпратена с клавиатура и звук")
+                
             except Exception as e:
-                logger.error(f"Грешка при startup notification: {e}")
+                logger.error(f"❌ Грешка при startup notification (опит 1): {e}")
+                
+                # ОПИТ 2 - след още 3 секунди
+                try:
+                    await asyncio.sleep(3)
+                    await app.bot.send_message(
+                        chat_id=OWNER_CHAT_ID,
+                        text=(
+                            "✅ <b>БОТ ОНЛАЙН!</b>\n\n"
+                            "🟢 Рестартът завърши успешно.\n"
+                            "💡 Всички системи работят."
+                        ),
+                        parse_mode='HTML',
+                        disable_notification=False,
+                        reply_markup=get_main_keyboard()
+                    )
+                    logger.info("✅ Startup notification изпратена (опит 2)")
+                except Exception as e2:
+                    logger.error(f"❌ Грешка при startup notification (опит 2): {e2}")
         
         # Изпълни след инициализация на app
         async def schedule_reports_task(context):
@@ -10409,7 +10430,7 @@ def main():
         
         app.job_queue.run_once(schedule_reports_task, 5)
         app.job_queue.run_once(enable_auto_alerts_task, 10)
-        app.job_queue.run_once(send_startup_notification_task, 3)
+        app.job_queue.run_once(send_startup_notification_task, 1)  # ПО-БЪРЗО - след 1 секунда!
         
         # Keepalive ping на всеки 30 минути (1800 секунди)
         app.job_queue.run_repeating(keepalive_ping, interval=1800, first=1800)
