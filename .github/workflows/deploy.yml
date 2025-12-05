@@ -46,8 +46,17 @@ jobs:
             echo "🔄 Restarting bot service..."
             systemctl restart crypto-bot
             
-            sleep 5
-            echo "✅ Deploy complete! Bot is running."
+            # Wait for service to start
+            sleep 3
+            
+            # Check if bot is running
+            if systemctl is-active --quiet crypto-bot; then
+              echo "✅ Deploy complete! Bot is running successfully."
+            else
+              echo "❌ WARNING: Bot service is not active!"
+              systemctl status crypto-bot --no-pager
+              exit 1
+            fi
           EOF
       
       - name: Send Success Notification

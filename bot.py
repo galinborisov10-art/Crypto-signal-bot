@@ -4613,8 +4613,18 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sl_price = price * (1 - sl_pct / 100)
         signal_emoji = "⚪"
     
-    # Запиши сигнала в статистиката с trading параметри + ML Journal
-    signal_id = None
+    # Запиши ВСЕКИ сигнал в статистиката (не само good trades)
+    signal_id = record_signal(
+        symbol, 
+        timeframe, 
+        analysis['signal'], 
+        final_confidence,
+        entry_price=price,
+        tp_price=tp_price,
+        sl_price=sl_price
+    )
+    
+    # ML Journal - само за good trades
     if analysis['has_good_trade']:
         # Подготви analysis_data за ML журнала (pure ICT strategy)
         analysis_data = {
@@ -4625,16 +4635,6 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'btc_correlation': btc_correlation,
             'sentiment': sentiment
         }
-        
-        signal_id = record_signal(
-            symbol, 
-            timeframe, 
-            analysis['signal'], 
-            final_confidence,
-            entry_price=price,
-            tp_price=tp_price,
-            sl_price=sl_price
-        )
         
         # 📝 Логвай също в Trading Journal за ML самообучение
         journal_id = log_trade_to_journal(
@@ -7199,18 +7199,16 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sl_price = price * (1 - sl_pct / 100)
                 signal_emoji = "⚪"
             
-            # Запиши сигнала в статистиката с trading параметри
-            signal_id = None
-            if analysis['has_good_trade']:
-                signal_id = record_signal(
-                    symbol, 
-                    timeframe, 
-                    analysis['signal'], 
-                    final_confidence,
-                    entry_price=price,
-                    tp_price=tp_price,
-                    sl_price=sl_price
-                )
+            # Запиши ВСЕКИ auto-signal в статистиката
+            signal_id = record_signal(
+                symbol, 
+                timeframe, 
+                analysis['signal'], 
+                final_confidence,
+                entry_price=price,
+                tp_price=tp_price,
+                sl_price=sl_price
+            )
             
             # Генерирай графика с luxalgo_ict данни
             luxalgo_ict_data = analysis.get('luxalgo_ict')
