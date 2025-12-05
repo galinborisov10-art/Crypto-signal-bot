@@ -702,85 +702,111 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         ax_volume.tick_params(axis='y', labelcolor='#8b949e', labelsize=7)
         plt.setp(ax1.get_xticklabels(), visible=False)  # Скрий x-labels от горния панел
         
-        # 📦 ВИЗУАЛИЗИРАЙ САМО НАЙ-ВАЖНИТЕ ORDER BLOCKS
+        # 📦 ВИЗУАЛИЗИРАЙ ORDER BLOCKS - Подобрена версия с +OB, -OB, EQ
         for ob in order_blocks:
             idx = ob['index']
             ob_type = ob['type']
             score = ob.get('score', 0)
+            ob_high = ob['high']
+            ob_low = ob['low']
+            ob_mid = (ob_high + ob_low) / 2  # Equilibrium зона
             
             if ob_type == 'bullish':
-                # Bullish OB - зелена зона (support) - МЕКА ЗЕЛЕНА
-                color = '#81c784'  # Мека зелена вместо ярка lime
-                alpha = 0.2  # По-прозрачна
-                edge_color = '#388e3c'  # Мек тъмнозелен
+                # Bullish OB - зелена зона (support)
+                base_color = '#4caf50'  # Зелено
+                edge_color = '#2e7d32'  # Тъмнозелено
+                alpha = 0.15
                 
                 # Определи важността според score
                 if score >= 50:
-                    label = f"🟢💎 Strong Support"  # Много силен
-                    linewidth = 3
+                    label = "+OB 💎"  # Много силен
+                    linewidth = 2.5
+                    line_alpha = 0.9
                 elif score >= 35:
-                    label = f"🟢 Support"  # Силен
+                    label = "+OB"  # Силен
                     linewidth = 2
+                    line_alpha = 0.8
                 else:
-                    label = f"🟢 Weak Support"  # Слаб
+                    label = "+OB (W)"  # Weak - слаб
                     linewidth = 1.5
+                    line_alpha = 0.6
             else:
-                # Bearish OB - червена зона (resistance) - МЕКА ЧЕРВЕНА
-                color = '#e57373'  # Мека червена вместо ярка red
-                alpha = 0.2
-                edge_color = '#c62828'  # Мек тъмночервен
+                # Bearish OB - червена зона (resistance)
+                base_color = '#f44336'  # Червено
+                edge_color = '#c62828'  # Тъмночервено
+                alpha = 0.15
                 
                 if score >= 50:
-                    label = f"🔴💎 Strong Resistance"
-                    linewidth = 3
+                    label = "-OB 💎"  # Много силен
+                    linewidth = 2.5
+                    line_alpha = 0.9
                 elif score >= 35:
-                    label = f"🔴 Resistance"
+                    label = "-OB"  # Силен
                     linewidth = 2
+                    line_alpha = 0.8
                 else:
-                    label = f"🔴 Weak Resistance"
+                    label = "-OB (W)"  # Weak - слаб
                     linewidth = 1.5
+                    line_alpha = 0.6
             
-            # Нарисувай само тънка хоризонтална линия на горната граница на OB
-            height = ob['high'] - ob['low']
-            ob_price = ob['high'] if ob_type == 'bullish' else ob['low']
+            # 1. Нарисувай ЗОНАТА на Order Block (прозрачна)
+            ax1.axhspan(ob_low, ob_high, color=base_color, alpha=alpha, zorder=3)
             
-            # Малка линийка (10% от графиката)
-            line_start = max(0, idx - len(df) * 0.05)
-            line_end = min(len(df), idx + len(df) * 0.05)
+            # 2. Нарисувай горна граница (силна линия)
+            line_start = max(0, idx - len(df) * 0.03)
+            line_end = len(df) - 1
+            ax1.plot([line_start, line_end], [ob_high, ob_high], 
+                    color=edge_color, linestyle='-', linewidth=linewidth, alpha=line_alpha, zorder=4)
             
-            ax1.plot([line_start, line_end], [ob_price, ob_price], 
-                    color=edge_color, linestyle='-', linewidth=1.5, alpha=0.8, zorder=4)
+            # 3. Нарисувай долна граница (силна линия)
+            ax1.plot([line_start, line_end], [ob_low, ob_low], 
+                    color=edge_color, linestyle='-', linewidth=linewidth, alpha=line_alpha, zorder=4)
             
-            # Тикетче "+OB" или "-OB" като на снимката
-            ob_label = '+OB' if ob_type == 'bullish' else '-OB'
+            # 4. Нарисувай EQUILIBRIUM зона (средната линия - оранжева пунктирна)
+            ax1.plot([line_start, line_end], [ob_mid, ob_mid], 
+                    color='#ff9800', linestyle='--', linewidth=1.2, alpha=0.7, zorder=4)
             
+            # 5. Етикет +OB / -OB на края
             ax1.text(
-                line_end + 1,
-                ob_price,
-                ob_label,
+                line_end - 2,
+                ob_high if ob_type == 'bearish' else ob_low,
+                f" {label}",
                 fontsize=7,
-                color=edge_color,
+                color='white',
                 weight='bold',
-                ha='left',
+                ha='right',
+                va='top' if ob_type == 'bearish' else 'bottom',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor=edge_color, alpha=0.9, edgecolor='white', linewidth=1)
+            )
+            
+            # 6. Етикет EQ (Equilibrium) на средата
+            ax1.text(
+                line_end - 2,
+                ob_mid,
+                " EQ",
+                fontsize=6,
+                color='white',
+                weight='normal',
+                ha='right',
                 va='center',
-                bbox=dict(boxstyle='round,pad=0.2', facecolor='#0d1117', alpha=0.8, edgecolor=edge_color, linewidth=1)
+                bbox=dict(boxstyle='round,pad=0.2', facecolor='#ff9800', alpha=0.8, edgecolor='white', linewidth=0.8)
             )
         
         # 🎯 LUXALGO + ICT VISUALIZATION
         if luxalgo_ict_data:
-            # === SUPPORT & RESISTANCE LINES ===
+            # === SUPPORT & RESISTANCE LINES (ПЛЪТНИ ЛИНИИ) ===
             if luxalgo_ict_data.get('luxalgo_sr'):
                 sr_data = luxalgo_ict_data['luxalgo_sr']
                 
-                # Support - меки зелени линии (не ярки)
+                # Support - ПЛЪТНА зелена линия
                 for support_level in sr_data.get('support_levels', []):
-                    ax1.axhline(y=support_level, color='#66bb6a', linestyle='-', linewidth=1.5, alpha=0.6, zorder=3)
-                    ax1.text(2, support_level, '  Support', fontsize=6, color='#388e3c', weight='normal', va='bottom')
+                    ax1.axhline(y=support_level, color='#4caf50', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
+                    ax1.text(2, support_level, '  Support', fontsize=7, color='#2e7d32', weight='bold', va='bottom')
                 
-                # Resistance - меки червени линии (не ярки)
+                # Resistance - ПЛЪТНА червена линия
                 for resistance_level in sr_data.get('resistance_levels', []):
-                    ax1.axhline(y=resistance_level, color='#ef5350', linestyle='-', linewidth=1.5, alpha=0.6, zorder=3)
-                    ax1.text(2, resistance_level, '  Resistance', fontsize=6, color='#c62828', weight='normal', va='top')
+                    ax1.axhline(y=resistance_level, color='#f44336', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
+                    ax1.text(2, resistance_level, '  Resistance', fontsize=7, color='#c62828', weight='bold', va='top')
                 
                 # === BUY SIDE & SELL SIDE LIQUIDITY ===
                 liquidity_zones = sr_data.get('liquidity_zones', [])
@@ -800,43 +826,47 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                         ax1.axhline(y=liq_price, color='#1976d2', linestyle=':', linewidth=0.8, alpha=0.5, zorder=2)
                         ax1.text(1, liq_price, 'SSL', fontsize=5, color='#1976d2', weight='normal', ha='left', va='center')
             
-            # === FAIR VALUE GAPS (FVG) ===
+            # === FAIR VALUE GAPS (FVG) - ПЛЪТНИ/ПУНКТИРНИ според силата ===
             fvg_data = luxalgo_ict_data.get('ict_fvg', [])
             if fvg_data:
                 for fvg in fvg_data[-5:]:  # Покажи последните 5 FVG
                     fvg_low = fvg.get('gap_low')
                     fvg_high = fvg.get('gap_high')
                     fvg_type = fvg.get('type', 'BULLISH')
-                    fvg_strength = fvg.get('strength', 50)  # Сила на FVG (ако има)
                     
                     if fvg_low and fvg_high:
+                        # Изчисли сила на FVG (gap size %)
+                        gap_size_pct = ((fvg_high - fvg_low) / fvg_low) * 100
+                        
                         # Цвят според типа
                         if 'BULLISH' in fvg_type:
-                            fvg_color = '#66bb6a'  # Зелено
+                            fvg_color = '#4caf50'  # Зелено
                             fvg_label = 'FVG+'
                         else:
-                            fvg_color = '#ef5350'  # Червено
+                            fvg_color = '#f44336'  # Червено
                             fvg_label = 'FVG-'
                         
-                        # Линия стил според силата
-                        if fvg_strength >= 60 or (fvg_high - fvg_low) / fvg_low > 0.005:  # Силна FVG (>0.5% gap)
-                            linestyle = '-'  # Плътна линия
-                            linewidth = 1.5
-                            alpha = 0.8
+                        # ПЛЪТНА vs ПУНКТИРНА според силата
+                        if gap_size_pct >= 0.5:  # Силна FVG (gap ≥0.5%)
+                            linestyle = '-'  # ПЛЪТНА линия
+                            linewidth = 2
+                            alpha = 0.9
+                            label_suffix = ' (Strong)'
                         else:  # Слаба FVG
-                            linestyle = '--'  # Пунктир
-                            linewidth = 1
-                            alpha = 0.5
+                            linestyle = '--'  # ПУНКТИРНА линия
+                            linewidth = 1.5
+                            alpha = 0.6
+                            label_suffix = ' (Weak)'
                         
                         # Нарисувай горна и долна граница с линии
                         ax1.axhline(y=fvg_low, color=fvg_color, linestyle=linestyle, linewidth=linewidth, alpha=alpha, zorder=3)
                         ax1.axhline(y=fvg_high, color=fvg_color, linestyle=linestyle, linewidth=linewidth, alpha=alpha, zorder=3)
                         
                         # Малка прозрачна зона между линиите
-                        ax1.axhspan(fvg_low, fvg_high, color=fvg_color, alpha=0.08, zorder=2)
+                        ax1.axhspan(fvg_low, fvg_high, color=fvg_color, alpha=0.1, zorder=2)
                         
                         # Етикет на края
-                        ax1.text(len(df)-2, (fvg_low + fvg_high)/2, fvg_label, 
+                        ax1.text(len(df)-2, (fvg_low + fvg_high)/2, fvg_label + label_suffix, 
                                fontsize=6, color=fvg_color, weight='bold', ha='left', va='center',
                                bbox=dict(boxstyle='round,pad=0.2', facecolor='#0d1117', alpha=0.8, edgecolor=fvg_color, linewidth=1))
             
