@@ -10349,8 +10349,7 @@ def main():
         
         async def send_startup_notification():
             """Изпраща нотификация при рестарт на бота"""
-            # ОПИТ 1 - след 2 секунди (повече време за инициализация)
-            await asyncio.sleep(2)
+            # БЕЗ ИЗЧАКВАНЕ - веднага проверяваме!
             
             # ПРОВЕРИ ДАЛИ Е БИЛ РЕСТАРТ
             restart_flag_file = f"{BASE_PATH}/.restart_requested"
@@ -10443,7 +10442,7 @@ def main():
         
         app.job_queue.run_once(schedule_reports_task, 5)
         app.job_queue.run_once(enable_auto_alerts_task, 10)
-        app.job_queue.run_once(send_startup_notification_task, 2)  # След 2 секунди (вместо 1)
+        app.job_queue.run_once(send_startup_notification_task, 0.5)  # ВЕДНАГА - след 0.5 сек
         
         # Keepalive ping на всеки 30 минути (1800 секунди)
         app.job_queue.run_repeating(keepalive_ping, interval=1800, first=1800)
