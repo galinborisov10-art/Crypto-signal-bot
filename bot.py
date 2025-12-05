@@ -667,24 +667,24 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         
         logger.info(f"📦 Detected {len(order_blocks)} high-quality Order Blocks for {symbol}")
         
-        # Създай графика - ПРОФЕСИОНАЛЕН СТИЛ като AzCryptoBot (подобрена версия)
-        # ФОРМАТ 1:1 (квадратна снимка 16x16 - ПО-ГОЛЯМА) + ТЪМЕН ФОН + Volume панел
-        fig = plt.figure(figsize=(16, 16), facecolor='#0d1117')
+        # Създай графика - ПРОФЕСИОНАЛЕН СТИЛ като TradingView
+        # ФОРМАТ 1:1 (квадратна снимка 16x16) + БЯЛ ФОН + Volume панел
+        fig = plt.figure(figsize=(16, 16), facecolor='white')
         
         # 2 панела: Главна графика (80%), Volume (20%) - БЕЗ RSI
         gs = fig.add_gridspec(2, 1, height_ratios=[8, 2], hspace=0.05)
         
         # Главна графика
         ax1 = fig.add_subplot(gs[0])
-        ax1.set_facecolor('#161b22')
+        ax1.set_facecolor('white')
         
         # Volume панел
         ax_volume = fig.add_subplot(gs[1], sharex=ax1)
-        ax_volume.set_facecolor('#161b22')
+        ax_volume.set_facecolor('white')
         
-        # Тънък grid за професионален вид (като AzCryptoBot)
-        ax1.grid(True, alpha=0.1, linestyle=':', linewidth=0.4, color='#30363d')
-        ax_volume.grid(True, alpha=0.1, linestyle=':', linewidth=0.4, color='#30363d')
+        # Тънък grid за професионален вид (като TradingView)
+        ax1.grid(True, alpha=0.2, linestyle=':', linewidth=0.5, color='#d0d0d0')
+        ax_volume.grid(True, alpha=0.2, linestyle=':', linewidth=0.5, color='#d0d0d0')
         
         # Plot candlesticks - МАЛКИ и реалистични като AzCryptoBot
         for idx, (timestamp, row) in enumerate(df.iterrows()):
@@ -701,8 +701,8 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             vol_color = '#26a69a' if row['close'] >= row['open'] else '#ef5350'
             ax_volume.bar(idx, row['volume'], color=vol_color, alpha=0.6, width=0.8)
         
-        ax_volume.set_ylabel('Volume', color='#8b949e', fontsize=8)
-        ax_volume.tick_params(axis='y', labelcolor='#8b949e', labelsize=7)
+        ax_volume.set_ylabel('Volume', color='#333333', fontsize=8)
+        ax_volume.tick_params(axis='y', labelcolor='#333333', labelsize=7)
         plt.setp(ax1.get_xticklabels(), visible=False)  # Скрий x-labels от горния панел
         
         # 📦 ВИЗУАЛИЗИРАЙ ORDER BLOCKS - ПРОФЕСИОНАЛЕН СТИЛ
@@ -755,15 +755,15 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             # 1. Нарисувай ЛЕКА ЗОНА на Order Block
             ax1.axhspan(ob_low, ob_high, color=base_color, alpha=alpha, zorder=2)
             
-            # 2. Нарисувай горна граница (ТЪНКА линия) - САМО в зоната на OB
+            # 2. Нарисувай горна граница (ПО-КЪСА И ПО-ДЕБЕЛА линия)
             line_start = max(0, idx)  # Започни от самия OB
-            line_end = min(len(df) - 1, idx + 10)  # Продължи само 10 свещи напред
+            line_end = min(len(df) - 1, idx + 5)  # Продължи само 5 свещи напред (ПО-КЪСА)
             ax1.plot([line_start, line_end], [ob_high, ob_high], 
-                    color=edge_color, linestyle='-', linewidth=linewidth, alpha=line_alpha, zorder=3)
+                    color=edge_color, linestyle='-', linewidth=linewidth + 0.8, alpha=line_alpha, zorder=3)  # ПО-ДЕБЕЛА
             
-            # 3. Нарисувай долна граница (ТЪНКА линия) - САМО в зоната на OB
+            # 3. Нарисувай долна граница (ПО-КЪСА И ПО-ДЕБЕЛА линия)
             ax1.plot([line_start, line_end], [ob_low, ob_low], 
-                    color=edge_color, linestyle='-', linewidth=linewidth, alpha=line_alpha, zorder=3)
+                    color=edge_color, linestyle='-', linewidth=linewidth + 0.8, alpha=line_alpha, zorder=3)  # ПО-ДЕБЕЛА
             
             # 4. Нарисувай EQUILIBRIUM ЗОНА (ПРАВОЪГЪЛНИК) - бледо оцветена с контраст
             eq_height = (ob_high - ob_low) * 0.15  # 15% от височината на OB
@@ -843,7 +843,7 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                         ax1.axhline(y=liq_price, color='#1976d2', linestyle=':', linewidth=0.8, alpha=0.5, zorder=2)
                         ax1.text(1, liq_price, 'SSL', fontsize=5, color='#1976d2', weight='normal', ha='left', va='center')
             
-            # === FAIR VALUE GAPS (FVG) - ПО-ВИДИМИ със зони ===
+            # === FAIR VALUE GAPS (FVG) - ПРАВОЪГЪЛНИ ЗОНИ като Equilibrium ===
             fvg_data = luxalgo_ict_data.get('ict_fvg', [])
             if fvg_data:
                 for fvg in fvg_data[-5:]:  # Покажи последните 5 FVG
@@ -868,28 +868,35 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                         # ПЛЪТНА vs ПУНКТИРНА според силата
                         if gap_size_pct >= 0.5:  # Силна FVG (gap ≥0.5%)
                             linestyle = '-'  # ПЛЪТНА линия
-                            linewidth = 2
-                            alpha = 0.25  # По-видима зона
+                            linewidth = 2.0
+                            alpha = 0.20  # Лека зона
                             line_alpha = 0.9
-                            label_suffix = ' (S)'
+                            label_suffix = ' Strong'
                         else:  # Слаба FVG
                             linestyle = '--'  # ПУНКТИРНА линия
                             linewidth = 1.5
-                            alpha = 0.15
+                            alpha = 0.12
                             line_alpha = 0.7
-                            label_suffix = ' (W)'
+                            label_suffix = ' Weak'
                         
-                        # Нарисувай ВИДИМА зона между линиите
+                        # 1. Нарисувай ПРАВОЪГЪЛНА ЗОНА на FVG (от gap_low до gap_high)
                         ax1.axhspan(fvg_low, fvg_high, color=fvg_color, alpha=alpha, zorder=2)
                         
-                        # Нарисувай горна и долна граница с ВИДИМИ линии
-                        ax1.axhline(y=fvg_low, color=fvg_edge, linestyle=linestyle, linewidth=linewidth, alpha=line_alpha, zorder=3)
+                        # 2. Нарисувай горна граница на FVG зоната
                         ax1.axhline(y=fvg_high, color=fvg_edge, linestyle=linestyle, linewidth=linewidth, alpha=line_alpha, zorder=3)
                         
-                        # ВИДИМ етикет на края
-                        ax1.text(len(df)-2, (fvg_low + fvg_high)/2, fvg_label + label_suffix, 
+                        # 3. Нарисувай долна граница на FVG зоната
+                        ax1.axhline(y=fvg_low, color=fvg_edge, linestyle=linestyle, linewidth=linewidth, alpha=line_alpha, zorder=3)
+                        
+                        # 4. СРЕДНА ЛИНИЯ на FVG (като EQ)
+                        fvg_mid = (fvg_low + fvg_high) / 2
+                        ax1.axhline(y=fvg_mid, color=fvg_edge, linestyle=':', linewidth=1.2, alpha=0.6, zorder=3)
+                        
+                        # 5. ГОЛЯМ ВИДИМ ЕТИКЕТ "FVG" в средата на зоната с ДИАПАЗОН
+                        fvg_range_text = f"{fvg_label}{label_suffix}\n${fvg_low:.2f} - ${fvg_high:.2f}"
+                        ax1.text(len(df)-5, fvg_mid, fvg_range_text, 
                                fontsize=7, color='white', weight='bold', ha='left', va='center',
-                               bbox=dict(boxstyle='round,pad=0.3', facecolor=fvg_edge, alpha=0.9, edgecolor='white', linewidth=1))
+                               bbox=dict(boxstyle='round,pad=0.4', facecolor=fvg_edge, alpha=0.95, edgecolor='white', linewidth=1.5))
             
             # === FIBONACCI LEVELS ===
             fib_data = luxalgo_ict_data.get('fibonacci_extension')
@@ -966,29 +973,29 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                     fontsize=10, color='white', weight='bold',
                     bbox=dict(boxstyle='round,pad=0.5', facecolor='#c62828', alpha=0.85, edgecolor='white', linewidth=1.5))
         
-        # Watermark като AzCryptoBot
+        # Watermark като TradingView
         ax1.text(len(df)/2, (ax1.get_ylim()[0] + ax1.get_ylim()[1])/2, '@CryptoSignalBot',
-                fontsize=20, color='#30363d', alpha=0.25, ha='center', va='center',
+                fontsize=20, color='#e0e0e0', alpha=0.3, ha='center', va='center',
                 rotation=0, weight='bold')
         
-        # Axis styling за тъмен фон
-        ax1.tick_params(axis='x', colors='#8b949e', labelsize=8)
-        ax1.tick_params(axis='y', colors='#8b949e', labelsize=9)
-        ax1.spines['bottom'].set_color('#30363d')
-        ax1.spines['top'].set_color('#30363d')
-        ax1.spines['left'].set_color('#30363d')
-        ax1.spines['right'].set_color('#30363d')
+        # Axis styling за бял фон - ПОКАЖИ ВСИЧКИ ЦЕНИ
+        ax1.tick_params(axis='x', colors='#666666', labelsize=8)
+        ax1.tick_params(axis='y', colors='#333333', labelsize=9, right=True, labelright=True)  # Показвай цени отдясно
+        ax1.spines['bottom'].set_color('#cccccc')
+        ax1.spines['top'].set_color('#cccccc')
+        ax1.spines['left'].set_color('#cccccc')
+        ax1.spines['right'].set_color('#cccccc')
         
-        ax_volume.tick_params(axis='x', colors='#8b949e', labelsize=8)
-        ax_volume.spines['bottom'].set_color('#30363d')
-        ax_volume.spines['top'].set_color('#30363d')
-        ax_volume.spines['left'].set_color('#30363d')
-        ax_volume.spines['right'].set_color('#30363d')
+        ax_volume.tick_params(axis='x', colors='#666666', labelsize=8)
+        ax_volume.spines['bottom'].set_color('#cccccc')
+        ax_volume.spines['top'].set_color('#cccccc')
+        ax_volume.spines['left'].set_color('#cccccc')
+        ax_volume.spines['right'].set_color('#cccccc')
         
-        # Титла с контраст на тъмен фон
+        # Титла с контраст на бял фон
         ax1.set_title(f'{symbol} - {timeframe.upper()} - LuxAlgo + ICT Analysis - {datetime.now().strftime("%Y-%m-%d %H:%M")}', 
-                     fontsize=11, weight='normal', color='#c9d1d9')
-        ax1.set_ylabel('Price (USDT)', fontsize=9, color='#8b949e')
+                     fontsize=11, weight='normal', color='#333333')
+        ax1.set_ylabel('Price (USDT)', fontsize=9, color='#333333')
         
         # ЛЕГЕНДА ПРЕМАХНАТА (по желание на потребителя)
         
