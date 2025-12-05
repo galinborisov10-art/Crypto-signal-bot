@@ -6121,43 +6121,53 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"🔄 Bot restart requested by user {update.effective_user.id}")
     
-    # Изпрати ФИНАЛНО съобщение ПРЕДИ рестарт (със звук и клавиатура)
-    await context.bot.send_message(
-        chat_id=OWNER_CHAT_ID,
-        text=(
-            "🔄 <b>РЕСТАРТИРАМ БОТА СЕГА!</b>\n\n"
-            "⏱️ Време за рестарт: ~10-15 секунди\n\n"
-            "🔔 <b>ВНИМАНИЕ:</b>\n"
-            "След рестарта ще получиш ново съобщение\n"
-            "със ЗВУК и възстановена клавиатура!\n\n"
-            "💡 Изчакай 15 секунди..."
-        ),
-        parse_mode='HTML',
-        disable_notification=False,  # СЪС ЗВУК
-        reply_markup=ReplyKeyboardRemove()  # Премахни клавиатурата временно
-    )
-    
     try:
-        # Използвай ДИРЕКТЕН Python restart (най-надежден метод)
+        # Изпрати ПОТВЪРЖДЕНИЕ
+        await context.bot.send_message(
+            chat_id=OWNER_CHAT_ID,
+            text=(
+                "🔄 <b>РЕСТАРТ ЗАПОЧВА!</b>\n\n"
+                "⏱️ Очаквано време: 15-20 секунди\n\n"
+                "💡 <b>Ще получиш АВТОМАТИЧНО съобщение\n"
+                "със ЗВУК когато бота е готов!</b>\n\n"
+                "🔔 Клавиатурата ще се върне автоматично."
+            ),
+            parse_mode='HTML',
+            disable_notification=False
+        )
+        
+        # Изчакай да се изпрати съобщението
+        await asyncio.sleep(2)
+        
+        # GRACEFUL SHUTDOWN - спри polling
+        logger.info("🛑 Stopping application gracefully...")
+        await context.application.stop()
+        await context.application.shutdown()
+        
+        # EXTERNAL RESTART чрез bash script
+        import subprocess
+        restart_script = f"""#!/bin/bash
+sleep 3
+cd {BASE_PATH}
+pkill -f "python3 bot.py" 2>/dev/null
+sleep 2
+nohup python3 bot.py > /dev/null 2>&1 &
+"""
+        
+        # Запиши временен скрипт
+        with open('/tmp/bot_restart.sh', 'w') as f:
+            f.write(restart_script)
+        
+        os.chmod('/tmp/bot_restart.sh', 0o755)
+        
+        # Стартирай external restart
+        subprocess.Popen(['/bin/bash', '/tmp/bot_restart.sh'])
+        
+        logger.info("✅ Restart script started - exiting now")
+        
+        # Излез от процеса
         import sys
-        import asyncio
-        
-        # Изчакай малко да се изпрати съобщението
-        await asyncio.sleep(1)
-        
-        # ДИРЕКТЕН РЕСТАРТ - най-надежден
-        logger.info("🔄 Executing direct bot restart...")
-        os.execv(sys.executable, ['python3'] + sys.argv)
-        # Използвай ДИРЕКТЕН Python restart (най-надежден метод)
-        import sys
-        import asyncio
-        
-        # Изчакай малко да се изпрати съобщението
-        await asyncio.sleep(1)
-        
-        # ДИРЕКТЕН РЕСТАРТ - най-надежден
-        logger.info("🔄 Executing direct bot restart...")
-        os.execv(sys.executable, ['python3'] + sys.argv)
+        sys.exit(0)
             
     except Exception as e:
         logger.error(f"Restart error: {e}")
