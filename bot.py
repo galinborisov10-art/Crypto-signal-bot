@@ -5303,40 +5303,38 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Изпрати нотификация
         await send_bot_status_notification(context.bot, "stopping", "Ръчен рестарт от потребител")
         
-        # Рестарт чрез systemd
+        # Рестарт чрез bot-manager.sh (работи на Codespace И Server)
         import subprocess
         import asyncio
         
-        # Стартирай рестарта в отделен процес
-        subprocess.Popen(['sudo', 'systemctl', 'restart', 'crypto-bot.service'])
+        # Използвай bot-manager.sh за рестарт
+        bot_manager_script = f"{BASE_PATH}/bot-manager.sh"
         
-        # Изчакай 15 секунди
-        await asyncio.sleep(15)
-        
-        # Провери статуса
-        result = subprocess.run(
-            ['sudo', 'systemctl', 'is-active', 'crypto-bot.service'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        
-        if result.returncode == 0 and 'active' in result.stdout:
+        if os.path.exists(bot_manager_script):
+            # Стартирай рестарта в отделен процес
+            subprocess.Popen([bot_manager_script, 'restart'])
+            
             await status_msg.edit_text(
-                "✅ <b>РЕСТАРТ УСПЕШЕН!</b>\n\n"
-                "🟢 Ботът е онлайн\n"
-                "⏱️ Време: 15 секунди\n\n"
-                "💡 Изпрати /start за да проверим всичко.",
+                "✅ <b>РЕСТАРТ КОМАНДА ИЗПРАТЕНА!</b>\n\n"
+                "🔄 Ботът се рестартира...\n"
+                "⏱️ Времетраене: ~10-15 секунди\n\n"
+                "💡 Ботът ще се рестартира автоматично.\n"
+                "Изпрати /start след 15 секунди.",
                 parse_mode='HTML'
             )
         else:
+            # Fallback към direct Python restart
             await status_msg.edit_text(
-                "⚠️ <b>РЕСТАРТ ЗАВЪРШИ, НО...</b>\n\n"
-                "🔴 Статус не е ясен\n"
-                "💡 Провери ръчно:\n"
-                "<code>sudo systemctl status crypto-bot.service</code>",
+                "🔄 <b>РЕСТАРТ...</b>\n\n"
+                "Ботът ще се рестартира след 3 секунди.",
                 parse_mode='HTML'
             )
+            
+            await asyncio.sleep(3)
+            
+            # Спри текущия процес и го рестартирай
+            import sys
+            os.execv(sys.executable, ['python3'] + sys.argv)
             
     except Exception as e:
         logger.error(f"Restart error: {e}")
