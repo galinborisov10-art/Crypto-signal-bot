@@ -6122,52 +6122,32 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"🔄 Bot restart requested by user {update.effective_user.id}")
     
     try:
-        # Изпрати ПОТВЪРЖДЕНИЕ
+        # ПЪРВО - Създай RESTART FLAG файл
+        restart_flag_file = f"{BASE_PATH}/.restart_requested"
+        with open(restart_flag_file, 'w') as f:
+            f.write(str(datetime.now()))
+        
+        # ВТОРО - Изпрати ПОТВЪРЖДЕНИЕ
         await context.bot.send_message(
             chat_id=OWNER_CHAT_ID,
             text=(
-                "🔄 <b>РЕСТАРТ ЗАПОЧВА!</b>\n\n"
-                "⏱️ Очаквано време: 15-20 секунди\n\n"
-                "💡 <b>Ще получиш АВТОМАТИЧНО съобщение\n"
-                "със ЗВУК когато бота е готов!</b>\n\n"
-                "🔔 Клавиатурата ще се върне автоматично."
+                "🔄 <b>РЕСТАРТИРАМ СЕГА!</b>\n\n"
+                "⏱️ Време: ~15 секунди\n\n"
+                "🔔 <b>ГАРАНТИРАНО ще получиш съобщение\n"
+                "със ЗВУК след рестарта!</b>"
             ),
             parse_mode='HTML',
             disable_notification=False
         )
         
-        # Изчакай да се изпрати съобщението
-        await asyncio.sleep(2)
+        # ТРЕТО - Изчакай съобщението да се изпрати
+        await asyncio.sleep(1)
         
-        # GRACEFUL SHUTDOWN - спри polling
-        logger.info("🛑 Stopping application gracefully...")
-        await context.application.stop()
-        await context.application.shutdown()
+        # ЧЕТВЪРТО - ПРОСТО ИЗЛЕЗ (supervisor ще рестартира автоматично)
+        logger.info("🛑 Exiting for restart... Supervisor will restart the bot.")
         
-        # EXTERNAL RESTART чрез bash script
-        import subprocess
-        restart_script = f"""#!/bin/bash
-sleep 3
-cd {BASE_PATH}
-pkill -f "python3 bot.py" 2>/dev/null
-sleep 2
-nohup python3 bot.py > /dev/null 2>&1 &
-"""
-        
-        # Запиши временен скрипт
-        with open('/tmp/bot_restart.sh', 'w') as f:
-            f.write(restart_script)
-        
-        os.chmod('/tmp/bot_restart.sh', 0o755)
-        
-        # Стартирай external restart
-        subprocess.Popen(['/bin/bash', '/tmp/bot_restart.sh'])
-        
-        logger.info("✅ Restart script started - exiting now")
-        
-        # Излез от процеса
         import sys
-        sys.exit(0)
+        sys.exit(42)  # Exit code 42 = requested restart
             
     except Exception as e:
         logger.error(f"Restart error: {e}")
@@ -10367,6 +10347,17 @@ def main():
             # ОПИТ 1 - след 1 секунда
             await asyncio.sleep(1)
             
+            # ПРОВЕРИ ДАЛИ Е БИЛ РЕСТАРТ
+            restart_flag_file = f"{BASE_PATH}/.restart_requested"
+            was_restart = os.path.exists(restart_flag_file)
+            
+            # ИЗТРИЙ ФЛАГА
+            if was_restart:
+                try:
+                    os.remove(restart_flag_file)
+                except:
+                    pass
+            
             try:
                 # Тествай дали всички callback handlers работят
                 test_callbacks = [
@@ -10375,19 +10366,25 @@ def main():
                     'ml_train', 'backtest_run'
                 ]
                 
-                # 🔔 ГЛАВНО СЪОБЩЕНИЕ - СЪС ЗВУК И КЛАВИАТУРА
-                startup_msg = "✅ <b>БОТ РЕСТАРТИРАН УСПЕШНО!</b>\n\n"
-                startup_msg += f"🟢 <b>Статус:</b> Онлайн и готов\n"
-                startup_msg += f"⏱️ <b>Време:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                startup_msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                startup_msg += f"✅ Handlers: {len(test_callbacks)} активни\n"
-                startup_msg += f"✅ Бутони: Възстановени\n"
-                startup_msg += f"✅ Auto-alerts: 5 мин интервал\n"
-                startup_msg += f"✅ Daily reports: 20:00\n"
-                startup_msg += f"✅ ML Engine: Готов\n"
-                startup_msg += f"✅ Backtesting: Готов\n\n"
-                startup_msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                startup_msg += f"💡 <i>Всички системи функционират нормално!</i>"
+                # РАЗЛИЧНО СЪОБЩЕНИЕ според дали е бил рестарт
+                if was_restart:
+                    # 🔔 РЕСТАРТ ПОТВЪРЖДЕНИЕ - СЪС ЗВУК И КЛАВИАТУРА
+                    startup_msg = "✅ <b>РЕСТАРТ ЗАВЪРШЕН!</b>\n\n"
+                    startup_msg += f"🟢 <b>Бота е отново онлайн!</b>\n"
+                    startup_msg += f"⏱️ <b>Време:</b> {datetime.now().strftime('%H:%M:%S')}\n\n"
+                    startup_msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                    startup_msg += f"✅ Handlers: {len(test_callbacks)} активни\n"
+                    startup_msg += f"✅ Auto-alerts: Включени\n"
+                    startup_msg += f"✅ ML Engine: Готов\n"
+                    startup_msg += f"✅ Всички системи: Онлайн\n\n"
+                    startup_msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                    startup_msg += f"🎯 <i>Рестартът беше успешен!</i>"
+                else:
+                    # Обикновен старт (не рестарт)
+                    startup_msg = "🤖 <b>БОТ СТАРТИРАН!</b>\n\n"
+                    startup_msg += f"🟢 Статус: Онлайн\n"
+                    startup_msg += f"⏱️ Време: {datetime.now().strftime('%H:%M:%S')}\n\n"
+                    startup_msg += f"✅ Всички системи активни"
                 
                 await app.bot.send_message(
                     chat_id=OWNER_CHAT_ID,
@@ -10396,7 +10393,7 @@ def main():
                     disable_notification=False,  # СЪС ЗВУК - важно!
                     reply_markup=get_main_keyboard()  # Изпрати клавиатурата
                 )
-                logger.info("✅ Startup notification изпратена с клавиатура и звук")
+                logger.info(f"✅ Startup notification изпратена {'(RESTART)' if was_restart else '(NORMAL)'}")
                 
             except Exception as e:
                 logger.error(f"❌ Грешка при startup notification (опит 1): {e}")
@@ -10408,7 +10405,7 @@ def main():
                         chat_id=OWNER_CHAT_ID,
                         text=(
                             "✅ <b>БОТ ОНЛАЙН!</b>\n\n"
-                            "🟢 Рестартът завърши успешно.\n"
+                            f"🟢 {'Рестартът' if was_restart else 'Стартирането'} завърши успешно.\n"
                             "💡 Всички системи работят."
                         ),
                         parse_mode='HTML',
