@@ -705,7 +705,7 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         ax_volume.tick_params(axis='y', labelcolor='#333333', labelsize=7)
         plt.setp(ax1.get_xticklabels(), visible=False)  # Скрий x-labels от горния панел
         
-        # 📦 ВИЗУАЛИЗИРАЙ ORDER BLOCKS - ПРОФЕСИОНАЛЕН СТИЛ (BOXES като FVG)
+        # 📦 ВИЗУАЛИЗИРАЙ ORDER BLOCKS - ПРОФЕСИОНАЛЕН СТИЛ (КЪСИ ЛИНИИ)
         for ob in order_blocks:
             idx = ob['index']
             ob_type = ob['type']
@@ -752,13 +752,13 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                     linewidth = 1.2
                     line_alpha = 0.6
             
-            # ПОЗИЦИОНИРАНЕ: от idx до края (като FVG)
-            line_start = max(0, idx)
-            line_end = len(df) - 1
+            # 1. Определи позицията на OB box (ОТ НАЧАЛОТО, НЕ през цялата графика)
+            line_start = max(0, idx)  # Започни от самия OB
+            line_end = min(len(df) - 1, idx + 5)  # Продължи само 5 свещи напред
             ob_width = line_end - line_start
             ob_height = ob_high - ob_low
             
-            # 1. Нарисувай OB BOX (като FVG)
+            # 2. Нарисувай OB BOX (само в тази зона, НЕ през цялата графика)
             ob_box = plt.Rectangle(
                 (line_start, ob_low),
                 ob_width,
@@ -772,19 +772,20 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             )
             ax1.add_patch(ob_box)
             
-            # 2. Горна граница
+            # 3. Горна граница
             ax1.plot([line_start, line_end], [ob_high, ob_high], 
                     color=edge_color, linestyle='-', linewidth=linewidth + 0.8, alpha=line_alpha, zorder=3)
             
-            # 3. Долна граница
+            # 4. Долна граница
             ax1.plot([line_start, line_end], [ob_low, ob_low], 
                     color=edge_color, linestyle='-', linewidth=linewidth + 0.8, alpha=line_alpha, zorder=3)
             
-            # 4. EQUILIBRIUM ЗОНА (ПРАВОЪГЪЛНИК)
-            eq_height = (ob_high - ob_low) * 0.15
+            # 5. EQUILIBRIUM ЗОНА (BOX само в рамките на OB, НЕ през цялата графика)
+            eq_height = (ob_high - ob_low) * 0.15  # 15% от височината на OB
             eq_low = ob_mid - eq_height / 2
             eq_high = ob_mid + eq_height / 2
             
+            # EQ Box само в рамките на OB
             eq_box = plt.Rectangle(
                 (line_start, eq_low),
                 ob_width,
@@ -798,13 +799,13 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             )
             ax1.add_patch(eq_box)
             
-            # Централна линия на Equilibrium
+            # Централна линия на Equilibrium (само в рамките на OB)
             ax1.plot([line_start, line_end], [ob_mid, ob_mid], 
                     color='#ff9800', linestyle='-', linewidth=1.5, alpha=0.85, zorder=4)
             
-            # 5. ЕТИКЕТ +OB / -OB в НАЧАЛОТО (като FVG)
+            # 6. МАЛЪК етикет +OB / -OB в КРАЯ на box
             ax1.text(
-                line_start + 1,
+                line_end + 0.5,
                 ob_high if ob_type == 'bearish' else ob_low,
                 f"{label}",
                 fontsize=7,
@@ -815,9 +816,9 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                 bbox=dict(boxstyle='round,pad=0.25', facecolor=edge_color, alpha=0.85, edgecolor='none')
             )
             
-            # 6. ЕТИКЕТ EQ в НАЧАЛОТО
+            # 7. ВИДИМ етикет EQ (Equilibrium) в КРАЯ на box
             ax1.text(
-                line_start + 1,
+                line_end + 0.5,
                 ob_mid,
                 "EQ",
                 fontsize=7,
@@ -877,54 +878,50 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                         
                         # 🔍 ПРОВЕРИ ДАЛИ FVG Е ИЗЧИСТЕН (FILLED) - цената е влязла в зоната
                         is_filled = False
-                        if current_price >= fvg_low and current_price <= fvg_high:
-                            is_filled = True  # Цената е в зоната - FVG е изчистен
-                        elif 'BULLISH' in fvg_type and current_price < fvg_low:
-                            is_filled = True  # Bullish FVG е пробит надолу
-                        elif 'BEARISH' in fvg_type and current_price > fvg_high:
-                            is_filled = True  # Bearish FVG е пробит нагоре
+                        filled_at_index = len(df) - 1  # По подразбиране до края
                         
-                        # Цвят според типа и статуса (filled vs active)
+                        # Намери къде е влязла цената в FVG зоната
+                        for i in range(fvg_index, len(df)):
+                            candle_low = df.iloc[i]['low']
+                            candle_high = df.iloc[i]['high']
+                            
+                            # Проверка дали свещта е влязла в FVG зоната
+                            if candle_low <= fvg_high and candle_high >= fvg_low:
+                                is_filled = True
+                                filled_at_index = i
+                                break
+                        
+                        # АКО Е FILLED - НЕ ГО ПОКАЗВАЙ (skip)
+                        if is_filled:
+                            continue  # Пропусни този FVG, не го рисувай
+                        
+                        # Цвят според типа (САМО за активни FVG)
                         if 'BULLISH' in fvg_type:
-                            if is_filled:
-                                fvg_color = '#a5d6a7'  # Светлозелено (изчистен)
-                                fvg_edge = '#81c784'  # По-светло
-                                fvg_label = 'FVG+ FILLED'
-                                alpha_multiplier = 0.5  # По-прозрачен
-                            else:
-                                fvg_color = '#4caf50'  # Зелено (активен)
-                                fvg_edge = '#2e7d32'  # Тъмнозелено
-                                fvg_label = 'FVG+'
-                                alpha_multiplier = 1.0
+                            fvg_color = '#4caf50'  # Зелено (активен)
+                            fvg_edge = '#2e7d32'  # Тъмнозелено
+                            fvg_label = 'FVG+'
                         else:
-                            if is_filled:
-                                fvg_color = '#ef9a9a'  # Светлочервено (изчистен)
-                                fvg_edge = '#e57373'  # По-светло
-                                fvg_label = 'FVG- FILLED'
-                                alpha_multiplier = 0.5  # По-прозрачен
-                            else:
-                                fvg_color = '#f44336'  # Червено (активен)
-                                fvg_edge = '#c62828'  # Тъмночервено
-                                fvg_label = 'FVG-'
-                                alpha_multiplier = 1.0
+                            fvg_color = '#f44336'  # Червено (активен)
+                            fvg_edge = '#c62828'  # Тъмночервено
+                            fvg_label = 'FVG-'
                         
                         # ПЛЪТНА vs ПУНКТИРНА според силата
                         if gap_size_pct >= 0.5:  # Силна FVG (gap ≥0.5%)
                             linestyle = '-'  # ПЛЪТНА линия
                             linewidth = 2.0
-                            alpha = 0.20 * alpha_multiplier  # Лека зона
-                            line_alpha = 0.9 if not is_filled else 0.5
-                            label_suffix = ' Strong' if not is_filled else ''
+                            alpha = 0.20  # Лека зона
+                            line_alpha = 0.9
+                            label_suffix = ' Strong'
                         else:  # Слаба FVG
                             linestyle = '--'  # ПУНКТИРНА линия
                             linewidth = 1.5
-                            alpha = 0.12 * alpha_multiplier
-                            line_alpha = 0.7 if not is_filled else 0.4
-                            label_suffix = ' Weak' if not is_filled else ''
+                            alpha = 0.12
+                            line_alpha = 0.7
+                            label_suffix = ' Weak'
                         
-                        # 1. Определи позицията на FVG box (ТОЧНО къде е появил)
+                        # 1. Определи позицията на FVG box (ОТ НАЧАЛОТО)
                         fvg_start_x = max(0, fvg_index)  # Започва от индекса на FVG
-                        fvg_end_x = len(df) - 1  # Продължава до края
+                        fvg_end_x = len(df) - 1  # До края на графиката (понеже НЕ е filled)
                         fvg_width = fvg_end_x - fvg_start_x
                         fvg_height = fvg_high - fvg_low
                         
