@@ -6618,6 +6618,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🏠 Назад към Меню":
         await start_cmd(update, context)
     elif text == "💻 Workspace":
+        # Само owner има достъп до Workspace
+        if update.effective_user.id != OWNER_CHAT_ID:
+            await update.message.reply_text(
+                "❌ <b>ДОСТЪП ОТКАЗАН</b>\n\n"
+                "🔒 Workspace е достъпен само за owner.\n"
+                "Съдържа административни файлове и код.",
+                parse_mode='HTML'
+            )
+            return
+        
         workspace_message = f"""💻 <b>GITHUB CODESPACE ACCESS</b>
 
 🔐 <b>Директен достъп до твоя Workspace:</b>
@@ -6722,6 +6732,16 @@ https://github.com/galinborisov10-art/Crypto-signal-bot
         )
     
     elif text == "💻 Workspace":
+        # Само owner има достъп до Workspace
+        if update.effective_user.id != OWNER_CHAT_ID:
+            await update.message.reply_text(
+                "❌ <b>ДОСТЪП ОТКАЗАН</b>\n\n"
+                "🔒 Workspace е достъпен само за owner.\n"
+                "Съдържа административни файлове и код.",
+                parse_mode='HTML'
+            )
+            return
+        
         workspace_message = f"""💻 <b>GITHUB CODESPACE ACCESS</b>
 
 🔐 <b>Директен достъп до твоя Workspace:</b>
