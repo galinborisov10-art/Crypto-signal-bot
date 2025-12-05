@@ -6127,6 +6127,8 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(restart_flag_file, 'w') as f:
             f.write(str(datetime.now()))
         
+        logger.info(f"✅ Restart flag created: {restart_flag_file}")
+        
         # ВТОРО - Изпрати ПОТВЪРЖДЕНИЕ
         await context.bot.send_message(
             chat_id=OWNER_CHAT_ID,
@@ -6141,13 +6143,16 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # ТРЕТО - Изчакай съобщението да се изпрати
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
         
-        # ЧЕТВЪРТО - ПРОСТО ИЗЛЕЗ (supervisor ще рестартира автоматично)
-        logger.info("🛑 Exiting for restart... Supervisor will restart the bot.")
+        # ЧЕТВЪРТО - KILL ПРОЦЕСА (systemd автоматично рестартира)
+        logger.info("🛑 Killing bot process... systemd will auto-restart.")
         
-        import sys
-        sys.exit(42)  # Exit code 42 = requested restart
+        import os
+        import signal
+        
+        # Изпрати SIGTERM на себе си
+        os.kill(os.getpid(), signal.SIGTERM)
             
     except Exception as e:
         logger.error(f"Restart error: {e}")
@@ -10131,8 +10136,8 @@ def main():
     app.add_handler(CommandHandler("admin_weekly", admin_weekly_cmd))
     app.add_handler(CommandHandler("admin_monthly", admin_monthly_cmd))
     app.add_handler(CommandHandler("admin_docs", admin_docs_cmd))
-    app.add_handler(CommandHandler("update", update_bot_cmd))  # Обновяване на бота
-    app.add_handler(CommandHandler("auto_update", auto_update_cmd))  # 🔄 Auto-update от GitHub
+    app.add_handler(CommandHandler("update", auto_update_cmd))  # 🔄 Обновяване на бота от GitHub (БЕЗ ПАРОЛА)
+    app.add_handler(CommandHandler("auto_update", auto_update_cmd))  # 🔄 Auto-update от GitHub (същата функция)
     app.add_handler(CommandHandler("test", test_system_cmd))  # Тест и автоматично отстраняване на грешки
     
     # User Access Management команди (само owner)
