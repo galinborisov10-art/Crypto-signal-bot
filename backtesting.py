@@ -96,9 +96,11 @@ class BacktestEngine:
             # Извлечи данни
             historical_data = await self.fetch_historical_data(symbol, timeframe, days)
             
-            if not historical_data or len(historical_data) < 50:
-                print("❌ Insufficient historical data")
+            if not historical_data or len(historical_data) < 30:
+                print(f"❌ Insufficient historical data (got {len(historical_data) if historical_data else 0}, need 30+)")
                 return None
+            
+            print(f"✅ Processing {len(historical_data)} candles...")
             
             trades = []
             wins = 0
@@ -106,12 +108,12 @@ class BacktestEngine:
             total_profit = 0
             
             # Симулирай trades на всеки 10-ти candle (за да не е прекалено)
-            for i in range(0, len(historical_data) - 20, 10):
+            for i in range(30, len(historical_data) - 20, 10):  # Започни от candle 30
                 # Вземи данни до момента
                 past_data = historical_data[:i+1]
                 future_data = historical_data[i+1:i+21]  # Следващите 20 candles
                 
-                if len(past_data) < 50:
+                if len(past_data) < 30:  # Минимум 30 candles за анализ
                     continue
                 
                 # Симулирай анализ (опростен - реалната функция е сложна)
@@ -122,7 +124,7 @@ class BacktestEngine:
                 gains = [closes[i] - closes[i-1] for i in range(1, len(closes)) if closes[i] > closes[i-1]]
                 losses_list = [closes[i-1] - closes[i] for i in range(1, len(closes)) if closes[i] < closes[i-1]]
                 
-                avg_gain = sum(gains) / 14 if gains else 0
+                avg_gain = sum(gains) / 14 if gains else 0.01
                 avg_loss = sum(losses_list) / 14 if losses_list else 0.01
                 rs = avg_gain / avg_loss
                 rsi = 100 - (100 / (1 + rs))
