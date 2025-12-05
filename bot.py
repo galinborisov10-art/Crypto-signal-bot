@@ -8619,25 +8619,32 @@ async def admin_mode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Изпълнява back-test на стратегията"""
     if not BACKTEST_AVAILABLE:
-        await update.message.reply_text("❌ Back-testing модул не е наличен")
+        await update.message.reply_text(
+            "❌ <b>Back-testing модул не е наличен</b>\n\n"
+            "Модулът не е зареден. Проверете логовете.",
+            parse_mode='HTML'
+        )
         return
     
-    # Параметри
-    symbol = context.args[0] if context.args else 'BTCUSDT'
-    timeframe = context.args[1] if len(context.args) > 1 else '4h'
-    days = int(context.args[2]) if len(context.args) > 2 else 90
-    
-    # Progress message
-    status_msg = await update.message.reply_text(
-        f"📊 <b>BACKTEST СТАРТИРА...</b>\n\n"
-        f"💰 Символ: {symbol}\n"
-        f"⏰ Timeframe: {timeframe}\n"
-        f"📅 Период: {days} дни\n\n"
-        f"⏳ Изтеглям данни от Binance...",
-        parse_mode='HTML'
-    )
-    
-    await asyncio.sleep(0.5)
+    try:
+        # Параметри
+        symbol = context.args[0] if context.args else 'BTCUSDT'
+        timeframe = context.args[1] if len(context.args) > 1 else '4h'
+        days = int(context.args[2]) if len(context.args) > 2 else 30  # По-кратък период по подразбиране
+        
+        logger.info(f"📊 Backtest started: {symbol} {timeframe} {days}d by user {update.effective_user.id}")
+        
+        # Progress message
+        status_msg = await update.message.reply_text(
+            f"📊 <b>BACKTEST СТАРТИРА...</b>\n\n"
+            f"💰 Символ: {symbol}\n"
+            f"⏰ Timeframe: {timeframe}\n"
+            f"📅 Период: {days} дни\n\n"
+            f"⏳ Изтеглям данни от Binance...",
+            parse_mode='HTML'
+        )
+        
+        await asyncio.sleep(0.5)
     
     try:
         # Update progress
@@ -8647,37 +8654,56 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⏰ Timeframe: {timeframe}\n"
             f"📅 Период: {days} дни\n\n"
             f"🔄 Симулирам трейдове...\n"
-            f"⏱️ Може да отнеме 30-60 секунди\n\n"
+            f"⏱️ Може да отнеме 20-40 секунди\n\n"
             f"<i>Моля изчакайте...</i>",
             parse_mode='HTML'
         )
+        
+        logger.info(f"📥 Fetching {days} days of data for {symbol}...")
         
         # Изпълни back-test с timeout
         try:
             results = await asyncio.wait_for(
                 backtest_engine.run_backtest(symbol, timeframe, None, days),
-                timeout=120.0  # 2 минути максимум
+                timeout=90.0  # 90 секунди максимум
             )
+            logger.info(f"✅ Backtest completed: {results}")
         except asyncio.TimeoutError:
+            logger.error(f"⏱️ Backtest timeout for {symbol}")
             await status_msg.edit_text(
                 "⏱️ <b>TIMEOUT!</b>\n\n"
                 "Backtest отне твърде дълго време.\n"
-                "Опитайте с по-кратък период (напр. 30 дни).",
+                "Опитайте с по-кратък период:\n"
+                "<code>/backtest BTCUSDT 4h 15</code>",
+                parse_mode='HTML'
+            )
+            return
+        except Exception as fetch_error:
+            logger.error(f"❌ Backtest fetch error: {fetch_error}", exc_info=True)
+            await status_msg.edit_text(
+                f"❌ <b>ГРЕШКА ПРИ ИЗТЕГЛЯНЕ:</b>\n\n"
+                f"<code>{str(fetch_error)[:200]}</code>\n\n"
+                f"Binance API може да не отговаря.",
                 parse_mode='HTML'
             )
             return
         
         if not results:
+            logger.warning(f"⚠️ Backtest returned no results for {symbol}")
             await status_msg.edit_text(
-                "❌ <b>ГРЕШКА ПРИ BACKTEST</b>\n\n"
+                "❌ <b>НЯМА РЕЗУЛТАТИ</b>\n\n"
                 "Възможни причини:\n"
-                "• Невалиден символ\n"
-                "• Binance API не отговаря\n"
-                "• Няма достатъчно данни\n\n"
-                "Опитайте: <code>/backtest BTCUSDT 4h 30</code>",
+                "• Невалиден символ или timeframe\n"
+                "• Няма достатъчно данни от Binance\n"
+                "• API грешка\n\n"
+                "Опитайте:\n"
+                "<code>/backtest BTCUSDT 4h 15</code>\n"
+                "<code>/backtest ETHUSDT 1h 20</code>",
                 parse_mode='HTML'
             )
             return
+        
+        logger.info(f"✅ Backtest results: {results['total_trades']} trades, {results['win_rate']:.1f}% win rate")
         
         # Финално съобщение с резултати
         message = f"""📊 <b>BACK-TEST РЕЗУЛТАТИ</b>
