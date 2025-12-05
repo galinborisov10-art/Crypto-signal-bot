@@ -1,0 +1,18 @@
+{
+  "name": "Crypto Signal Bot",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  
+  "postStartCommand": "git pull origin main || true",
+  
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  }
+}
