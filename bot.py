@@ -3151,16 +3151,6 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         logger.info(f"📊 Download complete: {len(updated_files)} success, {len(failed_files)} failed")
         
-        # Стъпка 2: Verify bot status
-        status_result = subprocess.run(
-            ['systemctl', 'status', 'crypto-bot', '--no-pager'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        bot_status = "🟢 Активен" if "active (running)" in status_result.stdout else "🔴 Спрян"
-        
         # Update status
         status_text = "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
         status_text += f"📥 <b>Обновени {len(updated_files)} файла:</b>\n"
@@ -3176,10 +3166,9 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for f in failed_files[:3]:
                 status_text += f"   • {f}\n"
         
-        status_text += f"\n🤖 <b>Бот статус:</b> {bot_status}\n\n"
-        status_text += "🔄 <b>За да приложиш промените:</b>\n"
+        status_text += f"\n🔄 <b>За да приложиш промените:</b>\n"
         status_text += "Изпрати: <code>/restart</code>\n\n"
-        status_text += "<i>Или рестартирай ръчно на сървъра.</i>"
+        status_text += "<i>Промените ще влезат в сила след restart.</i>"
         
         logger.info("📝 Updating status message...")
         await status_msg.edit_text(status_text, parse_mode='HTML')
