@@ -15,9 +15,16 @@ class MLTradingEngine:
     def __init__(self):
         self.model = None
         self.scaler = StandardScaler()
-        self.model_path = '/workspaces/Crypto-signal-bot/ml_model.pkl'
-        self.scaler_path = '/workspaces/Crypto-signal-bot/ml_scaler.pkl'
-        self.trading_journal_path = '/workspaces/Crypto-signal-bot/trading_journal.json'  # Използва trading_journal!
+        
+        # Auto-detect base path (works on Codespace AND server)
+        if os.path.exists('/root/Crypto-signal-bot'):
+            base_path = '/root/Crypto-signal-bot'
+        else:
+            base_path = '/workspaces/Crypto-signal-bot'
+        
+        self.model_path = f'{base_path}/ml_model.pkl'
+        self.scaler_path = f'{base_path}/ml_scaler.pkl'
+        self.trading_journal_path = f'{base_path}/trading_journal.json'
         self.min_training_samples = 50  # Минимум данни за обучение
         self.hybrid_mode = True  # Стартира в хибриден режим
         self.ml_weight = 0.3  # Първоначално 30% ML, 70% класически
