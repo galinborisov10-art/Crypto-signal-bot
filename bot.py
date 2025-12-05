@@ -3101,89 +3101,85 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         bot_dir = '/root/Crypto-signal-bot'
         
-        logger.info(f"📥 Starting deploy...")
+        logger.info(f"📥 Starting deploy (GitHub Actions method)...")
         
         await status_msg.edit_text(
             "🚀 <b>DEPLOY ЗАПОЧВА...</b>\n\n"
-            "📥 Проверка на git repo...",
+            "📥 Синхронизация с GitHub...",
             parse_mode='HTML'
         )
         
-        # Проверка дали е git repo
-        check_git = subprocess.run(
-            ['git', 'status'],
-            cwd=bot_dir,
+        # Използвай СЪЩАТА команда като GitHub Actions (която работи 100%)
+        deploy_script = f"""
+cd {bot_dir}
+
+# Check if git exists
+if ! command -v git &> /dev/null; then
+    echo "ERROR: git not installed"
+    exit 1
+fi
+
+# Initialize git if needed
+if [ ! -d .git ]; then
+    git init
+    git remote add origin https://github.com/galinborisov10-art/Crypto-signal-bot.git
+fi
+
+# Fetch and reset (same as GitHub Actions)
+git fetch origin main 2>&1
+git reset --hard origin/main 2>&1
+git clean -fd 2>&1
+
+echo "SUCCESS"
+"""
+        
+        logger.info("🔧 Executing deploy script...")
+        
+        result = subprocess.run(
+            ['bash', '-c', deploy_script],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=60
         )
         
-        if check_git.returncode == 0:
-            # Има git - използвай git pull
-            logger.info("✅ Git repo detected")
+        logger.info(f"📝 Deploy output: {result.stdout}")
+        logger.info(f"📝 Deploy errors: {result.stderr}")
+        
+        if result.returncode != 0 or "ERROR" in result.stdout:
+            error_msg = result.stderr or result.stdout
+            logger.error(f"❌ Deploy failed: {error_msg}")
             await status_msg.edit_text(
-                "🚀 <b>DEPLOY В ХОД...</b>\n\n"
-                "📥 Git pull от GitHub...",
+                f"❌ <b>DEPLOY ГРЕШКА!</b>\n\n"
+                f"<code>{error_msg[:500]}</code>\n\n"
+                f"💡 <b>Възможни причини:</b>\n"
+                f"• Git не е инсталиран на сървъра\n"
+                f"• Няма достъп до GitHub\n"
+                f"• Неправилен път ({bot_dir})\n\n"
+                f"🔧 <b>Решение:</b> Използвай GitHub Actions\n"
+                f"(автоматично при всеки push)",
                 parse_mode='HTML'
             )
-            
-            pull_result = subprocess.run(
-                ['git', 'pull', 'origin', 'main'],
-                cwd=bot_dir,
-                capture_output=True,
-                text=True,
-                timeout=30
+            return
+        
+        if "SUCCESS" in result.stdout:
+            logger.info("✅ Deploy successful!")
+            await status_msg.edit_text(
+                "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
+                "📥 <b>ВСИЧКИ файлове синхронизирани с GitHub</b>\n"
+                "   (git fetch + reset --hard)\n\n"
+                "🔄 <b>За да приложиш промените:</b>\n"
+                "Изпрати: <code>/restart</code>\n\n"
+                "<i>Използван е същият метод като GitHub Actions.</i>",
+                parse_mode='HTML'
             )
-            
-            if pull_result.returncode != 0:
-                logger.error(f"❌ Git pull failed: {pull_result.stderr}")
-                await status_msg.edit_text(
-                    f"❌ <b>GIT ГРЕШКА!</b>\n\n"
-                    f"<code>{pull_result.stderr[:400]}</code>\n\n"
-                    f"💡 Решение: Използвай GitHub Actions auto-deploy.",
-                    parse_mode='HTML'
-                )
-                return
-            
-            logger.info(f"✅ Git pull successful")
-            success_msg = "✅ <b>DEPLOY УСПЕШЕН (Git Pull)!</b>\n\n"
-            success_msg += "📥 Всички файлове обновени\n\n"
+            logger.info(f"✅ Deploy completed by {user_id}")
         else:
-            # Няма git - използвай curl за bot.py
-            logger.warning("⚠️ Not a git repo, using curl fallback")
             await status_msg.edit_text(
-                "🚀 <b>DEPLOY В ХОД...</b>\n\n"
-                "📥 Изтегляне на bot.py от GitHub...",
+                "⚠️ <b>DEPLOY ЧАСТИЧНО УСПЕШЕН</b>\n\n"
+                "Командата завърши, но без потвърждение.\n\n"
+                "Провери с: <code>/status</code>",
                 parse_mode='HTML'
             )
-            
-            curl_result = subprocess.run(
-                ['curl', '-s', '-o', f'{bot_dir}/bot.py', 
-                 'https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main/bot.py'],
-                capture_output=True,
-                timeout=30
-            )
-            
-            if curl_result.returncode != 0:
-                await status_msg.edit_text(
-                    "❌ <b>DEPLOY ГРЕШКА!</b>\n\n"
-                    "Не мога да изтегля файлове.\n"
-                    "Използвай GitHub Actions.",
-                    parse_mode='HTML'
-                )
-                return
-            
-            logger.info("✅ Curl download successful")
-            success_msg = "✅ <b>DEPLOY УСПЕШЕН (Curl)!</b>\n\n"
-            success_msg += "📥 bot.py обновен\n\n"
-        
-        # Update status
-        success_msg += "🔄 <b>За да приложиш промените:</b>\n"
-        success_msg += "Изпрати: <code>/restart</code>\n\n"
-        success_msg += "<i>Промените ще влезат в сила след restart.</i>"
-        
-        await status_msg.edit_text(success_msg, parse_mode='HTML')
-        logger.info(f"✅ Deploy completed by {user_id}")
             
     except subprocess.TimeoutExpired:
         await status_msg.edit_text(
