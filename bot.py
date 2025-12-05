@@ -8645,8 +8645,7 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         await asyncio.sleep(0.5)
-    
-    try:
+        
         # Update progress
         await status_msg.edit_text(
             f"📊 <b>BACKTEST В ХОД...</b>\n\n"
