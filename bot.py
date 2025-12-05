@@ -6122,17 +6122,14 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text(
         "🔄 <b>РЕСТАРТ ЗАПОЧВА!</b>\n\n"
         "⏳ Рестартирам бота...\n"
-        "⌛ Timeout: 30 секунди\n\n"
-        "<i>Изчакай за потвърждение...</i>",
+        "⌛ Очаквано време: 10-15 секунди\n\n"
+        "💡 <i>Ще получиш потвърждение със ЗВУК след рестарта!</i>",
         parse_mode='HTML'
     )
     
     logger.info(f"🔄 Bot restart requested by user {update.effective_user.id}")
     
     try:
-        # Изпрати нотификация
-        await send_bot_status_notification(context.bot, "stopping", "Ръчен рестарт от потребител")
-        
         # Рестарт чрез bot-manager.sh (работи на Codespace И Server)
         import subprocess
         import asyncio
@@ -6146,10 +6143,11 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await status_msg.edit_text(
                 "✅ <b>РЕСТАРТ КОМАНДА ИЗПРАТЕНА!</b>\n\n"
-                "🔄 Ботът се рестартира...\n"
+                "🔄 Ботът се рестартира сега...\n"
                 "⏱️ Времетраене: ~10-15 секунди\n\n"
-                "💡 Ботът ще се рестартира автоматично.\n"
-                "Изпрати /start след 15 секунди.",
+                "🔔 <b>ВАЖНО:</b> Ще получиш съобщение със ЗВУК\n"
+                "когато ботът е рестартиран успешно!\n\n"
+                "💡 Клавиатурата ще бъде възстановена автоматично.",
                 parse_mode='HTML'
             )
         else:
@@ -10358,22 +10356,6 @@ def main():
         async def send_startup_notification():
             """Изпраща нотификация при рестарт на бота"""
             try:
-                # 🧹 ПОЧИСТИ СТАРИ INLINE БУТОНИ (ако има)
-                try:
-                    # Изпрати съобщение което "затваря" старите бутони
-                    await app.bot.send_message(
-                        chat_id=OWNER_CHAT_ID,
-                        text="🔄 <b>Актуализиране на интерфейса...</b>",
-                        parse_mode='HTML',
-                        reply_markup=ReplyKeyboardRemove()  # Премахва стари бутони
-                    )
-                    await asyncio.sleep(0.5)  # Кратка пауза
-                except Exception as e:
-                    logger.warning(f"Cleanup на стари бутони: {e}")
-                
-                # Изпрати потвърждение за успешен рестарт
-                await send_bot_status_notification(app.bot, "restarted", "")
-                
                 # Тествай дали всички callback handlers работят
                 test_callbacks = [
                     'signal_BTCUSDT', 'signal_ETHUSDT', 'signal_SOLUSDT',
@@ -10381,24 +10363,28 @@ def main():
                     'ml_train', 'backtest_run'
                 ]
                 
-                startup_msg = "🤖 <b>ДЕТАЙЛИ ЗА СТАРТИРАНЕ:</b>\n\n"
-                startup_msg += f"✅ Всички handlers регистрирани\n"
-                startup_msg += f"✅ Callback handlers: {len(test_callbacks)} активни\n"
-                startup_msg += f"✅ Бутоните са активни\n"
-                startup_msg += f"✅ Auto-alerts включени (5 мин)\n"
-                startup_msg += f"✅ Daily reports активни (20:00)\n"
-                startup_msg += f"✅ ML Engine готов\n"
-                startup_msg += f"✅ Backtesting готов\n\n"
-                startup_msg += f"<i>Всички системи функционални.</i>"
+                # 🔔 ГЛАВНО СЪОБЩЕНИЕ - СЪС ЗВУК И КЛАВИАТУРА
+                startup_msg = "✅ <b>БОТ РЕСТАРТИРАН УСПЕШНО!</b>\n\n"
+                startup_msg += f"🟢 <b>Статус:</b> Онлайн и готов\n"
+                startup_msg += f"⏱️ <b>Време:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                startup_msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                startup_msg += f"✅ Handlers: {len(test_callbacks)} активни\n"
+                startup_msg += f"✅ Бутони: Възстановени\n"
+                startup_msg += f"✅ Auto-alerts: 5 мин интервал\n"
+                startup_msg += f"✅ Daily reports: 20:00\n"
+                startup_msg += f"✅ ML Engine: Готов\n"
+                startup_msg += f"✅ Backtesting: Готов\n\n"
+                startup_msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                startup_msg += f"💡 <i>Всички системи функционират нормално!</i>"
                 
                 await app.bot.send_message(
                     chat_id=OWNER_CHAT_ID,
                     text=startup_msg,
                     parse_mode='HTML',
-                    disable_notification=True,  # Без звук за детайлите
-                    reply_markup=get_main_keyboard()  # Изпрати клавиатурата отново
+                    disable_notification=False,  # СЪС ЗВУК - важно!
+                    reply_markup=get_main_keyboard()  # Изпрати клавиатурата
                 )
-                logger.info("✅ Startup notification изпратена с клавиатура")
+                logger.info("✅ Startup notification изпратена с клавиатура и звук")
             except Exception as e:
                 logger.error(f"Грешка при startup notification: {e}")
         
