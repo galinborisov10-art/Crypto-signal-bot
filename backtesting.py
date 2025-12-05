@@ -11,8 +11,14 @@ import os
 
 class BacktestEngine:
     def __init__(self):
-        self.results_path = '/workspaces/Crypto-signal-bot/backtest_results.json'
-        self.optimized_params_path = '/workspaces/Crypto-signal-bot/optimized_params.json'
+        # Auto-detect base path (works on Codespace AND server)
+        if os.path.exists('/root/Crypto-signal-bot'):
+            base_path = '/root/Crypto-signal-bot'
+        else:
+            base_path = '/workspaces/Crypto-signal-bot'
+        
+        self.results_path = f'{base_path}/backtest_results.json'
+        self.optimized_params_path = f'{base_path}/optimized_params.json'
     
     async def fetch_historical_data(self, symbol, timeframe, days=90):
         """Извлича исторически klines данни"""

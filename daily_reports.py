@@ -9,8 +9,14 @@ import os
 
 class DailyReportEngine:
     def __init__(self):
-        self.stats_path = '/workspaces/Crypto-signal-bot/bot_stats.json'
-        self.reports_path = '/workspaces/Crypto-signal-bot/daily_reports.json'
+        # Auto-detect base path (works on Codespace AND server)
+        if os.path.exists('/root/Crypto-signal-bot'):
+            base_path = '/root/Crypto-signal-bot'
+        else:
+            base_path = '/workspaces/Crypto-signal-bot'
+        
+        self.stats_path = f'{base_path}/bot_stats.json'
+        self.reports_path = f'{base_path}/daily_reports.json'
     
     def generate_daily_report(self):
         """Генерира дневен отчет с анализ на точност и успеваемост"""
