@@ -607,7 +607,7 @@ def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_
                             'body_ratio': body_ratio
                         })
     
-    # ФИЛТРИРАНЕ: Вземи само най-важните OB
+    # ФИЛТРИРАНЕ: Вземи топ N най-важни OB
     bullish_obs = [ob for ob in all_order_blocks if ob['type'] == 'bullish']
     bearish_obs = [ob for ob in all_order_blocks if ob['type'] == 'bearish']
     
@@ -619,8 +619,12 @@ def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_
     top_bullish = bullish_obs[:max_obs]
     top_bearish = bearish_obs[:max_obs]
     
-    # Обедини и върни
-    return top_bullish + top_bearish
+    # СОРТИРАЙ ПО ИНДЕКС (възможно най-рано на графиката)
+    # За да се показват отляво надясно според появата им
+    all_selected = top_bullish + top_bearish
+    all_selected.sort(key=lambda x: x['index'])  # Сортирай по време (индекс)
+    
+    return all_selected
 
 
 def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_price, timeframe, luxalgo_ict_data=None):
@@ -648,11 +652,10 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             logger.warning(f"Insufficient data for chart: only {len(df)} candles")
             return None
         
-        # 🔍 ДЕТЕКТИРАЙ САМО НАЙ-ВАЖНИТЕ ORDER BLOCKS
+        # 🔍 ДЕТЕКТИРАЙ ORDER BLOCKS - ТОП 5 ОТ ВСЕКИ ТИП
         # Подавай текущата цена за филтриране по близост
-        # Намали lookback и max_obs ако има малко данни
         lookback_period = min(5, len(df) - 2)
-        max_obs_count = 3 if len(df) >= 30 else 2
+        max_obs_count = 5  # Топ 5 вместо 3
         
         order_blocks = detect_order_blocks(
             df.reset_index(drop=True), 
@@ -702,94 +705,65 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         ax_volume.tick_params(axis='y', labelcolor='#8b949e', labelsize=7)
         plt.setp(ax1.get_xticklabels(), visible=False)  # Скрий x-labels от горния панел
         
-        # 📦 ВИЗУАЛИЗИРАЙ ORDER BLOCKS - Подобрена версия с +OB, -OB, EQ
+        # 📦 ВИЗУАЛИЗИРАЙ ORDER BLOCKS - LuxAlgo Style
         for ob in order_blocks:
             idx = ob['index']
             ob_type = ob['type']
             score = ob.get('score', 0)
             ob_high = ob['high']
             ob_low = ob['low']
-            ob_mid = (ob_high + ob_low) / 2  # Equilibrium зона
             
+            # LuxAlgo стил - минималистичен
             if ob_type == 'bullish':
-                # Bullish OB - зелена зона (support)
-                base_color = '#4caf50'  # Зелено
-                edge_color = '#2e7d32'  # Тъмнозелено
+                # Bullish OB - светлозелена прозрачна зона
+                box_color = '#089981'  # TradingView зелено
+                edge_color = '#089981'
                 alpha = 0.15
-                
-                # Определи важността според score
-                if score >= 50:
-                    label = "+OB 💎"  # Много силен
-                    linewidth = 2.5
-                    line_alpha = 0.9
-                elif score >= 35:
-                    label = "+OB"  # Силен
-                    linewidth = 2
-                    line_alpha = 0.8
-                else:
-                    label = "+OB (W)"  # Weak - слаб
-                    linewidth = 1.5
-                    line_alpha = 0.6
+                label_text = 'OB'
+                label_color = '#089981'
             else:
-                # Bearish OB - червена зона (resistance)
-                base_color = '#f44336'  # Червено
-                edge_color = '#c62828'  # Тъмночервено
+                # Bearish OB - светлочервена прозрачна зона  
+                box_color = '#f23645'  # TradingView червено
+                edge_color = '#f23645'
                 alpha = 0.15
-                
-                if score >= 50:
-                    label = "-OB 💎"  # Много силен
-                    linewidth = 2.5
-                    line_alpha = 0.9
-                elif score >= 35:
-                    label = "-OB"  # Силен
-                    linewidth = 2
-                    line_alpha = 0.8
-                else:
-                    label = "-OB (W)"  # Weak - слаб
-                    linewidth = 1.5
-                    line_alpha = 0.6
+                label_text = 'OB'
+                label_color = '#f23645'
             
-            # 1. Нарисувай ЗОНАТА на Order Block (прозрачна)
-            ax1.axhspan(ob_low, ob_high, color=base_color, alpha=alpha, zorder=3)
+            # 1. Нарисувай Box зона (като LuxAlgo)
+            # OB зона се простира от момента на откриване до края на графиката
+            box_start = idx
+            box_end = len(df) - 1
             
-            # 2. Нарисувай горна граница (силна линия)
-            line_start = max(0, idx - len(df) * 0.03)
-            line_end = len(df) - 1
-            ax1.plot([line_start, line_end], [ob_high, ob_high], 
-                    color=edge_color, linestyle='-', linewidth=linewidth, alpha=line_alpha, zorder=4)
-            
-            # 3. Нарисувай долна граница (силна линия)
-            ax1.plot([line_start, line_end], [ob_low, ob_low], 
-                    color=edge_color, linestyle='-', linewidth=linewidth, alpha=line_alpha, zorder=4)
-            
-            # 4. Нарисувай EQUILIBRIUM зона (средната линия - оранжева пунктирна)
-            ax1.plot([line_start, line_end], [ob_mid, ob_mid], 
-                    color='#ff9800', linestyle='--', linewidth=1.2, alpha=0.7, zorder=4)
-            
-            # 5. Етикет +OB / -OB на края
-            ax1.text(
-                line_end - 2,
-                ob_high if ob_type == 'bearish' else ob_low,
-                f" {label}",
-                fontsize=7,
-                color='white',
-                weight='bold',
-                ha='right',
-                va='top' if ob_type == 'bearish' else 'bottom',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor=edge_color, alpha=0.9, edgecolor='white', linewidth=1)
+            # Създай правоъгълник (box) за OB зоната
+            from matplotlib.patches import Rectangle
+            ob_box = Rectangle(
+                (box_start, ob_low),  # Долен ляв ъгъл
+                box_end - box_start,  # Ширина
+                ob_high - ob_low,     # Височина
+                facecolor=box_color,
+                edgecolor=edge_color,
+                alpha=alpha,
+                linewidth=1,
+                zorder=3
             )
+            ax1.add_patch(ob_box)
             
-            # 6. Етикет EQ (Equilibrium) на средата
+            # 2. Малък дискретен label като LuxAlgo
+            # Поставен в началото на OB (при откриването му)
+            label_y = ob_low if ob_type == 'bullish' else ob_high
+            label_va = 'top' if ob_type == 'bullish' else 'bottom'
+            
             ax1.text(
-                line_end - 2,
-                ob_mid,
-                " EQ",
+                box_start + 1,
+                label_y,
+                label_text,
                 fontsize=6,
-                color='white',
-                weight='normal',
-                ha='right',
-                va='center',
-                bbox=dict(boxstyle='round,pad=0.2', facecolor='#ff9800', alpha=0.8, edgecolor='white', linewidth=0.8)
+                color=label_color,
+                weight='bold',
+                ha='left',
+                va=label_va,
+                alpha=0.8,
+                zorder=5
             )
         
         # 🎯 LUXALGO + ICT VISUALIZATION
