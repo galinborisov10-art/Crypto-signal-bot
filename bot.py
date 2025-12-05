@@ -1681,23 +1681,238 @@ async def send_signal_alert(alert):
             message += f"⏱️ Време: {time_str}\n\n"
             message += f"🔒 Автоматично затворен на SL"
             
-        # === 3. 80% TP ALERT ===
+        # === 3. 80% TP ALERT С ПЪЛЕН РЕАНАЛИЗ ===
         elif alert_type == '80_PERCENT':
             progress = alert['progress']
             current_profit_pct = ((current_price - entry_price) / entry_price * 100) if signal_type == 'BUY' else ((entry_price - current_price) / entry_price * 100)
             
-            message = f"🎯 <b>80% ДО ЦЕЛ!</b> 🎯\n"
-            message += f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            message += f"{signal_emoji} <b>{symbol}: {signal_type}</b>\n"
-            message += f"📊 Увереност: <b>{confidence}%</b>\n"
-            message += f"⏰ Таймфрейм: <b>{timeframe}</b>\n\n"
-            message += f"💰 Entry: ${entry_price:,.4f}\n"
-            message += f"🎯 TP: ${tp_price:,.4f}\n"
-            message += f"💵 Current: ${current_price:,.4f}\n\n"
-            message += f"📈 <b>Прогрес: {progress:.1f}%</b>\n"
-            message += f"💚 Текуща печалба: +{current_profit_pct:.2f}%\n"
-            message += f"⏱️ Време: {time_str}\n\n"
-            message += f"💡 Обмисли частично затваряне или trailing stop!"
+            # === ПЪЛЕН РЕАНАЛИЗ НА ПОЗИЦИЯТА ===
+            try:
+                # 1. Вземи актуални данни
+                klines = await fetch_klines(symbol, timeframe, limit=100)
+                params_24h = {'symbol': symbol}
+                data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
+                
+                if isinstance(data_24h, list):
+                    data_24h = next((s for s in data_24h if s['symbol'] == symbol), None)
+                
+                if not klines or not data_24h:
+                    # Fallback ако няма данни
+                    message = f"🎯 <b>80% ДО ЦЕЛ!</b> 🎯\n"
+                    message += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                    message += f"{signal_emoji} <b>{symbol}: {signal_type}</b>\n"
+                    message += f"📈 Прогрес: {progress:.1f}%\n"
+                    message += f"💚 Печалба: +{current_profit_pct:.2f}%\n\n"
+                    message += f"⚠️ Не мога да реанализирам (липсват данни)"
+                else:
+                    # 2. Извлечи price data
+                    closes = [float(k[4]) for k in klines]
+                    highs = [float(k[2]) for k in klines]
+                    lows = [float(k[3]) for k in klines]
+                    opens = [float(k[1]) for k in klines]
+                    volumes = [float(k[5]) for k in klines]
+                    
+                    # 3. Анализи
+                    rsi = calculate_rsi(closes)
+                    
+                    # Volume trend
+                    avg_volume = sum(volumes[-20:]) / 20
+                    current_volume = volumes[-1]
+                    volume_trend = "📈 Нараства" if current_volume > avg_volume * 1.2 else "📉 Намалява" if current_volume < avg_volume * 0.8 else "➡️ Стабилен"
+                    
+                    # Shadow Patterns
+                    shadow_patterns = detect_candlestick_patterns(klines)
+                    reversal_warning = False
+                    reversal_pattern = None
+                    
+                    for pattern_name, pattern_signal, _ in shadow_patterns:
+                        # Ако има противоположен pattern - warning!
+                        if (signal_type == 'BUY' and pattern_signal == 'SELL') or \
+                           (signal_type == 'SELL' and pattern_signal == 'BUY'):
+                            reversal_warning = True
+                            reversal_pattern = pattern_name
+                            break
+                    
+                    # BTC Correlation
+                    btc_corr = await analyze_btc_correlation(symbol, timeframe)
+                    btc_aligned = False
+                    if btc_corr:
+                        btc_aligned = btc_corr['trend'] == signal_type
+                    
+                    # Order Book
+                    order_book = await analyze_order_book(symbol, current_price)
+                    ob_pressure = order_book['pressure'] if order_book else 'NEUTRAL'
+                    ob_aligned = ob_pressure == signal_type
+                    
+                    # News Sentiment
+                    sentiment = await analyze_news_sentiment(symbol)
+                    sentiment_aligned = False
+                    if sentiment and sentiment['sentiment'] != 'NEUTRAL':
+                        sentiment_aligned = sentiment['sentiment'] == signal_type
+                    
+                    # === DECISION LOGIC ===
+                    hold_score = 0  # Точки за hold
+                    close_score = 0  # Точки за close
+                    
+                    # RSI проверка
+                    if signal_type == 'BUY':
+                        if rsi and rsi < 70:
+                            hold_score += 2  # Още има място за ръст
+                        elif rsi and rsi > 75:
+                            close_score += 2  # Overbought - риск от reversal
+                    else:  # SELL
+                        if rsi and rsi > 30:
+                            hold_score += 2  # Още има място за спад
+                        elif rsi and rsi < 25:
+                            close_score += 2  # Oversold - риск от reversal
+                    
+                    # Volume check
+                    if current_volume > avg_volume * 1.2:
+                        hold_score += 1  # Силен momentum
+                    else:
+                        close_score += 1  # Слаб momentum
+                    
+                    # Shadow Patterns
+                    if reversal_warning:
+                        close_score += 3  # Силен сигнал за затваряне!
+                    else:
+                        hold_score += 1
+                    
+                    # BTC Correlation
+                    if btc_aligned:
+                        hold_score += 2
+                    else:
+                        close_score += 1
+                    
+                    # Order Book
+                    if ob_aligned:
+                        hold_score += 2
+                    else:
+                        close_score += 1
+                    
+                    # Sentiment
+                    if sentiment_aligned:
+                        hold_score += 1
+                    
+                    # === ПРЕПОРЪКА ===
+                    recommendation = ""
+                    recommendation_emoji = ""
+                    action_plan = ""
+                    
+                    if hold_score >= close_score + 3:
+                        # СИЛЕН HOLD
+                        recommendation = "HOLD ДО TP"
+                        recommendation_emoji = "✅"
+                        action_plan = f"🎯 <b>Препоръка: HOLD до пълен TP</b>\n\n"
+                        action_plan += f"📊 Причини:\n"
+                        action_plan += f"   • Momentum силен ({hold_score} точки)\n"
+                        if rsi:
+                            action_plan += f"   • RSI: {rsi:.1f} (здравословно)\n"
+                        if btc_aligned:
+                            action_plan += f"   • BTC подкрепя движението\n"
+                        if ob_aligned:
+                            action_plan += f"   • Order Book показва {signal_type} натиск\n"
+                        action_plan += f"\n💡 <b>План:</b>\n"
+                        action_plan += f"   1. Остави позицията отворена\n"
+                        action_plan += f"   2. Целта е близо - очаквай TP hit\n"
+                        action_plan += f"   3. Провери отново след 1-2 часа\n"
+                        
+                    elif close_score >= hold_score + 2:
+                        # СИЛЕН CLOSE
+                        recommendation = "ЗАТВОРИ СЕГА"
+                        recommendation_emoji = "❌"
+                        action_plan = f"❌ <b>Препоръка: ЗАТВОРИ ПОЗИЦИЯТА</b>\n\n"
+                        action_plan += f"⚠️ Причини:\n"
+                        action_plan += f"   • Риск от обръщане ({close_score} точки)\n"
+                        if reversal_warning:
+                            action_plan += f"   • 🕯️ {reversal_pattern} (reversal pattern!)\n"
+                        if rsi:
+                            if signal_type == 'BUY' and rsi > 75:
+                                action_plan += f"   • RSI: {rsi:.1f} (overbought!)\n"
+                            elif signal_type == 'SELL' and rsi < 25:
+                                action_plan += f"   • RSI: {rsi:.1f} (oversold!)\n"
+                        if not btc_aligned:
+                            action_plan += f"   • BTC вече не подкрепя\n"
+                        action_plan += f"\n💡 <b>План:</b>\n"
+                        action_plan += f"   1. Затвори позицията СЕГА\n"
+                        action_plan += f"   2. Вземи печалбата (+{current_profit_pct:.2f}%)\n"
+                        action_plan += f"   3. Избегни reversal risk\n"
+                        
+                    else:
+                        # PARTIAL CLOSE
+                        recommendation = "ЧАСТИЧНО ЗАТВОРИ"
+                        recommendation_emoji = "📊"
+                        action_plan = f"📊 <b>Препоръка: ЧАСТИЧНО ЗАТВАРЯНЕ</b>\n\n"
+                        action_plan += f"⚖️ Причини:\n"
+                        action_plan += f"   • Смесени сигнали (Hold: {hold_score}, Close: {close_score})\n"
+                        action_plan += f"   • Momentum леко отслабва\n"
+                        action_plan += f"   • Добра печалба вече (+{current_profit_pct:.2f}%)\n"
+                        action_plan += f"\n💡 <b>План:</b>\n"
+                        action_plan += f"   1. Затвори 50-70% от позицията\n"
+                        action_plan += f"   2. Остави 30-50% за TP\n"
+                        action_plan += f"   3. Премести SL на breakeven (${entry_price:,.4f})\n"
+                        action_plan += f"   4. Trailing stop: ${current_price * 0.985:,.4f}\n"
+                    
+                    # === ФИНАЛНО СЪОБЩЕНИЕ ===
+                    message = f"🎯 <b>80% ДО ЦЕЛ - РЕАНАЛИЗ</b> 🎯\n"
+                    message += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                    message += f"{signal_emoji} <b>{symbol}: {signal_type}</b>\n"
+                    message += f"📊 Първоначална увереност: <b>{confidence}%</b>\n"
+                    message += f"⏰ Таймфрейм: <b>{timeframe}</b>\n\n"
+                    
+                    message += f"💰 Entry: ${entry_price:,.4f}\n"
+                    message += f"🎯 TP: ${tp_price:,.4f}\n"
+                    message += f"💵 Current: ${current_price:,.4f}\n\n"
+                    
+                    message += f"📈 <b>Прогрес: {progress:.1f}%</b>\n"
+                    message += f"💚 Текуща печалба: <b>+{current_profit_pct:.2f}%</b>\n"
+                    message += f"⏱️ Отворена: {time_str}\n\n"
+                    
+                    message += f"━━━━━━━━━━━━━━━━━━━━\n"
+                    message += f"🔍 <b>АКТУАЛЕН АНАЛИЗ:</b>\n\n"
+                    
+                    if rsi:
+                        message += f"📊 RSI: {rsi:.1f}"
+                        if signal_type == 'BUY':
+                            if rsi < 50: message += " (здравословно ✅)\n"
+                            elif rsi < 70: message += " (добре 👍)\n"
+                            else: message += " (overbought ⚠️)\n"
+                        else:
+                            if rsi > 50: message += " (здравословно ✅)\n"
+                            elif rsi > 30: message += " (добре 👍)\n"
+                            else: message += " (oversold ⚠️)\n"
+                    
+                    message += f"📦 Volume: {volume_trend}\n"
+                    
+                    if reversal_warning:
+                        message += f"🕯️ Pattern: <b>{reversal_pattern}</b> ⚠️ REVERSAL!\n"
+                    else:
+                        message += f"🕯️ Pattern: Няма reversal signals ✅\n"
+                    
+                    if btc_corr:
+                        btc_emoji = "✅" if btc_aligned else "⚠️"
+                        message += f"📊 BTC: {btc_corr['trend']} ({btc_corr['change']:+.1f}%) {btc_emoji}\n"
+                    
+                    ob_emoji = "✅" if ob_aligned else "⚠️"
+                    message += f"📖 Order Book: {ob_pressure} {ob_emoji}\n"
+                    
+                    if sentiment and sentiment['sentiment'] != 'NEUTRAL':
+                        sent_emoji = "✅" if sentiment_aligned else "⚠️"
+                        message += f"📰 Sentiment: {sentiment['sentiment']} {sent_emoji}\n"
+                    
+                    message += f"\n━━━━━━━━━━━━━━━━━━━━\n"
+                    message += f"{recommendation_emoji} <b>SCORE: Hold {hold_score} | Close {close_score}</b>\n\n"
+                    message += action_plan
+                    
+            except Exception as e:
+                logger.error(f"Грешка при реанализ на 80% alert: {e}")
+                # Fallback съобщение
+                message = f"🎯 <b>80% ДО ЦЕЛ!</b> 🎯\n"
+                message += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                message += f"{signal_emoji} <b>{symbol}: {signal_type}</b>\n"
+                message += f"📈 Прогрес: {progress:.1f}%\n"
+                message += f"💚 Печалба: +{current_profit_pct:.2f}%\n\n"
+                message += f"⚠️ Грешка при реанализ: {e}"
         
         # Изпрати съобщението
         await application.bot.send_message(
