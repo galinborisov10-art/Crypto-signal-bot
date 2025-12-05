@@ -36,10 +36,22 @@ jobs:
               git remote add origin https://github.com/galinborisov10-art/Crypto-signal-bot.git
             fi
             
+            # Запази restart flag ако съществува
+            if [ -f .restart_requested ]; then
+              cp .restart_requested /tmp/.restart_requested_backup
+              echo "💾 Restart flag запазен временно"
+            fi
+            
             # Reset any local changes and pull latest
             git fetch origin main
             git reset --hard origin/main
             git clean -fd
+            
+            # Възстанови restart flag
+            if [ -f /tmp/.restart_requested_backup ]; then
+              mv /tmp/.restart_requested_backup .restart_requested
+              echo "♻️ Restart flag възстановен"
+            fi
             
             echo "✅ All files updated from GitHub!"
             
