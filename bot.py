@@ -3069,122 +3069,6 @@ BTC, ETH, XRP, SOL, BNB, ADA
     await update.message.reply_text(welcome_text, parse_mode='HTML', reply_markup=get_main_keyboard())
 
 
-async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """🚀 Deploy на бота - Download от GitHub и restart"""
-    user_id = update.effective_user.id
-    
-    logger.info(f"🚀 deploy_cmd called by user {user_id}")
-    
-    # Проверка за admin права
-    if user_id != OWNER_CHAT_ID:
-        logger.warning(f"❌ Deploy denied for user {user_id} (not owner)")
-        await update.message.reply_text(
-            "❌ <b>Достъп отказан!</b>\n\n"
-            "Само owner може да deploy-ва бота.",
-            parse_mode='HTML'
-        )
-        return
-    
-    logger.info(f"✅ Deploy authorized for owner {user_id}")
-    
-    try:
-        logger.info("📤 Sending status message...")
-        status_msg = await update.message.reply_text(
-            "🚀 <b>DEPLOY ЗАПОЧВА...</b>\n\n"
-            "⏳ Изтегляне на промени от GitHub...",
-            parse_mode='HTML'
-        )
-        logger.info("✅ Status message sent")
-        
-        import subprocess
-        import os
-        
-        bot_dir = '/root/Crypto-signal-bot'
-        
-        logger.info(f"📥 Starting deploy...")
-        
-        await status_msg.edit_text(
-            "🚀 <b>DEPLOY ЗАПОЧВА...</b>\n\n"
-            "📥 Синхронизация с GitHub...",
-            parse_mode='HTML'
-        )
-        
-        # Метод 1: Опитай git fetch + reset (като GitHub Actions)
-        try:
-            # Стъпка 1: Git fetch
-            fetch_result = subprocess.run(
-                ['git', 'fetch', 'origin', 'main'],
-                cwd=bot_dir,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if fetch_result.returncode != 0:
-                raise Exception(f"Git fetch failed: {fetch_result.stderr}")
-            
-            logger.info("✅ Git fetch successful")
-            
-            # Стъпка 2: Git reset --hard
-            reset_result = subprocess.run(
-                ['git', 'reset', '--hard', 'origin/main'],
-                cwd=bot_dir,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if reset_result.returncode != 0:
-                raise Exception(f"Git reset failed: {reset_result.stderr}")
-            
-            logger.info("✅ Git reset successful")
-            
-            # Success!
-            await status_msg.edit_text(
-                "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
-                "📥 <b>ВСИЧКИ файлове синхронизирани</b>\n"
-                "   (git fetch + reset --hard)\n\n"
-                "🔄 <b>За да приложиш промените:</b>\n"
-                "Изпрати: <code>/restart</code>\n\n"
-                "<i>Използван метод: GitHub Actions</i>",
-                parse_mode='HTML'
-            )
-            logger.info(f"✅ Deploy completed by {user_id}")
-            
-        except Exception as e:
-            # Git метода не работи - fallback на webhook info
-            logger.warning(f"⚠️ Git method failed: {e}")
-            
-            await status_msg.edit_text(
-                "ℹ️ <b>DEPLOY ИНФОРМАЦИЯ</b>\n\n"
-                "❌ Ръчен deploy през Telegram не е наличен на този сървър.\n\n"
-                "✅ <b>Автоматичен deploy работи при:</b>\n"
-                "• Всеки push в GitHub → Auto-deploy\n"
-                "• GitHub Actions рестартира бота\n\n"
-                "📊 <b>Последен deploy:</b>\n"
-                "Провери с: <code>/status</code>\n\n"
-                "💡 Промените вече са deployed автоматично!",
-                parse_mode='HTML'
-            )
-            logger.info(f"Deploy info sent to {user_id}")
-            
-    except subprocess.TimeoutExpired:
-        await status_msg.edit_text(
-            "⏱️ <b>TIMEOUT!</b>\n\n"
-            "Download отне твърде дълго време.\n"
-            "Провери мрежата или използвай ръчен deploy.",
-            parse_mode='HTML'
-        )
-    except Exception as e:
-        logger.error(f"Deploy error: {e}")
-        await update.message.reply_text(
-            f"❌ <b>ГРЕШКА ПРИ DEPLOY:</b>\n\n"
-            f"<code>{str(e)}</code>\n\n"
-            "Използвай ръчен deploy на сървъра.",
-            parse_mode='HTML'
-        )
-
-
 async def ml_menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📚 ML Анализ главно меню с описания"""
     ml_menu_text = """📚 <b>ML АНАЛИЗ - Machine Learning</b>
@@ -9233,7 +9117,7 @@ def main():
     
     # Регистрирай команди
     app.add_handler(CommandHandler("start", start_cmd))
-    app.add_handler(CommandHandler("deploy", deploy_cmd))  # 🚀 Deploy бота
+    # /deploy е премахнат - GitHub Actions прави автоматичен deploy при всеки push
     app.add_handler(CommandHandler("ml_menu", ml_menu_cmd))  # 📚 ML Анализ меню
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("market", market_cmd))
