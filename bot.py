@@ -180,6 +180,9 @@ BINANCE_DEPTH_URL = "https://api.binance.com/api/v3/depth"
 # Win-rate tracking file - използва BASE_PATH
 STATS_FILE = f"{BASE_PATH}/bot_stats.json"
 
+# Auto-Signal Tracking file - следи активните автоматични сигнали
+ACTIVE_SIGNALS_FILE = f"{BASE_PATH}/active_auto_signals.json"
+
 # CoinMarketCap API ключ (опционално - за повече новини)
 CMC_API_KEY = ""  # Може да добавите CoinMarketCap API ключ тук (безплатен на coinmarketcap.com/api)
 CMC_NEWS_URL = "https://coinmarketcap.com/api/headlines/latest"  # Public endpoint (no key needed)
@@ -1443,6 +1446,274 @@ async def get_higher_timeframe_confirmation(symbol, current_timeframe, signal):
     except Exception as e:
         logger.error(f"Грешка при MTF анализ: {e}")
         return None
+
+
+# ==================== AUTO-SIGNAL TRACKING SYSTEM ====================
+
+def load_active_signals():
+    """Зарежда активните автоматични сигнали от JSON файл"""
+    try:
+        if os.path.exists(ACTIVE_SIGNALS_FILE):
+            with open(ACTIVE_SIGNALS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return []
+    except Exception as e:
+        logger.error(f"Грешка при зареждане на активни сигнали: {e}")
+        return []
+
+
+def save_active_signals(signals):
+    """Запазва активните сигнали в JSON файл"""
+    try:
+        with open(ACTIVE_SIGNALS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(signals, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logger.error(f"Грешка при запазване на активни сигнали: {e}")
+        return False
+
+
+def add_signal_to_tracking(symbol, signal_type, entry_price, tp_price, sl_price, 
+                           confidence, timeframe, timestamp):
+    """Добавя автоматичен сигнал за tracking"""
+    try:
+        signals = load_active_signals()
+        
+        # Създай нов signal ID
+        signal_id = f"{symbol}_{signal_type}_{int(timestamp.timestamp())}"
+        
+        new_signal = {
+            'id': signal_id,
+            'symbol': symbol,
+            'signal_type': signal_type,
+            'entry_price': entry_price,
+            'tp_price': tp_price,
+            'sl_price': sl_price,
+            'confidence': confidence,
+            'timeframe': timeframe,
+            'timestamp': timestamp.isoformat(),
+            'status': 'ACTIVE',  # ACTIVE, TP_REACHED, SL_HIT, 80_PERCENT_ALERTED
+            'tp_80_alerted': False,
+            'result_sent': False
+        }
+        
+        signals.append(new_signal)
+        save_active_signals(signals)
+        
+        logger.info(f"📊 Auto-signal added to tracking: {signal_id}")
+        return signal_id
+        
+    except Exception as e:
+        logger.error(f"Грешка при добавяне на сигнал за tracking: {e}")
+        return None
+
+
+async def check_active_signals():
+    """
+    Проверява всички активни сигнали и изпраща alerts:
+    - 80% TP достигнат
+    - TP пълно hit
+    - SL hit
+    """
+    try:
+        signals = load_active_signals()
+        
+        if not signals:
+            return
+        
+        updated_signals = []
+        signals_to_alert = []
+        
+        for signal in signals:
+            # Пропускай вече приключени сигнали
+            if signal.get('result_sent', False):
+                continue
+            
+            symbol = signal['symbol']
+            signal_type = signal['signal_type']
+            entry_price = signal['entry_price']
+            tp_price = signal['tp_price']
+            sl_price = signal['sl_price']
+            
+            # Вземи текуща цена
+            try:
+                params = {'symbol': symbol}
+                current_data = await fetch_json(BINANCE_PRICE_URL, params)
+                
+                if isinstance(current_data, list):
+                    current_data = next((s for s in current_data if s['symbol'] == symbol), None)
+                
+                if not current_data:
+                    updated_signals.append(signal)
+                    continue
+                
+                current_price = float(current_data['price'])
+                
+            except Exception as e:
+                logger.error(f"Грешка при взимане на цена за {symbol}: {e}")
+                updated_signals.append(signal)
+                continue
+            
+            # Изчисли прогрес към TP
+            if signal_type == 'BUY':
+                progress_to_tp = ((current_price - entry_price) / (tp_price - entry_price)) * 100
+                sl_hit = current_price <= sl_price
+                tp_hit = current_price >= tp_price
+            else:  # SELL
+                progress_to_tp = ((entry_price - current_price) / (entry_price - tp_price)) * 100
+                sl_hit = current_price >= sl_price
+                tp_hit = current_price <= tp_price
+            
+            # === 1. TP HIT (100%) ===
+            if tp_hit and not signal.get('result_sent', False):
+                profit_pct = ((tp_price - entry_price) / entry_price * 100) if signal_type == 'BUY' else ((entry_price - tp_price) / entry_price * 100)
+                
+                signals_to_alert.append({
+                    'type': 'TP_HIT',
+                    'signal': signal,
+                    'current_price': current_price,
+                    'profit_pct': profit_pct
+                })
+                
+                signal['status'] = 'TP_REACHED'
+                signal['result_sent'] = True
+                updated_signals.append(signal)
+                continue
+            
+            # === 2. SL HIT ===
+            if sl_hit and not signal.get('result_sent', False):
+                loss_pct = ((entry_price - sl_price) / entry_price * 100) if signal_type == 'BUY' else ((sl_price - entry_price) / entry_price * 100)
+                
+                signals_to_alert.append({
+                    'type': 'SL_HIT',
+                    'signal': signal,
+                    'current_price': current_price,
+                    'loss_pct': loss_pct
+                })
+                
+                signal['status'] = 'SL_HIT'
+                signal['result_sent'] = True
+                updated_signals.append(signal)
+                continue
+            
+            # === 3. 80% TP ALERT ===
+            if progress_to_tp >= 80 and not signal.get('tp_80_alerted', False):
+                signals_to_alert.append({
+                    'type': '80_PERCENT',
+                    'signal': signal,
+                    'current_price': current_price,
+                    'progress': progress_to_tp
+                })
+                
+                signal['tp_80_alerted'] = True
+                signal['status'] = '80_PERCENT_ALERTED'
+            
+            updated_signals.append(signal)
+        
+        # Запази обновените сигнали
+        save_active_signals(updated_signals)
+        
+        # Изпрати alerts
+        for alert in signals_to_alert:
+            await send_signal_alert(alert)
+        
+    except Exception as e:
+        logger.error(f"Грешка при проверка на активни сигнали: {e}")
+
+
+async def send_signal_alert(alert):
+    """Изпраща alert за автоматичен сигнал"""
+    try:
+        alert_type = alert['type']
+        signal = alert['signal']
+        current_price = alert['current_price']
+        
+        symbol = signal['symbol']
+        signal_type = signal['signal_type']
+        entry_price = signal['entry_price']
+        tp_price = signal['tp_price']
+        sl_price = signal['sl_price']
+        confidence = signal['confidence']
+        timeframe = signal['timeframe']
+        timestamp = datetime.fromisoformat(signal['timestamp'])
+        
+        # Изчисли колко време е отворен сигнала
+        time_open = datetime.now() - timestamp
+        if time_open.total_seconds() < 3600:
+            time_str = f"{int(time_open.total_seconds() / 60)} минути"
+        elif time_open.total_seconds() < 86400:
+            time_str = f"{time_open.total_seconds() / 3600:.1f} часа"
+        else:
+            time_str = f"{time_open.total_seconds() / 86400:.1f} дни"
+        
+        # Emoji според типа
+        signal_emoji = "🟢" if signal_type == 'BUY' else "🔴"
+        
+        # === 1. TP HIT (100%) ===
+        if alert_type == 'TP_HIT':
+            profit_pct = alert['profit_pct']
+            
+            message = f"✅ <b>ЦЕЛ ПОСТИГНАТА!</b> ✅\n"
+            message += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            message += f"{signal_emoji} <b>{symbol}: {signal_type}</b>\n"
+            message += f"📊 Увереност: <b>{confidence}%</b>\n"
+            message += f"⏰ Таймфрейм: <b>{timeframe}</b>\n\n"
+            message += f"💰 Entry: ${entry_price:,.4f}\n"
+            message += f"🎯 TP: ${tp_price:,.4f}\n"
+            message += f"💵 Current: ${current_price:,.4f}\n\n"
+            message += f"💎 <b>Печалба: +{profit_pct:.2f}%</b>\n"
+            message += f"⏱️ Време: {time_str}\n\n"
+            message += f"✨ Автоматичният сигнал е успешен!"
+            
+        # === 2. SL HIT ===
+        elif alert_type == 'SL_HIT':
+            loss_pct = alert['loss_pct']
+            
+            message = f"❌ <b>STOP LOSS HIT</b> ❌\n"
+            message += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            message += f"{signal_emoji} <b>{symbol}: {signal_type}</b>\n"
+            message += f"📊 Увереност: <b>{confidence}%</b>\n"
+            message += f"⏰ Таймфрейм: <b>{timeframe}</b>\n\n"
+            message += f"💰 Entry: ${entry_price:,.4f}\n"
+            message += f"🛡️ SL: ${sl_price:,.4f}\n"
+            message += f"💵 Current: ${current_price:,.4f}\n\n"
+            message += f"📉 <b>Загуба: -{loss_pct:.2f}%</b>\n"
+            message += f"⏱️ Време: {time_str}\n\n"
+            message += f"🔒 Автоматично затворен на SL"
+            
+        # === 3. 80% TP ALERT ===
+        elif alert_type == '80_PERCENT':
+            progress = alert['progress']
+            current_profit_pct = ((current_price - entry_price) / entry_price * 100) if signal_type == 'BUY' else ((entry_price - current_price) / entry_price * 100)
+            
+            message = f"🎯 <b>80% ДО ЦЕЛ!</b> 🎯\n"
+            message += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            message += f"{signal_emoji} <b>{symbol}: {signal_type}</b>\n"
+            message += f"📊 Увереност: <b>{confidence}%</b>\n"
+            message += f"⏰ Таймфрейм: <b>{timeframe}</b>\n\n"
+            message += f"💰 Entry: ${entry_price:,.4f}\n"
+            message += f"🎯 TP: ${tp_price:,.4f}\n"
+            message += f"💵 Current: ${current_price:,.4f}\n\n"
+            message += f"📈 <b>Прогрес: {progress:.1f}%</b>\n"
+            message += f"💚 Текуща печалба: +{current_profit_pct:.2f}%\n"
+            message += f"⏱️ Време: {time_str}\n\n"
+            message += f"💡 Обмисли частично затваряне или trailing stop!"
+        
+        # Изпрати съобщението
+        await application.bot.send_message(
+            chat_id=OWNER_CHAT_ID,
+            text=message,
+            parse_mode='HTML',
+            disable_notification=False  # Със звук!
+        )
+        
+        logger.info(f"📤 Signal alert sent: {alert_type} for {symbol}")
+        
+    except Exception as e:
+        logger.error(f"Грешка при изпращане на signal alert: {e}")
+
+
+# ==================== END AUTO-SIGNAL TRACKING ====================
 
 
 def detect_market_regime(closes, highs, lows):
@@ -6754,6 +7025,18 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                     disable_notification=False
                 )
                 logger.info(f"🔔 Автоматичен сигнал изпратен без графика: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
+            
+            # === ДОБАВИ СИГНАЛА ЗА TRACKING ===
+            add_signal_to_tracking(
+                symbol=symbol,
+                signal_type=analysis['signal'],
+                entry_price=price,
+                tp_price=analysis['tp'],
+                sl_price=analysis['sl'],
+                confidence=best_confidence,
+                timeframe=timeframe,
+                timestamp=datetime.now()
+            )
         
         except Exception as e:
             logger.error(f"Грешка при изпращане на alert: {e}")
@@ -9604,8 +9887,22 @@ def main():
                 minutes=2
             )
             
+            # 🎯 AUTO-SIGNAL TRACKING - проверява сигналите на всеки 15 минути
+            async def signal_tracking_wrapper():
+                """Wrapper за signal tracking"""
+                try:
+                    await check_active_signals()
+                except Exception as e:
+                    logger.error(f"Signal tracking wrapper error: {e}")
+            
+            scheduler.add_job(
+                signal_tracking_wrapper,
+                'interval',
+                minutes=15  # Проверява на всеки 15 минути
+            )
+            
             scheduler.start()
-            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7")
+            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING")
         
         async def enable_auto_alerts():
             """Автоматично активиране на alerts за owner при стартиране"""
