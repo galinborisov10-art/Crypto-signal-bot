@@ -395,8 +395,8 @@ def get_main_keyboard():
         [KeyboardButton("📰 Новини"), KeyboardButton("📋 Отчети")],
         [KeyboardButton("📚 ML Анализ"), KeyboardButton("⚙️ Настройки")],
         [KeyboardButton("🔔 Alerts"), KeyboardButton("ℹ️ Помощ")],
-        [KeyboardButton("🚀 Deploy"), KeyboardButton("🔄 Рестарт")],
-        [KeyboardButton("💻 Workspace"), KeyboardButton("🏠 Меню")]
+        [KeyboardButton("🔄 Рестарт"), KeyboardButton("💻 Workspace")],
+        [KeyboardButton("🏠 Меню")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -3120,7 +3120,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 <b>1. Основни команди:</b>
 /start - Стартиране на бота
-/deploy - 🚀 Deploy на бота (само owner)
 /help - Тази помощна информация
 /market - Преглед на пазара
 
@@ -6594,10 +6593,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await help_cmd(update, context)
     elif text == "🏠 Меню":
         await start_cmd(update, context)
-    elif text == "🚀 Deploy":
-        # Deploy на бота от GitHub
-        logger.info(f"🚀 Deploy button pressed by user {update.effective_user.id}")
-        await deploy_cmd(update, context)
     elif text == "🔄 Рестарт":
         # Рестарт на бота
         logger.info(f"🔄 Restart button pressed by user {update.effective_user.id}")
