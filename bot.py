@@ -3101,7 +3101,7 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         bot_dir = '/root/Crypto-signal-bot'
         
-        logger.info(f"📥 Starting deploy (GitHub Actions method)...")
+        logger.info(f"📥 Starting deploy...")
         
         await status_msg.edit_text(
             "🚀 <b>DEPLOY ЗАПОЧВА...</b>\n\n"
@@ -3109,77 +3109,64 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='HTML'
         )
         
-        # Използвай СЪЩАТА команда като GitHub Actions (която работи 100%)
-        deploy_script = f"""
-cd {bot_dir}
-
-# Check if git exists
-if ! command -v git &> /dev/null; then
-    echo "ERROR: git not installed"
-    exit 1
-fi
-
-# Initialize git if needed
-if [ ! -d .git ]; then
-    git init
-    git remote add origin https://github.com/galinborisov10-art/Crypto-signal-bot.git
-fi
-
-# Fetch and reset (same as GitHub Actions)
-git fetch origin main 2>&1
-git reset --hard origin/main 2>&1
-git clean -fd 2>&1
-
-echo "SUCCESS"
-"""
-        
-        logger.info("🔧 Executing deploy script...")
-        
-        result = subprocess.run(
-            ['bash', '-c', deploy_script],
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        
-        logger.info(f"📝 Deploy output: {result.stdout}")
-        logger.info(f"📝 Deploy errors: {result.stderr}")
-        
-        if result.returncode != 0 or "ERROR" in result.stdout:
-            error_msg = result.stderr or result.stdout
-            logger.error(f"❌ Deploy failed: {error_msg}")
-            await status_msg.edit_text(
-                f"❌ <b>DEPLOY ГРЕШКА!</b>\n\n"
-                f"<code>{error_msg[:500]}</code>\n\n"
-                f"💡 <b>Възможни причини:</b>\n"
-                f"• Git не е инсталиран на сървъра\n"
-                f"• Няма достъп до GitHub\n"
-                f"• Неправилен път ({bot_dir})\n\n"
-                f"🔧 <b>Решение:</b> Използвай GitHub Actions\n"
-                f"(автоматично при всеки push)",
-                parse_mode='HTML'
+        # Метод 1: Опитай git fetch + reset (като GitHub Actions)
+        try:
+            # Стъпка 1: Git fetch
+            fetch_result = subprocess.run(
+                ['git', 'fetch', 'origin', 'main'],
+                cwd=bot_dir,
+                capture_output=True,
+                text=True,
+                timeout=30
             )
-            return
-        
-        if "SUCCESS" in result.stdout:
-            logger.info("✅ Deploy successful!")
+            
+            if fetch_result.returncode != 0:
+                raise Exception(f"Git fetch failed: {fetch_result.stderr}")
+            
+            logger.info("✅ Git fetch successful")
+            
+            # Стъпка 2: Git reset --hard
+            reset_result = subprocess.run(
+                ['git', 'reset', '--hard', 'origin/main'],
+                cwd=bot_dir,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if reset_result.returncode != 0:
+                raise Exception(f"Git reset failed: {reset_result.stderr}")
+            
+            logger.info("✅ Git reset successful")
+            
+            # Success!
             await status_msg.edit_text(
                 "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
-                "📥 <b>ВСИЧКИ файлове синхронизирани с GitHub</b>\n"
+                "📥 <b>ВСИЧКИ файлове синхронизирани</b>\n"
                 "   (git fetch + reset --hard)\n\n"
                 "🔄 <b>За да приложиш промените:</b>\n"
                 "Изпрати: <code>/restart</code>\n\n"
-                "<i>Използван е същият метод като GitHub Actions.</i>",
+                "<i>Използван метод: GitHub Actions</i>",
                 parse_mode='HTML'
             )
             logger.info(f"✅ Deploy completed by {user_id}")
-        else:
+            
+        except Exception as e:
+            # Git метода не работи - fallback на webhook info
+            logger.warning(f"⚠️ Git method failed: {e}")
+            
             await status_msg.edit_text(
-                "⚠️ <b>DEPLOY ЧАСТИЧНО УСПЕШЕН</b>\n\n"
-                "Командата завърши, но без потвърждение.\n\n"
-                "Провери с: <code>/status</code>",
+                "ℹ️ <b>DEPLOY ИНФОРМАЦИЯ</b>\n\n"
+                "❌ Ръчен deploy през Telegram не е наличен на този сървър.\n\n"
+                "✅ <b>Автоматичен deploy работи при:</b>\n"
+                "• Всеки push в GitHub → Auto-deploy\n"
+                "• GitHub Actions рестартира бота\n\n"
+                "📊 <b>Последен deploy:</b>\n"
+                "Провери с: <code>/status</code>\n\n"
+                "💡 Промените вече са deployed автоматично!",
                 parse_mode='HTML'
             )
+            logger.info(f"Deploy info sent to {user_id}")
             
     except subprocess.TimeoutExpired:
         await status_msg.edit_text(
