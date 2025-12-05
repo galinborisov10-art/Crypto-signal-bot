@@ -5395,8 +5395,9 @@ Take Profit (TP): {settings['tp']:.1f}%
 Stop Loss (SL): {settings['sl']:.1f}%
 Risk/Reward (RR): 1:{settings['rr']:.1f}
 
-📈 <b>Анализ:</b>
-Timeframe: {settings['timeframe']}
+📈 <b>Анализ (Автоматичен):</b>
+Timeframes: 1h, 4h, 1d
+Сканира всички 3 timeframes за всеки сигнал
 
 🔔 <b>Известия:</b>
 Автоматични сигнали: {'Вкл ✅' if settings['alerts_enabled'] else 'Изкл ❌'}
