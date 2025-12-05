@@ -705,7 +705,7 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         ax_volume.tick_params(axis='y', labelcolor='#333333', labelsize=7)
         plt.setp(ax1.get_xticklabels(), visible=False)  # Скрий x-labels от горния панел
         
-        # 📦 ВИЗУАЛИЗИРАЙ ORDER BLOCKS - ПРОФЕСИОНАЛЕН СТИЛ
+        # 📦 ВИЗУАЛИЗИРАЙ ORDER BLOCKS - ПРОФЕСИОНАЛЕН СТИЛ (BOXES като FVG)
         for ob in order_blocks:
             idx = ob['index']
             ob_type = ob['type']
@@ -752,40 +752,59 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                     linewidth = 1.2
                     line_alpha = 0.6
             
-            # 1. Нарисувай ЛЕКА ЗОНА на Order Block
-            ax1.axhspan(ob_low, ob_high, color=base_color, alpha=alpha, zorder=2)
+            # ПОЗИЦИОНИРАНЕ: от idx до края (като FVG)
+            line_start = max(0, idx)
+            line_end = len(df) - 1
+            ob_width = line_end - line_start
+            ob_height = ob_high - ob_low
             
-            # 2. Нарисувай горна граница (ПО-КЪСА И ПО-ДЕБЕЛА линия)
-            line_start = max(0, idx)  # Започни от самия OB
-            line_end = min(len(df) - 1, idx + 5)  # Продължи само 5 свещи напред (ПО-КЪСА)
+            # 1. Нарисувай OB BOX (като FVG)
+            ob_box = plt.Rectangle(
+                (line_start, ob_low),
+                ob_width,
+                ob_height,
+                facecolor=base_color,
+                edgecolor=edge_color,
+                linewidth=linewidth + 0.8,
+                linestyle='-',
+                alpha=alpha,
+                zorder=2
+            )
+            ax1.add_patch(ob_box)
+            
+            # 2. Горна граница
             ax1.plot([line_start, line_end], [ob_high, ob_high], 
-                    color=edge_color, linestyle='-', linewidth=linewidth + 0.8, alpha=line_alpha, zorder=3)  # ПО-ДЕБЕЛА
+                    color=edge_color, linestyle='-', linewidth=linewidth + 0.8, alpha=line_alpha, zorder=3)
             
-            # 3. Нарисувай долна граница (ПО-КЪСА И ПО-ДЕБЕЛА линия)
+            # 3. Долна граница
             ax1.plot([line_start, line_end], [ob_low, ob_low], 
-                    color=edge_color, linestyle='-', linewidth=linewidth + 0.8, alpha=line_alpha, zorder=3)  # ПО-ДЕБЕЛА
+                    color=edge_color, linestyle='-', linewidth=linewidth + 0.8, alpha=line_alpha, zorder=3)
             
-            # 4. Нарисувай EQUILIBRIUM ЗОНА (ПРАВОЪГЪЛНИК) - бледо оцветена с контраст
-            eq_height = (ob_high - ob_low) * 0.15  # 15% от височината на OB
+            # 4. EQUILIBRIUM ЗОНА (ПРАВОЪГЪЛНИК)
+            eq_height = (ob_high - ob_low) * 0.15
             eq_low = ob_mid - eq_height / 2
             eq_high = ob_mid + eq_height / 2
             
-            # Правоъгълна зона за Equilibrium
-            ax1.axhspan(eq_low, eq_high, color='#ff9800', alpha=0.25, zorder=3)
-            
-            # Гранични линии на EQ зоната
-            ax1.plot([line_start, line_end], [eq_low, eq_low], 
-                    color='#f57c00', linestyle='--', linewidth=1.2, alpha=0.7, zorder=3)
-            ax1.plot([line_start, line_end], [eq_high, eq_high], 
-                    color='#f57c00', linestyle='--', linewidth=1.2, alpha=0.7, zorder=3)
+            eq_box = plt.Rectangle(
+                (line_start, eq_low),
+                ob_width,
+                eq_height,
+                facecolor='#ff9800',
+                edgecolor='#f57c00',
+                linewidth=1.2,
+                linestyle='--',
+                alpha=0.25,
+                zorder=3
+            )
+            ax1.add_patch(eq_box)
             
             # Централна линия на Equilibrium
             ax1.plot([line_start, line_end], [ob_mid, ob_mid], 
                     color='#ff9800', linestyle='-', linewidth=1.5, alpha=0.85, zorder=4)
             
-            # 5. МАЛЪК етикет +OB / -OB в КРАЯ на линията
+            # 5. ЕТИКЕТ +OB / -OB в НАЧАЛОТО (като FVG)
             ax1.text(
-                line_end + 0.5,
+                line_start + 1,
                 ob_high if ob_type == 'bearish' else ob_low,
                 f"{label}",
                 fontsize=7,
@@ -796,9 +815,9 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                 bbox=dict(boxstyle='round,pad=0.25', facecolor=edge_color, alpha=0.85, edgecolor='none')
             )
             
-            # 6. ВИДИМ етикет EQ (Equilibrium) в КРАЯ - показва диапазона
+            # 6. ЕТИКЕТ EQ в НАЧАЛОТО
             ax1.text(
-                line_end + 0.5,
+                line_start + 1,
                 ob_mid,
                 "EQ",
                 fontsize=7,
