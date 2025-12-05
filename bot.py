@@ -4633,38 +4633,38 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sl_price=sl_price
     )
     
-    # ML Journal - само за good trades
-    if analysis['has_good_trade']:
-        # Подготви analysis_data за ML журнала (pure ICT strategy)
-        analysis_data = {
-            'rsi': analysis.get('rsi'),
-            'volume_ratio': analysis.get('volume_ratio'),
-            'volatility': analysis.get('volatility'),
-            'trend': analysis.get('trend'),
-            'btc_correlation': btc_correlation,
-            'sentiment': sentiment
-        }
-        
-        # 📝 Логвай също в Trading Journal за ML самообучение
-        journal_id = log_trade_to_journal(
-            symbol=symbol,
-            timeframe=timeframe,
-            signal_type=analysis['signal'],
-            confidence=final_confidence,
-            entry_price=price,
-            tp_price=tp_price,
-            sl_price=sl_price,
-            analysis_data=analysis_data
-        )
-        
-        if journal_id:
-            logger.info(f"📝 Trade logged to ML journal (ID: {journal_id})")
+    # 📝 ML Journal - запиши ВСЕКИ сигнал за ML обучение (не само good trades)
+    # Подготви analysis_data за ML журнала (pure ICT strategy)
+    analysis_data = {
+        'rsi': analysis.get('rsi'),
+        'volume_ratio': analysis.get('volume_ratio'),
+        'volatility': analysis.get('volatility'),
+        'trend': analysis.get('trend'),
+        'btc_correlation': btc_correlation,
+        'sentiment': sentiment,
+        'has_good_trade': analysis.get('has_good_trade', False)  # Добави като feature
+    }
     
-    # === ML PREDICTION ===
+    # Логвай в Trading Journal за ML самообучение
+    journal_id = log_trade_to_journal(
+        symbol=symbol,
+        timeframe=timeframe,
+        signal_type=analysis['signal'],
+        confidence=final_confidence,
+        entry_price=price,
+        tp_price=tp_price,
+        sl_price=sl_price,
+        analysis_data=analysis_data
+    )
+    
+    if journal_id:
+        logger.info(f"📝 Trade #{journal_id} logged to ML journal (ALL signals)")
+    
+    # === ML PREDICTION - за ВСИЧКИ сигнали ===
     ml_probability = None
     ml_message = ""
     
-    if ML_PREDICTOR_AVAILABLE and analysis['has_good_trade']:
+    if ML_PREDICTOR_AVAILABLE:
         try:
             ml_predictor = get_ml_predictor()
             
