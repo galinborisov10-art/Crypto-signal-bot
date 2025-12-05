@@ -765,9 +765,23 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             ax1.plot([line_start, line_end], [ob_low, ob_low], 
                     color=edge_color, linestyle='-', linewidth=linewidth, alpha=line_alpha, zorder=3)
             
-            # 4. Нарисувай EQUILIBRIUM зона (ТЪНКА пунктирна) - САМО в зоната на OB
+            # 4. Нарисувай EQUILIBRIUM ЗОНА (ПРАВОЪГЪЛНИК) - бледо оцветена с контраст
+            eq_height = (ob_high - ob_low) * 0.15  # 15% от височината на OB
+            eq_low = ob_mid - eq_height / 2
+            eq_high = ob_mid + eq_height / 2
+            
+            # Правоъгълна зона за Equilibrium
+            ax1.axhspan(eq_low, eq_high, color='#ff9800', alpha=0.25, zorder=3)
+            
+            # Гранични линии на EQ зоната
+            ax1.plot([line_start, line_end], [eq_low, eq_low], 
+                    color='#f57c00', linestyle='--', linewidth=1.2, alpha=0.7, zorder=3)
+            ax1.plot([line_start, line_end], [eq_high, eq_high], 
+                    color='#f57c00', linestyle='--', linewidth=1.2, alpha=0.7, zorder=3)
+            
+            # Централна линия на Equilibrium
             ax1.plot([line_start, line_end], [ob_mid, ob_mid], 
-                    color='#ff9800', linestyle='--', linewidth=1.0, alpha=0.6, zorder=3)
+                    color='#ff9800', linestyle='-', linewidth=1.5, alpha=0.85, zorder=4)
             
             # 5. МАЛЪК етикет +OB / -OB в КРАЯ на линията
             ax1.text(
@@ -782,17 +796,17 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                 bbox=dict(boxstyle='round,pad=0.25', facecolor=edge_color, alpha=0.85, edgecolor='none')
             )
             
-            # 6. МАЛЪК етикет EQ (Equilibrium) в КРАЯ на средната линия
+            # 6. ВИДИМ етикет EQ (Equilibrium) в КРАЯ - показва диапазона
             ax1.text(
                 line_end + 0.5,
                 ob_mid,
                 "EQ",
-                fontsize=6,
+                fontsize=7,
                 color='white',
-                weight='normal',
+                weight='bold',
                 ha='left',
                 va='center',
-                bbox=dict(boxstyle='round,pad=0.2', facecolor='#ff9800', alpha=0.8, edgecolor='none')
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='#ff9800', alpha=0.95, edgecolor='white', linewidth=1.2)
             )
         
         # 🎯 LUXALGO + ICT VISUALIZATION
@@ -829,7 +843,7 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                         ax1.axhline(y=liq_price, color='#1976d2', linestyle=':', linewidth=0.8, alpha=0.5, zorder=2)
                         ax1.text(1, liq_price, 'SSL', fontsize=5, color='#1976d2', weight='normal', ha='left', va='center')
             
-            # === FAIR VALUE GAPS (FVG) - ПЛЪТНИ/ПУНКТИРНИ според силата ===
+            # === FAIR VALUE GAPS (FVG) - ПО-ВИДИМИ със зони ===
             fvg_data = luxalgo_ict_data.get('ict_fvg', [])
             if fvg_data:
                 for fvg in fvg_data[-5:]:  # Покажи последните 5 FVG
@@ -844,34 +858,38 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                         # Цвят според типа
                         if 'BULLISH' in fvg_type:
                             fvg_color = '#4caf50'  # Зелено
+                            fvg_edge = '#2e7d32'  # Тъмнозелено
                             fvg_label = 'FVG+'
                         else:
                             fvg_color = '#f44336'  # Червено
+                            fvg_edge = '#c62828'  # Тъмночервено
                             fvg_label = 'FVG-'
                         
                         # ПЛЪТНА vs ПУНКТИРНА според силата
                         if gap_size_pct >= 0.5:  # Силна FVG (gap ≥0.5%)
                             linestyle = '-'  # ПЛЪТНА линия
                             linewidth = 2
-                            alpha = 0.9
-                            label_suffix = ' (Strong)'
+                            alpha = 0.25  # По-видима зона
+                            line_alpha = 0.9
+                            label_suffix = ' (S)'
                         else:  # Слаба FVG
                             linestyle = '--'  # ПУНКТИРНА линия
                             linewidth = 1.5
-                            alpha = 0.6
-                            label_suffix = ' (Weak)'
+                            alpha = 0.15
+                            line_alpha = 0.7
+                            label_suffix = ' (W)'
                         
-                        # Нарисувай горна и долна граница с линии
-                        ax1.axhline(y=fvg_low, color=fvg_color, linestyle=linestyle, linewidth=linewidth, alpha=alpha, zorder=3)
-                        ax1.axhline(y=fvg_high, color=fvg_color, linestyle=linestyle, linewidth=linewidth, alpha=alpha, zorder=3)
+                        # Нарисувай ВИДИМА зона между линиите
+                        ax1.axhspan(fvg_low, fvg_high, color=fvg_color, alpha=alpha, zorder=2)
                         
-                        # Малка прозрачна зона между линиите
-                        ax1.axhspan(fvg_low, fvg_high, color=fvg_color, alpha=0.1, zorder=2)
+                        # Нарисувай горна и долна граница с ВИДИМИ линии
+                        ax1.axhline(y=fvg_low, color=fvg_edge, linestyle=linestyle, linewidth=linewidth, alpha=line_alpha, zorder=3)
+                        ax1.axhline(y=fvg_high, color=fvg_edge, linestyle=linestyle, linewidth=linewidth, alpha=line_alpha, zorder=3)
                         
-                        # Етикет на края
+                        # ВИДИМ етикет на края
                         ax1.text(len(df)-2, (fvg_low + fvg_high)/2, fvg_label + label_suffix, 
-                               fontsize=6, color=fvg_color, weight='bold', ha='left', va='center',
-                               bbox=dict(boxstyle='round,pad=0.2', facecolor='#0d1117', alpha=0.8, edgecolor=fvg_color, linewidth=1))
+                               fontsize=7, color='white', weight='bold', ha='left', va='center',
+                               bbox=dict(boxstyle='round,pad=0.3', facecolor=fvg_edge, alpha=0.9, edgecolor='white', linewidth=1))
             
             # === FIBONACCI LEVELS ===
             fib_data = luxalgo_ict_data.get('fibonacci_extension')
