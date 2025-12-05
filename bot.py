@@ -855,29 +855,52 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                         # Изчисли сила на FVG (gap size %)
                         gap_size_pct = ((fvg_high - fvg_low) / fvg_low) * 100
                         
-                        # Цвят според типа
+                        # 🔍 ПРОВЕРИ ДАЛИ FVG Е ИЗЧИСТЕН (FILLED) - цената е влязла в зоната
+                        is_filled = False
+                        if current_price >= fvg_low and current_price <= fvg_high:
+                            is_filled = True  # Цената е в зоната - FVG е изчистен
+                        elif 'BULLISH' in fvg_type and current_price < fvg_low:
+                            is_filled = True  # Bullish FVG е пробит надолу
+                        elif 'BEARISH' in fvg_type and current_price > fvg_high:
+                            is_filled = True  # Bearish FVG е пробит нагоре
+                        
+                        # Цвят според типа и статуса (filled vs active)
                         if 'BULLISH' in fvg_type:
-                            fvg_color = '#4caf50'  # Зелено
-                            fvg_edge = '#2e7d32'  # Тъмнозелено
-                            fvg_label = 'FVG+'
+                            if is_filled:
+                                fvg_color = '#a5d6a7'  # Светлозелено (изчистен)
+                                fvg_edge = '#81c784'  # По-светло
+                                fvg_label = 'FVG+ FILLED'
+                                alpha_multiplier = 0.5  # По-прозрачен
+                            else:
+                                fvg_color = '#4caf50'  # Зелено (активен)
+                                fvg_edge = '#2e7d32'  # Тъмнозелено
+                                fvg_label = 'FVG+'
+                                alpha_multiplier = 1.0
                         else:
-                            fvg_color = '#f44336'  # Червено
-                            fvg_edge = '#c62828'  # Тъмночервено
-                            fvg_label = 'FVG-'
+                            if is_filled:
+                                fvg_color = '#ef9a9a'  # Светлочервено (изчистен)
+                                fvg_edge = '#e57373'  # По-светло
+                                fvg_label = 'FVG- FILLED'
+                                alpha_multiplier = 0.5  # По-прозрачен
+                            else:
+                                fvg_color = '#f44336'  # Червено (активен)
+                                fvg_edge = '#c62828'  # Тъмночервено
+                                fvg_label = 'FVG-'
+                                alpha_multiplier = 1.0
                         
                         # ПЛЪТНА vs ПУНКТИРНА според силата
                         if gap_size_pct >= 0.5:  # Силна FVG (gap ≥0.5%)
                             linestyle = '-'  # ПЛЪТНА линия
                             linewidth = 2.0
-                            alpha = 0.20  # Лека зона
-                            line_alpha = 0.9
-                            label_suffix = ' Strong'
+                            alpha = 0.20 * alpha_multiplier  # Лека зона
+                            line_alpha = 0.9 if not is_filled else 0.5
+                            label_suffix = ' Strong' if not is_filled else ''
                         else:  # Слаба FVG
                             linestyle = '--'  # ПУНКТИРНА линия
                             linewidth = 1.5
-                            alpha = 0.12
-                            line_alpha = 0.7
-                            label_suffix = ' Weak'
+                            alpha = 0.12 * alpha_multiplier
+                            line_alpha = 0.7 if not is_filled else 0.4
+                            label_suffix = ' Weak' if not is_filled else ''
                         
                         # 1. Нарисувай ПРАВОЪГЪЛНА ЗОНА на FVG (от gap_low до gap_high)
                         ax1.axhspan(fvg_low, fvg_high, color=fvg_color, alpha=alpha, zorder=2)
