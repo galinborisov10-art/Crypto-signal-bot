@@ -3100,56 +3100,58 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import os
         
         bot_dir = '/root/Crypto-signal-bot'
+        github_url = 'https://raw.githubusercontent.com/galinborisov10-art/Crypto-signal-bot/main'
         
-        logger.info(f"📥 Starting git pull from GitHub...")
+        logger.info(f"📥 Starting deploy from GitHub...")
         
-        # Стъпка 1: Git fetch + reset (all files, no skips)
+        # ВСИЧКИ файлове за обновяване
+        files_to_update = [
+            'bot.py',
+            'ml_engine.py', 
+            'ml_predictor.py',
+            'backtesting.py',
+            'daily_reports.py',
+            'luxalgo_sr_mtf.py',
+            'luxalgo_ict_concepts.py',
+            'luxalgo_chart_generator.py',
+            'luxalgo_ict_analysis.py',
+            'bot_watchdog.py',
+            'auto_fixer.py',
+            'requirements.txt'
+        ]
+        
         await status_msg.edit_text(
             "🚀 <b>DEPLOY ЗАПОЧВА...</b>\n\n"
-            "📥 Изтегляне на ВСИЧКИ файлове от GitHub...",
+            f"📥 Изтегляне на {len(files_to_update)} файла...",
             parse_mode='HTML'
         )
         
-        git_result = subprocess.run(
-            ['git', 'fetch', 'origin', 'main'],
-            cwd=bot_dir,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        updated_files = []
+        failed_files = []
         
-        if git_result.returncode != 0:
-            logger.error(f"❌ Git fetch failed: {git_result.stderr}")
-            await status_msg.edit_text(
-                f"❌ <b>DEPLOY ГРЕШКА!</b>\n\n"
-                f"Git fetch неуспешен:\n<code>{git_result.stderr[:300]}</code>",
-                parse_mode='HTML'
-            )
-            return
+        for filename in files_to_update:
+            try:
+                logger.info(f"⬇️ Downloading {filename}...")
+                result = subprocess.run(
+                    ['wget', '-q', f'{github_url}/{filename}', '-O', f'{bot_dir}/{filename}'],
+                    timeout=15,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    updated_files.append(filename)
+                    logger.info(f"✅ {filename} downloaded")
+                else:
+                    failed_files.append(filename)
+                    logger.error(f"❌ {filename} failed: {result.stderr}")
+            except Exception as e:
+                failed_files.append(filename)
+                logger.error(f"❌ Failed to download {filename}: {e}")
         
-        logger.info("✅ Git fetch successful")
+        logger.info(f"📊 Download complete: {len(updated_files)} success, {len(failed_files)} failed")
         
-        # Стъпка 2: Reset to latest
-        reset_result = subprocess.run(
-            ['git', 'reset', '--hard', 'origin/main'],
-            cwd=bot_dir,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        
-        if reset_result.returncode != 0:
-            logger.error(f"❌ Git reset failed: {reset_result.stderr}")
-            await status_msg.edit_text(
-                f"❌ <b>DEPLOY ГРЕШКА!</b>\n\n"
-                f"Git reset неуспешен:\n<code>{reset_result.stderr[:300]}</code>",
-                parse_mode='HTML'
-            )
-            return
-        
-        logger.info("✅ Git reset successful - all files updated")
-        
-        # Стъпка 3: Verify bot status
+        # Стъпка 2: Verify bot status
         status_result = subprocess.run(
             ['systemctl', 'status', 'crypto-bot', '--no-pager'],
             capture_output=True,
@@ -3161,14 +3163,20 @@ async def deploy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Update status
         status_text = "✅ <b>DEPLOY УСПЕШЕН!</b>\n\n"
-        status_text += "📥 <b>ВСИЧКИ файлове обновени</b>\n"
-        status_text += "   ✓ bot.py\n"
-        status_text += "   ✓ ml_engine.py\n"
-        status_text += "   ✓ daily_reports.py\n"
-        status_text += "   ✓ luxalgo модули\n"
-        status_text += "   ✓ config файлове\n"
-        status_text += "   ... и всички останали\n\n"
-        status_text += f"🤖 <b>Бот статус:</b> {bot_status}\n\n"
+        status_text += f"📥 <b>Обновени {len(updated_files)} файла:</b>\n"
+        
+        for f in updated_files[:6]:
+            status_text += f"   ✓ {f}\n"
+        
+        if len(updated_files) > 6:
+            status_text += f"   ... и още {len(updated_files) - 6}\n"
+        
+        if failed_files:
+            status_text += f"\n⚠️ <b>Пропуснати ({len(failed_files)}):</b>\n"
+            for f in failed_files[:3]:
+                status_text += f"   • {f}\n"
+        
+        status_text += f"\n🤖 <b>Бот статус:</b> {bot_status}\n\n"
         status_text += "🔄 <b>За да приложиш промените:</b>\n"
         status_text += "Изпрати: <code>/restart</code>\n\n"
         status_text += "<i>Или рестартирай ръчно на сървъра.</i>"
