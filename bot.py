@@ -627,6 +627,61 @@ def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_
     return all_selected
 
 
+def detect_mss_bos(df):
+    """Детектира Market Structure Shift (MSS) и Break of Structure (BOS)"""
+    mss_bos_points = []
+    
+    # Намери swing highs и swing lows
+    for i in range(2, len(df) - 2):
+        # Swing High
+        if (df.iloc[i]['high'] > df.iloc[i-1]['high'] and 
+            df.iloc[i]['high'] > df.iloc[i-2]['high'] and
+            df.iloc[i]['high'] > df.iloc[i+1]['high'] and
+            df.iloc[i]['high'] > df.iloc[i+2]['high']):
+            
+            # Проверка за BOS/MSS - пробив на предишен high
+            for j in range(i+1, min(i+10, len(df))):
+                if df.iloc[j]['close'] > df.iloc[i]['high']:
+                    # BOS Bullish - пробива swing high
+                    mss_bos_points.append({
+                        'index': j,
+                        'price': df.iloc[i]['high'],
+                        'type': 'BOS',
+                        'direction': 'bullish'
+                    })
+                    break
+        
+        # Swing Low
+        if (df.iloc[i]['low'] < df.iloc[i-1]['low'] and 
+            df.iloc[i]['low'] < df.iloc[i-2]['low'] and
+            df.iloc[i]['low'] < df.iloc[i+1]['low'] and
+            df.iloc[i]['low'] < df.iloc[i+2]['low']):
+            
+            # Проверка за BOS/MSS - пробив на предишен low
+            for j in range(i+1, min(i+10, len(df))):
+                if df.iloc[j]['close'] < df.iloc[i]['low']:
+                    # BOS Bearish - пробива swing low
+                    mss_bos_points.append({
+                        'index': j,
+                        'price': df.iloc[i]['low'],
+                        'type': 'BOS',
+                        'direction': 'bearish'
+                    })
+                    break
+    
+    # Детектирай MSS (по-силна промяна на структурата)
+    for point in mss_bos_points:
+        idx = point['index']
+        # MSS = BOS + силна промяна (>2% от цената)
+        if idx > 0:
+            price_change_pct = abs((df.iloc[idx]['close'] - df.iloc[idx-5]['close']) / df.iloc[idx-5]['close']) * 100
+            if price_change_pct > 2.0:  # Промяна >2%
+                point['type'] = 'MSS'
+    
+    # Върни последните 3 MSS/BOS
+    return mss_bos_points[-3:] if mss_bos_points else []
+
+
 def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_price, timeframe, luxalgo_ict_data=None):
     """Генерира графика със свещи, индикатори, Order Blocks, ликвидни зони и стрелка за тренда"""
     try:
@@ -666,6 +721,10 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         )
         
         logger.info(f"📦 Detected {len(order_blocks)} high-quality Order Blocks for {symbol}")
+        
+        # 🔍 ДЕТЕКТИРАЙ MSS/BOS
+        mss_bos_points = detect_mss_bos(df.reset_index(drop=True))
+        logger.info(f"🔄 Detected {len(mss_bos_points)} MSS/BOS points for {symbol}")
         
         # Създай графика - ПРОФЕСИОНАЛЕН СТИЛ като TradingView
         # ФОРМАТ 1:1 (квадратна снимка 16x16) + БЯЛ ФОН + Volume панел
@@ -754,7 +813,8 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             
             # 1. Определи позицията на OB box (ОТ НАЧАЛОТО, НЕ през цялата графика)
             line_start = max(0, idx)  # Започни от самия OB
-            line_end = min(len(df) - 1, idx + 5)  # Продължи само 5 свещи напред
+            line_end = min(len(df) - 1, idx + 5)  # OB e 5 свещи
+            eq_line_end = min(len(df) - 1, idx + 8)  # EQ e по-дълъг - 8 свещи
             ob_width = line_end - line_start
             ob_height = ob_high - ob_low
             
@@ -784,11 +844,12 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             eq_height = (ob_high - ob_low) * 0.15  # 15% от височината на OB
             eq_low = ob_mid - eq_height / 2
             eq_high = ob_mid + eq_height / 2
+            eq_width = eq_line_end - line_start  # 8 свещи за EQ
             
-            # EQ Box само в рамките на OB
+            # EQ Box само в рамките на OB (по-дълъг)
             eq_box = plt.Rectangle(
                 (line_start, eq_low),
-                ob_width,
+                eq_width,  # По-дълъг - 8 свещи
                 eq_height,
                 facecolor='#ff9800',
                 edgecolor='#f57c00',
@@ -799,8 +860,8 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
             )
             ax1.add_patch(eq_box)
             
-            # Централна линия на Equilibrium (само в рамките на OB)
-            ax1.plot([line_start, line_end], [ob_mid, ob_mid], 
+            # Централна линия на Equilibrium (по-дълга - 8 свещи)
+            ax1.plot([line_start, eq_line_end], [ob_mid, ob_mid], 
                     color='#ff9800', linestyle='-', linewidth=1.5, alpha=0.85, zorder=4)
             
             # 6. МАЛЪК етикет +OB / -OB в КРАЯ на box
@@ -827,6 +888,34 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                 ha='left',
                 va='center',
                 bbox=dict(boxstyle='round,pad=0.3', facecolor='#ff9800', alpha=0.95, edgecolor='white', linewidth=1.2)
+            )
+        
+        # 🔄 ВИЗУАЛИЗИРАЙ MSS/BOS - МАЛКИ ЕТИКЕТИ
+        for mss_bos in mss_bos_points:
+            idx = mss_bos['index']
+            price = mss_bos['price']
+            mss_type = mss_bos['type']  # MSS or BOS
+            direction = mss_bos['direction']  # bullish or bearish
+            
+            # Цвят и етикет
+            if direction == 'bullish':
+                color = '#26a69a'  # Teal
+                arrow = '▲'
+            else:
+                color = '#ef5350'  # Red
+                arrow = '▼'
+            
+            # Нарисувай малък етикет
+            ax1.text(
+                idx,
+                price,
+                f"{arrow} {mss_type}",
+                fontsize=6,
+                color='white',
+                weight='bold',
+                ha='center',
+                va='bottom' if direction == 'bullish' else 'top',
+                bbox=dict(boxstyle='round,pad=0.2', facecolor=color, alpha=0.9, edgecolor='white', linewidth=1)
             )
         
         # 🎯 LUXALGO + ICT VISUALIZATION
@@ -7191,6 +7280,14 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         sl_pct = ((analysis['sl'] - price) / price) * 100
     
         message += f"🎯 <b>TAKE PROFIT:</b> ${analysis['tp']:,.4f} ({tp_pct:+.2f}%)\n"
+    
+        # MTF Потвърждение
+        mtf_info = sig.get('mtf_confirmation')
+        if mtf_info and mtf_info.get('confirmed'):
+            higher_tf = mtf_info.get('higher_timeframe', 'N/A')
+            message += f"   ✅ <b>MTF:</b> {higher_tf} потвърждава\n"
+        elif mtf_info:
+            message += f"   ⚠️ MTF: Няма потвърждение\n"
     
         # TP вероятност и време
         if 'tp_probability' in analysis:
