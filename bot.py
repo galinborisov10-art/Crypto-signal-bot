@@ -1131,7 +1131,11 @@ def calculate_bollinger_bands(prices, period=20, std_dev=2):
 
 
 def detect_candlestick_patterns(klines_data):
-    """Откриване на свещни модели"""
+    """
+    🕯️ ENHANCED Shadow Pattern Detection
+    Засича: Hammer, Shooting Star, Engulfing, Doji, Inverted Hammer, Morning/Evening Star
+    Използва се за: ръчни и автоматични сигнали, всички валути и timeframes
+    """
     patterns = []
     
     if len(klines_data) < 3:
@@ -1150,33 +1154,129 @@ def detect_candlestick_patterns(klines_data):
         close = float(k[4])
         body = abs(close - open_p)
         range_val = high - low
+        upper_shadow = high - max(open_p, close)
+        lower_shadow = min(open_p, close) - low
         is_bullish = close > open_p
-        return open_p, high, low, close, body, range_val, is_bullish
+        return {
+            'open': open_p,
+            'high': high,
+            'low': low,
+            'close': close,
+            'body': body,
+            'range': range_val,
+            'upper_shadow': upper_shadow,
+            'lower_shadow': lower_shadow,
+            'is_bullish': is_bullish
+        }
     
-    c_open, c_high, c_low, c_close, c_body, c_range, c_bull = candle_info(current)
-    p1_open, p1_high, p1_low, p1_close, p1_body, p1_range, p1_bull = candle_info(prev1)
+    c = candle_info(current)
+    p1 = candle_info(prev1)
+    p2 = candle_info(prev2)
     
-    # Hammer (бичи обръщане)
-    if c_body < c_range * 0.3 and (c_low < min(c_open, c_close) - c_body * 2):
-        if not p1_bull:  # След низходящо движение
-            patterns.append(('HAMMER', 'BUY', 15))
+    # === 1. HAMMER (Bullish Reversal) ===
+    # Критерии:
+    # - Малко тяло (body < 30% от range)
+    # - Дълга долна сенка (lower_shadow >= 2x body)
+    # - Малка или няма горна сенка (upper_shadow < 0.5x body)
+    # - След низходящо движение
+    if (c['body'] < c['range'] * 0.3 and
+        c['lower_shadow'] >= c['body'] * 2 and
+        c['upper_shadow'] < c['body'] * 0.5 and
+        not p1['is_bullish'] and p1['close'] < p2['close']):
+        patterns.append(('HAMMER', 'BUY', 20))
     
-    # Shooting Star (мечи обръщане)
-    if c_body < c_range * 0.3 and (c_high > max(c_open, c_close) + c_body * 2):
-        if p1_bull:  # След възходящо движение
-            patterns.append(('SHOOTING_STAR', 'SELL', 15))
+    # === 2. INVERTED HAMMER (Bullish Reversal) ===
+    # Критерии:
+    # - Малко тяло (body < 30% от range)
+    # - Дълга горна сенка (upper_shadow >= 2x body)
+    # - Малка или няма долна сенка (lower_shadow < 0.5x body)
+    # - След низходящо движение
+    if (c['body'] < c['range'] * 0.3 and
+        c['upper_shadow'] >= c['body'] * 2 and
+        c['lower_shadow'] < c['body'] * 0.5 and
+        not p1['is_bullish'] and p1['close'] < p2['close']):
+        patterns.append(('INVERTED_HAMMER', 'BUY', 18))
     
-    # Bullish Engulfing
-    if c_bull and not p1_bull and c_body > p1_body * 1.2 and c_close > p1_open and c_open < p1_close:
-        patterns.append(('BULLISH_ENGULFING', 'BUY', 20))
+    # === 3. SHOOTING STAR (Bearish Reversal) ===
+    # Критерии:
+    # - Малко тяло (body < 30% от range)
+    # - Дълга горна сенка (upper_shadow >= 2x body)
+    # - Малка или няма долна сенка (lower_shadow < 0.5x body)
+    # - След възходящо движение
+    if (c['body'] < c['range'] * 0.3 and
+        c['upper_shadow'] >= c['body'] * 2 and
+        c['lower_shadow'] < c['body'] * 0.5 and
+        p1['is_bullish'] and p1['close'] > p2['close']):
+        patterns.append(('SHOOTING_STAR', 'SELL', 20))
     
-    # Bearish Engulfing
-    if not c_bull and p1_bull and c_body > p1_body * 1.2 and c_close < p1_open and c_open > p1_close:
-        patterns.append(('BEARISH_ENGULFING', 'SELL', 20))
+    # === 4. BULLISH ENGULFING ===
+    # Критерии:
+    # - Предишна свещ е bearish, текуща е bullish
+    # - Тялото на текущата свещ погълва цялото тяло на предишната
+    # - Текущото тяло е >20% по-голямо
+    if (c['is_bullish'] and not p1['is_bullish'] and
+        c['body'] > p1['body'] * 1.2 and
+        c['close'] > p1['open'] and c['open'] < p1['close']):
+        patterns.append(('BULLISH_ENGULFING', 'BUY', 25))
     
-    # Doji (неутрално - обръщане)
-    if c_body < c_range * 0.1:
+    # === 5. BEARISH ENGULFING ===
+    # Критерии:
+    # - Предишна свещ е bullish, текуща е bearish
+    # - Тялото на текущата свещ погълва цялото тяло на предишната
+    # - Текущото тяло е >20% по-голямо
+    if (not c['is_bullish'] and p1['is_bullish'] and
+        c['body'] > p1['body'] * 1.2 and
+        c['close'] < p1['open'] and c['open'] > p1['close']):
+        patterns.append(('BEARISH_ENGULFING', 'SELL', 25))
+    
+    # === 6. MORNING STAR (Bullish Reversal) - 3 свещи ===
+    # Критерии:
+    # - 1-ва свещ: голяма bearish
+    # - 2-ра свещ: малко тяло (Doji или малка свещ)
+    # - 3-та свещ: голяма bullish, затваря над средата на 1-ва свещ
+    if (not p2['is_bullish'] and p2['body'] > p2['range'] * 0.5 and
+        p1['body'] < p1['range'] * 0.3 and
+        c['is_bullish'] and c['body'] > c['range'] * 0.5 and
+        c['close'] > (p2['open'] + p2['close']) / 2):
+        patterns.append(('MORNING_STAR', 'BUY', 30))
+    
+    # === 7. EVENING STAR (Bearish Reversal) - 3 свещи ===
+    # Критерии:
+    # - 1-ва свещ: голяма bullish
+    # - 2-ра свещ: малко тяло (Doji или малка свещ)
+    # - 3-та свещ: голяма bearish, затваря под средата на 1-ва свещ
+    if (p2['is_bullish'] and p2['body'] > p2['range'] * 0.5 and
+        p1['body'] < p1['range'] * 0.3 and
+        not c['is_bullish'] and c['body'] > c['range'] * 0.5 and
+        c['close'] < (p2['open'] + p2['close']) / 2):
+        patterns.append(('EVENING_STAR', 'SELL', 30))
+    
+    # === 8. DOJI (Indecision - Reversal Warning) ===
+    # Критерии:
+    # - Тялото е много малко (< 10% от range)
+    # - Може да бъде сигнал за обръщане
+    if c['body'] < c['range'] * 0.1 and c['range'] > 0:
         patterns.append(('DOJI', 'NEUTRAL', 10))
+    
+    # === 9. PIERCING LINE (Bullish Reversal) ===
+    # Критерии:
+    # - 1-ва свещ: bearish
+    # - 2-ра свещ: bullish, отваря под low на 1-ва, затваря над средата на 1-ва
+    if (not p1['is_bullish'] and c['is_bullish'] and
+        c['open'] < p1['low'] and
+        c['close'] > (p1['open'] + p1['close']) / 2 and
+        c['close'] < p1['open']):
+        patterns.append(('PIERCING_LINE', 'BUY', 22))
+    
+    # === 10. DARK CLOUD COVER (Bearish Reversal) ===
+    # Критерии:
+    # - 1-ва свещ: bullish
+    # - 2-ра свещ: bearish, отваря над high на 1-ва, затваря под средата на 1-ва
+    if (p1['is_bullish'] and not c['is_bullish'] and
+        c['open'] > p1['high'] and
+        c['close'] < (p1['open'] + p1['close']) / 2 and
+        c['close'] > p1['open']):
+        patterns.append(('DARK_CLOUD_COVER', 'SELL', 22))
     
     return patterns
 
@@ -2503,10 +2603,33 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
                 reasons.append("ICT: In OTE zone with FVG confluence")
                 confidence += 20
         
-        # === ENTRY RULE: All 3 must align ===
+        # === 7. SHADOW PATTERNS (Candlestick Analysis) ===
+        shadow_signal = None
+        shadow_confidence_boost = 0
+        candlestick_patterns = detect_candlestick_patterns(klines_data)
+        
+        for pattern_name, pattern_signal, pattern_confidence in candlestick_patterns:
+            if pattern_signal == 'BUY':
+                shadow_signal = 'BUY'
+                shadow_confidence_boost = max(shadow_confidence_boost, pattern_confidence)
+                reasons.append(f"🕯️ {pattern_name} (Bullish reversal)")
+            elif pattern_signal == 'SELL':
+                shadow_signal = 'SELL'
+                shadow_confidence_boost = max(shadow_confidence_boost, pattern_confidence)
+                reasons.append(f"🕯️ {pattern_name} (Bearish reversal)")
+            elif pattern_signal == 'NEUTRAL' and pattern_name == 'DOJI':
+                # Doji предупреждава за възможно обръщане - намали confidence
+                confidence -= 10
+                reasons.append(f"⚠️ DOJI (Indecision - възможно обръщане)")
+        
+        if shadow_confidence_boost > 0:
+            confidence += shadow_confidence_boost
+        
+        # === ENTRY RULE: All systems must align ===
         # 1. LuxAlgo S/R
         # 2. ICT Concepts (MSS/Liquidity/FVG)
-        # 3. Signal confirmation (RSI/MACD)
+        # 3. Shadow Patterns (Candlestick)
+        # 4. Signal confirmation (RSI extreme)
         
         luxalgo_says = sr_direction
         ict_says = ict_direction or fvg_signal
@@ -2527,7 +2650,7 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         # MACD/EMA REMOVED - Pure ICT strategy (Order Blocks, FVG, Liquidity only)
         
         # ===  FINAL SIGNAL DETERMINATION ===
-        # ICT-FIRST STRATEGY: ICT + S/R confluence (RSI only for extreme confirmation)
+        # ICT-FIRST STRATEGY: ICT + S/R + Shadow Patterns confluence (RSI only for extreme confirmation)
         vote_buy = 0
         vote_sell = 0
         
@@ -2537,6 +2660,10 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         if ict_says == 'BUY': vote_buy += 2  # ICT is primary
         if ict_says == 'SELL': vote_sell += 2
         
+        # Shadow Patterns (strong reversal confirmation)
+        if shadow_signal == 'BUY': vote_buy += 1
+        if shadow_signal == 'SELL': vote_sell += 1
+        
         # RSI extreme (confirmatory only)
         if traditional_signal == 'BUY': vote_buy += 1
         if traditional_signal == 'SELL': vote_sell += 1
@@ -2544,16 +2671,22 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         # Decision: ICT + S/R must align (at least 3 votes)
         if vote_buy >= 3:
             signal = 'BUY'
-            if vote_buy >= 5:
-                reasons.append("✅ PERFECT ICT + S/R + RSI SETUP: BUY")
+            if vote_buy >= 6:
+                reasons.append("✅ PERFECT: ICT + S/R + Shadow + RSI SETUP")
+                confidence += 35
+            elif vote_buy >= 5:
+                reasons.append("✅ PERFECT ICT + S/R + RSI/Shadow SETUP: BUY")
                 confidence += 30
             else:
                 reasons.append(f"✅ ICT + S/R ALIGNED: BUY")
                 confidence += 20
         elif vote_sell >= 3:
             signal = 'SELL'
-            if vote_sell >= 5:
-                reasons.append("✅ PERFECT ICT + S/R + RSI SETUP: SELL")
+            if vote_sell >= 6:
+                reasons.append("✅ PERFECT: ICT + S/R + Shadow + RSI SETUP")
+                confidence += 35
+            elif vote_sell >= 5:
+                reasons.append("✅ PERFECT ICT + S/R + RSI/Shadow SETUP: SELL")
                 confidence += 30
             else:
                 reasons.append(f"✅ ICT + S/R ALIGNED: SELL")
