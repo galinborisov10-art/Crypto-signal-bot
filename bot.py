@@ -843,13 +843,14 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                         ax1.axhline(y=liq_price, color='#1976d2', linestyle=':', linewidth=0.8, alpha=0.5, zorder=2)
                         ax1.text(1, liq_price, 'SSL', fontsize=5, color='#1976d2', weight='normal', ha='left', va='center')
             
-            # === FAIR VALUE GAPS (FVG) - ПРАВОЪГЪЛНИ ЗОНИ като Equilibrium ===
+            # === FAIR VALUE GAPS (FVG) - ТОЧНО НА МЯСТОТО КАТО TradingView ===
             fvg_data = luxalgo_ict_data.get('ict_fvg', [])
             if fvg_data:
                 for fvg in fvg_data[-5:]:  # Покажи последните 5 FVG
                     fvg_low = fvg.get('gap_low')
                     fvg_high = fvg.get('gap_high')
                     fvg_type = fvg.get('type', 'BULLISH')
+                    fvg_index = fvg.get('index', len(df)-10)  # Индекс къде е FVG
                     
                     if fvg_low and fvg_high:
                         # Изчисли сила на FVG (gap size %)
@@ -902,24 +903,42 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                             line_alpha = 0.7 if not is_filled else 0.4
                             label_suffix = ' Weak' if not is_filled else ''
                         
-                        # 1. Нарисувай ПРАВОЪГЪЛНА ЗОНА на FVG (от gap_low до gap_high)
-                        ax1.axhspan(fvg_low, fvg_high, color=fvg_color, alpha=alpha, zorder=2)
+                        # 1. Определи позицията на FVG box (ТОЧНО къде е появил)
+                        fvg_start_x = max(0, fvg_index)  # Започва от индекса на FVG
+                        fvg_end_x = len(df) - 1  # Продължава до края
+                        fvg_width = fvg_end_x - fvg_start_x
+                        fvg_height = fvg_high - fvg_low
                         
-                        # 2. Нарисувай горна граница на FVG зоната
-                        ax1.axhline(y=fvg_high, color=fvg_edge, linestyle=linestyle, linewidth=linewidth, alpha=line_alpha, zorder=3)
+                        # 2. Нарисувай FVG BOX (като TradingView)
+                        fvg_box = plt.Rectangle(
+                            (fvg_start_x, fvg_low),  # Долен ляв ъгъл
+                            fvg_width,  # Ширина
+                            fvg_height,  # Височина
+                            facecolor=fvg_color,
+                            edgecolor=fvg_edge,
+                            linewidth=linewidth,
+                            linestyle=linestyle,
+                            alpha=alpha,
+                            zorder=2
+                        )
+                        ax1.add_patch(fvg_box)
                         
-                        # 3. Нарисувай долна граница на FVG зоната
-                        ax1.axhline(y=fvg_low, color=fvg_edge, linestyle=linestyle, linewidth=linewidth, alpha=line_alpha, zorder=3)
+                        # 3. Горна и долна граница (ПЛЪТНИ линии в рамките на box)
+                        ax1.plot([fvg_start_x, fvg_end_x], [fvg_high, fvg_high], 
+                                color=fvg_edge, linestyle=linestyle, linewidth=linewidth, alpha=line_alpha, zorder=3)
+                        ax1.plot([fvg_start_x, fvg_end_x], [fvg_low, fvg_low], 
+                                color=fvg_edge, linestyle=linestyle, linewidth=linewidth, alpha=line_alpha, zorder=3)
                         
-                        # 4. СРЕДНА ЛИНИЯ на FVG (като EQ)
+                        # 4. СРЕДНА ЛИНИЯ (EQ) в рамките на box
                         fvg_mid = (fvg_low + fvg_high) / 2
-                        ax1.axhline(y=fvg_mid, color=fvg_edge, linestyle=':', linewidth=1.2, alpha=0.6, zorder=3)
+                        ax1.plot([fvg_start_x, fvg_end_x], [fvg_mid, fvg_mid], 
+                                color=fvg_edge, linestyle=':', linewidth=1.0, alpha=0.5, zorder=3)
                         
-                        # 5. ГОЛЯМ ВИДИМ ЕТИКЕТ "FVG" в средата на зоната с ДИАПАЗОН
-                        fvg_range_text = f"{fvg_label}{label_suffix}\n${fvg_low:.2f} - ${fvg_high:.2f}"
-                        ax1.text(len(df)-5, fvg_mid, fvg_range_text, 
+                        # 5. ЕТИКЕТ В НАЧАЛОТО на FVG (къде се е появил)
+                        fvg_label_text = f"{fvg_label}{label_suffix}"
+                        ax1.text(fvg_start_x + 1, fvg_mid, fvg_label_text, 
                                fontsize=7, color='white', weight='bold', ha='left', va='center',
-                               bbox=dict(boxstyle='round,pad=0.4', facecolor=fvg_edge, alpha=0.95, edgecolor='white', linewidth=1.5))
+                               bbox=dict(boxstyle='round,pad=0.3', facecolor=fvg_edge, alpha=0.9, edgecolor='white', linewidth=1.2))
             
             # === FIBONACCI LEVELS ===
             fib_data = luxalgo_ict_data.get('fibonacci_extension')
@@ -1001,9 +1020,16 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                 fontsize=20, color='#e0e0e0', alpha=0.3, ha='center', va='center',
                 rotation=0, weight='bold')
         
-        # Axis styling за бял фон - ПОКАЖИ ВСИЧКИ ЦЕНИ
+        # Axis styling за бял фон - ПОДРОБНИ ЦЕНИ
         ax1.tick_params(axis='x', colors='#666666', labelsize=8)
-        ax1.tick_params(axis='y', colors='#333333', labelsize=9, right=True, labelright=True)  # Показвай цени отдясно
+        ax1.tick_params(axis='y', colors='#333333', labelsize=9, right=True, labelright=True, 
+                       which='both')  # Показвай major И minor ticks
+        
+        # Добави MINOR TICKS за повече детайли на цените
+        from matplotlib.ticker import AutoMinorLocator
+        ax1.yaxis.set_minor_locator(AutoMinorLocator(5))  # 5 minor ticks между major
+        ax1.tick_params(axis='y', which='minor', right=True, labelright=False, length=3, color='#cccccc')
+        
         ax1.spines['bottom'].set_color('#cccccc')
         ax1.spines['top'].set_color('#cccccc')
         ax1.spines['left'].set_color('#cccccc')
