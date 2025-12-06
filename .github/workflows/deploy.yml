@@ -60,12 +60,40 @@ jobs:
             find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
             find . -type f -name "*.pyc" -delete 2>/dev/null || true
             find . -type f -name "*.pyo" -delete 2>/dev/null || true
+            echo "✅ Python cache изчистен"
+            
+            # Генерирай deployment info
+            echo "📋 Създаване на deployment info..."
+            COMMIT_SHA=$(git rev-parse --short HEAD)
+            VERSION=$(cat VERSION || echo "2.0")
+            TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            PTB_VERSION=$(source venv/bin/activate && pip show python-telegram-bot | grep Version | awk '{print $2}')
+            
+            cat > .deployment-info << DEPLOY
+{
+  "version": "$VERSION",
+  "last_deployed": "$TIMESTAMP",
+  "commit_sha": "$COMMIT_SHA",
+  "deployed_from": "github-actions",
+  "python_telegram_bot_version": "$PTB_VERSION"
+}
+DEPLOY
+            
+            echo "📋 Deployment Info:"
+            cat .deployment-info
             
             echo "🔄 Restarting bot service..."
             systemctl restart crypto-bot
             
             # Wait for service to start
             sleep 3
+            
+            # Run health check
+            echo "🔍 Running health check..."
+            if [ -f health-check.sh ]; then
+              chmod +x health-check.sh
+              ./health-check.sh
+            fi
             
             # Check if bot is running
             if systemctl is-active --quiet crypto-bot; then
@@ -77,14 +105,26 @@ jobs:
             fi
           EOF
       
+      - name: Get Deployment Info
+        id: deploy_info
+        run: |
+          VERSION=$(ssh -i ~/.ssh/deploy_key root@${{ secrets.SERVER_IP }} "cat /root/Crypto-signal-bot/VERSION 2>/dev/null || echo '2.0'")
+          COMMIT_SHA=$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+      
       - name: Send Success Notification
         if: success()
         run: |
+          VERSION="${{ steps.deploy_info.outputs.version }}"
+          COMMIT_SHA="${{ steps.deploy_info.outputs.commit_sha }}"
+          
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            MESSAGE="🌅 ДНЕВЕН AUTO-DEPLOY ЗАВЪРШЕН!%0A%0A✅ Файловете са обновени%0A✅ Ботът е рестартиран успешно%0A✅ ML моделът се преобучава%0A%0A⏰ $(date '+%H:%M:%S %d.%m.%Y')%0A%0A🎯 Статус: Всичко работи перфектно!"
+            MESSAGE="🌅 ДНЕВЕН AUTO-DEPLOY ЗАВЪРШЕН!%0A%0A📦 Версия: v${VERSION}%0A🔖 Commit: ${COMMIT_SHA}%0A✅ Файловете са обновени%0A✅ Ботът е рестартиран успешно%0A✅ ML модели са запазени%0A✅ Python cache изчистен%0A%0A⏰ $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
           else
-            MESSAGE="🚀 DEPLOY ЗАВЪРШЕН УСПЕШНО!%0A%0A✅ Файловете са обновени от GitHub%0A✅ Ботът е рестартиран и работи%0A✅ Промените са активни на сървъра%0A%0A⏰ Време: $(date '+%H:%M:%S %d.%m.%Y')%0A%0A🎯 Статус: Production ready!"
+            MESSAGE="🚀 DEPLOY ЗАВЪРШЕН УСПЕШНО!%0A%0A📦 Версия: v${VERSION}%0A🔖 Commit: ${COMMIT_SHA}%0A✅ Файловете са обновени от GitHub%0A✅ Ботът е рестартиран и работи%0A✅ Python cache изчистен%0A%0A⏰ $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
           fi
+          
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
             -d "text=${MESSAGE}" \
