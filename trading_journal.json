@@ -2,8 +2,8 @@
   "metadata": {
     "created": "2025-11-25",
     "version": "1.0",
-    "total_trades": 125,
-    "last_updated": "2025-12-02T09:43:02.958571"
+    "total_trades": 129,
+    "last_updated": "2025-12-05T12:27:32.030989"
   },
   "trades": [
     {
@@ -3645,6 +3645,102 @@
         "ma_50": 0.39659599999999995,
         "volume_ratio": 0.5992737702100454,
         "volatility": 1.569598470622619,
+        "trend": null,
+        "btc_correlation": null,
+        "sentiment": null
+      },
+      "notes": []
+    },
+    {
+      "id": 126,
+      "timestamp": "2025-12-05T12:26:54.877283",
+      "symbol": "XRPUSDT",
+      "timeframe": "4h",
+      "signal": "BUY",
+      "confidence": 75,
+      "entry_price": 2.0699,
+      "tp_price": 2.131997,
+      "sl_price": 2.028502,
+      "status": "PENDING",
+      "outcome": null,
+      "profit_loss_pct": null,
+      "closed_at": null,
+      "conditions": {
+        "rsi": 17.90808240887499,
+        "volume_ratio": 0.07298357860915214,
+        "volatility": 2.2516892136856557,
+        "trend": null,
+        "btc_correlation": null,
+        "sentiment": null
+      },
+      "notes": []
+    },
+    {
+      "id": 127,
+      "timestamp": "2025-12-05T12:26:56.226890",
+      "symbol": "SOLUSDT",
+      "timeframe": "4h",
+      "signal": "BUY",
+      "confidence": 65,
+      "entry_price": 136.67,
+      "tp_price": 140.77009999999999,
+      "sl_price": 133.9366,
+      "status": "PENDING",
+      "outcome": null,
+      "profit_loss_pct": null,
+      "closed_at": null,
+      "conditions": {
+        "rsi": 32.73691186216034,
+        "volume_ratio": 0.21649632284828707,
+        "volatility": 2.528933875300412,
+        "trend": null,
+        "btc_correlation": null,
+        "sentiment": null
+      },
+      "notes": []
+    },
+    {
+      "id": 128,
+      "timestamp": "2025-12-05T12:27:31.107403",
+      "symbol": "XRPUSDT",
+      "timeframe": "4h",
+      "signal": "BUY",
+      "confidence": 75,
+      "entry_price": 2.0697,
+      "tp_price": 2.131791,
+      "sl_price": 2.028306,
+      "status": "PENDING",
+      "outcome": null,
+      "profit_loss_pct": null,
+      "closed_at": null,
+      "conditions": {
+        "rsi": 17.821258593337063,
+        "volume_ratio": 0.07530294110948045,
+        "volatility": 2.2523824405004134,
+        "trend": null,
+        "btc_correlation": null,
+        "sentiment": null
+      },
+      "notes": []
+    },
+    {
+      "id": 129,
+      "timestamp": "2025-12-05T12:27:32.030964",
+      "symbol": "SOLUSDT",
+      "timeframe": "4h",
+      "signal": "BUY",
+      "confidence": 65,
+      "entry_price": 136.66,
+      "tp_price": 140.7598,
+      "sl_price": 133.9268,
+      "status": "PENDING",
+      "outcome": null,
+      "profit_loss_pct": null,
+      "closed_at": null,
+      "conditions": {
+        "rsi": 32.71523178807948,
+        "volume_ratio": 0.2172196457813401,
+        "volatility": 2.529283973701801,
         "trend": null,
         "btc_correlation": null,
         "sentiment": null

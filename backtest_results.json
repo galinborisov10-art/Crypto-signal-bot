@@ -1,0 +1,63 @@
+{
+  "backtests": [
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "period_days": 15,
+      "total_trades": 0,
+      "wins": 0,
+      "losses": 0,
+      "win_rate": 0,
+      "total_profit_pct": 0,
+      "avg_profit_per_trade": 0,
+      "timestamp": "2025-12-05T11:58:10.470751",
+      "trades": []
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "period_days": 15,
+      "total_trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "win_rate": 0.0,
+      "total_profit_pct": -1.2000000000000073,
+      "avg_profit_per_trade": -1.2000000000000073,
+      "timestamp": "2025-12-05T11:58:46.050264",
+      "trades": [
+        {
+          "timestamp": 1764216000000,
+          "signal": "SELL",
+          "entry_price": 91408.34,
+          "tp_price": 89123.13149999999,
+          "sl_price": 92505.24008,
+          "result": "LOSS",
+          "profit_pct": -1.2000000000000073
+        }
+      ]
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "period_days": 15,
+      "total_trades": 1,
+      "wins": 0,
+      "losses": 1,
+      "win_rate": 0.0,
+      "total_profit_pct": -1.2,
+      "avg_profit_per_trade": -1.2,
+      "timestamp": "2025-12-05T12:16:40.986382",
+      "trades": [
+        {
+          "timestamp": 1764230400000,
+          "signal": "SELL",
+          "entry_price": 91371.88,
+          "tp_price": 89087.583,
+          "sl_price": 92468.34256,
+          "result": "LOSS",
+          "profit_pct": -1.2
+        }
+      ]
+    }
+  ]
+}

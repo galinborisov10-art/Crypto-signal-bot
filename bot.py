@@ -7147,6 +7147,21 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         
         # ✅ Сигналът вече е валидиран по-рано, можем да го изпратим
         
+        # 📊 ЗАПИШИ СИГНАЛА В СТАТИСТИКАТА
+        try:
+            signal_id = record_signal(
+                symbol=symbol,
+                timeframe=timeframe,
+                signal_type=analysis['signal'],
+                confidence=best_confidence,
+                entry_price=price,
+                tp_price=analysis['tp'],
+                sl_price=analysis['sl']
+            )
+            logger.info(f"📊 AUTO-SIGNAL recorded to stats (ID: {signal_id})")
+        except Exception as e:
+            logger.error(f"❌ Stats recording error in auto-signal: {e}")
+        
         # 📝 АВТОМАТИЧНО ЛОГВАНЕ В JOURNAL - 24/7 събиране на данни
         if best_confidence >= 65:
             try:
