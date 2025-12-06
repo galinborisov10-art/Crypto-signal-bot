@@ -1142,6 +1142,51 @@
       "timestamp": "2025-12-05T12:27:56.625549",
       "total_signals": 0,
       "message": "\u041d\u044f\u043c\u0430 \u0441\u0438\u0433\u043d\u0430\u043b\u0438 \u0437\u0430 04.12.2025"
+    },
+    {
+      "date": "2025-12-05",
+      "timestamp": "2025-12-06T08:24:43.044809",
+      "total_signals": 4,
+      "buy_signals": 4,
+      "sell_signals": 0,
+      "active_signals": 0,
+      "completed_signals": 0,
+      "wins": 0,
+      "losses": 0,
+      "breakeven": 0,
+      "accuracy": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "avg_win": 0,
+      "avg_loss": 0,
+      "best_trade": null,
+      "worst_trade": null,
+      "profit_factor": 0,
+      "avg_confidence": 70.0,
+      "confidence_accuracy": {},
+      "symbols_traded": [
+        "XRPUSDT",
+        "SOLUSDT"
+      ],
+      "symbols_stats": {
+        "XRPUSDT": {
+          "total": 2,
+          "completed": 0,
+          "wins": 0,
+          "accuracy": 0,
+          "profit": 0
+        },
+        "SOLUSDT": {
+          "total": 2,
+          "completed": 0,
+          "wins": 0,
+          "accuracy": 0,
+          "profit": 0
+        }
+      },
+      "ml_signals_count": 0,
+      "ml_completed": 0,
+      "ml_accuracy": 0
     }
   ]
 }

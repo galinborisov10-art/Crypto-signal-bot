@@ -10343,8 +10343,67 @@ def main():
                 minutes=15  # Проверява на всеки 15 минути
             )
             
+            # 📊 АВТОМАТИЧЕН СЕДМИЧЕН BACKTEST - всеки понеделник в 09:00 UTC (11:00 BG)
+            if BACKTEST_AVAILABLE:
+                async def weekly_backtest_wrapper():
+                    """Wrapper за автоматичен седмичен backtest"""
+                    try:
+                        logger.info("📊 Starting weekly automated backtest...")
+                        
+                        # Backtest на основните монети
+                        symbols_to_test = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+                        
+                        for symbol in symbols_to_test:
+                            try:
+                                results = await backtest_engine.run_backtest(symbol, '4h', None, 30)
+                                
+                                if results:
+                                    # Изпрати резултати към owner
+                                    message = f"""📊 <b>СЕДМИЧЕН AUTO-BACKTEST</b>
+
+💰 <b>Символ:</b> {results['symbol']}
+⏰ <b>Таймфрейм:</b> {results['timeframe']}
+📅 <b>Период:</b> {results['period_days']} дни
+
+<b>Резултати:</b>
+   Общо trades: {results['total_trades']}
+   🟢 Печеливши: {results['wins']}
+   🔴 Загубени: {results['losses']}
+   🎯 Win Rate: {results['win_rate']:.1f}%
+   💰 Обща печалба: {results['total_profit_pct']:+.2f}%
+   📊 Средно на trade: {results['avg_profit_per_trade']:+.2f}%
+
+⚠️ <i>Симулация базирана на исторически данни</i>
+"""
+                                    
+                                    await application.bot.send_message(
+                                        chat_id=OWNER_CHAT_ID,
+                                        text=message,
+                                        parse_mode='HTML',
+                                        disable_notification=True
+                                    )
+                                    logger.info(f"✅ Weekly backtest sent for {symbol}")
+                                    
+                                    # Пауза между backtests
+                                    await asyncio.sleep(5)
+                                    
+                            except Exception as e:
+                                logger.error(f"❌ Weekly backtest error for {symbol}: {e}")
+                                
+                    except Exception as e:
+                        logger.error(f"❌ Weekly backtest wrapper error: {e}")
+                
+                scheduler.add_job(
+                    weekly_backtest_wrapper,
+                    'cron',
+                    day_of_week='mon',  # Понеделник
+                    hour=9,  # 11:00 BG = 09:00 UTC
+                    minute=0
+                )
+                logger.info("✅ Weekly automated backtest scheduled (Mondays at 11:00 BG time)")
+            
             scheduler.start()
-            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING")
+            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST")
         
         async def enable_auto_alerts():
             """Автоматично активиране на alerts за owner при стартиране"""
