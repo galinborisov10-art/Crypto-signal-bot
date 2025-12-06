@@ -53,8 +53,12 @@ pip install -r requirements.txt
 
 # Validate dependencies
 echo "✅ Validating dependencies..."
-PTB_VERSION=$(pip show python-telegram-bot | grep Version | awk '{print $2}')
-echo "  📦 python-telegram-bot: $PTB_VERSION"
+PTB_VERSION=$(python3 -m pip show python-telegram-bot 2>/dev/null | grep Version | awk '{print $2}')
+if [ -n "$PTB_VERSION" ]; then
+  echo "  📦 python-telegram-bot: $PTB_VERSION"
+else
+  echo "  ⚠️  python-telegram-bot installation check skipped"
+fi
 
 # Clear Python cache
 echo "🗑️  Clearing Python cache..."

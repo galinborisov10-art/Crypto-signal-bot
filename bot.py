@@ -4076,19 +4076,21 @@ ORDER_BLOCKS_GUIDE.md
 async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показва текущата версия на бота"""
     try:
-        # Read VERSION file
+        # Read VERSION file from BASE_PATH
         version = "2.0"  # Default
+        version_file = os.path.join(BASE_PATH, 'VERSION')
         try:
-            with open('VERSION', 'r') as f:
+            with open(version_file, 'r') as f:
                 version = f.read().strip()
         except FileNotFoundError:
             pass
         
-        # Read deployment info
+        # Read deployment info from BASE_PATH
         deployment_info = {}
+        deployment_file = os.path.join(BASE_PATH, '.deployment-info')
         try:
-            if os.path.exists('.deployment-info'):
-                with open('.deployment-info', 'r') as f:
+            if os.path.exists(deployment_file):
+                with open(deployment_file, 'r') as f:
                     deployment_info = json.load(f)
         except Exception:
             pass
@@ -4097,8 +4099,7 @@ async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import telegram
         ptb_version = telegram.__version__
         
-        # Get Python version
-        import sys
+        # Get Python version (sys is already imported at the top)
         python_version = sys.version.split()[0]
         
         message = f"""
