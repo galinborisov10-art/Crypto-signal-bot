@@ -55,6 +55,12 @@ jobs:
             
             echo "✅ All files updated from GitHub!"
             
+            # Изтрий Python cache файлове (критично!)
+            echo "🗑️ Изтриване на Python cache..."
+            find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+            find . -type f -name "*.pyc" -delete 2>/dev/null || true
+            find . -type f -name "*.pyo" -delete 2>/dev/null || true
+            
             echo "🔄 Restarting bot service..."
             systemctl restart crypto-bot
             
