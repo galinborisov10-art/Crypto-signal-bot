@@ -5367,6 +5367,18 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sl_price=sl_price
     )
     
+    # 🎯 ДОБАВИ СИГНАЛА ЗА TRACKING (80% alert, TP/SL monitoring)
+    add_signal_to_tracking(
+        symbol=symbol,
+        signal_type=analysis['signal'],
+        entry_price=price,
+        tp_price=tp_price,
+        sl_price=sl_price,
+        confidence=final_confidence,
+        timeframe=timeframe,
+        timestamp=datetime.now()
+    )
+    
     # 📝 ML Journal - запиши ВСЕКИ сигнал за ML обучение (не само good trades)
     # Подготви analysis_data за ML журнала (pure ICT strategy)
     analysis_data = {
