@@ -3952,6 +3952,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <b>1. Основни команди:</b>
 /start - Стартиране на бота
 /help - Тази помощна информация
+/version или /v - Информация за версията
 /market - Преглед на пазара
 
 <b>2. Сигнали:</b>
@@ -4070,6 +4071,63 @@ ORDER_BLOCKS_GUIDE.md
 Винаги правете собствено проучване (DYOR).
 """
     await update.message.reply_text(help_text, parse_mode='HTML')
+
+
+async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показва текущата версия на бота"""
+    try:
+        # Read VERSION file
+        version = "2.0"  # Default
+        try:
+            with open('VERSION', 'r') as f:
+                version = f.read().strip()
+        except FileNotFoundError:
+            pass
+        
+        # Read deployment info
+        deployment_info = {}
+        try:
+            if os.path.exists('.deployment-info'):
+                with open('.deployment-info', 'r') as f:
+                    deployment_info = json.load(f)
+        except Exception:
+            pass
+        
+        # Get python-telegram-bot version
+        import telegram
+        ptb_version = telegram.__version__
+        
+        # Get Python version
+        import sys
+        python_version = sys.version.split()[0]
+        
+        message = f"""
+🤖 <b>CRYPTO SIGNAL BOT - VERSION INFO</b>
+
+📦 <b>Bot Version:</b> v{version}
+🐍 <b>Python:</b> {python_version}
+📡 <b>python-telegram-bot:</b> {ptb_version}
+
+"""
+        
+        if deployment_info:
+            message += f"""
+📊 <b>Deployment Info:</b>
+🕐 <b>Last Deploy:</b> {deployment_info.get('last_deployed', 'N/A')}
+🔖 <b>Commit SHA:</b> {deployment_info.get('commit_sha', 'N/A')}
+🚀 <b>Deployed From:</b> {deployment_info.get('deployed_from', 'N/A')}
+"""
+        
+        message += f"""
+✅ <b>Status:</b> Operational
+🔄 <b>Auto-Deploy:</b> Active (Daily at 04:00 BG time)
+"""
+        
+        await update.message.reply_text(message, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Error in version_cmd: {e}")
+        await update.message.reply_text(f"❌ Error getting version: {str(e)}")
 
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -10139,6 +10197,8 @@ def main():
     # /deploy е премахнат - GitHub Actions прави автоматичен deploy при всеки push
     app.add_handler(CommandHandler("ml_menu", ml_menu_cmd))  # 📚 ML Анализ меню
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("version", version_cmd))  # Bot version info
+    app.add_handler(CommandHandler("v", version_cmd))  # Short alias for version
     app.add_handler(CommandHandler("market", market_cmd))
     app.add_handler(CommandHandler("signal", signal_cmd))
     app.add_handler(CommandHandler("news", news_cmd))
