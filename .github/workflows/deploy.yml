@@ -76,14 +76,9 @@ jobs:
             fi
             PTB_VERSION=${PTB_VERSION:-"unknown"}
             
-            # Create deployment info JSON
-            echo "{" > .deployment-info
-            echo "  \"version\": \"$VERSION\"," >> .deployment-info
-            echo "  \"last_deployed\": \"$TIMESTAMP\"," >> .deployment-info
-            echo "  \"commit_sha\": \"$COMMIT_SHA\"," >> .deployment-info
-            echo "  \"deployed_from\": \"github-actions\"," >> .deployment-info
-            echo "  \"python_telegram_bot_version\": \"$PTB_VERSION\"" >> .deployment-info
-            echo "}" >> .deployment-info
+            # Create deployment info JSON using printf for safer string handling
+            printf '{\n  "version": "%s",\n  "last_deployed": "%s",\n  "commit_sha": "%s",\n  "deployed_from": "github-actions",\n  "python_telegram_bot_version": "%s"\n}\n' \
+              "$VERSION" "$TIMESTAMP" "$COMMIT_SHA" "$PTB_VERSION" > .deployment-info
             
             echo "📋 Deployment Info:"
             cat .deployment-info
