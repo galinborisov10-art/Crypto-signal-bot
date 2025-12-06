@@ -10346,50 +10346,90 @@ def main():
             # 📊 АВТОМАТИЧЕН СЕДМИЧЕН BACKTEST - всеки понеделник в 09:00 UTC (11:00 BG)
             if BACKTEST_AVAILABLE:
                 async def weekly_backtest_wrapper():
-                    """Wrapper за автоматичен седмичен backtest"""
+                    """Wrapper за автоматичен седмичен backtest - ВСИЧКИ монети и таймфрейми"""
                     try:
-                        logger.info("📊 Starting weekly automated backtest...")
+                        logger.info("📊 Starting weekly automated backtest for ALL coins and timeframes...")
                         
-                        # Backtest на основните монети
-                        symbols_to_test = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+                        # ВСИЧКИ монети от SYMBOLS
+                        symbols_to_test = list(SYMBOLS.values())  # BTCUSDT, ETHUSDT, XRPUSDT, SOLUSDT, BNBUSDT, ADAUSDT
+                        
+                        # ВСИЧКИ основни таймфрейми
+                        timeframes_to_test = ['1h', '4h', '1d']
+                        
+                        # Събиране на резултати за общ отчет
+                        all_results = []
                         
                         for symbol in symbols_to_test:
-                            try:
-                                results = await backtest_engine.run_backtest(symbol, '4h', None, 30)
-                                
-                                if results:
-                                    # Изпрати резултати към owner
-                                    message = f"""📊 <b>СЕДМИЧЕН AUTO-BACKTEST</b>
+                            for timeframe in timeframes_to_test:
+                                try:
+                                    logger.info(f"📊 Backtesting {symbol} on {timeframe}...")
+                                    
+                                    results = await backtest_engine.run_backtest(symbol, timeframe, None, 30)
+                                    
+                                    if results:
+                                        all_results.append(results)
+                                        logger.info(f"✅ {symbol} {timeframe}: {results['win_rate']:.1f}% win rate")
+                                        
+                                        # Кратка пауза между backtests
+                                        await asyncio.sleep(2)
+                                        
+                                except Exception as e:
+                                    logger.error(f"❌ Backtest error for {symbol} {timeframe}: {e}")
+                        
+                        # Изпрати обобщен отчет
+                        if all_results:
+                            # Намери най-добрите резултати
+                            best_winrate = max(all_results, key=lambda x: x['win_rate'])
+                            best_profit = max(all_results, key=lambda x: x['total_profit_pct'])
+                            
+                            # Средни стойности
+                            avg_winrate = sum(r['win_rate'] for r in all_results) / len(all_results)
+                            avg_profit = sum(r['total_profit_pct'] for r in all_results) / len(all_results)
+                            total_trades = sum(r['total_trades'] for r in all_results)
+                            
+                            summary = f"""📊 <b>СЕДМИЧЕН AUTO-BACKTEST РЕЗУЛТАТИ</b>
 
-💰 <b>Символ:</b> {results['symbol']}
-⏰ <b>Таймфрейм:</b> {results['timeframe']}
-📅 <b>Период:</b> {results['period_days']} дни
+🎯 <b>ТЕСТВАНИ:</b>
+   • Монети: {len(symbols_to_test)} ({', '.join([s.replace('USDT', '') for s in symbols_to_test])})
+   • Таймфрейми: {len(timeframes_to_test)} (1h, 4h, 1d)
+   • Общо комбинации: {len(all_results)}
+   • Общо симулирани trades: {total_trades}
 
-<b>Резултати:</b>
-   Общо trades: {results['total_trades']}
-   🟢 Печеливши: {results['wins']}
-   🔴 Загубени: {results['losses']}
-   🎯 Win Rate: {results['win_rate']:.1f}%
-   💰 Обща печалба: {results['total_profit_pct']:+.2f}%
-   📊 Средно на trade: {results['avg_profit_per_trade']:+.2f}%
+📈 <b>СРЕДНИ РЕЗУЛТАТИ:</b>
+   🎯 Среден Win Rate: {avg_winrate:.1f}%
+   💰 Среден Profit: {avg_profit:+.2f}%
 
+🏆 <b>НАЙ-ДОБРИ КОМБИНАЦИИ:</b>
+
+<b>По Win Rate:</b>
+   {best_winrate['symbol']} ({best_winrate['timeframe']})
+   🎯 Win Rate: {best_winrate['win_rate']:.1f}%
+   💰 Profit: {best_winrate['total_profit_pct']:+.2f}%
+   📊 Trades: {best_winrate['total_trades']}
+
+<b>По Profit:</b>
+   {best_profit['symbol']} ({best_profit['timeframe']})
+   💰 Profit: {best_profit['total_profit_pct']:+.2f}%
+   🎯 Win Rate: {best_profit['win_rate']:.1f}%
+   📊 Trades: {best_profit['total_trades']}
+
+📅 <b>Период:</b> 30 дни история
 ⚠️ <i>Симулация базирана на исторически данни</i>
+
+💡 <b>Използвай:</b> <code>/backtest {best_profit['symbol']} {best_profit['timeframe']} 30</code>
+за детайли на най-добрата комбинация
 """
-                                    
-                                    await application.bot.send_message(
-                                        chat_id=OWNER_CHAT_ID,
-                                        text=message,
-                                        parse_mode='HTML',
-                                        disable_notification=True
-                                    )
-                                    logger.info(f"✅ Weekly backtest sent for {symbol}")
-                                    
-                                    # Пауза между backtests
-                                    await asyncio.sleep(5)
-                                    
-                            except Exception as e:
-                                logger.error(f"❌ Weekly backtest error for {symbol}: {e}")
-                                
+                            
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=summary,
+                                parse_mode='HTML',
+                                disable_notification=True
+                            )
+                            logger.info(f"✅ Weekly backtest summary sent: {len(all_results)} combinations tested")
+                        else:
+                            logger.warning("⚠️ No backtest results to send")
+                            
                     except Exception as e:
                         logger.error(f"❌ Weekly backtest wrapper error: {e}")
                 
@@ -10400,7 +10440,7 @@ def main():
                     hour=9,  # 11:00 BG = 09:00 UTC
                     minute=0
                 )
-                logger.info("✅ Weekly automated backtest scheduled (Mondays at 11:00 BG time)")
+                logger.info("✅ Weekly automated backtest scheduled (Mondays at 11:00 BG time) - ALL COINS & TIMEFRAMES")
             
             scheduler.start()
             logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST")
