@@ -1,5 +1,5 @@
 {
-  "total_signals": 32,
+  "total_signals": 36,
   "by_symbol": {
     "BTCUSDT": {
       "count": 26,
@@ -7,13 +7,18 @@
       "SELL": 10
     },
     "XRPUSDT": {
-      "count": 5,
-      "BUY": 0,
+      "count": 7,
+      "BUY": 2,
       "SELL": 5
     },
     "ETHUSDT": {
       "count": 1,
       "BUY": 1,
+      "SELL": 0
+    },
+    "SOLUSDT": {
+      "count": 2,
+      "BUY": 2,
       "SELL": 0
     }
   },
@@ -22,7 +27,7 @@
       "count": 5
     },
     "4h": {
-      "count": 13
+      "count": 17
     },
     "5m": {
       "count": 3
@@ -48,10 +53,10 @@
       "count": 7
     },
     "60-69": {
-      "count": 8
+      "count": 10
     },
     "70-79": {
-      "count": 12
+      "count": 14
     },
     "90-99": {
       "count": 5
@@ -745,6 +750,58 @@
       "entry_price": 87343.43,
       "tp_price": 89989.935929,
       "sl_price": 86330.24621199998
+    },
+    {
+      "symbol": "XRPUSDT",
+      "timeframe": "4h",
+      "type": "BUY",
+      "confidence": 75,
+      "timestamp": "2025-12-05T12:26:54.877283",
+      "entry_price": 2.0699,
+      "tp_price": 2.131997,
+      "sl_price": 2.028502,
+      "status": "PENDING",
+      "result": null,
+      "profit_pct": null
+    },
+    {
+      "symbol": "SOLUSDT",
+      "timeframe": "4h",
+      "type": "BUY",
+      "confidence": 65,
+      "timestamp": "2025-12-05T12:26:56.226890",
+      "entry_price": 136.67,
+      "tp_price": 140.77009999999999,
+      "sl_price": 133.9366,
+      "status": "PENDING",
+      "result": null,
+      "profit_pct": null
+    },
+    {
+      "symbol": "XRPUSDT",
+      "timeframe": "4h",
+      "type": "BUY",
+      "confidence": 75,
+      "timestamp": "2025-12-05T12:27:31.107403",
+      "entry_price": 2.0697,
+      "tp_price": 2.131791,
+      "sl_price": 2.028306,
+      "status": "PENDING",
+      "result": null,
+      "profit_pct": null
+    },
+    {
+      "symbol": "SOLUSDT",
+      "timeframe": "4h",
+      "type": "BUY",
+      "confidence": 65,
+      "timestamp": "2025-12-05T12:27:32.030964",
+      "entry_price": 136.66,
+      "tp_price": 140.7598,
+      "sl_price": 133.9268,
+      "status": "PENDING",
+      "result": null,
+      "profit_pct": null
     }
   ]
 }
