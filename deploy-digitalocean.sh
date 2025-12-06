@@ -51,6 +51,22 @@ echo "📚 Installing dependencies..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
+# Validate dependencies
+echo "✅ Validating dependencies..."
+PTB_VERSION=$(python3 -m pip show python-telegram-bot 2>/dev/null | grep Version | awk '{print $2}')
+if [ -n "$PTB_VERSION" ]; then
+  echo "  📦 python-telegram-bot: $PTB_VERSION"
+else
+  echo "  ⚠️  python-telegram-bot installation check skipped"
+fi
+
+# Clear Python cache
+echo "🗑️  Clearing Python cache..."
+find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find . -type f -name "*.pyc" -delete 2>/dev/null || true
+find . -type f -name "*.pyo" -delete 2>/dev/null || true
+echo "  ✅ Python cache cleared"
+
 # Create systemd service
 echo "⚙️  Creating systemd service..."
 cat > /etc/systemd/system/crypto-bot.service << 'EOF'
@@ -81,11 +97,24 @@ echo "🚀 Starting bot service..."
 systemctl enable crypto-bot
 systemctl start crypto-bot
 
+# Wait for service to start
+sleep 3
+
 # Show status
 echo ""
 echo "✅ Deployment complete!"
 echo ""
 systemctl status crypto-bot --no-pager
+
+# Verify deployment with health check
+echo ""
+echo "🔍 Running health check..."
+if [ -f health-check.sh ]; then
+  chmod +x health-check.sh
+  ./health-check.sh
+else
+  echo "⚠️  Health check script not found, skipping validation"
+fi
 
 echo ""
 echo "📋 Useful commands:"

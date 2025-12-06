@@ -1,7 +1,7 @@
 # 🤖 Crypto Signal Bot - Professional Edition
 
 **Версия:** 2.0  
-**Последна актуализация:** 23 Ноември 2025  
+**Последна актуализация:** 06 Декември 2025  
 **Автор:** galinborisov10-art
 
 ---
@@ -39,10 +39,10 @@ source .venv/bin/activate  # Linux/Mac
 
 ### 3. Инсталирай зависимости:
 ```bash
-pip install python-telegram-bot==20.7
-pip install requests matplotlib mplfinance pandas numpy
-pip install deep-translator apscheduler
+pip install -r requirements.txt
 ```
+
+⚠️ **ВАЖНО:** ВИНАГИ използвай `pip install -r requirements.txt` за гарантиране на правилните версии на всички зависимости!
 
 ### 4. Конфигурирай bot token:
 - Отвори `admin/credentials.json`
