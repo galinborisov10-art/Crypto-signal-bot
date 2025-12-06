@@ -69,15 +69,14 @@ jobs:
             TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
             PTB_VERSION=$(source venv/bin/activate && pip show python-telegram-bot | grep Version | awk '{print $2}')
             
-            cat > .deployment-info << DEPLOY
-{
-  "version": "$VERSION",
-  "last_deployed": "$TIMESTAMP",
-  "commit_sha": "$COMMIT_SHA",
-  "deployed_from": "github-actions",
-  "python_telegram_bot_version": "$PTB_VERSION"
-}
-DEPLOY
+            # Create deployment info JSON
+            echo "{" > .deployment-info
+            echo "  \"version\": \"$VERSION\"," >> .deployment-info
+            echo "  \"last_deployed\": \"$TIMESTAMP\"," >> .deployment-info
+            echo "  \"commit_sha\": \"$COMMIT_SHA\"," >> .deployment-info
+            echo "  \"deployed_from\": \"github-actions\"," >> .deployment-info
+            echo "  \"python_telegram_bot_version\": \"$PTB_VERSION\"" >> .deployment-info
+            echo "}" >> .deployment-info
             
             echo "📋 Deployment Info:"
             cat .deployment-info
