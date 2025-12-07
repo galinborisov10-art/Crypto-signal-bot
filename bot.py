@@ -8056,7 +8056,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 except (BadRequest, TimedOut, NetworkError) as send_error:
                     logger.error(f"Failed to send fallback message: {send_error}")
-                    # Якщо і це не вийшло, просто продовжуємо - головне query.answer() вже викликано
+                    # Ако и това не се получи, просто продължаваме - важното е, че query.answer() вече е извикан
             
             # Вземи настройките
             settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
