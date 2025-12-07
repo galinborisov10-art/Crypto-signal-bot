@@ -7956,7 +7956,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔔 Alerts - Автоматични сигнали
 ℹ️ Помощ - Пълна документация
 """
-        await query.message.edit_text(welcome_text, parse_mode='HTML')
+        await query.edit_message_text(welcome_text, parse_mode='HTML')
         return
     
     # Връщане към менюто за избор на валута
