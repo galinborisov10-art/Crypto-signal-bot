@@ -33,21 +33,15 @@ class MLTradingEngine:
         self.load_model()
     
     def extract_features(self, analysis):
-        """Извлича features от анализа за ML"""
+        """Извлича features от анализа за ML (6 features - match bot.py)"""
         try:
             features = [
-                analysis.get('rsi', 50),
-                analysis.get('ma_20', 0),
-                analysis.get('ma_50', 0),
-                analysis.get('volume_ratio', 1),
-                analysis.get('price_position', 50),
-                analysis.get('volatility_score', 5),
-                analysis.get('trend_strength', 0),
-                analysis.get('btc_correlation', 0),
-                analysis.get('order_book_pressure', 0),
-                analysis.get('sentiment_score', 0),
-                analysis.get('change_24h', 0),
-                analysis.get('high_low_range', 0),
+                analysis.get('rsi', 50),                    # 1
+                analysis.get('price_change_pct', 0),        # 2
+                analysis.get('volume_ratio', 1),            # 3
+                analysis.get('volatility', 5),              # 4
+                analysis.get('bb_position', 0.5),           # 5
+                analysis.get('ict_confidence', 0.5),        # 6
             ]
             return np.array(features).reshape(1, -1)
         except Exception as e:
@@ -173,13 +167,14 @@ class MLTradingEngine:
                 
                 conditions = trade.get('conditions', {})
                 
-                # Извлечи features (само ICT-compatible)
+                # Извлечи features (6 features - matching bot.py)
                 features = [
-                    conditions.get('rsi', 50),
-                    conditions.get('volume_ratio', 1),
-                    conditions.get('volatility', 5),
-                    conditions.get('btc_correlation', 0),
-                    trade.get('confidence', 50),
+                    conditions.get('rsi', 50),                    # 1
+                    conditions.get('price_change_pct', 0),        # 2
+                    conditions.get('volume_ratio', 1),            # 3
+                    conditions.get('volatility', 5),              # 4
+                    conditions.get('bb_position', 0.5),           # 5
+                    conditions.get('ict_confidence', 0.5),        # 6
                 ]
                 
                 X.append(features)
