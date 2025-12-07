@@ -8033,15 +8033,25 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             timeframe = parts[1]
             logger.info(f"Processing signal for {symbol} on {timeframe}")
             
-            # Изтрий предишното съобщение
-            await query.message.delete()
-            
-            # Изпрати съобщение че анализира
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"🔍 Анализирам {symbol} на {timeframe}...",
-                parse_mode='HTML'
-            )
+            # Редактирай съобщението вместо да го изтриваш (по-надеждно)
+            try:
+                await query.edit_message_text(
+                    text=f"🔍 Анализирам {symbol} на {timeframe}...",
+                    parse_mode='HTML'
+                )
+            except Exception as edit_error:
+                # Ако редактирането се провали, изтрий и изпрати ново съобщение
+                logger.warning(f"Failed to edit message, deleting instead: {edit_error}")
+                try:
+                    await query.message.delete()
+                except Exception as delete_error:
+                    logger.warning(f"Failed to delete message: {delete_error}")
+                
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"🔍 Анализирам {symbol} на {timeframe}...",
+                    parse_mode='HTML'
+                )
             
             # Вземи настройките
             settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
