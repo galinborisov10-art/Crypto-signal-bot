@@ -41,3 +41,16 @@ Thumbs.db
 # Добави ML модел файлове в gitignore
 ml_model.pkl
 *.pkl
+
+# ML и Stats файлове (не трябва да се commit-ват)
+bot_stats.json
+bot_stats.json.backup
+backtest_results.json
+daily_reports. json
+trading_journal.json
+active_auto_signals.json
+
+# ML model файлове
+ml_model.pkl
+ml_scaler.pkl
+*.pkl
