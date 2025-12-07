@@ -199,6 +199,11 @@ class MLTradingEngine:
                     sentiment = conditions.get('sentiment', {})
                     if isinstance(sentiment, dict):
                         sentiment_confidence = sentiment.get('confidence', 0)
+                        # If sentiment contradicts signal, negate confidence (match ml_predictor.py)
+                        sentiment_type = sentiment.get('sentiment')
+                        signal_type = trade.get('signal')
+                        if sentiment_type and signal_type and sentiment_type != signal_type:
+                            sentiment_confidence = -sentiment_confidence
                 
                 # Default to 0 if still None
                 if sentiment_confidence is None:
