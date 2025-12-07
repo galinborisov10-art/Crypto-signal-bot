@@ -173,20 +173,25 @@ class MLTradingEngine:
                 
                 conditions = trade.get('conditions', {})
                 
+                # Get entry price once
+                entry_price = trade.get('entry_price', 1)
+                
                 # Calculate normalized MA values if needed (match ml_predictor.py logic)
-                ma_20_norm = conditions.get('ma_20_norm', 0)
-                ma_50_norm = conditions.get('ma_50_norm', 0)
+                ma_20_norm = conditions.get('ma_20_norm')
+                ma_50_norm = conditions.get('ma_50_norm')
                 
                 # If normalized values not stored, calculate from raw values
-                if ma_20_norm == 0 and 'ma_20' in conditions:
-                    entry_price = trade.get('entry_price', 1)
+                if ma_20_norm is None and 'ma_20' in conditions:
                     ma_20 = conditions.get('ma_20', 0)
                     ma_20_norm = (ma_20 / entry_price - 1) * 100 if ma_20 > 0 and entry_price > 0 else 0
+                elif ma_20_norm is None:
+                    ma_20_norm = 0
                 
-                if ma_50_norm == 0 and 'ma_50' in conditions:
-                    entry_price = trade.get('entry_price', 1)
+                if ma_50_norm is None and 'ma_50' in conditions:
                     ma_50 = conditions.get('ma_50', 0)
                     ma_50_norm = (ma_50 / entry_price - 1) * 100 if ma_50 > 0 and entry_price > 0 else 0
+                elif ma_50_norm is None:
+                    ma_50_norm = 0
                 
                 # Extract sentiment confidence
                 sentiment_confidence = conditions.get('sentiment_confidence')
