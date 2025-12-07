@@ -7,6 +7,7 @@ import gc
 from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
+from telegram.error import BadRequest, TimedOut, NetworkError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import matplotlib
 matplotlib.use('Agg')  # Използвай non-GUI backend
@@ -8039,19 +8040,23 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=f"🔍 Анализирам {symbol} на {timeframe}...",
                     parse_mode='HTML'
                 )
-            except Exception as edit_error:
+            except (BadRequest, TimedOut, NetworkError) as edit_error:
                 # Ако редактирането се провали, изтрий и изпрати ново съобщение
-                logger.warning(f"Failed to edit message, deleting instead: {edit_error}")
+                logger.warning(f"Failed to edit message, falling back to delete+send: {edit_error}")
                 try:
                     await query.message.delete()
-                except Exception as delete_error:
+                except (BadRequest, TimedOut, NetworkError) as delete_error:
                     logger.warning(f"Failed to delete message: {delete_error}")
                 
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f"🔍 Анализирам {symbol} на {timeframe}...",
-                    parse_mode='HTML'
-                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"🔍 Анализирам {symbol} на {timeframe}...",
+                        parse_mode='HTML'
+                    )
+                except (BadRequest, TimedOut, NetworkError) as send_error:
+                    logger.error(f"Failed to send fallback message: {send_error}")
+                    # Якщо і це не вийшло, просто продовжуємо - головне query.answer() вже викликано
             
             # Вземи настройките
             settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
