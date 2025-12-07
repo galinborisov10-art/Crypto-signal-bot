@@ -215,11 +215,11 @@ class MLTradingEngine:
             accuracy = self.model.score(X_scaled, y)
             
             print(f"✅ ML Model trained successfully!")
-            print(f"📊 Samples: {len(data['samples'])}")
+            print(f"📊 Samples: {len(X)}")
             print(f"🎯 Training accuracy: {accuracy*100:.1f}%")
             
             # Адаптивно увеличаване на ML weight
-            self.adjust_ml_weight(len(data['samples']), accuracy)
+            self.adjust_ml_weight(len(X), accuracy)
             
             return True
             
