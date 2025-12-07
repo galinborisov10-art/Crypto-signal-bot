@@ -33,18 +33,15 @@ class MLTradingEngine:
         self.load_model()
     
     def extract_features(self, analysis):
-        """Извлича features от анализа за ML (8 features - match train_model)"""
+        """Извлича features от анализа за ML (6 features - match bot.py)"""
         try:
-            # Extract features matching train_model() exactly
             features = [
                 analysis.get('rsi', 50),                    # 1
-                analysis.get('ma_20_norm', 0),              # 2 - normalized MA20
-                analysis.get('ma_50_norm', 0),              # 3 - normalized MA50
-                analysis.get('volume_ratio', 1),            # 4
-                analysis.get('volatility', 5),              # 5
-                analysis.get('confidence', 50),             # 6
-                analysis.get('btc_correlation', 0),         # 7
-                analysis.get('sentiment_confidence', 0),    # 8
+                analysis.get('price_change_pct', 0),        # 2
+                analysis.get('volume_ratio', 1),            # 3
+                analysis.get('volatility', 5),              # 4
+                analysis.get('bb_position', 0.5),           # 5
+                analysis.get('ict_confidence', 0.5),        # 6
             ]
             return np.array(features).reshape(1, -1)
         except Exception as e:
@@ -170,16 +167,14 @@ class MLTradingEngine:
                 
                 conditions = trade.get('conditions', {})
                 
-                # Извлечи features (8 features - matching extract_features)
+                # Извлечи features (6 features - matching bot.py)
                 features = [
                     conditions.get('rsi', 50),                    # 1
-                    conditions.get('ma_20_norm', 0),              # 2
-                    conditions.get('ma_50_norm', 0),              # 3
-                    conditions.get('volume_ratio', 1),            # 4
-                    conditions.get('volatility', 5),              # 5
-                    trade.get('confidence', 50),                  # 6
-                    conditions.get('btc_correlation', 0),         # 7
-                    conditions.get('sentiment_confidence', 0),    # 8
+                    conditions.get('price_change_pct', 0),        # 2
+                    conditions.get('volume_ratio', 1),            # 3
+                    conditions.get('volatility', 5),              # 4
+                    conditions.get('bb_position', 0.5),           # 5
+                    conditions.get('ict_confidence', 0.5),        # 6
                 ]
                 
                 X.append(features)
