@@ -173,16 +173,43 @@ class MLTradingEngine:
                 
                 conditions = trade.get('conditions', {})
                 
+                # Calculate normalized MA values if needed (match ml_predictor.py logic)
+                ma_20_norm = conditions.get('ma_20_norm', 0)
+                ma_50_norm = conditions.get('ma_50_norm', 0)
+                
+                # If normalized values not stored, calculate from raw values
+                if ma_20_norm == 0 and 'ma_20' in conditions:
+                    entry_price = trade.get('entry_price', 1)
+                    ma_20 = conditions.get('ma_20', 0)
+                    ma_20_norm = (ma_20 / entry_price - 1) * 100 if ma_20 > 0 and entry_price > 0 else 0
+                
+                if ma_50_norm == 0 and 'ma_50' in conditions:
+                    entry_price = trade.get('entry_price', 1)
+                    ma_50 = conditions.get('ma_50', 0)
+                    ma_50_norm = (ma_50 / entry_price - 1) * 100 if ma_50 > 0 and entry_price > 0 else 0
+                
+                # Extract sentiment confidence
+                sentiment_confidence = conditions.get('sentiment_confidence', 0)
+                if sentiment_confidence == 0 and 'sentiment' in conditions:
+                    sentiment = conditions.get('sentiment', {})
+                    if isinstance(sentiment, dict):
+                        sentiment_confidence = sentiment.get('confidence', 0)
+                
+                # Extract BTC correlation strength
+                btc_correlation = conditions.get('btc_correlation', 0)
+                if isinstance(btc_correlation, dict):
+                    btc_correlation = btc_correlation.get('strength', 0)
+                
                 # Извлечи features (8 features - match ml_predictor.py)
                 features = [
                     conditions.get('rsi', 50),
-                    conditions.get('ma_20_norm', 0),
-                    conditions.get('ma_50_norm', 0),
+                    ma_20_norm,
+                    ma_50_norm,
                     conditions.get('volume_ratio', 1),
                     conditions.get('volatility', 5),
                     trade.get('confidence', 50),
-                    conditions.get('btc_correlation', 0),
-                    conditions.get('sentiment_confidence', 0),
+                    btc_correlation,
+                    sentiment_confidence,
                 ]
                 
                 X.append(features)
