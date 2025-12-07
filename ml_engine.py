@@ -173,13 +173,16 @@ class MLTradingEngine:
                 
                 conditions = trade.get('conditions', {})
                 
-                # Извлечи features (само ICT-compatible)
+                # Извлечи features (8 features - match ml_predictor.py)
                 features = [
                     conditions.get('rsi', 50),
+                    conditions.get('ma_20_norm', 0),
+                    conditions.get('ma_50_norm', 0),
                     conditions.get('volume_ratio', 1),
                     conditions.get('volatility', 5),
-                    conditions.get('btc_correlation', 0),
                     trade.get('confidence', 50),
+                    conditions.get('btc_correlation', 0),
+                    conditions.get('sentiment_confidence', 0),
                 ]
                 
                 X.append(features)
@@ -220,11 +223,11 @@ class MLTradingEngine:
             accuracy = self.model.score(X_scaled, y)
             
             print(f"✅ ML Model trained successfully!")
-            print(f"📊 Samples: {len(data['samples'])}")
+            print(f"📊 Samples: {len(X)}")
             print(f"🎯 Training accuracy: {accuracy*100:.1f}%")
             
             # Адаптивно увеличаване на ML weight
-            self.adjust_ml_weight(len(data['samples']), accuracy)
+            self.adjust_ml_weight(len(X), accuracy)
             
             return True
             
