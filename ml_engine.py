@@ -189,11 +189,15 @@ class MLTradingEngine:
                     ma_50_norm = (ma_50 / entry_price - 1) * 100 if ma_50 > 0 and entry_price > 0 else 0
                 
                 # Extract sentiment confidence
-                sentiment_confidence = conditions.get('sentiment_confidence', 0)
-                if sentiment_confidence == 0 and 'sentiment' in conditions:
+                sentiment_confidence = conditions.get('sentiment_confidence')
+                if sentiment_confidence is None and 'sentiment' in conditions:
                     sentiment = conditions.get('sentiment', {})
                     if isinstance(sentiment, dict):
                         sentiment_confidence = sentiment.get('confidence', 0)
+                
+                # Default to 0 if still None
+                if sentiment_confidence is None:
+                    sentiment_confidence = 0
                 
                 # Extract BTC correlation strength
                 btc_correlation = conditions.get('btc_correlation', 0)
