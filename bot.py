@@ -185,6 +185,9 @@ STATS_FILE = f"{BASE_PATH}/bot_stats.json"
 # Auto-Signal Tracking file - следи активните автоматични сигнали
 ACTIVE_SIGNALS_FILE = f"{BASE_PATH}/active_auto_signals.json"
 
+# Persistent cache за изпратени сигнали
+SENT_SIGNALS_CACHE_FILE = f"{BASE_PATH}/sent_signals_cache.json"
+
 # CoinMarketCap API ключ (опционално - за повече новини)
 CMC_API_KEY = ""  # Може да добавите CoinMarketCap API ключ тук (безплатен на coinmarketcap.com/api)
 CMC_NEWS_URL = "https://coinmarketcap.com/api/headlines/latest"  # Public endpoint (no key needed)
@@ -219,6 +222,47 @@ SYMBOLS = {
 # Tracking на изпратени автоматични сигнали (за предотвратяване на дублиране)
 # Формат: {"BTCUSDT_BUY_4h": {'timestamp': datetime, 'confidence': 75}, ...}
 SENT_SIGNALS_CACHE = {}
+
+
+def load_sent_signals_cache():
+    """Зарежда кеша на изпратени сигнали от файл"""
+    global SENT_SIGNALS_CACHE
+    try:
+        if os.path.exists(SENT_SIGNALS_CACHE_FILE):
+            with open(SENT_SIGNALS_CACHE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Конвертирай timestamp strings обратно в datetime
+                for key, value in data.items():
+                    value['timestamp'] = datetime.fromisoformat(value['timestamp'])
+                SENT_SIGNALS_CACHE = data
+                logger.info(f"✅ Loaded {len(SENT_SIGNALS_CACHE)} cached signals from file")
+        else:
+            logger.info("ℹ️ No cached signals file found, starting fresh")
+    except Exception as e:
+        logger.error(f"❌ Error loading sent signals cache: {e}")
+        SENT_SIGNALS_CACHE = {}
+
+
+def save_sent_signals_cache():
+    """Записва кеша на изпратени сигнали във файл"""
+    try:
+        # Конвертирай datetime към ISO string за JSON
+        data_to_save = {}
+        for key, value in SENT_SIGNALS_CACHE.items():
+            data_to_save[key] = {
+                'timestamp': value['timestamp'].isoformat(),
+                'confidence': value['confidence'],
+                'entry_price': value.get('entry_price'),
+                'tp_price': value.get('tp_price'),
+                'sl_price': value.get('sl_price')
+            }
+        
+        with open(SENT_SIGNALS_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data_to_save, f, indent=2, ensure_ascii=False)
+        logger.debug(f"💾 Saved {len(SENT_SIGNALS_CACHE)} signals to cache file")
+    except Exception as e:
+        logger.error(f"❌ Error saving sent signals cache: {e}")
+
 
 # ================= 3H TIMEFRAME CONVERSION =================
 def convert_1h_to_3h(klines_1h):
@@ -416,7 +460,7 @@ def get_ml_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
-def is_signal_already_sent(symbol, signal_type, timeframe, confidence, cooldown_minutes=60):
+def is_signal_already_sent(symbol, signal_type, timeframe, confidence, entry_price, tp_price, sl_price, cooldown_minutes=60):
     """Проверява дали даден сигнал вече е изпращан наскоро
     
     Args:
@@ -424,6 +468,9 @@ def is_signal_already_sent(symbol, signal_type, timeframe, confidence, cooldown_
         signal_type: BUY или SELL
         timeframe: Таймфрейм (напр. 4h)
         confidence: Ниво на увереност
+        entry_price: Entry цена
+        tp_price: Take Profit цена
+        sl_price: Stop Loss цена
         cooldown_minutes: Време за изчакване преди повторно изпращане (по подразбиране 60 мин)
     
     Returns:
@@ -440,6 +487,9 @@ def is_signal_already_sent(symbol, signal_type, timeframe, confidence, cooldown_
     if signal_key in SENT_SIGNALS_CACHE:
         last_sent_time = SENT_SIGNALS_CACHE[signal_key]['timestamp']
         last_confidence = SENT_SIGNALS_CACHE[signal_key]['confidence']
+        last_entry = SENT_SIGNALS_CACHE[signal_key].get('entry_price')
+        last_tp = SENT_SIGNALS_CACHE[signal_key].get('tp_price')
+        last_sl = SENT_SIGNALS_CACHE[signal_key].get('sl_price')
         
         # Изчисли колко време е минало
         time_diff = (current_time - last_sent_time).total_seconds() / 60  # в минути
@@ -449,6 +499,13 @@ def is_signal_already_sent(symbol, signal_type, timeframe, confidence, cooldown_
             logger.info(f"⏭️ Skip {signal_key}: Изпратен преди {time_diff:.1f} мин (cooldown: {cooldown_minutes} мин)")
             return True
         
+        # Проверка за близки цени (±1% tolerance)
+        if last_entry and entry_price:
+            entry_diff = abs(entry_price - last_entry) / last_entry
+            if entry_diff < 0.01 and time_diff < cooldown_minutes * 4:  # 4 часа за близки цени
+                logger.info(f"⏭️ Skip {signal_key}: Близък entry price ({entry_price:.2f} vs {last_entry:.2f}, diff: {entry_diff*100:.2f}%)")
+                return True
+        
         # Ако confidence е почти същият (±5%), също не изпращай
         if abs(confidence - last_confidence) < 5 and time_diff < cooldown_minutes * 2:
             logger.info(f"⏭️ Skip {signal_key}: Същия confidence ({confidence}% vs {last_confidence}%)")
@@ -457,8 +514,14 @@ def is_signal_already_sent(symbol, signal_type, timeframe, confidence, cooldown_
     # Запази новия сигнал в кеша
     SENT_SIGNALS_CACHE[signal_key] = {
         'timestamp': current_time,
-        'confidence': confidence
+        'confidence': confidence,
+        'entry_price': entry_price,
+        'tp_price': tp_price,
+        'sl_price': sl_price
     }
+    
+    # Запиши в persistent файл
+    save_sent_signals_cache()
     
     # Почисти стари записи (по-стари от 24 часа)
     cleanup_old_signals()
@@ -484,6 +547,7 @@ def cleanup_old_signals():
     
     if keys_to_remove:
         logger.info(f"🧹 Cleaned {len(keys_to_remove)} old signals from cache")
+        save_sent_signals_cache()  # Запиши след почистване
 
 
 def get_admin_keyboard():
@@ -7076,8 +7140,27 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             if not analysis or analysis['signal'] == 'NEUTRAL':
                 return None
             
-            # ⚡ ПРОВЕРКА ЗА ДУБЛИРАНЕ
-            if is_signal_already_sent(symbol, analysis['signal'], timeframe, analysis['confidence'], cooldown_minutes=60):
+            # Изчисли предварителни TP и SL за проверка за дублиране
+            # Използвай adaptive TP/SL ако има, иначе default стойности
+            if 'adaptive_tp_sl' in analysis:
+                adaptive_levels = analysis['adaptive_tp_sl']
+                tp_pct = adaptive_levels['tp']
+                sl_pct = adaptive_levels['sl']
+            else:
+                tp_pct = 3.0
+                sl_pct = 1.5
+            
+            price = analysis['price']
+            if analysis['signal'] == 'BUY':
+                preliminary_tp = price * (1 + tp_pct / 100)
+                preliminary_sl = price * (1 - sl_pct / 100)
+            else:  # SELL
+                preliminary_tp = price * (1 - tp_pct / 100)
+                preliminary_sl = price * (1 + sl_pct / 100)
+            
+            # ⚡ ПРОВЕРКА ЗА ДУБЛИРАНЕ (с цени)
+            if is_signal_already_sent(symbol, analysis['signal'], timeframe, analysis['confidence'], 
+                                      price, preliminary_tp, preliminary_sl, cooldown_minutes=60):
                 return None
             
             # === ДОПЪЛНИТЕЛНИ АНАЛИЗИ (КАТО РЪЧНИТЕ СИГНАЛИ) ===
@@ -10323,6 +10406,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
     
     logger.info("🚀 Crypto Signal Bot стартира...")
+    
+    # Load cached signals from persistent storage
+    load_sent_signals_cache()
     
     # 🤖 Initial ML training при старт (ако има достатъчно данни)
     if ML_AVAILABLE:
