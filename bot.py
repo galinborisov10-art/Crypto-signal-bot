@@ -10095,7 +10095,6 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("✅ Дневният отчет е изпратен!")
     
     elif query.data == "report_weekly":
-    elif query.data == "report_weekly":
         summary = report_engine.get_weekly_summary()
         if summary:
             accuracy_emoji = "🔥" if summary["accuracy"] >= 70 else "💪" if summary["accuracy"] >= 60 else "👍"
