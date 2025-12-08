@@ -233,6 +233,10 @@ def load_sent_signals_cache():
                 data = json.load(f)
                 # Конвертирай timestamp strings обратно в datetime
                 for key, value in data.items():
+                    # Validate required keys exist
+                    if 'timestamp' not in value:
+                        logger.warning(f"⚠️ Skipping cache entry {key}: missing timestamp")
+                        continue
                     value['timestamp'] = datetime.fromisoformat(value['timestamp'])
                 SENT_SIGNALS_CACHE = data
                 logger.info(f"✅ Loaded {len(SENT_SIGNALS_CACHE)} cached signals from file")
@@ -500,7 +504,7 @@ def is_signal_already_sent(symbol, signal_type, timeframe, confidence, entry_pri
             return True
         
         # Проверка за близки цени (±1% tolerance)
-        if last_entry and entry_price:
+        if last_entry and entry_price and last_entry > 0:
             entry_diff = abs(entry_price - last_entry) / last_entry
             if entry_diff < 0.01 and time_diff < cooldown_minutes * 4:  # 4 часа за близки цени
                 logger.info(f"⏭️ Skip {signal_key}: Близък entry price ({entry_price:.2f} vs {last_entry:.2f}, diff: {entry_diff*100:.2f}%)")
