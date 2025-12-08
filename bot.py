@@ -10027,6 +10027,7 @@ async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [
             InlineKeyboardButton("📊 Дневен отчет", callback_data="report_daily"),
             InlineKeyboardButton("📈 Седмичен", callback_data="report_weekly"),
+            InlineKeyboardButton("📆 Месечен", callback_data="report_monthly")
         ],
         [
             InlineKeyboardButton("📉 Back-test резултати", callback_data="report_backtest"),
@@ -10090,45 +10091,103 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if query.data == "report_daily":
         # Генерирай дневен отчет
-        if not REPORTS_AVAILABLE:
-            await query.edit_message_text("❌ Reports модул не е наличен")
-            return
-        
-        report = report_engine.generate_daily_report()
-        if report:
-            message = report_engine.format_report_message(report)
-            await query.edit_message_text(message, parse_mode='HTML')
-        else:
-            await query.edit_message_text("❌ Няма данни за днешен ден")
+        await send_daily_signal_report(context.bot)
+        await query.answer("✅ Дневният отчет е изпратен!")
     
     elif query.data == "report_weekly":
-        # Седмичен отчет
-        if not REPORTS_AVAILABLE:
-            await query.edit_message_text("❌ Reports модул не е наличен")
-            return
-        
+    elif query.data == "report_weekly":
         summary = report_engine.get_weekly_summary()
         if summary:
-            message = f"""📊 <b>СЕДМИЧЕН ОТЧЕТ</b>
-📅 Период: {summary['period']}
+            accuracy_emoji = "🔥" if summary["accuracy"] >= 70 else "💪" if summary["accuracy"] >= 60 else "👍"
+            profit_emoji = "💰" if summary. get("total_profit", 0) > 0 else "📉"
+            
+            message = f"""📊 <b>СЕДМИЧЕН ОТЧЕТ - 7 ДНИ</b>
+📅 {summary["start_date"]} → {summary["end_date"]}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-📈 <b>Обобщение:</b>
-   Общо сигнали: {summary['total_signals']}
-   Завършени trades: {summary['total_completed']}
-   
-🎯 <b>Резултати:</b>
-   ✅ Печеливши: {summary['total_wins']}
-   ❌ Загубени: {summary['total_losses']}
-   🎯 Win Rate: {summary['win_rate']:.1f}%
-   
-💪 <b>Средна увереност:</b> {summary['avg_confidence']:.1f}%
+📈 <b>ГЕНЕРИРАНИ СИГНАЛИ:</b>
+   📊 Общо: <b>{summary["total_signals"]}</b>
+   🟢 BUY: {summary["buy_signals"]}
+   🔴 SELL: {summary["sell_signals"]}
+   ⏳ Активни: {summary["active_signals"]}
+   ✅ Завършени: {summary["completed_signals"]}
 
-📊 Базирано на {summary['reports_count']} дневни отчета
 """
-            await query.edit_message_text(message, parse_mode='HTML')
+            if summary["completed_signals"] > 0:
+                message += f"""🎯 <b>ТОЧНОСТ НА СИГНАЛИТЕ:</b>
+   {accuracy_emoji} Accuracy: <b>{summary["accuracy"]:.1f}%</b>
+   ✅ Печеливши: {summary["wins"]} ({summary["wins"]}/{summary["completed_signals"]})
+   ❌ Загубени: {summary["losses"]} ({summary["losses"]}/{summary["completed_signals"]})
+
+💵 <b>УСПЕВАЕМОСТ:</b>
+   {profit_emoji} Общ Profit: <b>{summary.get("total_profit", 0):+.2f}%</b>
+
+"""
+                if summary.get("best_trade"):
+                    best = summary["best_trade"]
+                    message += f"""💎 <b>НАЙ-ДОБЪР TRADE:</b>
+   {best["symbol"]} {best["type"]} - {best["timeframe"]}
+   💰 Profit: <b>+{best.get("profit_pct", 0):.2f}%</b>
+
+"""
+                if summary.get("worst_trade"):
+                    worst = summary["worst_trade"]
+                    message += f"""⚠️ <b>НАЙ-ЛОШ TRADE:</b>
+   {worst["symbol"]} {worst["type"]} - {worst["timeframe"]}
+   📉 Loss: <b>{worst. get("profit_pct", 0):.2f}%</b>
+
+"""
+            await query.edit_message_text(message, parse_mode="HTML")
         else:
             await query.edit_message_text("❌ Недостатъчно данни за седмичен отчет")
+    
+    elif query.data == "report_monthly":
+        summary = report_engine.get_monthly_summary()
+
+        if summary:
+            accuracy_emoji = "🔥" if summary["accuracy"] >= 70 else "💪" if summary["accuracy"] >= 60 else "👍"
+            profit_emoji = "💰" if summary. get("total_profit", 0) > 0 else "📉"
+            
+            message = f"""📊 <b>МЕСЕЧЕН ОТЧЕТ - 30 ДНИ</b>
+📅 {summary["start_date"]} → {summary["end_date"]}
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 <b>ГЕНЕРИРАНИ СИГНАЛИ:</b>
+   📊 Общо: <b>{summary["total_signals"]}</b>
+   🟢 BUY: {summary["buy_signals"]}
+   🔴 SELL: {summary["sell_signals"]}
+   ⏳ Активни: {summary["active_signals"]}
+   ✅ Завършени: {summary["completed_signals"]}
+
+"""
+            if summary["completed_signals"] > 0:
+                message += f"""🎯 <b>ТОЧНОСТ НА СИГНАЛИТЕ:</b>
+   {accuracy_emoji} Accuracy: <b>{summary["accuracy"]:.1f}%</b>
+   ✅ Печеливши: {summary["wins"]} ({summary["wins"]}/{summary["completed_signals"]})
+   ❌ Загубени: {summary["losses"]} ({summary["losses"]}/{summary["completed_signals"]})
+
+💵 <b>УСПЕВАЕМОСТ:</b>
+   {profit_emoji} Общ Profit: <b>{summary. get("total_profit", 0):+.2f}%</b>
+
+"""
+                if summary. get("best_trade"):
+                    best = summary["best_trade"]
+                    message += f"""💎 <b>НАЙ-ДОБЪР TRADE:</b>
+   {best["symbol"]} {best["type"]} - {best["timeframe"]}
+   💰 Profit: <b>+{best. get("profit_pct", 0):.2f}%</b>
+
+"""
+                if summary.get("worst_trade"):
+                    worst = summary["worst_trade"]
+                    message += f"""⚠️ <b>НАЙ-ЛОШ TRADE:</b>
+   {worst["symbol"]} {worst["type"]} - {worst["timeframe"]}
+   📉 Loss: <b>{worst.get("profit_pct", 0):. 2f}%</b>
+
+"""
+            await query.edit_message_text(message, parse_mode="HTML")
+        else:
+            await query.edit_message_text("❌ Недостатъчно данни за месечен отчет")
+
     
     elif query.data == "report_backtest":
         # Back-test резултати
@@ -10612,7 +10671,7 @@ def main():
         
         # Изпълни след инициализация на app
         async def schedule_reports_task(context):
-            await schedule_reports()
+            await schedule_reports(context. application)
         
         async def enable_auto_alerts_task(context):
             await enable_auto_alerts()
