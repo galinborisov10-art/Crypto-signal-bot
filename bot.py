@@ -416,14 +416,15 @@ def get_ml_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
-def is_signal_already_sent(symbol, signal_type, timeframe, confidence, cooldown_minutes=60):
-    """Проверява дали даден сигнал вече е изпращан наскоро
+def is_signal_already_sent(symbol, signal_type, timeframe, confidence, entry_price, cooldown_minutes=60):
+    """Проверява дали даден сигнал вече е изпращан наскоро (с 4-степенна проверка за близост на цена)
     
     Args:
         symbol: Символ (напр. BTCUSDT)
         signal_type: BUY или SELL
         timeframe: Таймфрейм (напр. 4h)
         confidence: Ниво на увереност
+        entry_price: Цена на входа (за проверка на близост)
         cooldown_minutes: Време за изчакване преди повторно изпращане (по подразбиране 60 мин)
     
     Returns:
@@ -440,30 +441,50 @@ def is_signal_already_sent(symbol, signal_type, timeframe, confidence, cooldown_
     if signal_key in SENT_SIGNALS_CACHE:
         last_sent_time = SENT_SIGNALS_CACHE[signal_key]['timestamp']
         last_confidence = SENT_SIGNALS_CACHE[signal_key]['confidence']
+        last_price = SENT_SIGNALS_CACHE[signal_key].get('entry_price', entry_price)
         
         # Изчисли колко време е минало
         time_diff = (current_time - last_sent_time).total_seconds() / 60  # в минути
         
-        # Ако е минало по-малко от cooldown време, не изпращай
-        if time_diff < cooldown_minutes:
-            logger.info(f"⏭️ Skip {signal_key}: Изпратен преди {time_diff:.1f} мин (cooldown: {cooldown_minutes} мин)")
+        # Изчисли ценова разлика (процент)
+        price_diff_pct = abs((entry_price - last_price) / last_price) * 100 if last_price > 0 else 0
+        
+        # Изчисли confidence разлика
+        confidence_diff = abs(confidence - last_confidence)
+        
+        # === 4-СТЕПЕННА ПРОВЕРКА ЗА БЛИЗОСТ ===
+        
+        # ПРАВИЛО 1: Cooldown + близка цена (< 0.5%)
+        if time_diff < cooldown_minutes and price_diff_pct < 0.5:
+            logger.info(f"⏭️ Skip {signal_key}: Cooldown ({time_diff:.1f}m) + Price close ({price_diff_pct:.2f}%)")
             return True
         
-        # Ако confidence е почти същият (±5%), също не изпращай
-        if abs(confidence - last_confidence) < 5 and time_diff < cooldown_minutes * 2:
-            logger.info(f"⏭️ Skip {signal_key}: Същия confidence ({confidence}% vs {last_confidence}%)")
+        # ПРАВИЛО 2: Много близка цена (< 0.2%) в рамките на 2h
+        if price_diff_pct < 0.2 and time_diff < cooldown_minutes * 2:
+            logger.info(f"⏭️ Skip {signal_key}: Price very close ({price_diff_pct:.2f}%) within 2h")
+            return True
+        
+        # ПРАВИЛО 3: Подобен confidence (< 5%) + близка цена (< 1%) в рамките на 1.5x cooldown
+        if confidence_diff < 5 and price_diff_pct < 1.0 and time_diff < cooldown_minutes * 1.5:
+            logger.info(f"⏭️ Skip {signal_key}: Similar signal (Δconf={confidence_diff:.1f}%, Δprice={price_diff_pct:.2f}%)")
+            return True
+        
+        # ПРАВИЛО 4: Идентичен сигнал (< 0.3% цена, < 3% confidence) в рамките на 4h
+        if confidence_diff < 3 and price_diff_pct < 0.3 and time_diff < 240:
+            logger.info(f"⏭️ Skip {signal_key}: Almost identical within 4h (Δconf={confidence_diff:.1f}%, Δprice={price_diff_pct:.2f}%)")
             return True
     
-    # Запази новия сигнал в кеша
+    # Запази новия сигнал в кеша (с цената!)
     SENT_SIGNALS_CACHE[signal_key] = {
         'timestamp': current_time,
-        'confidence': confidence
+        'confidence': confidence,
+        'entry_price': entry_price
     }
     
     # Почисти стари записи (по-стари от 24 часа)
     cleanup_old_signals()
     
-    logger.info(f"✅ New signal: {signal_key} ({confidence}%)")
+    logger.info(f"✅ New signal: {signal_key} @ ${entry_price:.2f} ({confidence}%)")
     return False
 
 
@@ -7076,8 +7097,8 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             if not analysis or analysis['signal'] == 'NEUTRAL':
                 return None
             
-            # ⚡ ПРОВЕРКА ЗА ДУБЛИРАНЕ
-            if is_signal_already_sent(symbol, analysis['signal'], timeframe, analysis['confidence'], cooldown_minutes=60):
+            # ⚡ ПРОВЕРКА ЗА ДУБЛИРАНЕ (с 4-степенна проверка за близост на цена)
+            if is_signal_already_sent(symbol, analysis['signal'], timeframe, analysis['confidence'], analysis['price'], cooldown_minutes=60):
                 return None
             
             # === ДОПЪЛНИТЕЛНИ АНАЛИЗИ (КАТО РЪЧНИТЕ СИГНАЛИ) ===
@@ -9571,7 +9592,7 @@ async def admin_mode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ================= ML, BACKTEST, REPORTS КОМАНДИ =================
 
 async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Изпълнява back-test на стратегията"""
+    """Изпълнява back-test на стратегията (с поддръжка на всички timeframes)"""
     if not BACKTEST_AVAILABLE:
         await update.message.reply_text(
             "❌ <b>Back-testing модул не е наличен</b>\n\n"
@@ -9583,65 +9604,115 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Параметри
         symbol = context.args[0] if context.args else 'BTCUSDT'
-        timeframe = context.args[1] if len(context.args) > 1 else '4h'
-        days = int(context.args[2]) if len(context.args) > 2 else 30  # По-кратък период по подразбиране
         
-        logger.info(f"📊 Backtest started: {symbol} {timeframe} {days}d by user {update.effective_user.id}")
+        # Проверка дали е зададен конкретен timeframe или 'all'
+        if len(context.args) > 1 and context.args[1].lower() == 'all':
+            test_all_timeframes = True
+            timeframes_to_test = ['1m', '5m', '15m', '1h', '4h', '1d']
+            days = int(context.args[2]) if len(context.args) > 2 else 15
+        else:
+            test_all_timeframes = False
+            timeframe = context.args[1] if len(context.args) > 1 else '4h'
+            timeframes_to_test = [timeframe]
+            days = int(context.args[2]) if len(context.args) > 2 else 30
+        
+        logger.info(f"📊 Backtest started: {symbol} {timeframes_to_test} {days}d by user {update.effective_user.id}")
         
         # Progress message
-        status_msg = await update.message.reply_text(
-            f"📊 <b>BACKTEST СТАРТИРА...</b>\n\n"
-            f"💰 Символ: {symbol}\n"
-            f"⏰ Timeframe: {timeframe}\n"
-            f"📅 Период: {days} дни\n\n"
-            f"⏳ Изтеглям данни от Binance...",
-            parse_mode='HTML'
-        )
+        if test_all_timeframes:
+            status_msg = await update.message.reply_text(
+                f"📊 <b>MULTI-TIMEFRAME BACKTEST СТАРТИРА...</b>\n\n"
+                f"💰 Символ: {symbol}\n"
+                f"⏰ Timeframes: 1m, 5m, 15m, 1h, 4h, 1d\n"
+                f"📅 Период: {days} дни\n\n"
+                f"⏳ Изтеглям данни от Binance...\n"
+                f"🕒 Може да отнеме 1-2 минути",
+                parse_mode='HTML'
+            )
+        else:
+            status_msg = await update.message.reply_text(
+                f"📊 <b>BACKTEST СТАРТИРА...</b>\n\n"
+                f"💰 Символ: {symbol}\n"
+                f"⏰ Timeframe: {timeframe}\n"
+                f"📅 Период: {days} дни\n\n"
+                f"⏳ Изтеглям данни от Binance...",
+                parse_mode='HTML'
+            )
         
         await asyncio.sleep(0.5)
         
-        # Update progress
-        await status_msg.edit_text(
-            f"📊 <b>BACKTEST В ХОД...</b>\n\n"
-            f"💰 Символ: {symbol}\n"
-            f"⏰ Timeframe: {timeframe}\n"
-            f"📅 Период: {days} дни\n\n"
-            f"🔄 Симулирам трейдове...\n"
-            f"⏱️ Може да отнеме 20-40 секунди\n\n"
-            f"<i>Моля изчакайте...</i>",
-            parse_mode='HTML'
-        )
+        # Изпълни back-test за всички timeframes
+        all_results = []
+        total_trades_all = 0
+        total_wins_all = 0
+        total_losses_all = 0
+        total_profit_all = 0
         
-        logger.info(f"📥 Fetching {days} days of data for {symbol}...")
+        for idx, tf in enumerate(timeframes_to_test):
+            # Update progress
+            if test_all_timeframes:
+                await status_msg.edit_text(
+                    f"📊 <b>MULTI-TIMEFRAME BACKTEST В ХОД...</b>\n\n"
+                    f"💰 Символ: {symbol}\n"
+                    f"📅 Период: {days} дни\n\n"
+                    f"🔄 Обработвам: {tf} ({idx+1}/{len(timeframes_to_test)})\n"
+                    f"⏱️ Моля изчакайте...",
+                    parse_mode='HTML'
+                )
+            else:
+                await status_msg.edit_text(
+                    f"📊 <b>BACKTEST В ХОД...</b>\n\n"
+                    f"💰 Символ: {symbol}\n"
+                    f"⏰ Timeframe: {tf}\n"
+                    f"📅 Период: {days} дни\n\n"
+                    f"🔄 Симулирам трейдове...\n"
+                    f"⏱️ Може да отнеме 20-40 секунди\n\n"
+                    f"<i>Моля изчакайте...</i>",
+                    parse_mode='HTML'
+                )
+            
+            logger.info(f"📥 Fetching {days} days of data for {symbol} {tf}...")
+            
+            # Изпълни back-test с timeout
+            try:
+                results = await asyncio.wait_for(
+                    backtest_engine.run_backtest(symbol, tf, None, days),
+                    timeout=90.0  # 90 секунди максимум
+                )
+                
+                if results:
+                    all_results.append(results)
+                    total_trades_all += results['total_trades']
+                    total_wins_all += results['wins']
+                    total_losses_all += results['losses']
+                    total_profit_all += results['total_profit_pct']
+                    logger.info(f"✅ Backtest {tf} completed: {results['total_trades']} trades, {results['win_rate']:.1f}% win rate")
+                else:
+                    logger.warning(f"⚠️ No results for {tf}")
+                    
+            except asyncio.TimeoutError:
+                logger.error(f"⏱️ Backtest timeout for {symbol} {tf}")
+                if not test_all_timeframes:
+                    await status_msg.edit_text(
+                        "⏱️ <b>TIMEOUT!</b>\n\n"
+                        "Backtest отне твърде дълго време.\n"
+                        "Опитайте с по-кратък период:\n"
+                        "<code>/backtest BTCUSDT 4h 15</code>",
+                        parse_mode='HTML'
+                    )
+                    return
+            except Exception as fetch_error:
+                logger.error(f"❌ Backtest fetch error for {tf}: {fetch_error}", exc_info=True)
+                if not test_all_timeframes:
+                    await status_msg.edit_text(
+                        f"❌ <b>ГРЕШКА ПРИ ИЗТЕГЛЯНЕ:</b>\n\n"
+                        f"<code>{str(fetch_error)[:200]}</code>\n\n"
+                        f"Binance API може да не отговаря.",
+                        parse_mode='HTML'
+                    )
+                    return
         
-        # Изпълни back-test с timeout
-        try:
-            results = await asyncio.wait_for(
-                backtest_engine.run_backtest(symbol, timeframe, None, days),
-                timeout=90.0  # 90 секунди максимум
-            )
-            logger.info(f"✅ Backtest completed: {results}")
-        except asyncio.TimeoutError:
-            logger.error(f"⏱️ Backtest timeout for {symbol}")
-            await status_msg.edit_text(
-                "⏱️ <b>TIMEOUT!</b>\n\n"
-                "Backtest отне твърде дълго време.\n"
-                "Опитайте с по-кратък период:\n"
-                "<code>/backtest BTCUSDT 4h 15</code>",
-                parse_mode='HTML'
-            )
-            return
-        except Exception as fetch_error:
-            logger.error(f"❌ Backtest fetch error: {fetch_error}", exc_info=True)
-            await status_msg.edit_text(
-                f"❌ <b>ГРЕШКА ПРИ ИЗТЕГЛЯНЕ:</b>\n\n"
-                f"<code>{str(fetch_error)[:200]}</code>\n\n"
-                f"Binance API може да не отговаря.",
-                parse_mode='HTML'
-            )
-            return
-        
-        if not results:
+        if not all_results:
             logger.warning(f"⚠️ Backtest returned no results for {symbol}")
             await status_msg.edit_text(
                 "❌ <b>НЯМА РЕЗУЛТАТИ</b>\n\n"
@@ -9651,15 +9722,51 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• API грешка\n\n"
                 "Опитайте:\n"
                 "<code>/backtest BTCUSDT 4h 15</code>\n"
+                "<code>/backtest BTCUSDT all 15</code> (всички timeframes)\n"
                 "<code>/backtest ETHUSDT 1h 20</code>",
                 parse_mode='HTML'
             )
             return
         
-        logger.info(f"✅ Backtest results: {results['total_trades']} trades, {results['win_rate']:.1f}% win rate")
-        
-        # Финално съобщение с резултати
-        message = f"""📊 <b>BACK-TEST РЕЗУЛТАТИ</b>
+        # Формирай съобщението с резултати
+        if test_all_timeframes:
+            # Multi-timeframe резултати
+            overall_win_rate = (total_wins_all / total_trades_all * 100) if total_trades_all > 0 else 0
+            overall_avg = (total_profit_all / total_trades_all) if total_trades_all > 0 else 0
+            
+            message = f"""📊 <b>MULTI-TIMEFRAME BACKTEST</b>
+
+💰 <b>Символ:</b> {symbol}
+📅 <b>Период:</b> {days} дни
+
+<b>━━━ ОБЩА СТАТИСТИКА ━━━</b>
+   📈 Общо trades: {total_trades_all}
+   🟢 Печеливши: {total_wins_all}
+   🔴 Загубени: {total_losses_all}
+   🎯 Win Rate: {overall_win_rate:.1f}%
+   💰 Обща печалба: {total_profit_all:+.2f}%
+   📊 Средно/trade: {overall_avg:+.2f}%
+
+<b>━━━ ПО TIMEFRAME ━━━</b>
+"""
+            
+            # Добави статистика за всеки timeframe
+            for res in all_results:
+                tf_emoji = {
+                    '1m': '⚡', '5m': '🔥', '15m': '💨',
+                    '1h': '⏰', '4h': '📊', '1d': '🌅'
+                }.get(res['timeframe'], '📈')
+                
+                message += f"\n{tf_emoji} <b>{res['timeframe']}</b>: {res['total_trades']} trades | "
+                message += f"{res['win_rate']:.0f}% WR | "
+                message += f"{res['total_profit_pct']:+.1f}% profit"
+            
+            message += "\n\n⚠️ <i>Симулация базирана на исторически данни</i>"
+            
+        else:
+            # Single timeframe резултати
+            results = all_results[0]
+            message = f"""📊 <b>BACK-TEST РЕЗУЛТАТИ</b>
 
 💰 <b>Символ:</b> {results['symbol']}
 ⏰ <b>Таймфрейм:</b> {results['timeframe']}
@@ -9678,12 +9785,14 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await status_msg.edit_text(message, parse_mode='HTML')
         
-        # Оптимизирай параметри
-        try:
-            optimized = backtest_engine.optimize_parameters(results)
-            
-            if optimized:
-                opt_msg = f"""✅ <b>ПАРАМЕТРИ ОПТИМИЗИРАНИ</b>
+        # Оптимизирай параметри (само за single timeframe)
+        if not test_all_timeframes:
+            try:
+                results = all_results[0]
+                optimized = backtest_engine.optimize_parameters(results)
+                
+                if optimized:
+                    opt_msg = f"""✅ <b>ПАРАМЕТРИ ОПТИМИЗИРАНИ</b>
 
 🎯 Препоръчан TP: {optimized['optimized_tp_pct']:.2f}%
 🛡️ Препоръчан SL: {optimized['optimized_sl_pct']:.2f}%
@@ -9691,10 +9800,10 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 💡 <i>Използвай тези параметри за по-добри резултати!</i>
 """
-                await update.message.reply_text(opt_msg, parse_mode='HTML')
-        except Exception as e:
-            logger.error(f"Optimization error: {e}")
-            # Don't fail the whole command if optimization fails
+                    await update.message.reply_text(opt_msg, parse_mode='HTML')
+            except Exception as e:
+                logger.error(f"Optimization error: {e}")
+                # Don't fail the whole command if optimization fails
     
     except Exception as e:
         logger.error(f"❌ Backtest error: {e}")
