@@ -217,8 +217,24 @@ SYMBOLS = {
 
 # ================= ДЕДУПЛИКАЦИЯ НА СИГНАЛИ =================
 # Tracking на изпратени автоматични сигнали (за предотвратяване на дублиране)
-# Формат: {"BTCUSDT_BUY_4h": {'timestamp': datetime, 'confidence': 75}, ...}
+# Формат: {"BTCUSDT_BUY_4h": {'timestamp': datetime, 'confidence': 75, 'entry_price': 97100}, ...}
 SENT_SIGNALS_CACHE = {}
+
+# Константи за 4-степенна проверка на близост на цена
+PRICE_PROXIMITY_TIGHT = 0.2      # Много близка цена (%)
+PRICE_PROXIMITY_NORMAL = 0.5     # Близка цена (%)
+PRICE_PROXIMITY_LOOSE = 1.0      # Относително близка цена (%)
+PRICE_PROXIMITY_IDENTICAL = 0.3  # Идентична цена (%)
+
+CONFIDENCE_SIMILARITY_STRICT = 3  # Идентичен confidence (%)
+CONFIDENCE_SIMILARITY_NORMAL = 5  # Подобен confidence (%)
+
+TIME_WINDOW_EXTENDED = 120       # 2 часа (минути)
+TIME_WINDOW_LONG = 240           # 4 часа (минути)
+TIME_WINDOW_MEDIUM = 90          # 1.5 часа (минути)
+
+# Константи за backtest
+BACKTEST_ALL_KEYWORD = 'all'     # Ключова дума за всички timeframes
 
 # ================= 3H TIMEFRAME CONVERSION =================
 def convert_1h_to_3h(klines_1h):
@@ -441,36 +457,49 @@ def is_signal_already_sent(symbol, signal_type, timeframe, confidence, entry_pri
     if signal_key in SENT_SIGNALS_CACHE:
         last_sent_time = SENT_SIGNALS_CACHE[signal_key]['timestamp']
         last_confidence = SENT_SIGNALS_CACHE[signal_key]['confidence']
-        last_price = SENT_SIGNALS_CACHE[signal_key].get('entry_price', entry_price)
+        last_price = SENT_SIGNALS_CACHE[signal_key].get('entry_price', 0)
+        
+        # Ако няма запазена цена (стар кеш формат), не можем да проверим близост - пропусни
+        if last_price == 0:
+            logger.info(f"⚠️ {signal_key}: No cached price (old format) - allowing signal")
+            # Обнови кеша с новата цена и излез
+            SENT_SIGNALS_CACHE[signal_key] = {
+                'timestamp': current_time,
+                'confidence': confidence,
+                'entry_price': entry_price
+            }
+            cleanup_old_signals()
+            logger.info(f"✅ New signal: {signal_key} @ ${entry_price:.2f} ({confidence}%)")
+            return False
         
         # Изчисли колко време е минало
         time_diff = (current_time - last_sent_time).total_seconds() / 60  # в минути
         
         # Изчисли ценова разлика (процент)
-        price_diff_pct = abs((entry_price - last_price) / last_price) * 100 if last_price > 0 else 0
+        price_diff_pct = abs((entry_price - last_price) / last_price) * 100 if last_price > 0.01 else 100.0
         
         # Изчисли confidence разлика
         confidence_diff = abs(confidence - last_confidence)
         
         # === 4-СТЕПЕННА ПРОВЕРКА ЗА БЛИЗОСТ ===
         
-        # ПРАВИЛО 1: Cooldown + близка цена (< 0.5%)
-        if time_diff < cooldown_minutes and price_diff_pct < 0.5:
+        # ПРАВИЛО 1: Cooldown + близка цена
+        if time_diff < cooldown_minutes and price_diff_pct < PRICE_PROXIMITY_NORMAL:
             logger.info(f"⏭️ Skip {signal_key}: Cooldown ({time_diff:.1f}m) + Price close ({price_diff_pct:.2f}%)")
             return True
         
-        # ПРАВИЛО 2: Много близка цена (< 0.2%) в рамките на 2h
-        if price_diff_pct < 0.2 and time_diff < cooldown_minutes * 2:
+        # ПРАВИЛО 2: Много близка цена в рамките на 2h
+        if price_diff_pct < PRICE_PROXIMITY_TIGHT and time_diff < TIME_WINDOW_EXTENDED:
             logger.info(f"⏭️ Skip {signal_key}: Price very close ({price_diff_pct:.2f}%) within 2h")
             return True
         
-        # ПРАВИЛО 3: Подобен confidence (< 5%) + близка цена (< 1%) в рамките на 1.5x cooldown
-        if confidence_diff < 5 and price_diff_pct < 1.0 and time_diff < cooldown_minutes * 1.5:
+        # ПРАВИЛО 3: Подобен confidence + близка цена в рамките на 1.5x cooldown
+        if confidence_diff < CONFIDENCE_SIMILARITY_NORMAL and price_diff_pct < PRICE_PROXIMITY_LOOSE and time_diff < TIME_WINDOW_MEDIUM:
             logger.info(f"⏭️ Skip {signal_key}: Similar signal (Δconf={confidence_diff:.1f}%, Δprice={price_diff_pct:.2f}%)")
             return True
         
-        # ПРАВИЛО 4: Идентичен сигнал (< 0.3% цена, < 3% confidence) в рамките на 4h
-        if confidence_diff < 3 and price_diff_pct < 0.3 and time_diff < 240:
+        # ПРАВИЛО 4: Идентичен сигнал в рамките на 4h
+        if confidence_diff < CONFIDENCE_SIMILARITY_STRICT and price_diff_pct < PRICE_PROXIMITY_IDENTICAL and time_diff < TIME_WINDOW_LONG:
             logger.info(f"⏭️ Skip {signal_key}: Almost identical within 4h (Δconf={confidence_diff:.1f}%, Δprice={price_diff_pct:.2f}%)")
             return True
     
@@ -9606,7 +9635,7 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol = context.args[0] if context.args else 'BTCUSDT'
         
         # Проверка дали е зададен конкретен timeframe или 'all'
-        if len(context.args) > 1 and context.args[1].lower() == 'all':
+        if len(context.args) > 1 and context.args[1].lower() == BACKTEST_ALL_KEYWORD:
             test_all_timeframes = True
             timeframes_to_test = ['1m', '5m', '15m', '1h', '4h', '1d']
             days = int(context.args[2]) if len(context.args) > 2 else 15
@@ -9646,7 +9675,7 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_trades_all = 0
         total_wins_all = 0
         total_losses_all = 0
-        total_profit_all = 0
+        total_profit_all = 0  # Сума на профити от всички TF (за индикация)
         
         for idx, tf in enumerate(timeframes_to_test):
             # Update progress
