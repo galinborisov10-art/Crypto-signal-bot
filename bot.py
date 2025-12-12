@@ -11063,8 +11063,7 @@ def main():
             logger.info(f"🤖 Стартиране на polling (опит #{retry_count})...")
             app.run_polling(
                 drop_pending_updates=True, 
-                allowed_updates=Update.ALL_TYPES,
-                close_loop=False  # НЕ затваряй event loop при грешка
+                allowed_updates=Update.ALL_TYPES
             )
             # Ако polling спре нормално (KeyboardInterrupt), излез
             logger.info("ℹ️ Polling спря нормално")
