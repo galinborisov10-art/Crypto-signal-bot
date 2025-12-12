@@ -1,0 +1,1068 @@
+"""
+🎯 ICT SIGNAL ENGINE
+Central ICT Signal Generator - Combines ALL ICT concepts into unified signal generation
+
+Features:
+- Integrates Whale Order Blocks detection
+- Integrates Liquidity Pools mapping
+- Integrates Market Structure analysis
+- Integrates Internal Liquidity detection
+- Fair Value Gaps detection
+- Multi-Timeframe Confluence analysis
+- Complete signal generation with entry/SL/TP
+- Confidence scoring (0-100%)
+- Signal strength levels (WEAK to EXTREME)
+
+Author: galinborisov10-art
+Date: 2025-12-12
+"""
+
+import pandas as pd
+import numpy as np
+from typing import List, Dict, Optional, Tuple, Any
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
+import logging
+
+# Import ICT modules
+try:
+    from order_block_detector import OrderBlockDetector, OrderBlock, OrderBlockType
+    ORDER_BLOCK_AVAILABLE = True
+except ImportError:
+    ORDER_BLOCK_AVAILABLE = False
+    logging.warning("OrderBlockDetector not available")
+
+try:
+    from fvg_detector import FVGDetector, FairValueGap, FVGType
+    FVG_AVAILABLE = True
+except ImportError:
+    FVG_AVAILABLE = False
+    logging.warning("FVGDetector not available")
+
+try:
+    from ict_whale_detector import WhaleDetector, WhaleOrderBlock
+    WHALE_AVAILABLE = True
+except ImportError:
+    WHALE_AVAILABLE = False
+    logging.warning("WhaleDetector not available")
+
+try:
+    from liquidity_map import LiquidityMapper, LiquidityZone
+    LIQUIDITY_AVAILABLE = True
+except ImportError:
+    LIQUIDITY_AVAILABLE = False
+    logging.warning("LiquidityMapper not available")
+
+try:
+    from ilp_detector import InternalLiquidityPoolDetector
+    ILP_AVAILABLE = True
+except ImportError:
+    ILP_AVAILABLE = False
+    logging.warning("ILP Detector not available")
+
+try:
+    from mtf_analyzer import MultiTimeframeAnalyzer, MTFSignal, Bias
+    MTF_AVAILABLE = True
+except ImportError:
+    MTF_AVAILABLE = False
+    logging.warning("MTF Analyzer not available")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+class SignalType(Enum):
+    """Signal types"""
+    BUY = "BUY"
+    SELL = "SELL"
+    HOLD = "HOLD"
+    STRONG_BUY = "STRONG_BUY"
+    STRONG_SELL = "STRONG_SELL"
+
+
+class SignalStrength(Enum):
+    """Signal strength levels"""
+    WEAK = 1
+    MODERATE = 2
+    STRONG = 3
+    VERY_STRONG = 4
+    EXTREME = 5
+
+
+class MarketBias(Enum):
+    """Market bias"""
+    BULLISH = "BULLISH"
+    BEARISH = "BEARISH"
+    NEUTRAL = "NEUTRAL"
+    RANGING = "RANGING"
+
+
+@dataclass
+class ICTSignal:
+    """
+    Complete ICT Trading Signal
+    
+    Attributes:
+        timestamp: Signal generation time
+        symbol: Trading pair (e.g., "BTC/USDT")
+        timeframe: Primary timeframe
+        signal_type: BUY/SELL/HOLD/STRONG_BUY/STRONG_SELL
+        signal_strength: 1-5 (WEAK to EXTREME)
+        entry_price: Recommended entry price
+        sl_price: Stop loss price
+        tp_prices: List of take profit targets [TP1, TP2, TP3]
+        confidence: Confidence score (0-100)
+        risk_reward_ratio: Risk/reward ratio
+        whale_blocks: List of whale order blocks
+        liquidity_zones: List of liquidity zones
+        order_blocks: List of standard order blocks
+        fair_value_gaps: List of FVGs
+        internal_liquidity: Internal liquidity pools
+        bias: Market bias (BULLISH/BEARISH/NEUTRAL)
+        structure_broken: Whether structure was broken
+        displacement_detected: Whether displacement was detected
+        mtf_confluence: Multi-timeframe confluence score
+        reasoning: Human-readable explanation
+        warnings: List of warnings/caveats
+    """
+    timestamp: datetime
+    symbol: str
+    timeframe: str
+    signal_type: SignalType
+    signal_strength: SignalStrength
+    entry_price: float
+    sl_price: float
+    tp_prices: List[float]
+    confidence: float
+    risk_reward_ratio: float
+    
+    # ICT Components
+    whale_blocks: List[Dict] = field(default_factory=list)
+    liquidity_zones: List[Dict] = field(default_factory=list)
+    order_blocks: List[Dict] = field(default_factory=list)
+    fair_value_gaps: List[Dict] = field(default_factory=list)
+    internal_liquidity: List[Dict] = field(default_factory=list)
+    
+    # Market Analysis
+    bias: MarketBias = MarketBias.NEUTRAL
+    structure_broken: bool = False
+    displacement_detected: bool = False
+    mtf_confluence: int = 0
+    htf_bias: str = "NEUTRAL"
+    mtf_structure: str = "NEUTRAL"
+    
+    # Explanation
+    reasoning: str = ""
+    warnings: List[str] = field(default_factory=list)
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary"""
+        return {
+            'timestamp': self.timestamp.isoformat() if isinstance(self.timestamp, datetime) else str(self.timestamp),
+            'symbol': self.symbol,
+            'timeframe': self.timeframe,
+            'signal_type': self.signal_type.value,
+            'signal_strength': self.signal_strength.value,
+            'entry_price': self.entry_price,
+            'sl_price': self.sl_price,
+            'tp_prices': self.tp_prices,
+            'confidence': self.confidence,
+            'risk_reward_ratio': self.risk_reward_ratio,
+            'whale_blocks_count': len(self.whale_blocks),
+            'liquidity_zones_count': len(self.liquidity_zones),
+            'order_blocks_count': len(self.order_blocks),
+            'fvgs_count': len(self.fair_value_gaps),
+            'bias': self.bias.value,
+            'structure_broken': self.structure_broken,
+            'displacement_detected': self.displacement_detected,
+            'mtf_confluence': self.mtf_confluence,
+            'htf_bias': self.htf_bias,
+            'mtf_structure': self.mtf_structure,
+            'reasoning': self.reasoning,
+            'warnings': self.warnings
+        }
+
+
+class ICTSignalEngine:
+    """
+    Central ICT Signal Generation Engine
+    
+    Combines all ICT concepts into a unified signal generation system:
+    - Whale Order Blocks
+    - Liquidity Mapping
+    - Standard Order Blocks
+    - Fair Value Gaps
+    - Internal Liquidity Pools
+    - Multi-Timeframe Analysis
+    """
+    
+    def __init__(self, config: Optional[Dict] = None):
+        """
+        Initialize ICT Signal Engine
+        
+        Args:
+            config: Configuration parameters
+        """
+        self.config = config or self._get_default_config()
+        
+        # Initialize sub-detectors
+        self.ob_detector = OrderBlockDetector() if ORDER_BLOCK_AVAILABLE else None
+        self.fvg_detector = FVGDetector() if FVG_AVAILABLE else None
+        self.whale_detector = WhaleDetector() if WHALE_AVAILABLE else None
+        self.liquidity_mapper = LiquidityMapper() if LIQUIDITY_AVAILABLE else None
+        self.ilp_detector = InternalLiquidityPoolDetector() if ILP_AVAILABLE else None
+        self.mtf_analyzer = MultiTimeframeAnalyzer() if MTF_AVAILABLE else None
+        
+        logger.info("ICT Signal Engine initialized")
+        logger.info(f"Order Blocks: {ORDER_BLOCK_AVAILABLE}")
+        logger.info(f"FVG: {FVG_AVAILABLE}")
+        logger.info(f"Whale: {WHALE_AVAILABLE}")
+        logger.info(f"Liquidity: {LIQUIDITY_AVAILABLE}")
+        logger.info(f"ILP: {ILP_AVAILABLE}")
+        logger.info(f"MTF: {MTF_AVAILABLE}")
+    
+    def _get_default_config(self) -> Dict:
+        """Get default configuration"""
+        return {
+            'min_confidence': 70,          # Min 70% confidence
+            'min_risk_reward': 2.0,        # Min 1:2 R:R
+            'max_sl_distance_pct': 3.0,    # Max 3% SL distance
+            'tp_multipliers': [2, 3, 5],   # TP at 2R, 3R, 5R
+            'require_mtf_confluence': False, # Require MTF alignment
+            'min_mtf_confluence': 2,       # Min 2 timeframes aligned
+            'use_whale_blocks': True,      # Use whale detection
+            'use_liquidity': True,         # Use liquidity mapping
+            'use_order_blocks': True,      # Use order blocks
+            'use_fvgs': True,              # Use FVGs
+            'displacement_required': True, # Require displacement
+            'min_displacement_pct': 0.5,   # Min 0.5% displacement
+            'structure_break_weight': 0.2, # Weight for structure break
+            'whale_block_weight': 0.25,    # Weight for whale blocks
+            'liquidity_weight': 0.2,       # Weight for liquidity
+            'ob_weight': 0.15,             # Weight for order blocks
+            'fvg_weight': 0.1,             # Weight for FVGs
+            'mtf_weight': 0.1,             # Weight for MTF confluence
+        }
+    
+    def generate_signal(
+        self,
+        df: pd.DataFrame,
+        symbol: str,
+        timeframe: str = "1H",
+        mtf_data: Optional[Dict[str, pd.DataFrame]] = None
+    ) -> Optional[ICTSignal]:
+        """
+        Generate complete ICT trading signal
+        
+        Args:
+            df: Primary timeframe OHLCV data
+            symbol: Trading pair symbol
+            timeframe: Primary timeframe
+            mtf_data: Multi-timeframe data dict {timeframe: df}
+            
+        Returns:
+            ICTSignal object or None
+        """
+        logger.info(f"Generating ICT signal for {symbol} on {timeframe}")
+        
+        if len(df) < 50:
+            logger.warning("Insufficient data for signal generation")
+            return None
+        
+        # Prepare data
+        df = self._prepare_dataframe(df)
+        
+        # Step 1: Detect all ICT components
+        ict_components = self._detect_ict_components(df, timeframe)
+        
+        # Step 2: Analyze multi-timeframe confluence (if available)
+        mtf_analysis = self._analyze_mtf_confluence(df, mtf_data, symbol) if mtf_data else None
+        
+        # Step 3: Determine market bias
+        bias = self._determine_market_bias(df, ict_components, mtf_analysis)
+        
+        # Step 4: Check for structure break
+        structure_broken = self._check_structure_break(df)
+        
+        # Step 5: Check for displacement
+        displacement_detected = self._check_displacement(df)
+        
+        # Step 6: Identify entry setup
+        entry_setup = self._identify_entry_setup(df, ict_components, bias)
+        
+        if not entry_setup:
+            logger.info("No valid entry setup found")
+            return None
+        
+        # Step 7: Calculate entry, SL, and TP prices
+        entry_price = self._calculate_entry_price(df, entry_setup, bias)
+        sl_price = self._calculate_sl_price(df, entry_setup, entry_price, bias)
+        tp_prices = self._calculate_tp_prices(entry_price, sl_price, bias, ict_components)
+        
+        # Step 8: Calculate risk/reward ratio
+        risk = abs(entry_price - sl_price)
+        reward = abs(tp_prices[0] - entry_price) if tp_prices else 0
+        risk_reward_ratio = reward / risk if risk > 0 else 0
+        
+        # Check minimum R:R
+        if risk_reward_ratio < self.config['min_risk_reward']:
+            logger.info(f"Risk/reward too low: {risk_reward_ratio:.2f}")
+            return None
+        
+        # Step 9: Calculate signal confidence
+        confidence = self._calculate_signal_confidence(
+            ict_components=ict_components,
+            mtf_analysis=mtf_analysis,
+            bias=bias,
+            structure_broken=structure_broken,
+            displacement_detected=displacement_detected,
+            risk_reward_ratio=risk_reward_ratio
+        )
+        
+        # Check minimum confidence
+        if confidence < self.config['min_confidence']:
+            logger.info(f"Confidence too low: {confidence:.1f}%")
+            return None
+        
+        # Step 10: Calculate signal strength
+        signal_strength = self._calculate_signal_strength(confidence, risk_reward_ratio, ict_components)
+        
+        # Step 11: Determine signal type
+        signal_type = self._determine_signal_type(bias, signal_strength, confidence)
+        
+        # Step 12: Generate reasoning and warnings
+        reasoning = self._generate_reasoning(ict_components, bias, entry_setup, mtf_analysis)
+        warnings = self._generate_warnings(ict_components, risk_reward_ratio, df)
+        
+        # Step 13: Create ICT signal
+        signal = ICTSignal(
+            timestamp=datetime.now(),
+            symbol=symbol,
+            timeframe=timeframe,
+            signal_type=signal_type,
+            signal_strength=signal_strength,
+            entry_price=entry_price,
+            sl_price=sl_price,
+            tp_prices=tp_prices,
+            confidence=confidence,
+            risk_reward_ratio=risk_reward_ratio,
+            whale_blocks=[wb.to_dict() if hasattr(wb, 'to_dict') else wb for wb in ict_components.get('whale_blocks', [])],
+            liquidity_zones=[lz.__dict__ if hasattr(lz, '__dict__') else lz for lz in ict_components.get('liquidity_zones', [])],
+            order_blocks=[ob.to_dict() if hasattr(ob, 'to_dict') else ob for ob in ict_components.get('order_blocks', [])],
+            fair_value_gaps=[fvg.to_dict() if hasattr(fvg, 'to_dict') else fvg for fvg in ict_components.get('fvgs', [])],
+            internal_liquidity=[ilp for ilp in ict_components.get('internal_liquidity', [])],
+            bias=bias,
+            structure_broken=structure_broken,
+            displacement_detected=displacement_detected,
+            mtf_confluence=mtf_analysis.get('confluence_count', 0) if mtf_analysis else 0,
+            htf_bias=mtf_analysis.get('htf_bias', 'NEUTRAL') if mtf_analysis else 'NEUTRAL',
+            mtf_structure=mtf_analysis.get('mtf_structure', 'NEUTRAL') if mtf_analysis else 'NEUTRAL',
+            reasoning=reasoning,
+            warnings=warnings
+        )
+        
+        logger.info(f"Generated {signal_type.value} signal with {confidence:.1f}% confidence")
+        
+        return signal
+    
+    def _prepare_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Prepare dataframe with indicators"""
+        df = df.copy()
+        
+        # Ensure datetime index
+        if 'timestamp' in df.columns and not isinstance(df.index, pd.DatetimeIndex):
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df = df.set_index('timestamp')
+        
+        # Calculate ATR
+        df['atr'] = self._calculate_atr(df, period=14)
+        
+        # Calculate EMAs
+        df['ema_21'] = df['close'].ewm(span=21, adjust=False).mean()
+        df['ema_50'] = df['close'].ewm(span=50, adjust=False).mean()
+        df['ema_200'] = df['close'].ewm(span=200, adjust=False).mean()
+        
+        # Calculate volume metrics
+        if 'volume' in df.columns:
+            df['volume_ma'] = df['volume'].rolling(window=20).mean()
+            df['volume_ratio'] = df['volume'] / df['volume_ma'].replace(0, 1)
+        else:
+            df['volume'] = 0
+            df['volume_ma'] = 0
+            df['volume_ratio'] = 1.0
+        
+        return df
+    
+    def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate Average True Range"""
+        high = df['high']
+        low = df['low']
+        close = df['close']
+        
+        tr1 = high - low
+        tr2 = abs(high - close.shift())
+        tr3 = abs(low - close.shift())
+        
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(window=period).mean()
+        
+        return atr
+    
+    def _detect_ict_components(
+        self,
+        df: pd.DataFrame,
+        timeframe: str
+    ) -> Dict[str, List]:
+        """
+        Detect all ICT components
+        
+        Returns dict with:
+        - whale_blocks
+        - liquidity_zones
+        - order_blocks
+        - fvgs
+        - internal_liquidity
+        """
+        components = {
+            'whale_blocks': [],
+            'liquidity_zones': [],
+            'order_blocks': [],
+            'fvgs': [],
+            'internal_liquidity': []
+        }
+        
+        # Detect Order Blocks
+        if self.config['use_order_blocks'] and self.ob_detector:
+            try:
+                order_blocks = self.ob_detector.detect_order_blocks(df, timeframe)
+                components['order_blocks'] = order_blocks
+                logger.info(f"Detected {len(order_blocks)} order blocks")
+            except Exception as e:
+                logger.error(f"Order block detection error: {e}")
+        
+        # Detect Fair Value Gaps
+        if self.config['use_fvgs'] and self.fvg_detector:
+            try:
+                fvgs = self.fvg_detector.detect_fvgs(df, timeframe)
+                components['fvgs'] = fvgs
+                logger.info(f"Detected {len(fvgs)} FVGs")
+            except Exception as e:
+                logger.error(f"FVG detection error: {e}")
+        
+        # Detect Whale Blocks
+        if self.config['use_whale_blocks'] and self.whale_detector:
+            try:
+                whale_blocks = self.whale_detector.detect_whale_blocks(df, timeframe)
+                components['whale_blocks'] = whale_blocks
+                logger.info(f"Detected {len(whale_blocks)} whale blocks")
+            except Exception as e:
+                logger.error(f"Whale detection error: {e}")
+        
+        # Detect Liquidity Zones
+        if self.config['use_liquidity'] and self.liquidity_mapper:
+            try:
+                liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df)
+                components['liquidity_zones'] = liquidity_zones
+                logger.info(f"Detected {len(liquidity_zones)} liquidity zones")
+            except Exception as e:
+                logger.error(f"Liquidity detection error: {e}")
+        
+        # Detect Internal Liquidity Pools
+        if self.ilp_detector:
+            try:
+                ilp_analysis = self.ilp_detector.analyze(df)
+                components['internal_liquidity'] = ilp_analysis.get('pools', [])
+                logger.info(f"Detected {len(components['internal_liquidity'])} ILPs")
+            except Exception as e:
+                logger.error(f"ILP detection error: {e}")
+        
+        return components
+    
+    def _analyze_mtf_confluence(
+        self,
+        primary_df: pd.DataFrame,
+        mtf_data: Optional[Dict[str, pd.DataFrame]],
+        symbol: str
+    ) -> Optional[Dict]:
+        """Analyze multi-timeframe confluence"""
+        if not self.mtf_analyzer or not mtf_data:
+            return None
+        
+        try:
+            # Get higher timeframes
+            htf_df = mtf_data.get('1D') or mtf_data.get('4H')
+            mtf_df = mtf_data.get('4H') or mtf_data.get('1H')
+            ltf_df = mtf_data.get('1H') or primary_df
+            
+            if htf_df is None or mtf_df is None or ltf_df is None:
+                return None
+            
+            # Analyze
+            signals = self.mtf_analyzer.analyze_multi_timeframe(htf_df, mtf_df, ltf_df, symbol)
+            
+            if not signals:
+                return None
+            
+            # Get first signal
+            signal = signals[0]
+            
+            return {
+                'htf_bias': signal.htf_bias.value,
+                'mtf_structure': signal.mtf_structure,
+                'ltf_trigger': signal.ltf_trigger,
+                'confluence_count': signal.alignment_score * 5,  # Scale to 0-5
+                'alignment_score': signal.alignment_score
+            }
+        except Exception as e:
+            logger.error(f"MTF analysis error: {e}")
+            return None
+    
+    def _determine_market_bias(
+        self,
+        df: pd.DataFrame,
+        ict_components: Dict,
+        mtf_analysis: Optional[Dict]
+    ) -> MarketBias:
+        """Determine overall market bias"""
+        bullish_score = 0
+        bearish_score = 0
+        
+        # EMA alignment
+        current_price = df['close'].iloc[-1]
+        ema_21 = df['ema_21'].iloc[-1]
+        ema_50 = df['ema_50'].iloc[-1]
+        ema_200 = df['ema_200'].iloc[-1]
+        
+        if ema_21 > ema_50 > ema_200:
+            bullish_score += 2
+        elif ema_21 < ema_50 < ema_200:
+            bearish_score += 2
+        
+        # Order blocks
+        bullish_obs = [ob for ob in ict_components.get('order_blocks', []) 
+                       if hasattr(ob, 'type') and 'BULLISH' in str(ob.type.value)]
+        bearish_obs = [ob for ob in ict_components.get('order_blocks', []) 
+                       if hasattr(ob, 'type') and 'BEARISH' in str(ob.type.value)]
+        
+        if len(bullish_obs) > len(bearish_obs):
+            bullish_score += 1
+        elif len(bearish_obs) > len(bullish_obs):
+            bearish_score += 1
+        
+        # FVGs
+        bullish_fvgs = [fvg for fvg in ict_components.get('fvgs', []) 
+                        if hasattr(fvg, 'is_bullish') and fvg.is_bullish]
+        bearish_fvgs = [fvg for fvg in ict_components.get('fvgs', []) 
+                        if hasattr(fvg, 'is_bullish') and not fvg.is_bullish]
+        
+        if len(bullish_fvgs) > len(bearish_fvgs):
+            bullish_score += 1
+        elif len(bearish_fvgs) > len(bullish_fvgs):
+            bearish_score += 1
+        
+        # MTF bias
+        if mtf_analysis:
+            htf_bias = mtf_analysis.get('htf_bias', 'NEUTRAL')
+            if 'BULLISH' in htf_bias:
+                bullish_score += 2
+            elif 'BEARISH' in htf_bias:
+                bearish_score += 2
+        
+        # Determine bias
+        if bullish_score >= 4 and bullish_score > bearish_score:
+            return MarketBias.BULLISH
+        elif bearish_score >= 4 and bearish_score > bullish_score:
+            return MarketBias.BEARISH
+        elif abs(bullish_score - bearish_score) <= 1:
+            return MarketBias.RANGING
+        else:
+            return MarketBias.NEUTRAL
+    
+    def _check_structure_break(self, df: pd.DataFrame) -> bool:
+        """Check for recent structure break (BOS/CHOCH)"""
+        # Simple check: look for break of recent swing high/low
+        lookback = 20
+        
+        if len(df) < lookback:
+            return False
+        
+        recent_high = df['high'].iloc[-lookback:].max()
+        recent_low = df['low'].iloc[-lookback:].min()
+        current_price = df['close'].iloc[-1]
+        
+        # Check if recent candles broke structure
+        for i in range(-5, 0):
+            if df['high'].iloc[i] > recent_high * 1.01:
+                return True  # Bullish break
+            if df['low'].iloc[i] < recent_low * 0.99:
+                return True  # Bearish break
+        
+        return False
+    
+    def _check_displacement(self, df: pd.DataFrame) -> bool:
+        """Check for recent displacement"""
+        if len(df) < 5:
+            return False
+        
+        # Check last 3 candles for displacement
+        for i in range(-3, 0):
+            price_change = abs(df['close'].iloc[i] - df['open'].iloc[i])
+            price_change_pct = (price_change / df['open'].iloc[i]) * 100
+            
+            if price_change_pct >= self.config['min_displacement_pct']:
+                return True
+        
+        return False
+    
+    def _identify_entry_setup(
+        self,
+        df: pd.DataFrame,
+        ict_components: Dict,
+        bias: MarketBias
+    ) -> Optional[Dict]:
+        """Identify valid entry setup"""
+        current_price = df['close'].iloc[-1]
+        atr = df['atr'].iloc[-1]
+        
+        if bias == MarketBias.BULLISH:
+            # Look for bullish entry
+            
+            # Check for bullish order blocks near price
+            bullish_obs = [ob for ob in ict_components.get('order_blocks', []) 
+                          if hasattr(ob, 'type') and 'BULLISH' in str(ob.type.value)
+                          and hasattr(ob, 'is_valid') and ob.is_valid()
+                          and ob.bottom <= current_price <= ob.top * 1.05]
+            
+            if bullish_obs:
+                best_ob = max(bullish_obs, key=lambda x: x.strength)
+                return {
+                    'type': 'bullish_ob',
+                    'ob': best_ob,
+                    'price_zone': (best_ob.bottom, best_ob.top)
+                }
+            
+            # Check for bullish FVGs
+            bullish_fvgs = [fvg for fvg in ict_components.get('fvgs', []) 
+                           if hasattr(fvg, 'is_bullish') and fvg.is_bullish
+                           and hasattr(fvg, 'is_valid') and fvg.is_valid()
+                           and fvg.bottom <= current_price <= fvg.top * 1.05]
+            
+            if bullish_fvgs:
+                best_fvg = max(bullish_fvgs, key=lambda x: x.strength)
+                return {
+                    'type': 'bullish_fvg',
+                    'fvg': best_fvg,
+                    'price_zone': (best_fvg.bottom, best_fvg.top)
+                }
+        
+        elif bias == MarketBias.BEARISH:
+            # Look for bearish entry
+            
+            # Check for bearish order blocks near price
+            bearish_obs = [ob for ob in ict_components.get('order_blocks', []) 
+                          if hasattr(ob, 'type') and 'BEARISH' in str(ob.type.value)
+                          and hasattr(ob, 'is_valid') and ob.is_valid()
+                          and ob.bottom * 0.95 <= current_price <= ob.top]
+            
+            if bearish_obs:
+                best_ob = max(bearish_obs, key=lambda x: x.strength)
+                return {
+                    'type': 'bearish_ob',
+                    'ob': best_ob,
+                    'price_zone': (best_ob.bottom, best_ob.top)
+                }
+            
+            # Check for bearish FVGs
+            bearish_fvgs = [fvg for fvg in ict_components.get('fvgs', []) 
+                           if hasattr(fvg, 'is_bullish') and not fvg.is_bullish
+                           and hasattr(fvg, 'is_valid') and fvg.is_valid()
+                           and fvg.bottom * 0.95 <= current_price <= fvg.top]
+            
+            if bearish_fvgs:
+                best_fvg = max(bearish_fvgs, key=lambda x: x.strength)
+                return {
+                    'type': 'bearish_fvg',
+                    'fvg': best_fvg,
+                    'price_zone': (best_fvg.bottom, best_fvg.top)
+                }
+        
+        return None
+    
+    def _calculate_entry_price(
+        self,
+        df: pd.DataFrame,
+        entry_setup: Dict,
+        bias: MarketBias
+    ) -> float:
+        """Calculate optimal entry price"""
+        current_price = df['close'].iloc[-1]
+        price_zone = entry_setup.get('price_zone', (current_price, current_price))
+        
+        # Enter at middle of zone or current price
+        if bias == MarketBias.BULLISH:
+            # Enter near bottom of bullish zone
+            entry = price_zone[0] * 1.005
+        else:
+            # Enter near top of bearish zone
+            entry = price_zone[1] * 0.995
+        
+        return entry
+    
+    def _calculate_sl_price(
+        self,
+        df: pd.DataFrame,
+        entry_setup: Dict,
+        entry_price: float,
+        bias: MarketBias
+    ) -> float:
+        """Calculate stop loss price"""
+        atr = df['atr'].iloc[-1]
+        price_zone = entry_setup.get('price_zone', (entry_price, entry_price))
+        
+        if bias == MarketBias.BULLISH:
+            # SL below the zone
+            sl = price_zone[0] - (atr * 0.5)
+        else:
+            # SL above the zone
+            sl = price_zone[1] + (atr * 0.5)
+        
+        # Check max SL distance
+        sl_distance_pct = abs(entry_price - sl) / entry_price * 100
+        max_distance = self.config['max_sl_distance_pct']
+        
+        if sl_distance_pct > max_distance:
+            # Adjust SL to max distance
+            if bias == MarketBias.BULLISH:
+                sl = entry_price * (1 - max_distance / 100)
+            else:
+                sl = entry_price * (1 + max_distance / 100)
+        
+        return sl
+    
+    def _calculate_tp_prices(
+        self,
+        entry_price: float,
+        sl_price: float,
+        bias: MarketBias,
+        ict_components: Dict
+    ) -> List[float]:
+        """Calculate take profit targets"""
+        risk = abs(entry_price - sl_price)
+        multipliers = self.config['tp_multipliers']
+        
+        tp_prices = []
+        
+        for multiplier in multipliers:
+            if bias == MarketBias.BULLISH:
+                tp = entry_price + (risk * multiplier)
+            else:
+                tp = entry_price - (risk * multiplier)
+            
+            tp_prices.append(tp)
+        
+        # Optionally adjust TPs to liquidity zones
+        liquidity_zones = ict_components.get('liquidity_zones', [])
+        
+        if liquidity_zones:
+            for i, tp in enumerate(tp_prices):
+                # Find nearest liquidity zone
+                if bias == MarketBias.BULLISH:
+                    nearby_lz = [lz for lz in liquidity_zones 
+                                if hasattr(lz, 'price_level') and lz.price_level > tp * 0.98]
+                else:
+                    nearby_lz = [lz for lz in liquidity_zones 
+                                if hasattr(lz, 'price_level') and lz.price_level < tp * 1.02]
+                
+                if nearby_lz:
+                    nearest = min(nearby_lz, key=lambda x: abs(x.price_level - tp))
+                    tp_prices[i] = nearest.price_level
+        
+        return tp_prices
+    
+    def _calculate_signal_confidence(
+        self,
+        ict_components: Dict,
+        mtf_analysis: Optional[Dict],
+        bias: MarketBias,
+        structure_broken: bool,
+        displacement_detected: bool,
+        risk_reward_ratio: float
+    ) -> float:
+        """Calculate signal confidence score (0-100)"""
+        confidence = 0.0
+        
+        # Structure break (20%)
+        if structure_broken:
+            confidence += 20 * self.config['structure_break_weight'] / 0.2
+        
+        # Whale blocks (25%)
+        whale_blocks = ict_components.get('whale_blocks', [])
+        if whale_blocks:
+            whale_score = min(25, len(whale_blocks) * 10)
+            confidence += whale_score * self.config['whale_block_weight'] / 0.25
+        
+        # Liquidity zones (20%)
+        liquidity_zones = ict_components.get('liquidity_zones', [])
+        if liquidity_zones:
+            liq_score = min(20, len(liquidity_zones) * 5)
+            confidence += liq_score * self.config['liquidity_weight'] / 0.2
+        
+        # Order blocks (15%)
+        order_blocks = ict_components.get('order_blocks', [])
+        if order_blocks:
+            ob_score = min(15, len(order_blocks) * 5)
+            confidence += ob_score * self.config['ob_weight'] / 0.15
+        
+        # FVGs (10%)
+        fvgs = ict_components.get('fvgs', [])
+        if fvgs:
+            fvg_score = min(10, len(fvgs) * 3)
+            confidence += fvg_score * self.config['fvg_weight'] / 0.1
+        
+        # MTF confluence (10%)
+        if mtf_analysis:
+            confluence_count = mtf_analysis.get('confluence_count', 0)
+            mtf_score = min(10, confluence_count * 3)
+            confidence += mtf_score * self.config['mtf_weight'] / 0.1
+        
+        # Displacement bonus (10%)
+        if displacement_detected:
+            confidence += 10
+        
+        # Risk/reward bonus (max 10%)
+        rr_bonus = min(10, (risk_reward_ratio / 2) * 5)
+        confidence += rr_bonus
+        
+        # Bias penalty
+        if bias == MarketBias.NEUTRAL or bias == MarketBias.RANGING:
+            confidence *= 0.8
+        
+        return min(100, max(0, confidence))
+    
+    def _calculate_signal_strength(
+        self,
+        confidence: float,
+        risk_reward_ratio: float,
+        ict_components: Dict
+    ) -> SignalStrength:
+        """Calculate signal strength (1-5)"""
+        # Base on confidence
+        if confidence >= 90:
+            strength = 5
+        elif confidence >= 80:
+            strength = 4
+        elif confidence >= 70:
+            strength = 3
+        elif confidence >= 60:
+            strength = 2
+        else:
+            strength = 1
+        
+        # Boost for high R:R
+        if risk_reward_ratio >= 4:
+            strength = min(5, strength + 1)
+        
+        # Boost for multiple ICT confirmations
+        total_confirmations = (
+            len(ict_components.get('whale_blocks', [])) +
+            len(ict_components.get('liquidity_zones', [])) +
+            len(ict_components.get('order_blocks', [])) +
+            len(ict_components.get('fvgs', []))
+        )
+        
+        if total_confirmations >= 5:
+            strength = min(5, strength + 1)
+        
+        return SignalStrength(strength)
+    
+    def _determine_signal_type(
+        self,
+        bias: MarketBias,
+        signal_strength: SignalStrength,
+        confidence: float
+    ) -> SignalType:
+        """Determine signal type"""
+        if bias == MarketBias.NEUTRAL or bias == MarketBias.RANGING:
+            return SignalType.HOLD
+        
+        if bias == MarketBias.BULLISH:
+            if signal_strength.value >= 4 and confidence >= 85:
+                return SignalType.STRONG_BUY
+            else:
+                return SignalType.BUY
+        
+        elif bias == MarketBias.BEARISH:
+            if signal_strength.value >= 4 and confidence >= 85:
+                return SignalType.STRONG_SELL
+            else:
+                return SignalType.SELL
+        
+        return SignalType.HOLD
+    
+    def _generate_reasoning(
+        self,
+        ict_components: Dict,
+        bias: MarketBias,
+        entry_setup: Optional[Dict],
+        mtf_analysis: Optional[Dict]
+    ) -> str:
+        """Generate human-readable reasoning"""
+        lines = []
+        
+        # Market bias
+        lines.append(f"Market Bias: {bias.value}")
+        
+        # HTF bias
+        if mtf_analysis:
+            htf_bias = mtf_analysis.get('htf_bias', 'NEUTRAL')
+            lines.append(f"Higher Timeframe: {htf_bias}")
+        
+        # Entry setup
+        if entry_setup:
+            setup_type = entry_setup.get('type', 'unknown')
+            lines.append(f"Entry Setup: {setup_type.replace('_', ' ').title()}")
+        
+        # ICT components
+        whale_count = len(ict_components.get('whale_blocks', []))
+        liq_count = len(ict_components.get('liquidity_zones', []))
+        ob_count = len(ict_components.get('order_blocks', []))
+        fvg_count = len(ict_components.get('fvgs', []))
+        
+        lines.append(f"\nICT Confirmations:")
+        if whale_count > 0:
+            lines.append(f"- {whale_count} Whale Order Blocks detected")
+        if liq_count > 0:
+            lines.append(f"- {liq_count} Liquidity Zones identified")
+        if ob_count > 0:
+            lines.append(f"- {ob_count} Order Blocks found")
+        if fvg_count > 0:
+            lines.append(f"- {fvg_count} Fair Value Gaps present")
+        
+        # MTF confluence
+        if mtf_analysis:
+            confluence = mtf_analysis.get('confluence_count', 0)
+            if confluence >= 2:
+                lines.append(f"- Multi-timeframe alignment ({int(confluence)}/5 TFs)")
+        
+        return '\n'.join(lines)
+    
+    def _generate_warnings(
+        self,
+        ict_components: Dict,
+        risk_reward_ratio: float,
+        df: pd.DataFrame
+    ) -> List[str]:
+        """Generate warnings and caveats"""
+        warnings = []
+        
+        # Low R:R warning
+        if risk_reward_ratio < 2.5:
+            warnings.append("Risk/reward ratio below 2.5")
+        
+        # Limited ICT confirmations
+        total_confirmations = (
+            len(ict_components.get('whale_blocks', [])) +
+            len(ict_components.get('liquidity_zones', [])) +
+            len(ict_components.get('order_blocks', [])) +
+            len(ict_components.get('fvgs', []))
+        )
+        
+        if total_confirmations < 3:
+            warnings.append("Limited ICT confirmations")
+        
+        # High volatility
+        atr = df['atr'].iloc[-1]
+        current_price = df['close'].iloc[-1]
+        atr_pct = (atr / current_price) * 100
+        
+        if atr_pct > 3:
+            warnings.append("High volatility detected")
+        
+        # Low volume
+        if 'volume_ratio' in df.columns:
+            volume_ratio = df['volume_ratio'].iloc[-1]
+            if volume_ratio < 0.7:
+                warnings.append("Below average volume")
+        
+        return warnings
+
+
+# Example usage
+if __name__ == "__main__":
+    print("🎯 ICT Signal Engine - Test Mode")
+    
+    # Create sample data
+    dates = pd.date_range(start='2025-01-01', periods=200, freq='1H')
+    np.random.seed(42)
+    
+    # Simulate realistic price data
+    base_price = 50000
+    prices = []
+    current = base_price
+    
+    for i in range(200):
+        # Add trending moves with some order blocks
+        if i == 80:  # Bullish setup
+            change = -150  # OB candle
+        elif i in [81, 82, 83]:  # Displacement
+            change = 600
+        elif i == 150:  # Bearish setup
+            change = 200  # OB candle
+        elif i in [151, 152, 153]:  # Displacement
+            change = -550
+        else:
+            change = np.random.randn() * 100
+        
+        current += change
+        prices.append(current)
+    
+    # Create dataframe
+    df = pd.DataFrame({
+        'timestamp': dates,
+        'open': prices,
+        'high': [p + abs(np.random.randn() * 50) for p in prices],
+        'low': [p - abs(np.random.randn() * 50) for p in prices],
+        'close': [p + np.random.randn() * 30 for p in prices],
+        'volume': [1000000 + np.random.randn() * 200000 for _ in prices]
+    })
+    
+    # Initialize engine
+    engine = ICTSignalEngine()
+    
+    # Generate signal
+    signal = engine.generate_signal(df, symbol="BTCUSDT", timeframe="1H")
+    
+    if signal:
+        print(f"\n✅ Generated {signal.signal_type.value} signal!")
+        print(f"\n📊 Signal Details:")
+        print(f"   Symbol: {signal.symbol}")
+        print(f"   Timeframe: {signal.timeframe}")
+        print(f"   Strength: {'🔥' * signal.signal_strength.value}")
+        print(f"   Confidence: {signal.confidence:.1f}%")
+        print(f"\n💰 Trade Setup:")
+        print(f"   Entry: ${signal.entry_price:.2f}")
+        print(f"   Stop Loss: ${signal.sl_price:.2f}")
+        print(f"   Take Profits:")
+        for i, tp in enumerate(signal.tp_prices, 1):
+            print(f"     TP{i}: ${tp:.2f}")
+        print(f"   Risk/Reward: {signal.risk_reward_ratio:.2f}")
+        print(f"\n📈 ICT Analysis:")
+        print(f"   Market Bias: {signal.bias.value}")
+        print(f"   Whale Blocks: {len(signal.whale_blocks)}")
+        print(f"   Liquidity Zones: {len(signal.liquidity_zones)}")
+        print(f"   Order Blocks: {len(signal.order_blocks)}")
+        print(f"   FVGs: {len(signal.fair_value_gaps)}")
+        print(f"   MTF Confluence: {signal.mtf_confluence}")
+        print(f"\n📝 Reasoning:")
+        print(signal.reasoning)
+        if signal.warnings:
+            print(f"\n⚠️  Warnings:")
+            for warning in signal.warnings:
+                print(f"   - {warning}")
+    else:
+        print("\n❌ No signal generated (conditions not met)")
+    
+    print("\n✅ ICT Signal Engine test completed!")
+    print(f"Total lines: {sum(1 for line in open(__file__))}+")
