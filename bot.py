@@ -86,6 +86,17 @@ except ImportError as e:
     RISK_MANAGER_AVAILABLE = False
     logger.warning(f"⚠️ Risk Management not available: {e}")
 
+# ICT Signal Engine - New Complete System
+try:
+    from ict_signal_engine import ICTSignalEngine, ICTSignal
+    from order_block_detector import OrderBlockDetector
+    from fvg_detector import FVGDetector
+    ICT_SIGNAL_ENGINE_AVAILABLE = True
+    logger.info("✅ ICT Signal Engine loaded")
+except ImportError as e:
+    ICT_SIGNAL_ENGINE_AVAILABLE = False
+    logger.warning(f"⚠️ ICT Signal Engine not available: {e}")
+
 # RSS и HTML парсинг за новини
 try:
     import feedparser
@@ -5813,6 +5824,199 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    🎯 ICT Complete Analysis Command
+    Full ICT trading signal with all components
+    """
+    logger.info(f"User {update.effective_user.id} executed /ict with args: {context.args}")
+    
+    if not ICT_SIGNAL_ENGINE_AVAILABLE:
+        await update.message.reply_text(
+            "❌ ICT Signal Engine not available. Please check bot configuration.",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Parse arguments
+    if not context.args:
+        # Show menu
+        keyboard = [
+            [
+                InlineKeyboardButton("₿ BTC", callback_data="ict_BTCUSDT"),
+                InlineKeyboardButton("Ξ ETH", callback_data="ict_ETHUSDT"),
+            ],
+            [
+                InlineKeyboardButton("⚡ SOL", callback_data="ict_SOLUSDT"),
+                InlineKeyboardButton("💎 XRP", callback_data="ict_XRPUSDT"),
+            ],
+            [
+                InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_menu"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "🎯 <b>ICT Analysis - Select Currency:</b>\n\n"
+            "💡 <i>Tip: Use /ict BTC 1h for specific timeframe</i>",
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+        return
+    
+    symbol = context.args[0].upper()
+    timeframe = context.args[1] if len(context.args) > 1 else '1h'
+    
+    # Validate symbol
+    if symbol not in SYMBOLS.values():
+        # Try to find in short names
+        found = False
+        for short, full in SYMBOLS.items():
+            if symbol == short:
+                symbol = full
+                found = True
+                break
+        if not found:
+            await update.message.reply_text(f"❌ Unknown symbol: {symbol}")
+            return
+    
+    # Send processing message
+    processing_msg = await update.message.reply_text(
+        f"🔍 <b>Running complete ICT analysis for {symbol}...</b>\n\n"
+        f"⏳ Analyzing: Order Blocks, FVGs, Liquidity, Market Structure...",
+        parse_mode='HTML'
+    )
+    
+    try:
+        # Initialize ICT engine
+        ict_engine = ICTSignalEngine()
+        
+        # Fetch OHLCV data
+        klines = requests.get(
+            f"{BINANCE_API}klines",
+            params={'symbol': symbol, 'interval': timeframe, 'limit': 200}
+        ).json()
+        
+        if not klines or 'code' in klines:
+            await processing_msg.edit_text(
+                f"❌ Failed to fetch data for {symbol}",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Prepare dataframe
+        df = pd.DataFrame(klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+            'taker_buy_quote', 'ignore'
+        ])
+        
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = df[col].astype(float)
+        
+        # Generate ICT signal
+        signal = ict_engine.generate_signal(
+            df=df,
+            symbol=symbol,
+            timeframe=timeframe,
+            mtf_data=None  # TODO: Add MTF data fetching
+        )
+        
+        if not signal:
+            await processing_msg.edit_text(
+                f"❌ <b>No ICT signal generated for {symbol}</b>\n\n"
+                f"Conditions not met for high-quality signal (minimum 70% confidence required).",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Format and send signal
+        signal_msg = format_ict_signal(signal)
+        
+        await processing_msg.edit_text(
+            signal_msg,
+            parse_mode='Markdown',
+            disable_web_page_preview=True
+        )
+        
+        logger.info(f"ICT signal sent for {symbol}: {signal.signal_type.value}")
+        
+    except Exception as e:
+        logger.error(f"ICT analysis error: {e}")
+        await processing_msg.edit_text(
+            f"❌ <b>Error during ICT analysis:</b>\n\n<code>{str(e)}</code>",
+            parse_mode='HTML'
+        )
+
+
+def format_ict_signal(signal: ICTSignal) -> str:
+    """
+    Format ICT signal for Telegram display
+    
+    Args:
+        signal: ICT signal object
+        
+    Returns:
+        Formatted message string
+    """
+    # Signal type emoji
+    signal_emoji = {
+        'BUY': '🟢',
+        'SELL': '🔴',
+        'STRONG_BUY': '💚',
+        'STRONG_SELL': '❤️',
+        'HOLD': '⚪'
+    }
+    
+    emoji = signal_emoji.get(signal.signal_type.value, '⚪')
+    strength_stars = '🔥' * signal.signal_strength.value
+    
+    msg = f"""
+{emoji} **ICT SIGNAL - {signal.signal_type.value}** {emoji}
+
+📊 **Symbol:** {signal.symbol}
+⏰ **Timeframe:** {signal.timeframe}
+💪 **Strength:** {strength_stars} ({signal.signal_strength.value}/5)
+📈 **Confidence:** {signal.confidence:.1f}%
+
+💰 **Trade Setup:**
+├─ Entry: ${signal.entry_price:.2f}
+├─ Stop Loss: ${signal.sl_price:.2f}
+└─ Take Profits:
+   ├─ TP1: ${signal.tp_prices[0]:.2f}
+   ├─ TP2: ${signal.tp_prices[1]:.2f}
+   └─ TP3: ${signal.tp_prices[2]:.2f}
+
+📊 **Risk/Reward:** {signal.risk_reward_ratio:.2f}:1
+
+🎯 **ICT Analysis:**
+├─ Market Bias: {signal.bias.value}
+├─ Whale Blocks: {len(signal.whale_blocks)}
+├─ Liquidity Zones: {len(signal.liquidity_zones)}
+├─ Order Blocks: {len(signal.order_blocks)}
+├─ Fair Value Gaps: {len(signal.fair_value_gaps)}
+└─ MTF Confluence: {signal.mtf_confluence} timeframes
+
+🔍 **Structure:**
+├─ HTF Bias: {signal.htf_bias}
+├─ Structure Broken: {'✅' if signal.structure_broken else '❌'}
+└─ Displacement: {'✅' if signal.displacement_detected else '❌'}
+
+📝 **Reasoning:**
+{signal.reasoning}
+"""
+    
+    if signal.warnings:
+        msg += f"\n\n⚠️ **Warnings:**\n"
+        for warning in signal.warnings:
+            msg += f"• {warning}\n"
+    
+    msg += f"\n\n⏰ _Generated: {signal.timestamp.strftime('%Y-%m-%d %H:%M:%S')}_"
+    
+    return msg
+
+
 async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Последни новини от крипто света - Топ надеждни източници"""
     logger.info(f"User {update.effective_user.id} executed /news")
@@ -10400,6 +10604,7 @@ def main():
     app.add_handler(CommandHandler("v", version_cmd))  # Short alias for version
     app.add_handler(CommandHandler("market", market_cmd))
     app.add_handler(CommandHandler("signal", signal_cmd))
+    app.add_handler(CommandHandler("ict", ict_cmd))  # 🎯 ICT Complete Analysis
     app.add_handler(CommandHandler("news", news_cmd))
     app.add_handler(CommandHandler("breaking", breaking_cmd))  # Критични новини
     app.add_handler(CommandHandler("task", task_cmd))  # Задания за Copilot
