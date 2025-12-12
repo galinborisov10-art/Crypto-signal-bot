@@ -83,11 +83,39 @@ jobs:
             echo "📋 Deployment Info:"
             cat .deployment-info
             
-            echo "🔄 Restarting bot service..."
-            systemctl restart crypto-bot
+            # Update systemd service file if it exists in repo
+            if [ -f crypto-signal-bot.service ]; then
+              echo "🔧 Updating systemd service file..."
+              cp crypto-signal-bot.service /etc/systemd/system/crypto-bot.service
+              echo "✅ Service file updated"
+            fi
+            
+            echo "🔄 Stopping bot service..."
+            systemctl stop crypto-bot || true
+            
+            # Kill any remaining Python processes running bot.py (force cleanup)
+            echo "🧹 Cleaning up any remaining bot processes..."
+            pkill -9 -f "python.*bot.py" || true
+            sleep 2
+            
+            # Verify no bot processes remain
+            if pgrep -f "python.*bot.py" > /dev/null; then
+              echo "⚠️ WARNING: Bot processes still running, forcing kill again..."
+              pkill -9 -f "python.*bot.py" || true
+              sleep 1
+            fi
+            
+            echo "✅ All bot processes terminated"
+            
+            # Reload systemd to pick up any service file changes
+            echo "🔧 Reloading systemd daemon..."
+            systemctl daemon-reload
+            
+            echo "🚀 Starting bot service..."
+            systemctl start crypto-bot
             
             # Wait for service to start
-            sleep 3
+            sleep 5
             
             # Run health check
             echo "🔍 Running health check..."
@@ -98,7 +126,19 @@ jobs:
             
             # Check if bot is running
             if systemctl is-active --quiet crypto-bot; then
-              echo "✅ Deploy complete! Bot is running successfully."
+              echo "✅ Bot service is active"
+              
+              # Verify the bot process is actually running with new code
+              BOT_PID=$(pgrep -f "python.*bot.py" | head -1)
+              if [ -n "$BOT_PID" ]; then
+                BOT_START_TIME=$(ps -p $BOT_PID -o lstart=)
+                echo "✅ Bot process PID: $BOT_PID"
+                echo "✅ Bot started at: $BOT_START_TIME"
+                echo "✅ Deploy complete! Bot is running with fresh code."
+              else
+                echo "⚠️ WARNING: Bot service is active but no bot.py process found!"
+                exit 1
+              fi
             else
               echo "❌ WARNING: Bot service is not active!"
               systemctl status crypto-bot --no-pager
