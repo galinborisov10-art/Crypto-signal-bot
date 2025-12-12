@@ -4176,8 +4176,8 @@ async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uptime = datetime.now(timezone.utc) - BOT_START_TIME
         uptime_str = str(uptime).split('.')[0]  # Remove microseconds
         
-        # Format bot start time in Bulgarian timezone (UTC+2)
-        bot_start_bg = BOT_START_TIME.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+        # Format bot start time (already in UTC)
+        bot_start_utc = BOT_START_TIME.strftime('%Y-%m-%d %H:%M:%S UTC')
         
         message = f"""
 🤖 <b>CRYPTO SIGNAL BOT - VERSION INFO</b>
@@ -4186,7 +4186,7 @@ async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🐍 <b>Python:</b> {python_version}
 📡 <b>python-telegram-bot:</b> {ptb_version}
 
-⏰ <b>Bot Process Started:</b> {bot_start_bg}
+⏰ <b>Bot Process Started:</b> {bot_start_utc}
 ⏱️ <b>Uptime:</b> {uptime_str}
 
 """

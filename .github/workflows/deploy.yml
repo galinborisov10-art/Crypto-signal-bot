@@ -100,8 +100,8 @@ jobs:
             
             # Verify no bot processes remain
             if pgrep -f "python.*bot.py" > /dev/null; then
-              echo "⚠️ WARNING: Bot processes still running, forcing kill..."
-              killall -9 python3 || true
+              echo "⚠️ WARNING: Bot processes still running, forcing kill again..."
+              pkill -9 -f "python.*bot.py" || true
               sleep 1
             fi
             
