@@ -83,6 +83,13 @@ jobs:
             echo "📋 Deployment Info:"
             cat .deployment-info
             
+            # Update systemd service file if it exists in repo
+            if [ -f crypto-signal-bot.service ]; then
+              echo "🔧 Updating systemd service file..."
+              cp crypto-signal-bot.service /etc/systemd/system/crypto-bot.service
+              echo "✅ Service file updated"
+            fi
+            
             echo "🔄 Stopping bot service..."
             systemctl stop crypto-bot || true
             
