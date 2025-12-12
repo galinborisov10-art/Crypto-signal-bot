@@ -1,6 +1,16 @@
 """
 🤖 MACHINE LEARNING ENGINE
-Самообучаваща се система за оптимизация на сигнали
+Self-Learning Signal Optimization System
+
+Complete ML system for trading signal prediction and optimization:
+- Feature extraction from technical analysis and ICT concepts
+- RandomForest classifier for signal prediction
+- Hybrid mode (ML + Classical signals)
+- Adaptive learning and retraining
+- Performance tracking and metrics
+- Feature importance analysis
+
+Author: ICT Trading System
 """
 
 import json
@@ -8,10 +18,23 @@ import numpy as np
 from datetime import datetime, timedelta
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.model_selection import train_test_split
 import joblib
 import os
+import logging
+from typing import Dict, List, Tuple, Optional, Any
+
+logger = logging.getLogger(__name__)
 
 class MLTradingEngine:
+    """
+    Machine Learning Trading Engine
+    
+    Implements ML-based signal prediction with hybrid classical+ML approach.
+    Features adaptive learning, performance tracking, and feature importance analysis.
+    """
+    
     def __init__(self):
         self.model = None
         self.scaler = StandardScaler()
@@ -22,15 +45,34 @@ class MLTradingEngine:
         else:
             base_path = '/workspaces/Crypto-signal-bot'
         
+        self.base_path = base_path
         self.model_path = f'{base_path}/ml_model.pkl'
         self.scaler_path = f'{base_path}/ml_scaler.pkl'
         self.trading_journal_path = f'{base_path}/trading_journal.json'
-        self.min_training_samples = 50  # Минимум данни за обучение
-        self.hybrid_mode = True  # Стартира в хибриден режим
-        self.ml_weight = 0.3  # Първоначално 30% ML, 70% класически
+        self.performance_log_path = f'{base_path}/ml_performance.json'
+        self.predictions_log_path = f'{base_path}/ml_predictions.json'
         
-        # Зареди модел ако съществува
+        # Configuration
+        self.min_training_samples = 50  # Minimum training samples
+        self.retrain_interval = 50  # Retrain every N signals
+        self.max_training_samples = 500  # Keep last 500 signals
+        self.validation_split = 0.2  # 20% for validation
+        
+        # Hybrid mode settings
+        self.hybrid_mode = True  # Start in hybrid mode
+        self.ml_weight = 0.3  # Initially 30% ML, 70% classical
+        
+        # Performance tracking
+        self.predictions_count = 0
+        self.correct_predictions = 0
+        self.current_metrics = {}
+        self.feature_importance = {}
+        
+        # Load model if exists
         self.load_model()
+        self._load_performance_log()
+        
+        logger.info("MLTradingEngine initialized successfully")
     
     def extract_features(self, analysis):
         """Извлича features от анализа за ML (6 features - match bot.py)"""
@@ -261,9 +303,9 @@ class MLTradingEngine:
             return False
     
     def get_status(self):
-        """Връща статус на ML системата"""
+        """Returns ML system status"""
         try:
-            # Брой trades от trading_journal
+            # Count trades from trading journal
             if os.path.exists(self.trading_journal_path):
                 with open(self.trading_journal_path, 'r') as f:
                     journal = json.load(f)
@@ -277,10 +319,408 @@ class MLTradingEngine:
                 'ml_weight': self.ml_weight,
                 'training_samples': num_samples,
                 'min_samples_needed': self.min_training_samples,
-                'ready_for_training': num_samples >= self.min_training_samples
+                'ready_for_training': num_samples >= self.min_training_samples,
+                'predictions_count': self.predictions_count,
+                'correct_predictions': self.correct_predictions,
+                'accuracy': self.correct_predictions / self.predictions_count if self.predictions_count > 0 else 0,
+                'current_metrics': self.current_metrics
             }
-        except:
+        except Exception as e:
+            logger.error(f"Get status error: {e}")
             return {'error': 'Failed to get status'}
+    
+    def evaluate_model(self, test_data: Optional[List[Dict]] = None) -> Dict[str, float]:
+        """
+        Evaluate model performance on test data
+        
+        Args:
+            test_data: Optional test dataset. If None, uses validation split from journal
+            
+        Returns:
+            Dictionary with evaluation metrics
+        """
+        try:
+            if self.model is None:
+                logger.warning("No model to evaluate")
+                return {'error': 'No model trained'}
+            
+            # Get test data
+            if test_data is None:
+                # Load from trading journal
+                if not os.path.exists(self.trading_journal_path):
+                    return {'error': 'No trading journal available'}
+                
+                with open(self.trading_journal_path, 'r') as f:
+                    journal = json.load(f)
+                
+                trades = journal.get('trades', [])
+                test_data = [t for t in trades if t.get('outcome')]
+            
+            if len(test_data) < 10:
+                return {'error': 'Insufficient test data'}
+            
+            # Prepare features and labels
+            X_test = []
+            y_test = []
+            
+            for trade in test_data:
+                conditions = trade.get('conditions', {})
+                
+                features = [
+                    conditions.get('rsi', 50),
+                    conditions.get('price_change_pct', 0),
+                    conditions.get('volume_ratio', 1),
+                    conditions.get('volatility', 5),
+                    conditions.get('bb_position', 0.5),
+                    conditions.get('ict_confidence', 0.5),
+                ]
+                
+                X_test.append(features)
+                
+                outcome = trade.get('outcome')
+                y_test.append(1 if outcome == 'WIN' else 0)
+            
+            X_test = np.array(X_test)
+            y_test = np.array(y_test)
+            
+            # Scale features
+            X_test_scaled = self.scaler.transform(X_test)
+            
+            # Predict
+            y_pred = self.model.predict(X_test_scaled)
+            
+            # Calculate metrics
+            accuracy = accuracy_score(y_test, y_pred)
+            precision = precision_score(y_test, y_pred, zero_division=0)
+            recall = recall_score(y_test, y_pred, zero_division=0)
+            f1 = f1_score(y_test, y_pred, zero_division=0)
+            
+            # Confusion matrix
+            cm = confusion_matrix(y_test, y_pred)
+            
+            metrics = {
+                'accuracy': float(accuracy),
+                'precision': float(precision),
+                'recall': float(recall),
+                'f1_score': float(f1),
+                'test_samples': len(X_test),
+                'confusion_matrix': cm.tolist()
+            }
+            
+            # Update current metrics
+            self.current_metrics = metrics
+            
+            logger.info(f"Model evaluation: Accuracy={accuracy:.2%}, Precision={precision:.2%}, Recall={recall:.2%}")
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Model evaluation error: {e}")
+            return {'error': str(e)}
+    
+    def save_model(self) -> bool:
+        """
+        Save model and scaler to disk
+        
+        Returns:
+            True if successful
+        """
+        try:
+            if self.model is None:
+                logger.warning("No model to save")
+                return False
+            
+            joblib.dump(self.model, self.model_path)
+            joblib.dump(self.scaler, self.scaler_path)
+            
+            logger.info(f"Model saved to {self.model_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Save model error: {e}")
+            return False
+    
+    def log_prediction(self, signal: str, features: Dict, outcome: Optional[str] = None) -> None:
+        """
+        Log prediction for tracking and future training
+        
+        Args:
+            signal: Predicted signal (BUY/SELL/HOLD)
+            features: Feature dictionary
+            outcome: Actual outcome (WIN/LOSS) - optional, added later
+        """
+        try:
+            # Load existing predictions
+            if os.path.exists(self.predictions_log_path):
+                with open(self.predictions_log_path, 'r') as f:
+                    predictions = json.load(f)
+            else:
+                predictions = {'predictions': []}
+            
+            # Add new prediction
+            prediction = {
+                'timestamp': datetime.now().isoformat(),
+                'signal': signal,
+                'features': features,
+                'outcome': outcome
+            }
+            
+            predictions['predictions'].append(prediction)
+            
+            # Keep only last 1000 predictions
+            if len(predictions['predictions']) > 1000:
+                predictions['predictions'] = predictions['predictions'][-1000:]
+            
+            # Save
+            with open(self.predictions_log_path, 'w') as f:
+                json.dump(predictions, f, indent=2)
+            
+            self.predictions_count += 1
+            
+            # If outcome provided, update accuracy
+            if outcome:
+                if (outcome == 'WIN' and signal in ['BUY', 'SELL']) or (outcome == 'LOSS' and signal == 'HOLD'):
+                    self.correct_predictions += 1
+            
+        except Exception as e:
+            logger.error(f"Log prediction error: {e}")
+    
+    def adaptive_learning(self) -> bool:
+        """
+        Perform adaptive learning - retrain on new data
+        
+        Returns:
+            True if retraining occurred
+        """
+        try:
+            # Check if retraining is needed
+            if self.predictions_count % self.retrain_interval == 0 and self.predictions_count > 0:
+                logger.info(f"Adaptive learning triggered at {self.predictions_count} predictions")
+                
+                # Retrain model
+                success = self.train_model()
+                
+                if success:
+                    # Evaluate on validation set
+                    metrics = self.evaluate_model()
+                    
+                    # Log performance
+                    self._log_performance(metrics)
+                    
+                    logger.info(f"Adaptive learning completed: {metrics}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Adaptive learning error: {e}")
+            return False
+    
+    def get_feature_importance(self) -> Dict[str, float]:
+        """
+        Get feature importance from the trained model
+        
+        Returns:
+            Dictionary mapping feature names to importance scores
+        """
+        try:
+            if self.model is None or not hasattr(self.model, 'feature_importances_'):
+                return {}
+            
+            feature_names = [
+                'rsi',
+                'price_change_pct',
+                'volume_ratio',
+                'volatility',
+                'bb_position',
+                'ict_confidence'
+            ]
+            
+            importance = self.model.feature_importances_
+            
+            self.feature_importance = {
+                name: float(score) 
+                for name, score in zip(feature_names, importance)
+            }
+            
+            # Sort by importance
+            self.feature_importance = dict(
+                sorted(self.feature_importance.items(), key=lambda x: x[1], reverse=True)
+            )
+            
+            return self.feature_importance
+            
+        except Exception as e:
+            logger.error(f"Feature importance error: {e}")
+            return {}
+    
+    def extract_ict_features(self, analysis: Dict, ict_components: Optional[Dict] = None) -> np.ndarray:
+        """
+        Extract enhanced features including ICT concepts
+        
+        Args:
+            analysis: Technical analysis dictionary
+            ict_components: ICT components dictionary (optional)
+            
+        Returns:
+            Feature array
+        """
+        try:
+            # Base features (6 features to match bot.py)
+            features = [
+                analysis.get('rsi', 50),                    # 1
+                analysis.get('price_change_pct', 0),        # 2
+                analysis.get('volume_ratio', 1),            # 3
+                analysis.get('volatility', 5),              # 4
+                analysis.get('bb_position', 0.5),           # 5
+                analysis.get('ict_confidence', 0.5),        # 6
+            ]
+            
+            # If ICT components provided, enhance the ict_confidence feature
+            if ict_components:
+                # Whale block presence (binary feature embedded in confidence)
+                whale_score = 0.0
+                if ict_components.get('whale_blocks'):
+                    whale_score = min(len(ict_components['whale_blocks']) / 3, 1.0) * 0.2
+                
+                # Liquidity sweep detected
+                sweep_score = 0.0
+                if ict_components.get('liquidity_sweeps'):
+                    sweep_score = 0.2
+                
+                # Order block quality
+                ob_score = 0.0
+                if ict_components.get('order_blocks'):
+                    obs = ict_components['order_blocks']
+                    active_obs = [ob for ob in obs if not ob.get('mitigated', False)]
+                    if active_obs:
+                        avg_quality = sum(ob.get('strength_score', 0) for ob in active_obs) / len(active_obs)
+                        ob_score = (avg_quality / 100) * 0.2
+                
+                # FVG count (normalized)
+                fvg_score = 0.0
+                if ict_components.get('fvgs'):
+                    fvgs = ict_components['fvgs']
+                    active_fvgs = [fvg for fvg in fvgs if not fvg.get('filled', False)]
+                    fvg_score = min(len(active_fvgs) / 5, 1.0) * 0.2
+                
+                # MTF confluence score
+                mtf_score = 0.0
+                if ict_components.get('mtf_confluence'):
+                    mtf_score = (ict_components['mtf_confluence'] / 3) * 0.2
+                
+                # Update ICT confidence with all scores
+                ict_confidence = whale_score + sweep_score + ob_score + fvg_score + mtf_score
+                features[5] = min(ict_confidence, 1.0)  # Update ict_confidence feature
+            
+            return np.array(features).reshape(1, -1)
+            
+        except Exception as e:
+            logger.error(f"ICT feature extraction error: {e}")
+            # Return base features on error
+            return self.extract_features(analysis)
+    
+    def _load_performance_log(self) -> None:
+        """Load performance log from disk"""
+        try:
+            if os.path.exists(self.performance_log_path):
+                with open(self.performance_log_path, 'r') as f:
+                    log = json.load(f)
+                
+                if log.get('history'):
+                    latest = log['history'][-1]
+                    self.current_metrics = latest.get('metrics', {})
+                    self.predictions_count = latest.get('predictions_count', 0)
+                    self.correct_predictions = latest.get('correct_predictions', 0)
+                
+                logger.info("Performance log loaded")
+        except Exception as e:
+            logger.error(f"Load performance log error: {e}")
+    
+    def _log_performance(self, metrics: Dict) -> None:
+        """
+        Log performance metrics to disk
+        
+        Args:
+            metrics: Performance metrics dictionary
+        """
+        try:
+            # Load existing log
+            if os.path.exists(self.performance_log_path):
+                with open(self.performance_log_path, 'r') as f:
+                    log = json.load(f)
+            else:
+                log = {'history': []}
+            
+            # Add new entry
+            entry = {
+                'timestamp': datetime.now().isoformat(),
+                'metrics': metrics,
+                'predictions_count': self.predictions_count,
+                'correct_predictions': self.correct_predictions,
+                'ml_weight': self.ml_weight,
+                'hybrid_mode': self.hybrid_mode
+            }
+            
+            log['history'].append(entry)
+            
+            # Keep only last 100 entries
+            if len(log['history']) > 100:
+                log['history'] = log['history'][-100:]
+            
+            # Save
+            with open(self.performance_log_path, 'w') as f:
+                json.dump(log, f, indent=2)
+            
+            logger.info("Performance logged successfully")
+            
+        except Exception as e:
+            logger.error(f"Log performance error: {e}")
+    
+    def get_performance_history(self) -> List[Dict]:
+        """
+        Get historical performance data
+        
+        Returns:
+            List of performance entries
+        """
+        try:
+            if os.path.exists(self.performance_log_path):
+                with open(self.performance_log_path, 'r') as f:
+                    log = json.load(f)
+                return log.get('history', [])
+            return []
+        except Exception as e:
+            logger.error(f"Get performance history error: {e}")
+            return []
+    
+    def calculate_profit_factor(self) -> float:
+        """
+        Calculate profit factor from predictions
+        
+        Returns:
+            Profit factor (wins/losses ratio)
+        """
+        try:
+            if not os.path.exists(self.predictions_log_path):
+                return 0.0
+            
+            with open(self.predictions_log_path, 'r') as f:
+                log = json.load(f)
+            
+            predictions = log.get('predictions', [])
+            
+            wins = sum(1 for p in predictions if p.get('outcome') == 'WIN')
+            losses = sum(1 for p in predictions if p.get('outcome') == 'LOSS')
+            
+            if losses == 0:
+                return float(wins) if wins > 0 else 0.0
+            
+            return wins / losses
+            
+        except Exception as e:
+            logger.error(f"Profit factor calculation error: {e}")
+            return 0.0
 
 
 # Global ML instance

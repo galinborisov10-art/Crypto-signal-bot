@@ -139,6 +139,17 @@ except ImportError as e:
     ML_PREDICTOR_AVAILABLE = False
     print(f"⚠️ ML Predictor not available: {e}")
 
+# ================= ICT SIGNAL ENGINE =================
+try:
+    from ict_signal_engine import ICTSignalEngine, ICTSignal
+    from order_block_detector import OrderBlockDetector
+    from fvg_detector import FVGDetector
+    ICT_ENGINE_AVAILABLE = True
+    print("✅ ICT Signal Engine loaded successfully")
+except ImportError as e:
+    ICT_ENGINE_AVAILABLE = False
+    print(f"⚠️ ICT Signal Engine not available: {e}")
+
 # ================= НАСТРОЙКИ (от .env файл) =================
 # Зареди от environment variables
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -214,6 +225,19 @@ SYMBOLS = {
 #     'news_enabled': False,  # Автоматични новини
 #     'news_interval': 7200,  # Интервал за новини (2 часа)
 # }
+
+# ================= ICT SYSTEM INITIALIZATION =================
+# Initialize ICT engines globally
+if ICT_ENGINE_AVAILABLE:
+    ict_signal_engine = ICTSignalEngine()
+    order_block_detector = OrderBlockDetector()
+    fvg_detector = FVGDetector()
+    logger.info("✅ ICT System initialized globally")
+else:
+    ict_signal_engine = None
+    order_block_detector = None
+    fvg_detector = None
+    logger.warning("⚠️ ICT System not available")
 
 # ================= ДЕДУПЛИКАЦИЯ НА СИГНАЛИ =================
 # Tracking на изпратени автоматични сигнали (за предотвратяване на дублиране)
@@ -3664,7 +3688,10 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
             'luxalgo_ict': luxalgo_ict,  # Full ICT analysis data
             'time_factor': get_time_of_day_factor(),
             'liquidity': check_liquidity(volume_24h, avg_volume, volume_ratio),
-            'risk_validation': risk_validation  # Risk Management results
+            'risk_validation': risk_validation,  # Risk Management results
+            'ict_order_blocks': 0,  # Placeholder - updated by ICT analysis
+            'ict_fvgs': 0,  # Placeholder - updated by ICT analysis
+            'ict_confidence': luxalgo_ict.get('overall_confluence', 50) / 100 if luxalgo_ict else 0.5  # For ML
         }
     
     except Exception as e:
@@ -5810,6 +5837,235 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"🔔🔊 {message}",
             parse_mode='HTML',
             disable_notification=False
+        )
+
+
+async def ict_signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    🎯 Advanced ICT Signal Generator
+    Generates professional trading signals using complete ICT methodology
+    """
+    logger.info(f"User {update.effective_user.id} executed /ict_signal with args: {context.args}")
+    
+    if not ICT_ENGINE_AVAILABLE:
+        await update.message.reply_text(
+            "❌ <b>ICT Signal Engine not available</b>\n\n"
+            "The system is not properly configured. Please contact the administrator.",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Parse arguments
+    if not context.args:
+        # Show coin selection
+        keyboard = [
+            [
+                InlineKeyboardButton("₿ BTC", callback_data="ict_signal_BTCUSDT"),
+                InlineKeyboardButton("Ξ ETH", callback_data="ict_signal_ETHUSDT"),
+            ],
+            [
+                InlineKeyboardButton("⚡ SOL", callback_data="ict_signal_SOLUSDT"),
+                InlineKeyboardButton("💎 XRP", callback_data="ict_signal_XRPUSDT"),
+            ],
+            [
+                InlineKeyboardButton("🔷 BNB", callback_data="ict_signal_BNBUSDT"),
+                InlineKeyboardButton("♠️ ADA", callback_data="ict_signal_ADAUSDT"),
+            ],
+            [
+                InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_menu"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "🎯 <b>ICT Signal Generator</b>\n\n"
+            "Select a cryptocurrency for advanced ICT analysis:\n\n"
+            "📊 <i>This uses professional ICT concepts:\n"
+            "• Order Blocks\n"
+            "• Fair Value Gaps\n"
+            "• Liquidity Zones\n"
+            "• Multi-Timeframe Analysis</i>\n\n"
+            "💡 <i>Tip: Use /ict_signal BTC 1h for specific timeframe</i>",
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+        return
+    
+    symbol = context.args[0].upper()
+    
+    # Check for custom timeframe
+    custom_timeframe = '1h'  # Default
+    if len(context.args) > 1:
+        tf = context.args[1].lower()
+        valid_timeframes = ['15m', '30m', '1h', '2h', '4h', '1d']
+        if tf in valid_timeframes:
+            custom_timeframe = tf
+        else:
+            await update.message.reply_text(
+                f"❌ Invalid timeframe: {tf}\n\nValid: {', '.join(valid_timeframes)}",
+                parse_mode='HTML'
+            )
+            return
+    
+    # Validate symbol
+    if symbol not in SYMBOLS.values():
+        # Try short names
+        found = False
+        for short, full in SYMBOLS.items():
+            if symbol == short:
+                symbol = full
+                found = True
+                break
+        if not found:
+            await update.message.reply_text(f"❌ Unknown symbol: {symbol}")
+            return
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"🎯 <b>ICT Analysis for {symbol}</b>\n\n"
+             f"⏳ Generating advanced signal...\n"
+             f"📊 Timeframe: {custom_timeframe}\n\n"
+             f"<i>Analyzing order blocks, FVGs, liquidity zones...</i>",
+        parse_mode='HTML'
+    )
+    
+    try:
+        # Fetch primary timeframe data
+        klines = await fetch_klines(symbol, custom_timeframe, limit=200)
+        
+        if not klines:
+            await update.message.reply_text("❌ Error fetching data")
+            return
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+            'taker_buy_quote', 'ignore'
+        ])
+        
+        # Convert to numeric
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = pd.to_numeric(df[col])
+        
+        # Convert timestamp to datetime
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        
+        # Fetch MTF data (optional)
+        mtf_data = None
+        if custom_timeframe in ['15m', '30m', '1h']:
+            # Fetch higher timeframes
+            try:
+                klines_4h = await fetch_klines(symbol, '4h', limit=100)
+                klines_1d = await fetch_klines(symbol, '1d', limit=50)
+                
+                if klines_4h and klines_1d:
+                    df_4h = pd.DataFrame(klines_4h, columns=[
+                        'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                        'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                        'taker_buy_quote', 'ignore'
+                    ])
+                    df_1d = pd.DataFrame(klines_1d, columns=[
+                        'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                        'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                        'taker_buy_quote', 'ignore'
+                    ])
+                    
+                    for col in ['open', 'high', 'low', 'close', 'volume']:
+                        df_4h[col] = pd.to_numeric(df_4h[col])
+                        df_1d[col] = pd.to_numeric(df_1d[col])
+                    
+                    df_4h['timestamp'] = pd.to_datetime(df_4h['timestamp'], unit='ms')
+                    df_1d['timestamp'] = pd.to_datetime(df_1d['timestamp'], unit='ms')
+                    df_4h.set_index('timestamp', inplace=True)
+                    df_1d.set_index('timestamp', inplace=True)
+                    
+                    mtf_data = {
+                        '1H': df,
+                        '4H': df_4h,
+                        '1D': df_1d
+                    }
+            except Exception as e:
+                logger.warning(f"MTF data fetch error: {e}")
+        
+        # Generate ICT signal
+        signal = ict_signal_engine.generate_signal(df, symbol, custom_timeframe, mtf_data)
+        
+        if not signal:
+            await update.message.reply_text(
+                "⚠️ <b>No valid ICT setup found</b>\n\n"
+                "No high-probability ICT setup detected at this time.\n"
+                "Try again later or check a different timeframe.",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Format signal message
+        signal_emoji = "🟢" if signal.signal_type.value == "BUY" else "🔴"
+        strength_stars = "⭐" * signal.signal_strength.value
+        
+        message = f"{signal_emoji} <b>ICT SIGNAL - {signal.symbol}</b> {signal_emoji}\n\n"
+        message += f"📊 <b>Timeframe:</b> {signal.timeframe}\n"
+        message += f"📍 <b>Signal:</b> {signal.signal_type.value}\n"
+        message += f"💪 <b>Strength:</b> {strength_stars} ({signal.signal_strength.value}/5)\n"
+        message += f"🎯 <b>Confidence:</b> {signal.confidence:.1f}%\n"
+        message += f"⚡ <b>Risk/Reward:</b> 1:{signal.risk_reward_ratio:.2f}\n"
+        message += f"📈 <b>Market Bias:</b> {signal.market_bias.value}\n"
+        message += f"🔗 <b>MTF Confluence:</b> {signal.mtf_confluence}/3\n\n"
+        
+        message += f"💰 <b>ENTRY:</b> ${signal.entry_price:.2f}\n"
+        message += f"🛡️ <b>STOP LOSS:</b> ${signal.stop_loss:.2f}\n"
+        message += f"🎯 <b>TP1:</b> ${signal.take_profit_1:.2f}\n"
+        message += f"🎯 <b>TP2:</b> ${signal.take_profit_2:.2f}\n"
+        message += f"🎯 <b>TP3:</b> ${signal.take_profit_3:.2f}\n\n"
+        
+        message += f"📊 <b>ICT Components:</b>\n"
+        message += f"• Order Blocks: {len(signal.order_blocks)}\n"
+        message += f"• FVGs: {len(signal.fvgs)}\n"
+        message += f"• Whale Blocks: {len(signal.whale_blocks)}\n"
+        message += f"• Liquidity Zones: {len(signal.liquidity_zones)}\n\n"
+        
+        message += f"💡 <b>Reasoning:</b>\n<i>{signal.reasoning}</i>\n"
+        
+        if signal.warnings:
+            message += f"\n⚠️ <b>Warnings:</b>\n"
+            for warning in signal.warnings:
+                message += f"• {warning}\n"
+        
+        message += f"\n⏰ <i>Generated at {signal.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</i>"
+        
+        await update.message.reply_text(message, parse_mode='HTML', disable_notification=False)
+        
+        # Log to trading journal if available
+        try:
+            if ML_AVAILABLE and signal.signal_type.value in ['BUY', 'SELL']:
+                analysis_data = {
+                    'rsi': 50,  # Placeholder
+                    'volume_ratio': 1.0,
+                    'volatility': 5.0,
+                    'ict_confidence': signal.confidence / 100,
+                    'mtf_confluence': signal.mtf_confluence,
+                    'order_blocks': len(signal.order_blocks),
+                    'fvgs': len(signal.fvgs)
+                }
+                
+                log_trade_to_journal(
+                    symbol, custom_timeframe, signal.signal_type.value,
+                    signal.confidence, signal.entry_price,
+                    signal.take_profit_1, signal.stop_loss,
+                    analysis_data
+                )
+        except Exception as e:
+            logger.error(f"Journal logging error: {e}")
+        
+    except Exception as e:
+        logger.error(f"ICT signal generation error: {e}", exc_info=True)
+        await update.message.reply_text(
+            f"❌ <b>Error generating ICT signal</b>\n\n"
+            f"Error: {str(e)}\n\n"
+            f"Please try again later.",
+            parse_mode='HTML'
         )
 
 
@@ -10400,6 +10656,7 @@ def main():
     app.add_handler(CommandHandler("v", version_cmd))  # Short alias for version
     app.add_handler(CommandHandler("market", market_cmd))
     app.add_handler(CommandHandler("signal", signal_cmd))
+    app.add_handler(CommandHandler("ict_signal", ict_signal_cmd))  # Advanced ICT Signal
     app.add_handler(CommandHandler("news", news_cmd))
     app.add_handler(CommandHandler("breaking", breaking_cmd))  # Критични новини
     app.add_handler(CommandHandler("task", task_cmd))  # Задания за Copilot
