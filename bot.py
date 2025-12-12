@@ -31,6 +31,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Track bot process start time (for version info)
+BOT_START_TIME = datetime.now(timezone.utc)
+
 # AUTO-DETECT BASE PATH (Codespace vs Server) - EARLY INIT
 if os.path.exists('/root/Crypto-signal-bot'):
     BASE_PATH = '/root/Crypto-signal-bot'
@@ -4169,12 +4172,22 @@ async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Get Python version (sys is already imported at the top)
         python_version = sys.version.split()[0]
         
+        # Calculate bot uptime
+        uptime = datetime.now(timezone.utc) - BOT_START_TIME
+        uptime_str = str(uptime).split('.')[0]  # Remove microseconds
+        
+        # Format bot start time in Bulgarian timezone (UTC+2)
+        bot_start_bg = BOT_START_TIME.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+        
         message = f"""
 🤖 <b>CRYPTO SIGNAL BOT - VERSION INFO</b>
 
 📦 <b>Bot Version:</b> v{version}
 🐍 <b>Python:</b> {python_version}
 📡 <b>python-telegram-bot:</b> {ptb_version}
+
+⏰ <b>Bot Process Started:</b> {bot_start_bg}
+⏱️ <b>Uptime:</b> {uptime_str}
 
 """
         
