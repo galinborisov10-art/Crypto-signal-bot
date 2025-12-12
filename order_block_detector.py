@@ -131,7 +131,8 @@ class OrderBlockDetector:
             'min_body_ratio': 0.3,          # Min 30% body size
             'mitigation_threshold': 0.5,    # 50% retracement = mitigated
             'breaker_lookback': 20,         # Lookback for breaker detection
-            'max_age_bars': 50              # Max age before invalidation
+            'max_age_bars': 50,             # Max age before invalidation
+            'breaker_threshold_pct': 1.0,   # 1% threshold for breaker detection
         }
     
     def detect_order_blocks(
@@ -439,7 +440,8 @@ class OrderBlockDetector:
             # Check if OB was broken
             if ob.type == OrderBlockType.BULLISH:
                 # Bullish OB broken if price closes below it
-                broken = any(df['close'].iloc[start_idx:end_idx] < ob.bottom * 0.99)
+                threshold = 1 - (self.config['breaker_threshold_pct'] / 100)
+                broken = any(df['close'].iloc[start_idx:end_idx] < ob.bottom * threshold)
                 
                 if broken:
                     # Create bearish breaker block
@@ -461,7 +463,8 @@ class OrderBlockDetector:
             
             elif ob.type == OrderBlockType.BEARISH:
                 # Bearish OB broken if price closes above it
-                broken = any(df['close'].iloc[start_idx:end_idx] > ob.top * 1.01)
+                threshold = 1 + (self.config['breaker_threshold_pct'] / 100)
+                broken = any(df['close'].iloc[start_idx:end_idx] > ob.top * threshold)
                 
                 if broken:
                     # Create bullish breaker block

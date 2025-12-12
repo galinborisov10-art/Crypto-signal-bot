@@ -4024,6 +4024,10 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /signal XRPUSDT - Анализ на XRP
 /signal SOLUSDT - Анализ на SOL
 
+🎯 <b>ICT Complete Analysis:</b>
+/ict BTC - Full ICT analysis (OB, FVG, Liquidity)
+/ict ETHUSDT 1h - ICT analysis specific timeframe
+
 Или просто: /signal BTC
 
 <b>3. 🚀 ML + Back-test + Reports:</b>

@@ -413,8 +413,7 @@ class FVGDetector:
         self,
         df: pd.DataFrame,
         index: int,
-        direction: str = 'up',
-        candles: int = 3
+        direction: str = 'up'
     ) -> float:
         """Calculate displacement percentage"""
         if index < 1:

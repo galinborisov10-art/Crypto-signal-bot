@@ -244,6 +244,8 @@ class ICTSignalEngine:
             'ob_weight': 0.15,             # Weight for order blocks
             'fvg_weight': 0.1,             # Weight for FVGs
             'mtf_weight': 0.1,             # Weight for MTF confluence
+            'structure_break_threshold': 1.0,  # 1% threshold for structure break
+            'entry_adjustment_pct': 0.5,   # 0.5% entry price adjustment
         }
     
     def generate_signal(
@@ -593,10 +595,11 @@ class ICTSignalEngine:
         current_price = df['close'].iloc[-1]
         
         # Check if recent candles broke structure
+        threshold_pct = self.config['structure_break_threshold'] / 100
         for i in range(-5, 0):
-            if df['high'].iloc[i] > recent_high * 1.01:
+            if df['high'].iloc[i] > recent_high * (1 + threshold_pct):
                 return True  # Bullish break
-            if df['low'].iloc[i] < recent_low * 0.99:
+            if df['low'].iloc[i] < recent_low * (1 - threshold_pct):
                 return True  # Bearish break
         
         return False
@@ -701,12 +704,13 @@ class ICTSignalEngine:
         price_zone = entry_setup.get('price_zone', (current_price, current_price))
         
         # Enter at middle of zone or current price
+        adjustment = self.config['entry_adjustment_pct'] / 100
         if bias == MarketBias.BULLISH:
             # Enter near bottom of bullish zone
-            entry = price_zone[0] * 1.005
+            entry = price_zone[0] * (1 + adjustment)
         else:
             # Enter near top of bearish zone
-            entry = price_zone[1] * 0.995
+            entry = price_zone[1] * (1 - adjustment)
         
         return entry
     
