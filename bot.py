@@ -153,6 +153,16 @@ except ImportError as e:
     ML_PREDICTOR_AVAILABLE = False
     print(f"⚠️ ML Predictor not available: {e}")
 
+# ================= LOGGING SETUP (EARLY) =================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+
+
 # ICT Enhancement Layer
 try:
     from config.config_loader import load_feature_flags, update_feature_flag
