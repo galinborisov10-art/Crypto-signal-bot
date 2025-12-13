@@ -153,6 +153,18 @@ except ImportError as e:
     ML_PREDICTOR_AVAILABLE = False
     print(f"⚠️ ML Predictor not available: {e}")
 
+# ICT Enhancement Layer
+try:
+    from config.config_loader import load_feature_flags, update_feature_flag
+    from ict_enhancement.ict_enhancer import ICTEnhancer
+    
+    FEATURE_FLAGS = load_feature_flags()
+    ict_enhancer = ICTEnhancer(FEATURE_FLAGS)
+except ImportError as e:
+    logger.warning(f"ICT Enhancement not available: {e}")
+    FEATURE_FLAGS = {'use_ict_enhancer': False}
+    ict_enhancer = None
+
 # ================= НАСТРОЙКИ (от .env файл) =================
 # Зареди от environment variables
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -10591,6 +10603,27 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"❌ Грешка: {e}")
 
 
+async def toggle_ict_command(update, context):
+    """Toggle ICT enhancer"""
+    try:
+        if update.effective_user.id != OWNER_CHAT_ID:
+            await update.message.reply_text("❌ Owner only")
+            return
+        
+        config = load_feature_flags()
+        new_value = not config.get('use_ict_enhancer', False)
+        update_feature_flag('use_ict_enhancer', new_value)
+        
+        global FEATURE_FLAGS, ict_enhancer
+        FEATURE_FLAGS = load_feature_flags()
+        ict_enhancer = ICTEnhancer(FEATURE_FLAGS)
+        
+        status = "✅ ВКЛЮЧЕН" if new_value else "❌ ИЗКЛЮЧЕН"
+        await update.message.reply_text(f"🔧 ICT Enhancer: {status}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
 def main():
     # HTTPx клиент с persistent connection и retry логика
     from httpx import Limits
@@ -10636,6 +10669,7 @@ def main():
     app.add_handler(CommandHandler("journal", journal_cmd))  # 📝 Trading Journal с ML
     app.add_handler(CommandHandler("risk", risk_cmd))  # 🛡️ Risk Management
     app.add_handler(CommandHandler("explain", explain_cmd))  # 📖 ICT/LuxAlgo речник
+    app.add_handler(CommandHandler("toggle_ict", toggle_ict_command))  # 🔧 ICT Enhancer toggle
     
     # Админ команди
     app.add_handler(CommandHandler("admin_login", admin_login_cmd))

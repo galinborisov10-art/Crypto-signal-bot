@@ -1,0 +1,10 @@
+{
+  "use_ict_enhancer": false,
+  "ict_enhancer_min_confidence": 70,
+  "use_archive": false,
+  "auto_alerts_enabled": true,
+  "auto_alerts_interval_minutes": 15,
+  "auto_alerts_top_n": 3,
+  "news_tracking_enabled": true,
+  "debug_mode": false
+}
