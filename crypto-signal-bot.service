@@ -10,13 +10,6 @@ Environment="PATH=/root/Crypto-signal-bot/venv/bin:/usr/local/sbin:/usr/local/bi
 Environment="PYTHONDONTWRITEBYTECODE=1"
 Environment="PYTHONUNBUFFERED=1"
 
-# Cleanup before starting - ensure no stale processes
-# Try graceful shutdown first, then force kill if needed
-ExecStartPre=/bin/sh -c 'pkill -TERM -f "python.*bot.py" || true'
-ExecStartPre=/bin/sleep 2
-ExecStartPre=/bin/sh -c 'pkill -9 -f "python.*bot.py" || true'
-ExecStartPre=/bin/sleep 1
-
 ExecStart=/root/Crypto-signal-bot/venv/bin/python /root/Crypto-signal-bot/bot.py
 
 # Auto-restart настройки
