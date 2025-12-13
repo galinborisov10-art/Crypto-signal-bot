@@ -248,3 +248,4 @@ MIT License - свободно използване и модификация.
 # Test auto-deploy with permanent SSH key
 # Final auto-deploy test
 # Deploy test Tue Dec  2 08:51:16 UTC 2025
+
