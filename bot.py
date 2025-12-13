@@ -7509,6 +7509,28 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         best_confidence = sig['confidence']
         
         # Header
+        
+        # === ИЗВИКАЙ ДОПЪЛНИТЕЛЕН АНАЛИЗ (КАТО РЪЧНИТЕ СИГНАЛИ) ===
+        btc_corr = None
+        order_book = None
+        sentiment = None
+        
+        try:
+            btc_corr = await analyze_btc_correlation(symbol, timeframe)
+        except Exception as e:
+            logger.error(f"BTC correlation error in auto-signal: {e}")
+        
+        try:
+            order_book = await analyze_order_book(symbol, price)
+        except Exception as e: 
+            logger.error(f"Order Book error in auto-signal: {e}")
+        
+        try:
+            #             sentiment = await get_news_sentiment(symbol)
+            sentiment = None  # Disabled - no news API configured
+        except Exception as e:
+            logger. error(f"Sentiment error in auto-signal: {e}")
+        
         header = f" #{idx+1}" if len(signals_to_send) > 1 else ""
         
         # ✅ Сигналът вече е валидиран по-рано, можем да го изпратим
@@ -7537,8 +7559,8 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                     'volume_ratio': analysis.get('volume_ratio'),
                     'volatility': analysis.get('volatility'),
                     'trend': analysis.get('trend'),
-                    'btc_correlation': None,
-                    'sentiment': None
+                    'btc_correlation': btc_corr,
+                    'sentiment': sentiment
                 }
             
                 journal_id = log_trade_to_journal(
@@ -7726,6 +7748,32 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         reward = abs(analysis['tp'] - price)
         rr_ratio = reward / risk if risk > 0 else 0
         message += f"⚖️ Risk/Reward: 1:{rr_ratio:.2f}\n\n"
+
+        # === ДОПЪЛНИТЕЛЕН АНАЛИЗ (КАТО РЪЧНИТЕ СИГНАЛИ) ===
+        message += "\n━━━━━━━━━━━━━━━━━━━━\n"
+        message += "📊 <b>ДОПЪЛНИТЕЛЕН АНАЛИЗ: </b>\n\n"
+        
+        # BTC Correlation
+        if btc_corr: 
+            btc_aligned = (btc_corr['trend'] == 'BULLISH' and analysis['signal'] == 'BUY') or \
+                         (btc_corr['trend'] == 'BEARISH' and analysis['signal'] == 'SELL')
+            btc_emoji = "✅" if btc_aligned else "⚠️"
+            message += f"📊 BTC correlation: {btc_corr['trend']} ({btc_corr['change']:+.1f}%) {btc_emoji}\n"
+        
+        # Order Book
+        if order_book:
+            ob_aligned = order_book['pressure'] == analysis['signal']
+            ob_emoji = "✅" if ob_aligned else "⚠️"
+            message += f"📖 Order Book pressure: {order_book['pressure']} {ob_emoji}\n"
+        
+        # News Sentiment
+        if sentiment and sentiment. get('sentiment') != 'NEUTRAL':
+            sent_aligned = (sentiment['sentiment'] == 'BULLISH' and analysis['signal'] == 'BUY') or \
+                          (sentiment['sentiment'] == 'BEARISH' and analysis['signal'] == 'SELL')
+            sent_emoji = "✅" if sent_aligned else "⚠️"
+            message += f"📰 News sentiment: {sentiment['sentiment']} {sent_emoji}\n"
+        
+        message += "\n"
     
         # Причини за сигнала
         if analysis['reasons']:
@@ -9284,21 +9332,22 @@ async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Start new process
         if os.path.exists(venv_python):
-            subprocess.Popen(
-                [venv_python, 'bot.py'],
-                cwd=project_dir,
-                stdout=open('bot.log', 'w'),
-                stderr=subprocess.STDOUT,
-                start_new_session=True
-            )
-        else:
-            subprocess.Popen(
-                ['python3', 'bot.py'],
-                cwd=project_dir,
-                stdout=open('bot.log', 'w'),
-                stderr=subprocess.STDOUT,
-                start_new_session=True
-            )
+            pass  # systemd ще рестартира автоматично
+#            subprocess.Popen(
+#                [venv_python, 'bot.py'],
+#                cwd=project_dir,
+#                stdout=open('bot.log', 'w'),
+#                stderr=subprocess.STDOUT,
+#                start_new_session=True
+#            )
+#        else:
+#            subprocess.Popen(
+#                ['python3', 'bot.py'],
+#                cwd=project_dir,
+#                stdout=open('bot.log', 'w'),
+#                stderr=subprocess.STDOUT,
+#                start_new_session=True
+#            )
         
         # Success message
         commit_msg = "Updated to latest version"

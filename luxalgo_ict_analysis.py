@@ -421,6 +421,30 @@ def detect_breakout_retest(closes: List[float], resistances: List[float],
 # ICT CONCEPTS
 # ===================================
 
+def detect_swing_points(highs: List[float], lows: List[float], lookback: int = 5) -> Dict:
+    """
+    Detect swing highs and lows using lookback periods
+    """
+    try:
+        swing_highs = []
+        swing_lows = []
+        
+        for i in range(lookback, len(highs) - lookback):
+            # Swing high:  higher than lookback bars before and after
+            if all(highs[i] >= highs[j] for j in range(i-lookback, i)) and all(highs[i] >= highs[j] for j in range(i+1, i+lookback+1)):
+                swing_highs.append({"index": i, "value": highs[i]})
+            
+            # Swing low: lower than lookback bars before and after
+            if all(lows[i] <= lows[j] for j in range(i-lookback, i)) and all(lows[i] <= lows[j] for j in range(i+1, i+lookback+1)):
+                swing_lows.append({"index": i, "value": lows[i]})
+        
+        return {"swing_highs": swing_highs, "swing_lows":  swing_lows}
+    except Exception as e:
+        logger.error(f"Error detecting swing points: {e}")
+        return {"swing_highs": [], "swing_lows": []}
+
+
+
 def detect_market_structure_shift(highs: List[float], lows: List[float], 
                                    closes: List[float]) -> Optional[Dict]:
     """
@@ -441,7 +465,7 @@ def detect_market_structure_shift(highs: List[float], lows: List[float],
         
         # Bullish MSS: price breaks above previous swing high
         if swing_data['swing_highs']:
-            prev_swing_high = swing_data['swing_highs'][-1]['price']
+            prev_swing_high = swing_data['swing_highs'][-1]['value']
             if current_price > prev_swing_high:
                 return {
                     'type': 'BULLISH_MSS',
@@ -451,7 +475,7 @@ def detect_market_structure_shift(highs: List[float], lows: List[float],
         
         # Bearish MSS: price breaks below previous swing low
         if swing_data['swing_lows']:
-            prev_swing_low = swing_data['swing_lows'][-1]['price']
+            prev_swing_low = swing_data['swing_lows'][-1]['value']
             if current_price < prev_swing_low:
                 return {
                     'type': 'BEARISH_MSS',
@@ -596,8 +620,10 @@ def calculate_optimal_trade_entry(sr_data: Dict, fvgs: List[Dict],
             return None
         
         # Calculate Fibonacci levels for pullback entry
-        resistance = sr_data.get('dynamic_resistance', [current_price * 1.02])[0]
-        support = sr_data.get('dynamic_support', [current_price * 0.98])[0]
+        resistance_list = sr_data.get('dynamic_resistance', [current_price * 1.02])
+        support_list = sr_data.get('dynamic_support', [current_price * 0.98])
+        resistance = resistance_list[0] if resistance_list else current_price * 1.02
+        support = support_list[0] if support_list else current_price * 0.98
         
         range_size = resistance - support
         
