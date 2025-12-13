@@ -1,0 +1,8 @@
+{
+  "version": "2.0-PR15-STABLE",
+  "last_deployed": "2025-12-13T00:00:00Z",
+  "commit_sha": "d2ebde6641f799b5a38cc6d3faaffd68a2855fb1",
+  "deployed_from": "emergency-rollback",
+  "status": "STABLE",
+  "locked": true
+}

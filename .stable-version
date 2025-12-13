@@ -1,0 +1,4 @@
+STABLE_VERSION=PR15
+COMMIT=d2ebde6641f799b5a38cc6d3faaffd68a2855fb1
+LOCKED_AT=2025-12-13T00:00:00Z
+REASON=Post-PR15 changes compromised bot stability
