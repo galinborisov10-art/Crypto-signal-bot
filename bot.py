@@ -66,6 +66,7 @@ except ImportError:
 # Импорт на LuxAlgo + ICT Analysis
 try:
     from luxalgo_ict_analysis import (
+        LuxAlgoICTAnalyzer,
         combined_luxalgo_ict_analysis,
         calculate_luxalgo_sr_levels,
         detect_market_structure_shift,
@@ -3270,8 +3271,18 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         # ========== LUXALGO + ICT ANALYSIS ==========
         luxalgo_ict = {}
         if LUXALGO_ICT_AVAILABLE:
-            luxalgo_ict = combined_luxalgo_ict_analysis(opens, highs, lows, closes, volumes)
+            # Create DataFrame for analysis
+            import pandas as pd
+            df = pd.DataFrame({
+                'open': opens,
+                'high':  highs,
+                'low':  lows,
         
+                'close': closes,
+                'volume':  volumes
+            })
+            analyzer = LuxAlgoICTAnalyzer(enable_ict=True, enable_sr=True)
+            luxalgo_ict = analyzer.analyze_with_ict(df, timeframe)
         # ========== TRADITIONAL INDICATORS (само RSI и Bollinger Bands) ==========
         rsi = calculate_rsi(closes)
         bb_upper, bb_middle, bb_lower = calculate_bollinger_bands(closes)
