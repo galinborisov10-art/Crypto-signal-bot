@@ -14,6 +14,7 @@ import logging
 # Import LuxAlgo modules
 from luxalgo_sr_mtf import LuxAlgoSRMTF, LuxAlgoSignal, SnRZone
 from luxalgo_ict_concepts import LuxAlgoICT, OrderBlock, FairValueGap, MarketStructure, LiquidityLevel
+from ict_enhancement.breaker_detector import detect_breaker_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,17 @@ class CombinedLuxAlgoAnalysis:
                            f"{len(ict_results.get('fvgs', []))} FVGs, "
                            f"trend: {ict_results.get('trend')}")
             
+            # Detect Breaker Blocks
+            if self.enable_ict and ict_results.get("order_blocks"):
+                breaker_blocks = detect_breaker_blocks(
+                    highs=df["high"]. tolist(),
+                    lows=df["low"].tolist(),
+                    closes=df["close"].tolist(),
+                    order_blocks=ict_results["order_blocks"],
+                    lookback=50
+                )
+                ict_results["breaker_blocks"] = breaker_blocks
+                logger.info(f"🔥 Breaker Blocks detected: {len(breaker_blocks)}")
             # Generate combined trading signal
             if self.enable_sr and self.enable_ict and results['sr_data'] and results['ict_data']:
                 combined = self._generate_combined_signal(
