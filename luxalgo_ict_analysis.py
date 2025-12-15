@@ -97,12 +97,12 @@ class CombinedLuxAlgoAnalysis:
                            f"trend: {ict_results.get('trend')}")
             
             # Detect Breaker Blocks
-            if self.enable_ict and ict_results.get("order_blocks"):
+            if self.enable_ict and ict_results: 
                 breaker_blocks = detect_breaker_blocks(
                     highs=df["high"]. tolist(),
                     lows=df["low"].tolist(),
                     closes=df["close"].tolist(),
-                    order_blocks=ict_results["order_blocks"],
+                    order_blocks=ict_results. get("order_blocks", []),
                     lookback=50
                 )
                 ict_results["breaker_blocks"] = breaker_blocks
