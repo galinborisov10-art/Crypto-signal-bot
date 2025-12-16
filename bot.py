@@ -1023,22 +1023,32 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
                     ax1.text(2, resistance_level, '  Resistance', fontsize=7, color='#c62828', weight='bold', va='top')
                 
                 # === BUY SIDE & SELL SIDE LIQUIDITY ===
-                liquidity_zones = sr_data.get('liquidity_zones', [])
-                for liq_price in liquidity_zones:
+                liquidity_zones = sr_data. get('liquidity_zones', [])
+                
+                # Филтрирай само активни (non-swept) зони
+                active_zones = [liq for liq in liquidity_zones if not getattr(liq, 'swept', True)]
+                
+                for liq_obj in active_zones[: 10]:  # Топ 10 активни зони
+                    # Извлечи данни от LiquidityLevel обект
+                    liq_price = float(liq_obj.price)
+                    is_buy_side = liq_obj. is_buy_side
+                    
                     zone_width = liq_price * 0.004
                     zone_low = liq_price - zone_width
                     zone_high = liq_price + zone_width
                     
-                    if liq_price > current_price:
-                        # BUY SIDE liquidity (над цената) - мека червена зона
-                        ax1.axhspan(zone_low, zone_high, color='#ef5350', alpha=0.08, zorder=1)
-                        ax1.axhline(y=liq_price, color='#c62828', linestyle=':', linewidth=0.8, alpha=0.5, zorder=2)
-                        ax1.text(1, liq_price, 'BSL', fontsize=5, color='#c62828', weight='normal', ha='left', va='center')
+                    if is_buy_side:
+                        # BUY SIDE liquidity - мека червена зона
+                        ax1.axhspan(zone_low, zone_high, color='#ef5350', alpha=0.12, zorder=1)
+                        ax1.axhline(y=liq_price, color='#c62828', linestyle=':', linewidth=1.2, alpha=0.6, zorder=2)
+                        ax1.text(1, liq_price, '💧BSL', fontsize=6, color='#c62828', weight='bold', ha='left', va='center',
+                                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='#c62828', linewidth=0.8))
                     else:
-                        # SELL SIDE liquidity (под цената) - мека синя зона
-                        ax1.axhspan(zone_low, zone_high, color='#42a5f5', alpha=0.08, zorder=1)
-                        ax1.axhline(y=liq_price, color='#1976d2', linestyle=':', linewidth=0.8, alpha=0.5, zorder=2)
-                        ax1.text(1, liq_price, 'SSL', fontsize=5, color='#1976d2', weight='normal', ha='left', va='center')
+                        # SELL SIDE liquidity - мека синя зона
+                        ax1.axhspan(zone_low, zone_high, color='#42a5f5', alpha=0.12, zorder=1)
+                        ax1.axhline(y=liq_price, color='#1976d2', linestyle=':', linewidth=1.2, alpha=0.6, zorder=2)
+                        ax1.text(1, liq_price, '💧SSL', fontsize=6, color='#1976d2', weight='bold', ha='left', va='center',
+                                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='#1976d2', linewidth=0.8))
             
             # === FAIR VALUE GAPS (FVG) - ТОЧНО НА МЯСТОТО КАТО TradingView ===
             fvg_data = luxalgo_ict_data.get('ict_fvg', [])
