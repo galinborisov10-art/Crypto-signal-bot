@@ -583,7 +583,7 @@ def get_admin_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
-def detect_order_blocks(df, lookback=5, threshold=0.02, current_price=None, max_obs=3):
+def detect_order_blocks(df, lookback=15, threshold=0.01, current_price=None, max_obs=5):
     """
     Детектира само НАЙ-ВАЖНИТЕ Order Blocks - тези с най-голяма вероятност за отблъскване
     
@@ -797,8 +797,8 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         
         # 🔍 ДЕТЕКТИРАЙ ORDER BLOCKS - ТОП 5 ОТ ВСЕКИ ТИП
         # Подавай текущата цена за филтриране по близост
-        lookback_period = min(5, len(df) - 2)
-        max_obs_count = 5  # Топ 5 вместо 3
+        lookback_period = min(15, len(df) - 2)
+        max_obs_count = 7  # Топ 7 order blocks
         
         order_blocks = detect_order_blocks(
             df.reset_index(drop=True), 
