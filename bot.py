@@ -96,6 +96,7 @@ try:
     from fvg_detector import FVGDetector
     ICT_SIGNAL_ENGINE_AVAILABLE = True
     logger.info("✅ ICT Signal Engine loaded")
+    ict_engine_global = ICTSignalEngine()  # Global initialization for logs
 except ImportError as e:
     ICT_SIGNAL_ENGINE_AVAILABLE = False
     logger.warning(f"⚠️ ICT Signal Engine not available: {e}")
