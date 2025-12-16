@@ -386,7 +386,9 @@ def calculate_luxalgo_sr_levels(highs: List[float], lows: List[float], closes: L
             'static_resistance': max(highs) if highs else None,
             'static_support': min(lows) if lows else None,
             'current_price': closes[-1] if closes else None,
-            'breakout_status': 'detected' if sr_data.get('signals') else 'none'
+            'breakout_status': 'detected' if sr_data.get('signals') else 'none',
+            'liquidity_zones':  results.get('ict_data', {}).get('liquidity_levels', []),
+            'ict_data': results. get('ict_data')
         }
     except Exception as e:
         logger.error(f"Legacy S/R calculation error: {e}")
