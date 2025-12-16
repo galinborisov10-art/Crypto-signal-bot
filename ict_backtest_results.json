@@ -1,0 +1,41 @@
+{
+  "timestamp": "2025-12-16T14:04:29.866434",
+  "results": {
+    "SOLUSDT_5m": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_pnl": 0,
+      "avg_rr": 0
+    },
+    "SOLUSDT_15m": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_pnl": 0,
+      "avg_rr": 0
+    },
+    "ETHUSDT_5m": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_pnl": 0,
+      "avg_rr": 0
+    },
+    "ETHUSDT_15m": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_pnl": 0,
+      "avg_rr": 0
+    },
+    "BTCUSDT_5m": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_pnl": 0,
+      "avg_rr": 0
+    },
+    "BTCUSDT_15m": {
+      "total_trades": 0,
+      "win_rate": 0,
+      "total_pnl": 0,
+      "avg_rr": 0
+    }
+  }
+}
