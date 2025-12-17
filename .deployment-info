@@ -1,7 +1,7 @@
 {
   "version": "2.0-PR15-STABLE",
-  "last_deployed": "2025-12-16 14:10:18 UTC",
-  "commit_sha": "dff5e99",
+  "last_deployed": "2025-12-17 07:28:09 UTC",
+  "commit_sha": "2c2dc25",
   "deployed_from": "github-actions",
   "python_telegram_bot_version": "21.4"
 }

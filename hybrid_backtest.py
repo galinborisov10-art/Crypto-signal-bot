@@ -1,6 +1,6 @@
 """
-🔥 HYBRID ICT+ML BACKTESTING ENGINE (OPTIMIZED)
-Lazy loads ML engine only when needed
+🔥 HYBRID ICT+ML BACKTESTING ENGINE
+Tests ALL symbols on ALL timeframes
 """
 
 import asyncio
@@ -9,479 +9,151 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-import json
-import os
 
-# Import ICT engine (fast)
-from ict_signal_engine import ICTSignalEngine, MarketBias, ICTSignal
+from ict_signal_engine import ICTSignalEngine, MarketBias, ICTSignal, SignalType, SignalStrength
 
-# Lazy import ML (slow - only when needed)
-_ml_engine = None
-
-def get_ml_engine():
-    """Lazy load ML engine"""
-    global _ml_engine
-    if _ml_engine is None:
-        print("⏳ Loading ML engine...")
-        from ml_engine import MLEngine
-        _ml_engine = MLEngine()
-        print("✅ ML engine loaded")
-    return _ml_engine
-
-class BacktestICTWrapper:
-    """
-    Wrapper around ICT engine for backtesting
-    Relaxes entry requirements to find more historical signals
-    """
-    
-    def __init__(self, ict_engine):
-        self.ict = ict_engine
-    
-    def find_backtest_signal(self, df:  pd.DataFrame, symbol: str, timeframe: str):
-        """
-        Find ICT signal with relaxed backtest rules
-        """
-        current_price = df['close'].iloc[-1]
-        atr = df['atr'].iloc[-1] if 'atr' in df.columns else current_price * 0.02
-        
-        # Get ICT components
-        ict_components = self.ict._detect_ict_components(df, timeframe)
-        
-        # Get bias
-        mtf_analysis = None
-        # Add EMAs for bias calculation
-        df["ema_21"] = df["close"].ewm(span=21, adjust=False).mean()
-        df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
-        df["ema_200"] = df["close"].ewm(span=200, adjust=False).mean()
-        bias = self.ict._determine_market_bias(df, ict_components, mtf_analysis)
-        
-        # Check if we have order blocks or FVGs
-        order_blocks = ict_components.get('order_blocks', [])
-        fvgs = ict_components.get('fvgs', [])
-        
-        print(f"🔍 DEBUG: Bias={bias}, OBs={len(order_blocks)}, FVGs={len(fvgs)}")
-        print(f"📊 FVG types: {[(f.type, f.top, f.bottom) for f in fvgs[: 3]]}")
-        
-        # BACKTEST MODE: Look for OBs/FVGs within 5% of current price
-        # (instead of requiring price to be INSIDE zone)
-        
-        # Handle RANGING:  Pick direction based on components
-        if bias == MarketBias.  RANGING:
-            print(f"✅ RANGING detected!   Checking components...")
-            bullish_count = len([ob for ob in order_blocks if hasattr(ob, "type") and "BULLISH" in str(ob.type.value)])
-            bearish_count = len([ob for ob in order_blocks if hasattr(ob, "type") and "BEARISH" in str(ob.type. value)])
-            if bullish_count > bearish_count:
-                bias = MarketBias.BULLISH
-            elif bearish_count > bullish_count:
-                bias = MarketBias. BEARISH
-            else:
-                # Check FVGs
-                bullish_fvgs = len([f for f in fvgs if hasattr(f, "type") and "BULLISH" in str(f.type.value)])
-                bearish_fvgs = len([f for f in fvgs if hasattr(f, "type") and "BEARISH" in str(f.type.value)])
-                if bullish_fvgs > bearish_fvgs:
-                    bias = MarketBias.BULLISH
-                elif bearish_fvgs > bullish_fvgs:
-                    bias = MarketBias.BEARISH
-        if bias == MarketBias.BULLISH:
-            # Look for bullish OBs below current price
-            nearby_obs = [ob for ob in order_blocks
-                         if hasattr(ob, 'type') and 'BULLISH' in str(ob. type.value)
-                         and ob.top >= current_price * 0.95  # Within 5% below
-                         and ob.top <= current_price * 1.02] # Within 2% above
-            
-            if nearby_obs: 
-                best_ob = max(nearby_obs, key=lambda x:  x.strength)
-                
-                # Calculate entry/SL/TP
-                entry = current_price
-                sl = best_ob.bottom - (atr * 0.5)
-                tp = entry + (entry - sl) * 2.0  # 1: 2 R:R
-                
-                # Calculate confidence
-                confidence = self._calculate_backtest_confidence(
-                    bias, len(nearby_obs), len(fvgs), ict_components
-                )
-                
-                if confidence >= 50: 
-                    return ICTSignal(
-                        signal_type=MarketBias.BULLISH,
-                        entry_price=entry,
-                        sl_price=sl,
-                        tp_prices=[tp],
-                        confidence=confidence,
-                        setup_type='bullish_ob_backtest',
-                        reasoning=f"Bullish OB at {best_ob.bottom:.2f} (backtest mode)"
-                    )
-        
-        elif bias == MarketBias.BEARISH:
-            # Look for bearish OBs above current price
-            nearby_obs = [ob for ob in order_blocks
-                         if hasattr(ob, 'type') and 'BEARISH' in str(ob.type.value)
-                         and ob.bottom <= current_price * 1.05  # Within 5% above
-                         and ob.bottom >= current_price * 0.98] # Within 2% below
-            
-            if nearby_obs: 
-                best_ob = max(nearby_obs, key=lambda x: x.strength)
-                
-                entry = current_price
-                sl = best_ob.top + (atr * 0.5)
-        # Fallback:  Try FVGs if no OBs worked
-        if fvgs:
-            if bias == MarketBias. BULLISH:
-                bullish_fvgs = [f for f in fvgs if hasattr(f, "type") and "BULLISH" in str(f.type.value)]
-                if bullish_fvgs:
-                    best_fvg = bullish_fvgs[0]
-                    entry = current_price
-                    sl = best_fvg. bottom - (atr * 0.5)
-                    tp = entry + (entry - sl) * 2.0
-                    confidence = self._calculate_backtest_confidence(bias, 0, len(fvgs), ict_components)
-                    if confidence >= 45:
-                        return ICTSignal(
-                            signal_type=MarketBias.BULLISH,
-                            entry_price=entry,
-                            sl_price=sl,
-                            tp_prices=[tp],
-                            confidence=confidence,
-                            setup_type="bullish_fvg_backtest",
-                            reasoning=f"Bullish FVG at {best_fvg.bottom:.2f} (backtest)"
-                        )
-            elif bias == MarketBias. BEARISH:
-                bearish_fvgs = [f for f in fvgs if hasattr(f, "type") and "BEARISH" in str(f. type.value)]
-                if bearish_fvgs:
-                    best_fvg = bearish_fvgs[0]
-                    entry = current_price
-                    sl = best_fvg.top + (atr * 0.5)
-                    tp = entry - (sl - entry) * 2.0
-                    confidence = self._calculate_backtest_confidence(bias, 0, len(fvgs), ict_components)
-                    if confidence >= 45:
-                        return ICTSignal(
-                            signal_type=MarketBias.BEARISH,
-                            entry_price=entry,
-                            sl_price=sl,
-                            tp_prices=[tp],
-                            confidence=confidence,
-                            setup_type="bearish_fvg_backtest",
-                            reasoning=f"Bearish FVG at {best_fvg.top:.2f} (backtest)"
-                        )
-                tp = entry - (sl - entry) * 2.0
-                
-                confidence = self._calculate_backtest_confidence(
-                    bias, len(nearby_obs), len(fvgs), ict_components
-                )
-                
-                if confidence >= 50:
-                    return ICTSignal(
-                        signal_type=MarketBias.BEARISH,
-                        entry_price=entry,
-                        sl_price=sl,
-                        tp_prices=[tp],
-                        confidence=confidence,
-                        setup_type='bearish_ob_backtest',
-                        reasoning=f"Bearish OB at {best_ob.top:. 2f} (backtest mode)"
-                    )
-        
-        return None
-    
-    def _calculate_backtest_confidence(self, bias, num_obs, num_fvgs, components):
-        """Simple confidence calculation for backtest"""
-        confidence = 50  # Base
-        
-        if num_obs > 0:
-            confidence += 15
-        if num_fvgs > 0:
-            confidence += 10
-        if components. get('whale_blocks'):
-            confidence += 10
-        if components.get('liquidity_zones'):
-            confidence += 10
-        
-        return min(confidence, 95)
 
 class HybridBacktestEngine:
-    """
-    Hybrid backtesting combining ICT + ML
+    """Backtesting engine for hybrid ICT+ML strategy"""
     
-    Strategies tested:
-    1. Pure ICT (baseline)
-    2. Pure ML (baseline)
-    3. ICT with ML confirmation (hybrid)
-    4. ML with ICT confirmation (hybrid reverse)
-    """
+    def __init__(self):
+        self.ict_engine = ICTSignalEngine()
+        self.results = []
     
-    def __init__(self, use_ml: bool = True):
-        self. ict_engine = ICTSignalEngine()
-        self.use_ml = use_ml
-        self.ml_engine = None
-        self.results = {
-            'pure_ict': [],
-            'pure_ml': [],
-            'ict_ml_confirm': [],
-            'ml_ict_confirm': []
-        }
-    
-    def ensure_ml_loaded(self):
-        """Load ML engine if needed"""
-        if self.use_ml and self.ml_engine is None:
-            self.ml_engine = get_ml_engine()
-    
-    async def fetch_klines(self, symbol: str, timeframe: str, days: int = 30):
+    async def fetch_historical_data(self, symbol: str, timeframe: str, days: int = 30) -> pd.DataFrame:
         """Fetch historical OHLCV data from Binance"""
-        url = "https://api.binance.com/api/v3/klines"
-        
-        limit = days * 24  # hours
-        if timeframe == '4h':
-            limit = days * 6
-        elif timeframe == '1d':
-            limit = days
-        
-        params = {
-            'symbol': symbol,
-            'interval': timeframe,
-            'limit': min(limit, 1000)
-        }
-        
         try: 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    if resp.status == 200:
-                        klines = await resp.json()
-                        
-                        df = pd.DataFrame(klines, columns=[
-                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
-                            'taker_buy_quote', 'ignore'
-                        ])
-                        
-                        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-                        for col in ['open', 'high', 'low', 'close', 'volume']:
-                            df[col] = df[col].astype(float)
-                        
-                        return df
-                    else:
-                        print(f"❌ API error: {resp.status}")
-                        return None
-        except Exception as e:
-            print(f"❌ Fetch error: {e}")
-            return None
-    
-    def simulate_trade(self, entry:  float, sl: float, tp: float, 
-                      future_df: pd.DataFrame, direction: str) -> Dict:
-        """Simulate trade execution"""
-        for idx, row in future_df.iterrows():
-            high = row['high']
-            low = row['low']
+            interval_map = {'1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d'}
+            interval = interval_map.get(timeframe, '1h')
             
-            if direction == 'LONG':
-                if low <= sl:
-                    pnl_pct = ((sl - entry) / entry) * 100
-                    return {
-                        'outcome': 'LOSS',
-                        'pnl_pct': pnl_pct,
-                        'exit_price': sl,
-                        'bars_held': len(future_df[: idx+1])
-                    }
-                
-                if high >= tp:
-                    pnl_pct = ((tp - entry) / entry) * 100
-                    return {
-                        'outcome': 'WIN',
-                        'pnl_pct': pnl_pct,
-                        'exit_price': tp,
-                        'bars_held': len(future_df[:idx+1])
-                    }
-            
-            else:  # SHORT
-                if high >= sl:
-                    pnl_pct = ((entry - sl) / entry) * 100
-                    return {
-                        'outcome': 'LOSS',
-                        'pnl_pct': pnl_pct,
-                        'exit_price': sl,
-                        'bars_held': len(future_df[:idx+1])
-                    }
-                
-                if low <= tp:
-                    pnl_pct = ((entry - tp) / entry) * 100
-                    return {
-                        'outcome': 'WIN',
-                        'pnl_pct': pnl_pct,
-                        'exit_price': tp,
-                        'bars_held': len(future_df[:idx+1])
-                    }
-        
-        # Timeout
-        last_price = future_df. iloc[-1]['close']
-        if direction == 'LONG':
-            pnl_pct = ((last_price - entry) / entry) * 100
-        else:
-            pnl_pct = ((entry - last_price) / entry) * 100
-        
-        return {
-            'outcome': 'TIMEOUT',
-            'pnl_pct': pnl_pct,
-            'exit_price':  last_price,
-            'bars_held': len(future_df)
-        }
-    
-    async def run_backtest(self, symbol: str, timeframe: str, days: int = 30):
-        """Run hybrid backtest"""
-        print(f"\n🔥 HYBRID BACKTEST: {symbol} {timeframe} ({days} days)")
-        print("="*60)
-        
-        # Fetch data
-        print(f"⏳ Fetching data...")
-        df = await self.fetch_klines(symbol, timeframe, days)
-        if df is None or len(df) < 100:
-            print("❌ Insufficient data")
-            return None
-        
-        print(f"✅ Loaded {len(df)} candles")
-        
-        # Add indicators
-        print(f"⏳ Calculating indicators...")
-        df = self.add_indicators(df)
-        
-        # Load ML engine if needed
-        if self.use_ml:
-            self.ensure_ml_loaded()
-        
-        # Backtest
-        print(f"⏳ Running backtest...")
-        lookback = 50
-        lookahead = 20
-        
-        signals_found = 0
-        
-        for i in range(lookback, len(df) - lookahead, 5):  # Skip every 5 candles for speed
-            historical_df = df.iloc[: i]. copy()
-            current_candle = df.iloc[i]
-            future_df = df.iloc[i+1:i+1+lookahead]. copy()
-            
-            # ICT signal
-            # Use backtest wrapper instead
-            backtest_wrapper = BacktestICTWrapper(self.ict_engine)
-            ict_signal = backtest_wrapper.find_backtest_signal(historical_df, symbol, timeframe)
-
-            
-            if ict_signal and ict_signal.confidence >= 40:
-                signals_found += 1
-                self.test_pure_ict(ict_signal, future_df)
-                
-                if signals_found % 5 == 0:
-                    print(f"   Found {signals_found} ICT signals...")
-        
-        print(f"✅ Backtest complete!  Found {signals_found} signals")
-        
-        # Calculate metrics
-        metrics = self.calculate_metrics()
-        
-        # Save & print
-        self.save_results(symbol, timeframe, metrics)
-        self.print_summary(metrics)
-        
-        return metrics
-    
-    def add_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Add indicators"""
-        df['tr1'] = df['high'] - df['low']
-        df['tr2'] = abs(df['high'] - df['close'].shift(1))
-        df['tr3'] = abs(df['low'] - df['close'].shift(1))
-        df['tr'] = df[['tr1', 'tr2', 'tr3']].max(axis=1)
-        df['atr'] = df['tr'].rolling(14).mean()
-        return df
-    
-    def test_pure_ict(self, signal: ICTSignal, future_df: pd.DataFrame):
-        """Test pure ICT"""
-        direction = 'LONG' if signal.signal_type. value == 'LONG' else 'SHORT'
-        
-        result = self.simulate_trade(
-            entry=signal.entry_price,
-            sl=signal.stop_loss,
-            tp=signal.take_profit_levels[0],
-            future_df=future_df,
-            direction=direction
-        )
-        
-        result['strategy'] = 'pure_ict'
-        result['confidence'] = signal.confidence
-        result['entry'] = signal.entry_price
-        result['direction'] = direction
-        
-        self.results['pure_ict']. append(result)
-    
-    def calculate_metrics(self) -> Dict:
-        """Calculate metrics"""
-        metrics = {}
-        
-        for strategy_name, trades in self.results.items():
-            if not trades:
-                metrics[strategy_name] = {
-                    'total_trades': 0,
-                    'win_rate': 0,
-                    'avg_pnl': 0,
-                    'total_pnl': 0
-                }
-                continue
-            
-            wins = [t for t in trades if t['outcome'] == 'WIN']
-            losses = [t for t in trades if t['outcome'] == 'LOSS']
-            
-            total_trades = len(trades)
-            win_rate = (len(wins) / total_trades * 100) if total_trades > 0 else 0
-            
-            metrics[strategy_name] = {
-                'total_trades': total_trades,
-                'wins': len(wins),
-                'losses': len(losses),
-                'win_rate': round(win_rate, 2),
-                'avg_pnl': round(np.mean([t['pnl_pct'] for t in trades]), 2),
-                'total_pnl': round(sum([t['pnl_pct'] for t in trades]), 2),
-                'avg_win':  round(np.mean([t['pnl_pct'] for t in wins]), 2) if wins else 0,
-                'avg_loss': round(np.mean([t['pnl_pct'] for t in losses]), 2) if losses else 0
+            url = f"https://api.binance.com/api/v3/klines"
+            params = {
+                'symbol': symbol. replace('/', '').replace('USDT', 'USDT'),
+                'interval': interval,
+                'limit': min(days * 24, 1000)
             }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session. get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200:
+                        return pd.DataFrame()
+                    data = await resp.json()
+            
+            df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 
+                                            'close_time', 'quote_volume', 'trades', 'taker_buy_base', 
+                                            'taker_buy_quote', 'ignore'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df. set_index('timestamp', inplace=True)
+            
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            return df[['open', 'high', 'low', 'close', 'volume']].dropna()
         
-        return metrics
+        except Exception as e:
+            return pd.DataFrame()
     
-    def save_results(self, symbol: str, timeframe: str, metrics:  Dict):
-        """Save results"""
-        output = {
-            'symbol': symbol,
-            'timeframe': timeframe,
-            'timestamp': datetime.now().isoformat(),
-            'metrics': metrics
-        }
+    async def _generate_backtest_signal(self, df: pd.DataFrame, symbol: str, timeframe:  str) -> Optional[ICTSignal]:
+        """Generate ICT signal using async generate_signal"""
         
-        filename = f'hybrid_backtest_{symbol}_{timeframe}.json'
-        with open(filename, 'w') as f:
-            json.dump(output, f, indent=2)
+        if len(df) < 50:
+            return None
         
-        print(f"\n💾 Saved:  {filename}")
+        try:
+            # Use the actual ICT engine's generate_signal method
+            signal = await self.ict_engine.generate_signal(df, symbol, timeframe)
+            return signal
+        
+        except Exception as e:
+            return None
     
-    def print_summary(self, metrics:  Dict):
-        """Print summary"""
-        print("\n" + "="*60)
-        print("🏆 RESULTS")
-        print("="*60)
+    async def run_backtest(self, symbol: str, timeframe: str, days: int = 15) -> Dict:
+        """Run backtest for symbol/timeframe"""
         
-        for strategy, data in metrics.items():
-            if data['total_trades'] == 0:
-                continue
-                
-            print(f"\n📊 {strategy.upper().replace('_', ' ')}")
-            print(f"   Trades:     {data['total_trades']}")
-            print(f"   Win Rate:  {data['win_rate']}%")
-            print(f"   Total P/L: {data['total_pnl']: +.2f}%")
-            print(f"   Avg Win:   {data['avg_win']: +.2f}%")
-            print(f"   Avg Loss:  {data['avg_loss']:+.2f}%")
+        try:
+            df = await self.fetch_historical_data(symbol, timeframe, days)
+            
+            if df. empty or len(df) < 50:
+                return {'symbol': symbol, 'timeframe':  timeframe, 'status': 'insufficient_data'}
+            
+            signal = await self._generate_backtest_signal(df, symbol, timeframe)
+            
+            if not signal or signal.signal_type == SignalType.HOLD:
+                return {'symbol': symbol, 'timeframe': timeframe, 'status': 'no_signal'}
+            
+            result = {
+                'symbol': symbol,
+                'timeframe': timeframe,
+                'status': 'signal',
+                'type': signal.signal_type.value,
+                'entry': round(signal.entry_price, 4),
+                'sl': round(signal.sl_price, 4),
+                'tp': round(signal.tp_prices[0], 4) if signal.tp_prices else 0,
+                'confidence': round(signal.confidence, 1),
+                'rr': round(signal.risk_reward_ratio, 2),
+                'bias':  signal.bias.value,
+                'reasoning': signal.reasoning[: 100]
+            }
+            
+            return result
+        
+        except Exception as e: 
+            return {'symbol': symbol, 'timeframe': timeframe, 'status': 'error', 'error': str(e)}
+    
+    async def run_full_backtest(self, symbols: List[str], timeframes:  List[str], days: int = 15):
+        """Run backtest on ALL symbols and timeframes"""
+        
+        print(f"\n🚀 Starting FULL backtest:  {len(symbols)} symbols × {len(timeframes)} timeframes = {len(symbols) * len(timeframes)} tests\n")
+        
+        tasks = []
+        for symbol in symbols:
+            for tf in timeframes:
+                tasks.append(self.run_backtest(symbol, tf, days))
+        
+        results = await asyncio.gather(*tasks)
+        
+        # Filter and display signals
+        signals = [r for r in results if r. get('status') == 'signal']
+        
+        print(f"\n{'='*80}")
+        print(f"📊 BACKTEST RESULTS ({len(signals)} signals from {len(results)} tests)")
+        print(f"{'='*80}\n")
+        
+        if signals:
+            for s in signals:
+                emoji = "🟢" if s['type'] == 'LONG' else "🔴"
+                print(f"{emoji} {s['symbol']: 10} {s['timeframe']:4} | {s['type']:5} | Entry: {s['entry']: >10} | SL: {s['sl']:>10} | TP: {s['tp']:>10} | Conf: {s['confidence']: >5}% | RR: {s['rr']}")
+        else:
+            print("❌ No signals generated")
+        
+        # Summary
+        print(f"\n{'='*80}")
+        print(f"Summary:")
+        print(f"  Total tests: {len(results)}")
+        print(f"  Signals: {len(signals)}")
+        print(f"  No signal: {len([r for r in results if r.get('status') == 'no_signal'])}")
+        print(f"  Errors: {len([r for r in results if r.get('status') == 'error'])}")
+        print(f"{'='*80}\n")
+        
+        return results
 
 
 async def main():
-    """Run test"""
-    engine = HybridBacktestEngine(use_ml=False)  # Start with ICT only
-    await engine.run_backtest('BTCUSDT', '1h', 30)
+    """Run full backtest"""
+    
+    # ALL symbols
+    symbols = [
+        'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT',
+        'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'LINKUSDT', 'MATICUSDT',
+        'DOTUSDT', 'UNIUSDT', 'ATOMUSDT', 'LTCUSDT', 'NEARUSDT'
+    ]
+    
+    # ALL timeframes
+    timeframes = ['15m', '1h', '4h', '1d']
+    
+    engine = HybridBacktestEngine()
+    results = await engine. run_full_backtest(symbols, timeframes, days=15)
 
 
-if __name__ == '__main__':
-    asyncio. run(main())
-
-
+if __name__ == "__main__":
+    asyncio.run(main())

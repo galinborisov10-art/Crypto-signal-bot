@@ -1,0 +1,88 @@
+INFO:ict_signal_engine:ICT Signal Engine initialized
+INFO:ict_signal_engine:Order Blocks: True
+INFO:ict_signal_engine:FVG: True
+INFO:ict_signal_engine:Whale: True
+INFO:ict_signal_engine:Liquidity: True
+INFO:ict_signal_engine:ILP: True
+INFO:ict_signal_engine:MTF: True
+INFO:ict_signal_engine:Generating ICT signal for BNBUSDT on 15m
+INFO:order_block_detector:Detected 0 valid order blocks on 15m
+INFO:ict_signal_engine:Detected 0 order blocks
+INFO:fvg_detector:Detected 1 valid FVGs on 15m
+INFO:ict_signal_engine:Detected 1 FVGs
+INFO:ict_signal_engine:Detected 0 whale blocks
+INFO:liquidity_map:Detecting liquidity zones on 1H
+INFO:liquidity_map:Detected 0 liquidity zones
+INFO:ict_signal_engine:Detected 0 liquidity zones
+INFO:ilp_detector:Starting complete liquidity pool analysis...
+INFO:ilp_detector:Detected 19 swing highs and 20 swing lows
+INFO:ilp_detector:Detected 3 liquidity pools: 1 IBSL, 2 ISSL
+INFO:ilp_detector:ISSL sweep detected at 2025-12-14 21:45:00: Price 878.51 broke below 880.39
+INFO:ilp_detector:ISSL sweep detected at 2025-12-15 13:30:00: Price 885.14 broke below 886.40
+INFO:ilp_detector:IBSL sweep detected at 2025-12-16 06:00:00: Price 861.02 broke above 858.69
+INFO:ilp_detector:Detected 3 liquidity sweeps
+INFO:ilp_detector:Analysis complete!
+INFO:ilp_detector:Summary: 3 pools detected (0 active, 3 swept)
+INFO:ict_signal_engine:Detected 0 ILPs
+INFO:ict_signal_engine:No valid entry setup found
+INFO:ict_signal_engine:Generating ICT signal for BNBUSDT on 1h
+INFO:order_block_detector:Detected 0 valid order blocks on 1h
+INFO:ict_signal_engine:Detected 0 order blocks
+INFO:fvg_detector:Detected 1 valid FVGs on 1h
+INFO:ict_signal_engine:Detected 1 FVGs
+INFO:ict_whale_detector:🐋 Whale Block detected: BUY @ 885.01 (confidence: 53%)
+INFO:ict_signal_engine:Detected 1 whale blocks
+INFO:liquidity_map:Detecting liquidity zones on 1H
+INFO:liquidity_map:Detected 3 liquidity zones
+INFO:ict_signal_engine:Detected 3 liquidity zones
+INFO:ilp_detector:Starting complete liquidity pool analysis...
+INFO:ilp_detector:Detected 27 swing highs and 19 swing lows
+INFO:ilp_detector:Detected 3 liquidity pools: 3 IBSL, 0 ISSL
+INFO:ilp_detector:IBSL sweep detected at 2025-12-08 01:00:00: Price 909.68 broke above 907.49
+INFO:ilp_detector:IBSL sweep detected at 2025-12-07 17:00:00: Price 903.84 broke above 898.06
+INFO:ilp_detector:Detected 2 liquidity sweeps
+INFO:ilp_detector:Analysis complete!
+INFO:ilp_detector:Summary: 3 pools detected (1 active, 2 swept)
+INFO:ict_signal_engine:Detected 0 ILPs
+INFO:ict_signal_engine:No valid entry setup found
+INFO:ict_signal_engine:Generating ICT signal for BTCUSDT on 1d
+INFO:order_block_detector:Detected 0 valid order blocks on 1d
+INFO:ict_signal_engine:Detected 0 order blocks
+INFO:fvg_detector:Detected 3 valid FVGs on 1d
+INFO:ict_signal_engine:Detected 3 FVGs
+INFO:ict_whale_detector:🐋 Whale Block detected: SELL @ 96500.00 (confidence: 55%)
+INFO:ict_whale_detector:🐋 Whale Block detected: BUY @ 106100.01 (confidence: 54%)
+INFO:ict_whale_detector:🐋 Whale Block detected: BUY @ 118920.92 (confidence: 50%)
+INFO:ict_whale_detector:🐋 Whale Block detected: SELL @ 116725.69 (confidence: 63%)
+INFO:ict_whale_detector:🐋 Whale Block detected: SELL @ 113510.23 (confidence: 51%)
+INFO:ict_signal_engine:Detected 5 whale blocks
+INFO:liquidity_map:Detecting liquidity zones on 1H
+INFO:liquidity_map:Detected 0 liquidity zones
+INFO:ict_signal_engine:Detected 0 liquidity zones
+INFO:ilp_detector:Starting complete liquidity pool analysis...
+INFO:ilp_detector:Detected 23 swing highs and 23 swing lows
+INFO:ilp_detector:Detected 1 liquidity pools: 1 IBSL, 0 ISSL
+INFO:ilp_detector:IBSL sweep detected at 2025-07-09 00:00:00: Price 111999.79 broke above 110529.67
+INFO:ilp_detector:Detected 1 liquidity sweeps
+INFO:ilp_detector:Analysis complete!
+INFO:ilp_detector:Summary: 1 pools detected (0 active, 1 swept)
+INFO:ict_signal_engine:Detected 0 ILPs
+INFO:ict_signal_engine:No valid entry setup found
+
+🚀 Starting FULL backtest:  15 symbols × 4 timeframes = 60 tests
+
+
+================================================================================
+📊 BACKTEST RESULTS (0 signals from 60 tests)
+================================================================================
+
+❌ No signals generated
+
+================================================================================
+Summary:
+  Total tests: 60
+  Signals: 0
+  No signal: 3
+  Errors: 0
+================================================================================
+

@@ -58,6 +58,65 @@
           "profit_pct": -1.2
         }
       ]
+    },
+    {
+      "symbol": "BTCUSDT",
+      "timeframe": "4h",
+      "period_days": 30,
+      "total_trades": 5,
+      "wins": 2,
+      "losses": 3,
+      "win_rate": 40.0,
+      "total_profit_pct": 1.399999999999992,
+      "avg_profit_per_trade": 0.27999999999999836,
+      "timestamp": "2025-12-17T10:33:25.380843",
+      "trades": [
+        {
+          "timestamp": 1763812800000,
+          "signal": "BUY",
+          "entry_price": 84284.01,
+          "tp_price": 86391.11024999998,
+          "sl_price": 83272.60187999999,
+          "result": "WIN",
+          "profit_pct": 2.4999999999999867
+        },
+        {
+          "timestamp": 1763956800000,
+          "signal": "SELL",
+          "entry_price": 87050.39,
+          "tp_price": 84874.13025,
+          "sl_price": 88094.99468,
+          "result": "LOSS",
+          "profit_pct": -1.2000000000000046
+        },
+        {
+          "timestamp": 1764244800000,
+          "signal": "SELL",
+          "entry_price": 90958.3,
+          "tp_price": 88684.3425,
+          "sl_price": 92049.7996,
+          "result": "LOSS",
+          "profit_pct": -1.199999999999995
+        },
+        {
+          "timestamp": 1764820800000,
+          "signal": "SELL",
+          "entry_price": 93397.67,
+          "tp_price": 91062.72825,
+          "sl_price": 94518.44204,
+          "result": "WIN",
+          "profit_pct": 2.4999999999999982
+        },
+        {
+          "timestamp": 1764964800000,
+          "signal": "BUY",
+          "entry_price": 89330.04,
+          "tp_price": 91563.29099999998,
+          "sl_price": 88258.07952,
+          "result": "LOSS",
+          "profit_pct": -1.1999999999999935
+        }
+      ]
     }
   ]
 }

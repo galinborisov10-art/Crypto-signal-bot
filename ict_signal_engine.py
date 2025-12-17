@@ -141,6 +141,7 @@ class ICTSignal:
     # ICT Components
     whale_blocks: List[Dict] = field(default_factory=list)
     liquidity_zones: List[Dict] = field(default_factory=list)
+    liquidity_sweeps: List[Dict] = field(default_factory=list)
     order_blocks: List[Dict] = field(default_factory=list)
     fair_value_gaps: List[Dict] = field(default_factory=list)
     internal_liquidity: List[Dict] = field(default_factory=list)
@@ -382,9 +383,6 @@ class ICTSignalEngine:
         df['atr'] = self._calculate_atr(df, period=14)
         
         # Calculate EMAs
-        df['ema_21'] = df['close'].ewm(span=21, adjust=False).mean()
-        df['ema_50'] = df['close'].ewm(span=50, adjust=False).mean()
-        df['ema_200'] = df['close'].ewm(span=200, adjust=False).mean()
         
         # Calculate volume metrics
         if 'volume' in df.columns:
@@ -468,6 +466,15 @@ class ICTSignalEngine:
                 liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df)
                 components['liquidity_zones'] = liquidity_zones
                 logger.info(f"Detected {len(liquidity_zones)} liquidity zones")
+
+                # Detect Liquidity Sweeps
+                if liquidity_zones:
+                    try:
+                        sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df, liquidity_zones)
+                        components['liquidity_sweeps'] = sweeps
+                        logger.info(f"Detected {len(sweeps)} liquidity sweeps")
+                    except Exception as e:
+                        logger.error(f"Sweep detection error: {e}")
             except Exception as e:
                 logger.error(f"Liquidity detection error: {e}")
         
@@ -531,16 +538,6 @@ class ICTSignalEngine:
         bullish_score = 0
         bearish_score = 0
         
-        # EMA alignment
-        current_price = df['close'].iloc[-1]
-        ema_21 = df['ema_21'].iloc[-1]
-        ema_50 = df['ema_50'].iloc[-1]
-        ema_200 = df['ema_200'].iloc[-1]
-        
-        if ema_21 > ema_50 > ema_200:
-            bullish_score += 2
-        elif ema_21 < ema_50 < ema_200:
-            bearish_score += 2
         
         # Order blocks
         bullish_obs = [ob for ob in ict_components.get('order_blocks', []) 
@@ -636,7 +633,7 @@ class ICTSignalEngine:
             bullish_obs = [ob for ob in ict_components.get('order_blocks', []) 
                           if hasattr(ob, 'type') and 'BULLISH' in str(ob.type.value)
                           and hasattr(ob, 'is_valid') and ob.is_valid()
-                          and ob.bottom <= current_price <= ob.top * 1.05]
+                          and ob.bottom * 0.90 <= current_price <= ob. top * 1.15]
             
             if bullish_obs:
                 best_ob = max(bullish_obs, key=lambda x: x.strength)
@@ -650,7 +647,7 @@ class ICTSignalEngine:
             bullish_fvgs = [fvg for fvg in ict_components.get('fvgs', []) 
                            if hasattr(fvg, 'is_bullish') and fvg.is_bullish
                            and hasattr(fvg, 'is_valid') and fvg.is_valid()
-                           and fvg.bottom <= current_price <= fvg.top * 1.05]
+                           and fvg.bottom * 0.90 <= current_price <= fvg.top * 1.15]
             
             if bullish_fvgs:
                 best_fvg = max(bullish_fvgs, key=lambda x: x.strength)
@@ -681,7 +678,7 @@ class ICTSignalEngine:
             bearish_fvgs = [fvg for fvg in ict_components.get('fvgs', []) 
                            if hasattr(fvg, 'is_bullish') and not fvg.is_bullish
                            and hasattr(fvg, 'is_valid') and fvg.is_valid()
-                           and fvg.bottom * 0.95 <= current_price <= fvg.top]
+                           and fvg.bottom * 0.85 <= current_price <= fvg.top * 1.10]
             
             if bearish_fvgs:
                 best_fvg = max(bearish_fvgs, key=lambda x: x.strength)
@@ -714,75 +711,65 @@ class ICTSignalEngine:
         
         return entry
     
+
+    def _calculate_tp_prices(self, entry_price: float, sl_price: float, bias, ict_components: dict) -> list:
+        """Calculate TP levels with 1:2, 1:3, 1:5 RR"""
+        risk = abs(entry_price - sl_price)
+        if str(bias) == 'MarketBias. BULLISH':
+            return [entry_price + risk*3, entry_price + risk*2, entry_price + risk*5]
+        else:
+            return [entry_price - risk*3, entry_price - risk*2, entry_price - risk*5]
+
     def _calculate_sl_price(
         self,
-        df:  pd.DataFrame,
+        df: pd.DataFrame,
         entry_setup: Dict,
         entry_price: float,
         bias: MarketBias
     ) -> float:
-        """Calculate stop loss price with structure awareness"""
+        """Calculate stop loss using ICT invalidation levels"""
         atr = df['atr'].iloc[-1]
-        price_zone = entry_setup.get('price_zone', (entry_price, entry_price))
         
-        swing_period = 20
-        if bias == MarketBias.BULLISH:
-            swing_low = df['low'].rolling(swing_period).min().iloc[-1]
-            sl_from_structure = swing_low - (atr * 0.3)
-            sl_from_zone = price_zone[0] - (atr * 0.5)
-            sl = min(sl_from_structure, sl_from_zone)
-        else:
-            swing_high = df['high'].rolling(swing_period).max().iloc[-1]
-            sl_from_structure = swing_high + (atr * 0.3)
-            sl_from_zone = price_zone[1] + (atr * 0.5)
-            sl = max(sl_from_structure, sl_from_zone)
-        
-        sl_distance_pct = abs(entry_price - sl) / entry_price * 100
-        max_distance = self.config.get('max_sl_distance_pct', 3.0)
-        min_distance = self.config.get('min_sl_distance_pct', 1.5)
-        
-        if sl_distance_pct > max_distance:
-            if bias == MarketBias. BULLISH:
-                sl = entry_price * (1 - max_distance / 100)
-            else:
-                sl = entry_price * (1 + max_distance / 100)
-        elif sl_distance_pct < min_distance: 
-            if bias == MarketBias.BULLISH:
-                sl = entry_price * (1 - min_distance / 100)
-            else:
-                sl = entry_price * (1 + min_distance / 100)
-        
-        return sl
-
-        tp_prices = []
-        
-        for multiplier in multipliers:
-            if bias == MarketBias.BULLISH:
-                tp = entry_price + (risk * multiplier)
-            else:
-                tp = entry_price - (risk * multiplier)
+        if bias == MarketBias. BULLISH:
+            # SL below last swing low OR below OB/FVG zone
+            lookback = 20
+            recent_low = df['low'].iloc[-lookback: ].min()
             
-            tp_prices.append(tp)
+            # Use entry zone bottom if available
+            price_zone = entry_setup.get('price_zone', (entry_price, entry_price))
+            zone_low = min(price_zone)
+            
+            # SL = lower of:  zone bottom - buffer OR recent swing low
+            buffer = atr * 0.5  # 0.5 ATR buffer
+            sl_from_zone = zone_low - buffer
+            sl_from_swing = recent_low - buffer
+            
+            sl_price = min(sl_from_zone, sl_from_swing)
+            
+            # Ensure minimum distance (1% from entry)
+            min_sl = entry_price * 0.99
+            return min(sl_price, min_sl)
         
-        # Optionally adjust TPs to liquidity zones
-        liquidity_zones = ict_components.get('liquidity_zones', [])
-        
-        if liquidity_zones:
-            for i, tp in enumerate(tp_prices):
-                # Find nearest liquidity zone
-                if bias == MarketBias.BULLISH:
-                    nearby_lz = [lz for lz in liquidity_zones 
-                                if hasattr(lz, 'price_level') and lz.price_level > tp * 0.98]
-                else:
-                    nearby_lz = [lz for lz in liquidity_zones 
-                                if hasattr(lz, 'price_level') and lz.price_level < tp * 1.02]
-                
-                if nearby_lz:
-                    nearest = min(nearby_lz, key=lambda x: abs(x.price_level - tp))
-                    tp_prices[i] = nearest.price_level
-        
-        return tp_prices
-    
+        else:  # BEARISH
+            # SL above last swing high OR above OB/FVG zone
+            lookback = 20
+            recent_high = df['high'].iloc[-lookback:].max()
+            
+            # Use entry zone top if available
+            price_zone = entry_setup.get('price_zone', (entry_price, entry_price))
+            zone_high = max(price_zone)
+            
+            # SL = higher of: zone top + buffer OR recent swing high
+            buffer = atr * 0.5
+            sl_from_zone = zone_high + buffer
+            sl_from_swing = recent_high + buffer
+            
+            sl_price = max(sl_from_zone, sl_from_swing)
+            
+            # Ensure minimum distance (1% from entry)
+            max_sl = entry_price * 1.01
+            return max(sl_price, max_sl)
+
     def _calculate_signal_confidence(
         self,
         ict_components: Dict,
