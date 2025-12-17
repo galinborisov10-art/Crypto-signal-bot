@@ -49,6 +49,10 @@ class BacktestICTWrapper:
         
         # Get bias
         mtf_analysis = None
+        # Add EMAs for bias calculation
+        df["ema_21"] = df["close"].ewm(span=21, adjust=False).mean()
+        df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
+        df["ema_200"] = df["close"].ewm(span=200, adjust=False).mean()
         bias = self.ict._determine_market_bias(df, ict_components, mtf_analysis)
         
         # Check if we have order blocks or FVGs
