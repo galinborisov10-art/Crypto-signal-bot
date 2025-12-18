@@ -5983,17 +5983,15 @@ def format_ict_signal(signal: ICTSignal) -> str:
     
     # Check ML status
     ml_status_text = ""
-    if ICT_SIGNAL_ENGINE_AVAILABLE and hasattr(ict_engine_global, 'use_ml'):
-        if ict_engine_global.use_ml:
-            ml_active = "🤖 ML Active"
-            if ict_engine_global.ml_engine:
-                ml_status_text = f"\n🤖 **ML Engine:** Active (Hybrid Mode)"
-            elif ict_engine_global.ml_predictor:
-                ml_status_text = f"\n🤖 **ML Predictor:** Active"
-            else:
-                ml_status_text = f"\n🤖 **ML:** Enabled (Not initialized)"
+    if ICT_SIGNAL_ENGINE_AVAILABLE and hasattr(ict_engine_global, 'use_ml') and ict_engine_global.use_ml:
+        if ict_engine_global.ml_engine:
+            ml_status_text = f"\n🤖 **ML Engine:** Active (Hybrid Mode)"
+        elif ict_engine_global.ml_predictor:
+            ml_status_text = f"\n🤖 **ML Predictor:** Active"
         else:
-            ml_status_text = f"\n⚠️ **ML:** Disabled (ICT Only)"
+            ml_status_text = f"\n🤖 **ML:** Enabled (Not initialized)"
+    elif ICT_SIGNAL_ENGINE_AVAILABLE and hasattr(ict_engine_global, 'use_ml'):
+        ml_status_text = f"\n⚠️ **ML:** Disabled (ICT Only)"
     
     msg = f"""
 {emoji} **ICT SIGNAL - {signal.signal_type.value}** {emoji}

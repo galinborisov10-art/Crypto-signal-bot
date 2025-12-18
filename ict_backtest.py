@@ -337,7 +337,11 @@ class ICTBacktestEngine:
                 else:
                     continue
                 
-                percent_to_tp = (current_distance / distance_to_tp) * 100 if distance_to_tp > 0 else 0
+                # Check for valid distance (positive and non-zero)
+                if distance_to_tp <= 0:
+                    continue  # Invalid TP setup, skip this trade
+                
+                percent_to_tp = (current_distance / distance_to_tp) * 100
                 
                 # Trigger at 80% (+/- 5%)
                 if 75 <= percent_to_tp <= 85 and not trade.get('alert_80_triggered'):
@@ -407,7 +411,8 @@ class ICTBacktestEngine:
                     signal = self.ict_engine.generate_signal(current_bar, symbol, timeframe)
                     
                     if signal and signal.entry_price and signal.confidence >= 70:
-                        trade = self.open_trade(signal, current_price, current_timestamp)
+                        # Use signal's entry price for the trade
+                        trade = self.open_trade(signal, signal.entry_price, current_timestamp)
                         self.active_trades[trade['id']] = trade
                         
                 except Exception as e:
@@ -457,7 +462,7 @@ async def main():
             all_results[key] = result
             
             print(f"\n✅ {symbol} {tf}:")
-            print(f"   Trades: {result. get('total_trades', 0)}")
+            print(f"   Trades: {result.get('total_trades', 0)}")
             print(f"   Win Rate: {result.get('win_rate', 0):.1f}%")
             print(f"   Total PnL: {result.get('total_pnl', 0):.2f}%")
             print(f"   Avg RR: {result.get('avg_rr', 0):.2f}")
@@ -472,4 +477,4 @@ async def main():
     print("\n✅ Results saved to ict_backtest_results.json")
 
 if __name__ == '__main__':
-    asyncio. run(main())
+    asyncio.run(main())

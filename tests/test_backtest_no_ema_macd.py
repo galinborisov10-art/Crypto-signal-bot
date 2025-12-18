@@ -17,6 +17,8 @@ def test_no_ema_macd_in_files():
     ]
     
     banned_terms = ['ema', 'macd', 'ewm']
+    # Exclude patterns that contain banned terms but are not indicators
+    exclude_patterns = ['schema', 'remark', 'remain', 'cachemanager', 'no ema', 'no macd', 'critical: no ema/macd']
     all_passed = True
     
     for filename in files_to_check:
@@ -36,13 +38,8 @@ def test_no_ema_macd_in_files():
             count = 0
             for line in lines:
                 if term in line.lower():
-                    # Skip if it's in a comment saying "no ema/macd" or similar
-                    if 'no ema' in line.lower() or 'no macd' in line.lower():
-                        continue
-                    if 'critical: no ema/macd' in line.lower():
-                        continue
-                    # Skip variable names like "schema", "cachemanager" that contain "ema"
-                    if term == 'ema' and ('schema' in line.lower() or 'remark' in line.lower() or 'remain' in line.lower() or 'cachemanager' in line.lower()):
+                    # Skip if line contains any exclude pattern
+                    if any(pattern in line.lower() for pattern in exclude_patterns):
                         continue
                     count += 1
             
