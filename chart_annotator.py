@@ -5,8 +5,11 @@ Adds labels, arrows, and annotations to ICT charts.
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, TYPE_CHECKING
 import logging
+
+if TYPE_CHECKING:
+    from ict_signal_engine import ICTSignal
 
 logger = logging.getLogger(__name__)
 

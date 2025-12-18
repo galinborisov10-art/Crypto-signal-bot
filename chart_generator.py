@@ -7,10 +7,13 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.dates import DateFormatter
 import pandas as pd
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from datetime import datetime
 import io
 import logging
+
+if TYPE_CHECKING:
+    from ict_signal_engine import ICTSignal
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +168,7 @@ class ChartGenerator:
             
             # Extract zone boundaries
             x_start = wb_dict.get('start_index', 0)
-            x_end = len(ax.get_xlim()) if wb_dict.get('is_active', True) else x_start + 10
+            x_end = ax.get_xlim()[1] if wb_dict.get('is_active', True) else x_start + 10
             y_low = wb_dict.get('price_low', 0)
             y_high = wb_dict.get('price_high', 0)
             
@@ -285,8 +288,9 @@ class ChartGenerator:
             
             x_start = fvg_dict.get('start_index', 0)
             x_end = x_start + 5
-            y_low = fvg_dict.get('bottom', fvg_dict.get('price_low', 0))
-            y_high = fvg_dict.get('top', fvg_dict.get('price_high', 0))
+            # FVG zones use 'bottom'/'top' or 'price_low'/'price_high' depending on source
+            y_low = fvg_dict.get('bottom') or fvg_dict.get('price_low', 0)
+            y_high = fvg_dict.get('top') or fvg_dict.get('price_high', 0)
             
             rect = patches.Rectangle(
                 (x_start, y_low),
