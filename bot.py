@@ -17,6 +17,7 @@ import mplfinance as mpf
 import pandas as pd
 from io import BytesIO
 import os
+from pathlib import Path
 
 # ================= ENVIRONMENT VARIABLES =================
 from dotenv import load_dotenv

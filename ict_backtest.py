@@ -123,8 +123,8 @@ class ICTBacktestEngine:
         lookahead = 20
         
         for i in range(lookback, len(df) - lookahead, 5):  # Every 5 candles
-            past_df = df.iloc[:i+1].copy()
-            future_df = df.iloc[i+1:i+lookahead+1].copy()
+            past_df = df.iloc[:i + 1].copy()
+            future_df = df.iloc[i + 1:i + lookahead + 1].copy()
             current_price = df.iloc[i]['close']
             current_timestamp = df.iloc[i]['timestamp']
             

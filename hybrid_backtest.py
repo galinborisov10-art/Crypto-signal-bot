@@ -199,7 +199,7 @@ async def main():
     timeframes = ['15m', '1h', '4h', '1d']
     
     engine = HybridBacktestEngine()
-    results = await engine. run_full_backtest(symbols, timeframes, days=15)
+    results = await engine.run_full_backtest(symbols, timeframes, days=15)
 
 
 if __name__ == "__main__":
