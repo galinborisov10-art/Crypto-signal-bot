@@ -5981,13 +5981,27 @@ def format_ict_signal(signal: ICTSignal) -> str:
     emoji = signal_emoji.get(signal.signal_type.value, '⚪')
     strength_stars = '🔥' * signal.signal_strength.value
     
+    # Check ML status
+    ml_status_text = ""
+    if ICT_SIGNAL_ENGINE_AVAILABLE and hasattr(ict_engine_global, 'use_ml'):
+        if ict_engine_global.use_ml:
+            ml_active = "🤖 ML Active"
+            if ict_engine_global.ml_engine:
+                ml_status_text = f"\n🤖 **ML Engine:** Active (Hybrid Mode)"
+            elif ict_engine_global.ml_predictor:
+                ml_status_text = f"\n🤖 **ML Predictor:** Active"
+            else:
+                ml_status_text = f"\n🤖 **ML:** Enabled (Not initialized)"
+        else:
+            ml_status_text = f"\n⚠️ **ML:** Disabled (ICT Only)"
+    
     msg = f"""
 {emoji} **ICT SIGNAL - {signal.signal_type.value}** {emoji}
 
 📊 **Symbol:** {signal.symbol}
 ⏰ **Timeframe:** {signal.timeframe}
 💪 **Strength:** {strength_stars} ({signal.signal_strength.value}/5)
-📈 **Confidence:** {signal.confidence:.1f}%
+📈 **Confidence:** {signal.confidence:.1f}%{ml_status_text}
 
 💰 **Trade Setup:**
 ├─ Entry: ${signal.entry_price:.2f}

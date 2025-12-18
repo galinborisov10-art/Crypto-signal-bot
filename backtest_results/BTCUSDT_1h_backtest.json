@@ -1,0 +1,37 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "1h",
+  "total_trades": 1,
+  "total_win": 1,
+  "total_loss": 0,
+  "win_rate": 100.0,
+  "alerts_80_count": 1,
+  "final_alerts_count": 1,
+  "trades": [
+    {
+      "id": "trade_1",
+      "symbol": "BTCUSDT",
+      "direction": "BUY",
+      "entry_price": 50000,
+      "exit_price": 51000,
+      "result": "WIN",
+      "profit_percent": 2.0
+    }
+  ],
+  "alerts_80": [
+    {
+      "trade_id": "trade_1",
+      "symbol": "BTCUSDT",
+      "recommendation": "HOLD",
+      "confidence": 75.0
+    }
+  ],
+  "final_alerts": [
+    {
+      "trade_id": "trade_1",
+      "symbol": "BTCUSDT",
+      "result": "WIN",
+      "profit_percent": 2.0
+    }
+  ]
+}
