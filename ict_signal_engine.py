@@ -1135,9 +1135,13 @@ class ICTSignalEngine:
             logger.warning("No Order Block for SL validation")
             return sl_price
         
-        # Get OB boundaries
-        ob_bottom = getattr(order_block, 'zone_low', getattr(order_block, 'bottom', None))
-        ob_top = getattr(order_block, 'zone_high', getattr(order_block, 'top', None))
+        # Get OB boundaries - handle both object and dict types
+        if isinstance(order_block, dict):
+            ob_bottom = order_block.get('zone_low') or order_block.get('bottom')
+            ob_top = order_block.get('zone_high') or order_block.get('top')
+        else:
+            ob_bottom = getattr(order_block, 'zone_low', None) or getattr(order_block, 'bottom', None)
+            ob_top = getattr(order_block, 'zone_high', None) or getattr(order_block, 'top', None)
         
         if not ob_bottom or not ob_top:
             logger.warning("Invalid Order Block structure")
