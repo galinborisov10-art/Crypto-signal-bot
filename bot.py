@@ -103,6 +103,16 @@ except ImportError as e:
     ICT_SIGNAL_ENGINE_AVAILABLE = False
     logger.warning(f"⚠️ ICT Signal Engine not available: {e}")
 
+# Chart Visualization System
+try:
+    from chart_generator import ChartGenerator
+    from chart_annotator import ChartAnnotator
+    CHART_VISUALIZATION_AVAILABLE = True
+    logger.info("✅ Chart Visualization System loaded")
+except ImportError as e:
+    CHART_VISUALIZATION_AVAILABLE = False
+    logger.warning(f"⚠️ Chart Visualization not available: {e}")
+
 # RSS и HTML парсинг за новини
 try:
     import feedparser
@@ -5882,11 +5892,62 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         signal_msg = format_ict_signal(signal)
         
-        await processing_msg.edit_text(
-            signal_msg,
-            parse_mode='Markdown',
-            disable_web_page_preview=True
-        )
+        # NEW: Generate chart visualization
+        chart_sent = False
+        if CHART_VISUALIZATION_AVAILABLE:
+            try:
+                from config.config_loader import get_flag
+                use_charts = get_flag('use_chart_visualization', True)
+                
+                if use_charts:
+                    logger.info(f"Generating chart for {symbol} {timeframe}")
+                    
+                    # Generate chart
+                    generator = ChartGenerator()
+                    chart_bytes = generator.generate(df, signal, symbol, timeframe)
+                    
+                    # Send text first
+                    await processing_msg.edit_text(
+                        signal_msg,
+                        parse_mode='Markdown',
+                        disable_web_page_preview=True
+                    )
+                    
+                    # Send chart
+                    await update.message.reply_photo(
+                        photo=BytesIO(chart_bytes),
+                        caption=f"📊 {symbol} {timeframe} ICT Chart"
+                    )
+                    
+                    chart_sent = True
+                    logger.info(f"Chart sent successfully for {symbol}")
+                else:
+                    # Send text only
+                    await processing_msg.edit_text(
+                        signal_msg,
+                        parse_mode='Markdown',
+                        disable_web_page_preview=True
+                    )
+            
+            except Exception as chart_error:
+                logger.warning(f"Chart generation failed: {chart_error}")
+                # Fallback: send text only if chart wasn't sent
+                if not chart_sent:
+                    await processing_msg.edit_text(
+                        signal_msg,
+                        parse_mode='Markdown',
+                        disable_web_page_preview=True
+                    )
+                    await update.message.reply_text(
+                        "⚠️ Chart generation failed. Showing text analysis only."
+                    )
+        else:
+            # Chart visualization not available, send text only
+            await processing_msg.edit_text(
+                signal_msg,
+                parse_mode='Markdown',
+                disable_web_page_preview=True
+            )
         
         logger.info(f"ICT signal sent for {symbol}: {signal.signal_type.value}")
         
