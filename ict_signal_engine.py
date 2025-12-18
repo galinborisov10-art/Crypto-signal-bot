@@ -232,8 +232,8 @@ class ICTSignalEngine:
         self.liquidity_mapper = LiquidityMapper() if LIQUIDITY_AVAILABLE else None
         self.ilp_detector = InternalLiquidityPoolDetector() if ILP_AVAILABLE else None
         self.mtf_analyzer = MultiTimeframeAnalyzer() if MTF_AVAILABLE else None
-        self.breaker_detector = BreakerBlockDetector() if BREAKER_AVAILABLE and config.get('use_breaker_blocks', True) else None
-        self.sibi_ssib_detector = SIBISSIBDetector() if SIBI_SSIB_AVAILABLE and config.get('use_sibi_ssib', True) else None
+        self.breaker_detector = BreakerBlockDetector() if BREAKER_AVAILABLE and self.config.get('use_breaker_blocks', True) else None
+        self.sibi_ssib_detector = SIBISSIBDetector() if SIBI_SSIB_AVAILABLE and self.config.get('use_sibi_ssib', True) else None
         
         logger.info("ICT Signal Engine initialized")
         logger.info(f"Order Blocks: {ORDER_BLOCK_AVAILABLE}")
