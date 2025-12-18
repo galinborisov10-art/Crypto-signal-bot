@@ -27,7 +27,7 @@ import logging
 
 # Import ICT modules
 try:
-    from order_block_detector import OrderBlockDetector, OrderBlock, OrderBlockType
+    from order_block_detector import OrderBlockDetector, OrderBlock, OrderBlockType, MitigationBlock
     ORDER_BLOCK_AVAILABLE = True
 except ImportError:
     ORDER_BLOCK_AVAILABLE = False
@@ -67,6 +67,20 @@ try:
 except ImportError:
     MTF_AVAILABLE = False
     logging.warning("MTF Analyzer not available")
+
+try:
+    from breaker_block_detector import BreakerBlockDetector, BreakerBlock
+    BREAKER_AVAILABLE = True
+except ImportError:
+    BREAKER_AVAILABLE = False
+    logging.warning("BreakerBlockDetector not available")
+
+try:
+    from sibi_ssib_detector import SIBISSIBDetector, SIBISSIBZone
+    SIBI_SSIB_AVAILABLE = True
+except ImportError:
+    SIBI_SSIB_AVAILABLE = False
+    logging.warning("SIBISSIBDetector not available")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -145,6 +159,9 @@ class ICTSignal:
     order_blocks: List[Dict] = field(default_factory=list)
     fair_value_gaps: List[Dict] = field(default_factory=list)
     internal_liquidity: List[Dict] = field(default_factory=list)
+    breaker_blocks: List[Dict] = field(default_factory=list)
+    mitigation_blocks: List[Dict] = field(default_factory=list)
+    sibi_ssib_zones: List[Dict] = field(default_factory=list)
     
     # Market Analysis
     bias: MarketBias = MarketBias.NEUTRAL
@@ -215,6 +232,8 @@ class ICTSignalEngine:
         self.liquidity_mapper = LiquidityMapper() if LIQUIDITY_AVAILABLE else None
         self.ilp_detector = InternalLiquidityPoolDetector() if ILP_AVAILABLE else None
         self.mtf_analyzer = MultiTimeframeAnalyzer() if MTF_AVAILABLE else None
+        self.breaker_detector = BreakerBlockDetector() if BREAKER_AVAILABLE and config.get('use_breaker_blocks', True) else None
+        self.sibi_ssib_detector = SIBISSIBDetector() if SIBI_SSIB_AVAILABLE and config.get('use_sibi_ssib', True) else None
         
         logger.info("ICT Signal Engine initialized")
         logger.info(f"Order Blocks: {ORDER_BLOCK_AVAILABLE}")
@@ -223,6 +242,8 @@ class ICTSignalEngine:
         logger.info(f"Liquidity: {LIQUIDITY_AVAILABLE}")
         logger.info(f"ILP: {ILP_AVAILABLE}")
         logger.info(f"MTF: {MTF_AVAILABLE}")
+        logger.info(f"Breaker Blocks: {BREAKER_AVAILABLE}")
+        logger.info(f"SIBI/SSIB: {SIBI_SSIB_AVAILABLE}")
     
     def _get_default_config(self) -> Dict:
         """Get default configuration"""
@@ -356,6 +377,9 @@ class ICTSignalEngine:
             order_blocks=[ob.to_dict() if hasattr(ob, 'to_dict') else ob for ob in ict_components.get('order_blocks', [])],
             fair_value_gaps=[fvg.to_dict() if hasattr(fvg, 'to_dict') else fvg for fvg in ict_components.get('fvgs', [])],
             internal_liquidity=[ilp for ilp in ict_components.get('internal_liquidity', [])],
+            breaker_blocks=[bb.to_dict() for bb in ict_components.get('breaker_blocks', [])],
+            mitigation_blocks=[mb.to_dict() for mb in ict_components.get('mitigation_blocks', [])],
+            sibi_ssib_zones=[sz.to_dict() for sz in ict_components.get('sibi_ssib_zones', [])],
             bias=bias,
             structure_broken=structure_broken,
             displacement_detected=displacement_detected,
@@ -486,6 +510,52 @@ class ICTSignalEngine:
                 logger.info(f"Detected {len(components['internal_liquidity'])} ILPs")
             except Exception as e:
                 logger.error(f"ILP detection error: {e}")
+        
+        # Detect Breaker Blocks
+        if self.breaker_detector and components.get('order_blocks'):
+            try:
+                breaker_blocks = self.breaker_detector.detect_breaker_blocks(
+                    df,
+                    components['order_blocks']
+                )
+                components['breaker_blocks'] = breaker_blocks
+                logger.info(f"Detected {len(breaker_blocks)} breaker blocks")
+            except Exception as e:
+                logger.error(f"Breaker block detection error: {e}")
+                components['breaker_blocks'] = []
+        else:
+            components['breaker_blocks'] = []
+        
+        # Detect Mitigation Blocks  
+        if self.ob_detector:
+            try:
+                mitigation_blocks = self.ob_detector.detect_mitigation_blocks(
+                    df,
+                    components.get('order_blocks', [])
+                )
+                components['mitigation_blocks'] = mitigation_blocks
+                logger.info(f"Detected {len(mitigation_blocks)} mitigation blocks")
+            except Exception as e:
+                logger.error(f"Mitigation block detection error: {e}")
+                components['mitigation_blocks'] = []
+        else:
+            components['mitigation_blocks'] = []
+        
+        # Detect SIBI/SSIB
+        if self.sibi_ssib_detector:
+            try:
+                sibi_ssib_zones = self.sibi_ssib_detector.detect_sibi_ssib(
+                    df,
+                    components.get('fvgs', []),
+                    components.get('liquidity_zones', [])
+                )
+                components['sibi_ssib_zones'] = sibi_ssib_zones
+                logger.info(f"Detected {len(sibi_ssib_zones)} SIBI/SSIB zones")
+            except Exception as e:
+                logger.error(f"SIBI/SSIB detection error: {e}")
+                components['sibi_ssib_zones'] = []
+        else:
+            components['sibi_ssib_zones'] = []
         
         return components
     
@@ -815,6 +885,24 @@ class ICTSignalEngine:
             confluence_count = mtf_analysis.get('confluence_count', 0)
             mtf_score = min(10, confluence_count * 3)
             confidence += mtf_score * self.config['mtf_weight'] / 0.1
+        
+        # Breaker blocks (5%)
+        breaker_blocks = ict_components.get('breaker_blocks', [])
+        if breaker_blocks:
+            breaker_score = min(5, len(breaker_blocks) * 2)
+            confidence += breaker_score
+        
+        # Mitigation blocks (5%)
+        mitigation_blocks = ict_components.get('mitigation_blocks', [])
+        if mitigation_blocks:
+            mitigation_score = min(5, len(mitigation_blocks) * 2)
+            confidence += mitigation_score
+        
+        # SIBI/SSIB (5%)
+        sibi_ssib = ict_components.get('sibi_ssib_zones', [])
+        if sibi_ssib:
+            sibi_ssib_score = min(5, len(sibi_ssib) * 2)
+            confidence += sibi_ssib_score
         
         # Displacement bonus (10%)
         if displacement_detected:
