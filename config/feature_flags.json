@@ -6,5 +6,18 @@
   "auto_alerts_interval_minutes": 15,
   "auto_alerts_top_n": 3,
   "news_tracking_enabled": true,
-  "debug_mode": false
+  "debug_mode": false,
+  "use_ict_only": false,
+  "use_traditional": true,
+  "use_hybrid": true,
+  "use_breaker_blocks": true,
+  "use_mitigation_blocks": true,
+  "use_sibi_ssib": true,
+  "use_zone_explanations": true,
+  "use_cache": true,
+  "hybrid_mode": "smart",
+  "ict_weight": 0.6,
+  "traditional_weight": 0.4,
+  "cache_ttl_seconds": 3600,
+  "cache_max_size": 100
 }

@@ -36,7 +36,20 @@ def get_default_flags() -> Dict[str, Any]:
         'auto_alerts_interval_minutes': 15,
         'auto_alerts_top_n': 3,
         'news_tracking_enabled': True,
-        'debug_mode': False
+        'debug_mode': False,
+        'use_ict_only': False,
+        'use_traditional': True,
+        'use_hybrid': True,
+        'use_breaker_blocks': True,
+        'use_mitigation_blocks': True,
+        'use_sibi_ssib': True,
+        'use_zone_explanations': True,
+        'use_cache': True,
+        'hybrid_mode': 'smart',
+        'ict_weight': 0.6,
+        'traditional_weight': 0.4,
+        'cache_ttl_seconds': 3600,
+        'cache_max_size': 100
     }
 
 def update_feature_flag(key: str, value: Any) -> bool:
@@ -57,3 +70,77 @@ def is_feature_enabled(feature_name: str) -> bool:
     """Check if a feature is enabled"""
     config = load_feature_flags()
     return config.get(feature_name, False)
+
+def get_flag(name: str, default: Any = None) -> Any:
+    """
+    Get single feature flag value.
+    
+    Args:
+        name: Flag name
+        default: Default value if flag not found
+        
+    Returns:
+        Flag value or default
+    """
+    config = load_feature_flags()
+    return config.get(name, default)
+
+def set_flag(name: str, value: Any) -> bool:
+    """
+    Set single feature flag.
+    
+    Args:
+        name: Flag name
+        value: New value
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    return update_feature_flag(name, value)
+
+def toggle_flag(name: str) -> bool:
+    """
+    Toggle boolean feature flag.
+    
+    Args:
+        name: Flag name
+        
+    Returns:
+        New flag value (True/False)
+    """
+    try:
+        config = load_feature_flags()
+        current_value = config.get(name, False)
+        
+        # Only toggle if current value is boolean
+        if not isinstance(current_value, bool):
+            logger.warning(f"Cannot toggle non-boolean flag: {name}")
+            return current_value
+        
+        new_value = not current_value
+        update_feature_flag(name, new_value)
+        logger.info(f"Toggled flag {name}: {current_value} -> {new_value}")
+        return new_value
+    except Exception as e:
+        logger.error(f"Error toggling flag: {e}")
+        return False
+
+def save_feature_flags(flags: Dict[str, Any]) -> bool:
+    """
+    Save complete feature flags configuration.
+    
+    Args:
+        flags: Complete flags dictionary
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        with open(CONFIG_PATH, 'w') as f:
+            json.dump(flags, f, indent=2)
+        logger.info("Feature flags saved successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving feature flags: {e}")
+        return False

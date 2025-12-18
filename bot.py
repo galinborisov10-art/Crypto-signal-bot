@@ -10592,6 +10592,194 @@ async def toggle_ict_command(update, context):
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+async def toggle_ict_only_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle pure ICT mode (use_ict_only flag)"""
+    try:
+        # Only owner can change this
+        if update.effective_user.id != OWNER_CHAT_ID:
+            await update.message.reply_text("❌ Owner only")
+            return
+        
+        from config.config_loader import toggle_flag, get_flag
+        
+        # Toggle the flag
+        new_value = toggle_flag('use_ict_only')
+        
+        # Update global config if needed
+        global FEATURE_FLAGS
+        FEATURE_FLAGS = load_feature_flags()
+        
+        # Send status message
+        if new_value:
+            message = "🎯 **ICT-Only Mode ENABLED**\n\n"
+            message += "✅ Using pure ICT methodology\n"
+            message += "❌ Traditional indicators disabled\n"
+            message += "❌ Hybrid mode disabled\n\n"
+            message += "All signals will use only ICT concepts:\n"
+            message += "• Whale Order Blocks\n"
+            message += "• Breaker Blocks\n"
+            message += "• Mitigation Blocks\n"
+            message += "• SIBI/SSIB Zones\n"
+            message += "• Liquidity Mapping\n"
+            message += "• Market Structure\n"
+        else:
+            message = "🔀 **ICT-Only Mode DISABLED**\n\n"
+            message += "✅ Hybrid mode restored\n"
+            message += "✅ Traditional indicators enabled\n"
+            message += "✅ Combined analysis active\n\n"
+            message += "Signals will use both ICT and traditional analysis."
+        
+        await update.message.reply_text(message)
+        
+    except Exception as e:
+        logger.error(f"Error toggling ICT-only mode: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
+async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current configuration and cache statistics"""
+    try:
+        # Check if user is allowed
+        if update.effective_user.id != OWNER_CHAT_ID:
+            await update.message.reply_text("❌ Owner only")
+            return
+        
+        from config.config_loader import load_feature_flags
+        from cache_manager import get_cache_manager
+        
+        # Load current configuration
+        config = load_feature_flags()
+        
+        # Build status message
+        message = "📊 **Bot Status & Configuration**\n\n"
+        
+        # ICT Configuration
+        message += "**ICT Settings:**\n"
+        message += f"• ICT Only: {'✅' if config.get('use_ict_only', False) else '❌'}\n"
+        message += f"• Traditional: {'✅' if config.get('use_traditional', True) else '❌'}\n"
+        message += f"• Hybrid: {'✅' if config.get('use_hybrid', True) else '❌'}\n"
+        message += f"• Breaker Blocks: {'✅' if config.get('use_breaker_blocks', True) else '❌'}\n"
+        message += f"• Mitigation Blocks: {'✅' if config.get('use_mitigation_blocks', True) else '❌'}\n"
+        message += f"• SIBI/SSIB: {'✅' if config.get('use_sibi_ssib', True) else '❌'}\n"
+        message += f"• Zone Explanations: {'✅' if config.get('use_zone_explanations', True) else '❌'}\n\n"
+        
+        # Hybrid Mode Configuration
+        if config.get('use_hybrid', True):
+            hybrid_mode = config.get('hybrid_mode', 'smart')
+            ict_weight = config.get('ict_weight', 0.6)
+            trad_weight = config.get('traditional_weight', 0.4)
+            message += "**Hybrid Mode:**\n"
+            message += f"• Mode: {hybrid_mode.upper()}\n"
+            message += f"• ICT Weight: {ict_weight:.1%}\n"
+            message += f"• Traditional Weight: {trad_weight:.1%}\n\n"
+        
+        # Cache Configuration
+        message += "**Cache Settings:**\n"
+        message += f"• Enabled: {'✅' if config.get('use_cache', True) else '❌'}\n"
+        if config.get('use_cache', True):
+            ttl = config.get('cache_ttl_seconds', 3600)
+            max_size = config.get('cache_max_size', 100)
+            message += f"• TTL: {ttl // 60} minutes\n"
+            message += f"• Max Size: {max_size} entries\n"
+            
+            # Get cache statistics
+            try:
+                cache = get_cache_manager()
+                stats = cache.get_stats()
+                message += f"• Current Size: {stats['size']}/{stats['max_size']}\n"
+                message += f"• Hit Rate: {stats['hit_rate']:.1f}%\n"
+                message += f"• Total Requests: {stats['total_requests']}\n"
+            except Exception as e:
+                logger.warning(f"Could not get cache stats: {e}")
+        
+        message += "\n"
+        
+        # Other Settings
+        message += "**Other Settings:**\n"
+        message += f"• ICT Enhancer: {'✅' if config.get('use_ict_enhancer', False) else '❌'}\n"
+        message += f"• Auto Alerts: {'✅' if config.get('auto_alerts_enabled', True) else '❌'}\n"
+        message += f"• News Tracking: {'✅' if config.get('news_tracking_enabled', True) else '❌'}\n"
+        message += f"• Debug Mode: {'✅' if config.get('debug_mode', False) else '❌'}\n"
+        
+        await update.message.reply_text(message)
+        
+    except Exception as e:
+        logger.error(f"Error getting status: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
+async def cache_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show detailed cache statistics"""
+    try:
+        # Check if user is allowed
+        if update.effective_user.id != OWNER_CHAT_ID:
+            await update.message.reply_text("❌ Owner only")
+            return
+        
+        from cache_manager import get_cache_manager
+        from config.config_loader import get_flag
+        
+        # Check if cache is enabled
+        if not get_flag('use_cache', True):
+            await update.message.reply_text("❌ Cache is disabled in configuration")
+            return
+        
+        # Get cache manager
+        try:
+            cache = get_cache_manager()
+        except Exception as e:
+            await update.message.reply_text(f"❌ Cache not available: {e}")
+            return
+        
+        # Get detailed statistics
+        stats = cache.get_stats()
+        
+        # Build message
+        message = "📊 **Cache Statistics**\n\n"
+        
+        message += "**Size:**\n"
+        message += f"• Current: {stats['size']} entries\n"
+        message += f"• Maximum: {stats['max_size']} entries\n"
+        message += f"• Usage: {(stats['size'] / stats['max_size'] * 100):.1f}%\n\n"
+        
+        message += "**Performance:**\n"
+        message += f"• Total Requests: {stats['total_requests']}\n"
+        message += f"• Cache Hits: {stats['hits']} ({stats['hit_rate']:.1f}%)\n"
+        message += f"• Cache Misses: {stats['misses']}\n\n"
+        
+        message += "**Evictions:**\n"
+        message += f"• LRU Evictions: {stats['evictions']}\n"
+        message += f"• TTL Expirations: {stats['expirations']}\n\n"
+        
+        # Show recent keys
+        try:
+            keys = cache.get_keys()
+            if keys:
+                message += f"**Recent Entries ({min(5, len(keys))}/{len(keys)}):**\n"
+                for key in keys[-5:]:  # Last 5 keys
+                    message += f"• {key}\n"
+        except:
+            pass
+        
+        # Performance assessment
+        message += "\n**Assessment:**\n"
+        hit_rate = stats['hit_rate']
+        if hit_rate >= 80:
+            message += "✅ Excellent cache performance\n"
+        elif hit_rate >= 60:
+            message += "🟢 Good cache performance\n"
+        elif hit_rate >= 40:
+            message += "🟡 Moderate cache performance\n"
+        else:
+            message += "🔴 Low cache performance\n"
+        
+        await update.message.reply_text(message)
+        
+    except Exception as e:
+        logger.error(f"Error getting cache stats: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
 def main():
     # HTTPx клиент с persistent connection и retry логика
     from httpx import Limits
@@ -10638,6 +10826,9 @@ def main():
     app.add_handler(CommandHandler("risk", risk_cmd))  # 🛡️ Risk Management
     app.add_handler(CommandHandler("explain", explain_cmd))  # 📖 ICT/LuxAlgo речник
     app.add_handler(CommandHandler("toggle_ict", toggle_ict_command))  # 🔧 ICT Enhancer toggle
+    app.add_handler(CommandHandler("toggle_ict_only", toggle_ict_only_cmd))  # 🎯 Toggle pure ICT mode
+    app.add_handler(CommandHandler("status", status_cmd))  # 📊 Show configuration and cache stats
+    app.add_handler(CommandHandler("cache_stats", cache_stats_cmd))  # 📊 Detailed cache statistics
     
     # Админ команди
     app.add_handler(CommandHandler("admin_login", admin_login_cmd))

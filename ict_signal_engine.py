@@ -82,6 +82,27 @@ except ImportError:
     SIBI_SSIB_AVAILABLE = False
     logging.warning("SIBISSIBDetector not available")
 
+try:
+    from zone_explainer import ZoneExplainer
+    ZONE_EXPLAINER_AVAILABLE = True
+except ImportError:
+    ZONE_EXPLAINER_AVAILABLE = False
+    logging.warning("ZoneExplainer not available")
+
+try:
+    from cache_manager import get_cache_manager
+    CACHE_MANAGER_AVAILABLE = True
+except ImportError:
+    CACHE_MANAGER_AVAILABLE = False
+    logging.warning("CacheManager not available")
+
+try:
+    from config.config_loader import load_feature_flags, get_flag
+    FEATURE_FLAGS_AVAILABLE = True
+except ImportError:
+    FEATURE_FLAGS_AVAILABLE = False
+    logging.warning("Feature flags not available")
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -174,6 +195,7 @@ class ICTSignal:
     # Explanation
     reasoning: str = ""
     warnings: List[str] = field(default_factory=list)
+    zone_explanations: Dict[str, List[str]] = field(default_factory=dict)
     
     def to_dict(self) -> Dict:
         """Convert to dictionary"""
@@ -225,6 +247,23 @@ class ICTSignalEngine:
         """
         self.config = config or self._get_default_config()
         
+        # Load feature flags
+        if FEATURE_FLAGS_AVAILABLE:
+            try:
+                feature_flags = load_feature_flags()
+                # Merge feature flags into config
+                self.config.update({
+                    'use_breaker_blocks': feature_flags.get('use_breaker_blocks', True),
+                    'use_mitigation_blocks': feature_flags.get('use_mitigation_blocks', True),
+                    'use_sibi_ssib': feature_flags.get('use_sibi_ssib', True),
+                    'use_zone_explanations': feature_flags.get('use_zone_explanations', True),
+                    'use_cache': feature_flags.get('use_cache', True),
+                    'cache_ttl_seconds': feature_flags.get('cache_ttl_seconds', 3600),
+                    'cache_max_size': feature_flags.get('cache_max_size', 100)
+                })
+            except Exception as e:
+                logger.warning(f"Could not load feature flags: {e}")
+        
         # Initialize sub-detectors
         self.ob_detector = OrderBlockDetector() if ORDER_BLOCK_AVAILABLE else None
         self.fvg_detector = FVGDetector() if FVG_AVAILABLE else None
@@ -240,6 +279,23 @@ class ICTSignalEngine:
         use_sibi_ssib = self.config.get('use_sibi_ssib', True)
         self.sibi_ssib_detector = SIBISSIBDetector() if SIBI_SSIB_AVAILABLE and use_sibi_ssib else None
         
+        # Initialize zone explainer
+        use_zone_explanations = self.config.get('use_zone_explanations', True)
+        self.zone_explainer = ZoneExplainer() if ZONE_EXPLAINER_AVAILABLE and use_zone_explanations else None
+        
+        # Initialize cache manager
+        use_cache = self.config.get('use_cache', True)
+        if CACHE_MANAGER_AVAILABLE and use_cache:
+            try:
+                cache_max_size = self.config.get('cache_max_size', 100)
+                cache_ttl = self.config.get('cache_ttl_seconds', 3600)
+                self.cache_manager = get_cache_manager(cache_max_size, cache_ttl)
+            except Exception as e:
+                logger.warning(f"Could not initialize cache manager: {e}")
+                self.cache_manager = None
+        else:
+            self.cache_manager = None
+        
         logger.info("ICT Signal Engine initialized")
         logger.info(f"Order Blocks: {ORDER_BLOCK_AVAILABLE}")
         logger.info(f"FVG: {FVG_AVAILABLE}")
@@ -249,6 +305,8 @@ class ICTSignalEngine:
         logger.info(f"MTF: {MTF_AVAILABLE}")
         logger.info(f"Breaker Blocks: {BREAKER_AVAILABLE}")
         logger.info(f"SIBI/SSIB: {SIBI_SSIB_AVAILABLE}")
+        logger.info(f"Zone Explainer: {ZONE_EXPLAINER_AVAILABLE}")
+        logger.info(f"Cache Manager: {self.cache_manager is not None}")
     
     def _get_default_config(self) -> Dict:
         """Get default configuration"""
@@ -295,6 +353,16 @@ class ICTSignalEngine:
             ICTSignal object or None
         """
         logger.info(f"Generating ICT signal for {symbol} on {timeframe}")
+        
+        # Check cache first
+        if self.cache_manager:
+            try:
+                cached_signal = self.cache_manager.get_cached_signal(symbol, timeframe)
+                if cached_signal:
+                    logger.info(f"Returning cached signal for {symbol} {timeframe}")
+                    return cached_signal
+            except Exception as e:
+                logger.warning(f"Cache retrieval error: {e}")
         
         if len(df) < 50:
             logger.warning("Insufficient data for signal generation")
@@ -365,7 +433,20 @@ class ICTSignalEngine:
         reasoning = self._generate_reasoning(ict_components, bias, entry_setup, mtf_analysis)
         warnings = self._generate_warnings(ict_components, risk_reward_ratio, df)
         
-        # Step 13: Create ICT signal
+        # Step 13: Generate zone explanations
+        zone_explanations = {}
+        if self.zone_explainer:
+            try:
+                bias_str = bias.value if hasattr(bias, 'value') else str(bias)
+                zone_explanations = self.zone_explainer.generate_all_explanations(
+                    ict_components, 
+                    bias_str
+                )
+                logger.info(f"Generated zone explanations for {sum(len(v) for v in zone_explanations.values())} zones")
+            except Exception as e:
+                logger.error(f"Error generating zone explanations: {e}")
+        
+        # Step 14: Create ICT signal
         signal = ICTSignal(
             timestamp=datetime.now(),
             symbol=symbol,
@@ -392,10 +473,19 @@ class ICTSignalEngine:
             htf_bias=mtf_analysis.get('htf_bias', 'NEUTRAL') if mtf_analysis else 'NEUTRAL',
             mtf_structure=mtf_analysis.get('mtf_structure', 'NEUTRAL') if mtf_analysis else 'NEUTRAL',
             reasoning=reasoning,
-            warnings=warnings
+            warnings=warnings,
+            zone_explanations=zone_explanations
         )
         
         logger.info(f"Generated {signal_type.value} signal with {confidence:.1f}% confidence")
+        
+        # Step 15: Cache the signal
+        if self.cache_manager:
+            try:
+                self.cache_manager.cache_signal(symbol, timeframe, signal)
+                logger.info(f"Cached signal for {symbol} {timeframe}")
+            except Exception as e:
+                logger.warning(f"Cache storage error: {e}")
         
         return signal
     
