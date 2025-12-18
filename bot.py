@@ -17,6 +17,7 @@ import mplfinance as mpf
 import pandas as pd
 from io import BytesIO
 import os
+from pathlib import Path
 
 # ================= ENVIRONMENT VARIABLES =================
 from dotenv import load_dotenv
@@ -7978,7 +7979,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='HTML'
         )
     elif text == "📊 Backtest":
-        await backtest_cmd(update, context)
+        # Show backtest results instead of running new backtest
+        await backtest_results_cmd(update, context)
     elif text == "📈 ML Report":
         await ml_report_cmd(update, context)
     elif text == "🔧 ML Status":
@@ -9882,6 +9884,89 @@ async def admin_mode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # ================= ML, BACKTEST, REPORTS КОМАНДИ =================
 
+async def backtest_results_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Shows ALL backtest results from saved JSON files
+    Usage: /backtest_results
+    """
+    message = update.message or update.callback_query.message
+    
+    await message.reply_text("📊 Loading backtest results...")
+    
+    # Check if backtest_results directory exists
+    results_dir = Path("backtest_results")
+    
+    if not results_dir.exists():
+        await message.reply_text(
+            "⚠️ <b>No backtest results found</b>\n\n"
+            "Run a backtest first:\n"
+            "<code>/backtest BTCUSDT 1h</code>",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Collect all results
+    all_results = []
+    for result_file in results_dir.glob("*_backtest.json"):
+        try:
+            with open(result_file, 'r') as f:
+                result = json.load(f)
+                all_results.append(result)
+        except Exception as e:
+            logger.error(f"Error loading {result_file}: {e}")
+    
+    if not all_results:
+        await message.reply_text(
+            "⚠️ <b>No backtest results found</b>\n\n"
+            "The backtest_results directory is empty.\n"
+            "Run a backtest first:\n"
+            "<code>/backtest BTCUSDT 1h</code>",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Format results message
+    text = "📊 <b>BACKTEST RESULTS - ALL COINS & TIMEFRAMES</b>\n"
+    text += "=" * 40 + "\n\n"
+    
+    total_trades = 0
+    total_wins = 0
+    total_losses = 0
+    
+    for result in all_results:
+        symbol = result.get('symbol', 'UNKNOWN')
+        timeframe = result.get('timeframe', 'UNKNOWN')
+        trades = result.get('total_trades', 0)
+        wins = result.get('total_win', 0)
+        losses = result.get('total_loss', 0)
+        win_rate = result.get('win_rate', 0)
+        
+        total_trades += trades
+        total_wins += wins
+        total_losses += losses
+        
+        # Format each result
+        text += f"<b>{symbol} ({timeframe})</b>\n"
+        text += f"├─ Trades: {trades}\n"
+        text += f"├─ Wins: {wins} ✅\n"
+        text += f"├─ Losses: {losses} ❌\n"
+        text += f"└─ Win Rate: {win_rate:.1f}%\n\n"
+    
+    # Overall stats
+    overall_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+    text += "=" * 40 + "\n"
+    text += f"<b>OVERALL STATISTICS</b>\n"
+    text += f"├─ Total Trades: {total_trades}\n"
+    text += f"├─ Total Wins: {total_wins} ✅\n"
+    text += f"├─ Total Losses: {total_losses} ❌\n"
+    text += f"└─ Overall Win Rate: {overall_win_rate:.1f}%\n\n"
+    
+    text += "<i>💡 These results use ONLY ICT System 2\n"
+    text += "(Order Blocks, FVG, Liquidity)\n"
+    text += "NO EMA/MACD used</i>"
+    
+    await message.reply_text(text, parse_mode='HTML')
+
 async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Изпълнява back-test на стратегията (с поддръжка на всички timeframes)"""
     if not BACKTEST_AVAILABLE:
@@ -10908,7 +10993,8 @@ def main():
     app.add_handler(CommandHandler("users", list_users_cmd))  # Списък с потребители
     
     # ML, Back-testing, Reports команди
-    app.add_handler(CommandHandler("backtest", backtest_cmd))  # Back-testing
+    app.add_handler(CommandHandler("backtest", backtest_cmd))  # Run back-testing
+    app.add_handler(CommandHandler("backtest_results", backtest_results_cmd))  # Show saved backtest results
     app.add_handler(CommandHandler("ml_status", ml_status_cmd))  # ML статус
     app.add_handler(CommandHandler("ml_train", ml_train_cmd))  # Ръчно обучение
     app.add_handler(CommandHandler("daily_report", daily_report_cmd))  # Дневен отчет
