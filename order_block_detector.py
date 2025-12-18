@@ -17,7 +17,7 @@ Date: 2025-12-12
 
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -99,6 +99,30 @@ class OrderBlock:
         if self.tested_count > 3:
             return False
         return True
+
+
+@dataclass
+class MitigationBlock:
+    """Mitigation Block - Retested OB with increased strength"""
+    original_ob: Union[OrderBlock, Dict]  # Reference to original OrderBlock or dict representation
+    retest_count: int
+    price_low: float
+    price_high: float
+    price_mid: float
+    strength: float  # Increased strength from retests
+    last_retest_index: int
+    status: str  # ACTIVE, MITIGATED
+    
+    def to_dict(self):
+        return {
+            'type': 'MITIGATION_BLOCK',
+            'retest_count': self.retest_count,
+            'price_low': self.price_low,
+            'price_high': self.price_high,
+            'price_mid': self.price_mid,
+            'strength': self.strength,
+            'status': self.status
+        }
 
 
 class OrderBlockDetector:
@@ -585,6 +609,103 @@ class OrderBlockDetector:
         
         return is_mitigated, mitigation_pct
     
+    def detect_mitigation_blocks(
+        self,
+        df: pd.DataFrame,
+        order_blocks: List
+    ) -> List[MitigationBlock]:
+        """
+        Detect Mitigation Blocks - OBs that have been retested without breach
+        
+        Logic:
+        1. Check each OB for retests (price touches zone without breach)
+        2. Count retests
+        3. Increase strength per retest (+20% per retest)
+        4. Mark as Mitigation Block if retests >= 1
+        """
+        mitigation_blocks = []
+        
+        for ob in order_blocks:
+            retests = self._count_retests(df, ob)
+            
+            if retests >= 1 and not self._is_breached(df, ob):
+                ob_top = ob.top if hasattr(ob, 'top') else ob.price_high
+                ob_bottom = ob.bottom if hasattr(ob, 'bottom') else ob.price_low
+                ob_strength = ob.strength if hasattr(ob, 'strength') else 5.0
+                
+                # Increase strength per retest
+                mitigation_strength = ob_strength * (1 + retests * 0.2)
+                
+                mitigation = MitigationBlock(
+                    original_ob=ob,
+                    retest_count=retests,
+                    price_low=ob_bottom,
+                    price_high=ob_top,
+                    price_mid=(ob_top + ob_bottom) / 2,
+                    strength=min(10.0, mitigation_strength),
+                    last_retest_index=self._get_last_retest_index(df, ob),
+                    status='ACTIVE'
+                )
+                mitigation_blocks.append(mitigation)
+        
+        return mitigation_blocks
+
+    def _count_retests(self, df: pd.DataFrame, ob) -> int:
+        """Count how many times price touched OB zone without breach"""
+        retests = 0
+        ob_type = str(ob.type.value) if hasattr(ob.type, 'value') else str(ob.type)
+        ob_top = ob.top if hasattr(ob, 'top') else ob.price_high  
+        ob_bottom = ob.bottom if hasattr(ob, 'bottom') else ob.price_low
+        ob_index = ob.index if hasattr(ob, 'index') else ob.candle_index if hasattr(ob, 'candle_index') else 0
+        
+        for i in range(ob_index + 1, len(df)):
+            if 'BULLISH' in ob_type:
+                # Check for touch from above
+                if df['low'].iloc[i] <= ob_top * 1.01 and df['low'].iloc[i] >= ob_bottom:
+                    retests += 1
+            
+            elif 'BEARISH' in ob_type:
+                # Check for touch from below
+                if df['high'].iloc[i] >= ob_bottom * 0.99 and df['high'].iloc[i] <= ob_top:
+                    retests += 1
+        
+        return retests
+
+    def _is_breached(self, df: pd.DataFrame, ob) -> bool:
+        """Check if OB has been breached"""
+        ob_type = str(ob.type.value) if hasattr(ob.type, 'value') else str(ob.type)
+        ob_top = ob.top if hasattr(ob, 'top') else ob.price_high
+        ob_bottom = ob.bottom if hasattr(ob, 'bottom') else ob.price_low
+        ob_index = ob.index if hasattr(ob, 'index') else ob.candle_index if hasattr(ob, 'candle_index') else 0
+        
+        for i in range(ob_index + 1, len(df)):
+            close = df['close'].iloc[i]
+            
+            if 'BULLISH' in ob_type and close < ob_bottom * 0.999:
+                return True
+            elif 'BEARISH' in ob_type and close > ob_top * 1.001:
+                return True
+        
+        return False
+
+    def _get_last_retest_index(self, df: pd.DataFrame, ob) -> int:
+        """Get index of last retest"""
+        ob_type = str(ob.type.value) if hasattr(ob.type, 'value') else str(ob.type)
+        ob_top = ob.top if hasattr(ob, 'top') else ob.price_high
+        ob_bottom = ob.bottom if hasattr(ob, 'bottom') else ob.price_low
+        ob_index = ob.index if hasattr(ob, 'index') else ob.candle_index if hasattr(ob, 'candle_index') else 0
+        last_retest = ob_index
+        
+        for i in range(ob_index + 1, len(df)):
+            if 'BULLISH' in ob_type:
+                if df['low'].iloc[i] <= ob_top * 1.01 and df['low'].iloc[i] >= ob_bottom:
+                    last_retest = i
+            elif 'BEARISH' in ob_type:
+                if df['high'].iloc[i] >= ob_bottom * 0.99 and df['high'].iloc[i] <= ob_top:
+                    last_retest = i
+        
+        return last_retest
+
     def get_active_order_blocks(
         self,
         current_price: float,
