@@ -1,6 +1,7 @@
 """
 🎯 ICT Strategy Backtest Engine
 Tests optimized SL logic with structure awareness
+Now includes 80% TP alerts and final WIN/LOSS tracking
 """
 
 import asyncio
@@ -10,11 +11,15 @@ import json
 import pandas as pd
 import numpy as np
 from typing import Dict, List
+from pathlib import Path
 from ict_signal_engine import ICTSignalEngine, MarketBias
+from ict_80_alert_handler import ICT80AlertHandler
 
 class ICTBacktestEngine: 
     def __init__(self):
-        self. ict_engine = ICTSignalEngine()
+        self.ict_engine = ICTSignalEngine()
+        self.alert_handler = ICT80AlertHandler(self.ict_engine)
+        self.active_trades = {}  # Track active trades for 80% alerts
         
     async def fetch_klines(self, symbol: str, timeframe: str, days: int = 30):
         """Fetch historical klines from Binance"""
@@ -99,7 +104,7 @@ class ICTBacktestEngine:
         return {'result': 'TIMEOUT', 'pnl_pct': 0, 'exit_price': entry}
     
     async def run_backtest(self, symbol: str, timeframe: str, days: int = 30) -> Dict:
-        """Run ICT backtest"""
+        """Run ICT backtest with 80% TP alerts and final WIN/LOSS tracking"""
         print(f"\n📊 ICT Backtest:  {symbol} {timeframe} ({days} days)")
         
         # Fetch data
@@ -110,63 +115,254 @@ class ICTBacktestEngine:
         df = self.add_indicators(df)
         
         trades = []
+        alerts_80 = []
+        final_alerts = []
+        total_win = 0
+        total_loss = 0
         lookback = 50
         lookahead = 20
         
         for i in range(lookback, len(df) - lookahead, 5):  # Every 5 candles
-            past_df = df.iloc[: i+1]. copy()
+            past_df = df.iloc[:i+1].copy()
             future_df = df.iloc[i+1:i+lookahead+1].copy()
+            current_price = df.iloc[i]['close']
+            current_timestamp = df.iloc[i]['timestamp']
+            
+            # Check for 80% TP on active trades
+            for trade_id, trade in list(self.active_trades.items()):
+                entry_price = trade['entry_price']
+                tp_price = trade['tp']
+                
+                # Calculate distance to TP
+                if trade['direction'] == 'BULLISH':
+                    distance_to_tp = tp_price - entry_price
+                    current_distance = current_price - entry_price
+                elif trade['direction'] == 'BEARISH':
+                    distance_to_tp = entry_price - tp_price
+                    current_distance = entry_price - current_price
+                else:
+                    continue
+                
+                percent_to_tp = (current_distance / distance_to_tp) * 100 if distance_to_tp > 0 else 0
+                
+                # Trigger at 80% (+/- 5%)
+                if 75 <= percent_to_tp <= 85 and not trade.get('alert_80_triggered'):
+                    # Use ICT 80 Alert Handler for re-analysis
+                    klines_list = self._df_to_klines(df.iloc[max(0, i-100):i+1])
+                    
+                    alert_result = await self.alert_handler.analyze_position(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        signal_type=trade['direction'],
+                        entry_price=trade['entry_price'],
+                        tp_price=trade['tp'],
+                        current_price=current_price,
+                        original_confidence=trade['confidence'],
+                        klines=klines_list
+                    )
+                    
+                    alert = {
+                        'trade_id': trade_id,
+                        'symbol': symbol,
+                        'timestamp': str(current_timestamp),
+                        'current_price': current_price,
+                        'percent_to_tp': percent_to_tp,
+                        'recommendation': alert_result.get('recommendation', 'HOLD'),
+                        'confidence': alert_result.get('confidence', 0),
+                        'reasoning': alert_result.get('reasoning', ''),
+                        'score_hold': alert_result.get('score_hold', 0),
+                        'score_close': alert_result.get('score_close', 0)
+                    }
+                    
+                    alerts_80.append(alert)
+                    trade['alert_80_triggered'] = True
+                    
+                    print(f"\n🔔 80% TP ALERT: {symbol}")
+                    print(f"   Trade: {trade['direction']} @ {trade['entry_price']}")
+                    print(f"   Current: {current_price} ({percent_to_tp:.1f}% to TP)")
+                    print(f"   📊 Recommendation: {alert['recommendation']}")
+                    print(f"   Confidence: {alert['confidence']:.1f}%")
             
             # Try to generate signal
             try:
-                signal = self. ict_engine.generate_signal(past_df, symbol, timeframe)
+                signal = self.ict_engine.generate_signal(past_df, symbol, timeframe)
                 
-                if signal and signal. entry_price: 
-                    # Simulate trade
+                if signal and signal.entry_price: 
+                    # Open new trade
+                    trade_id = f"{symbol}_{int(current_timestamp.timestamp())}"
+                    tp_prices = [signal.tp1_price, signal.tp2_price, signal.tp3_price] if hasattr(signal, 'tp1_price') else signal.tp_prices
+                    
+                    trade = {
+                        'id': trade_id,
+                        'symbol': symbol,
+                        'direction': signal.bias.value,
+                        'entry_price': signal.entry_price,
+                        'entry_time': current_timestamp,
+                        'tp': tp_prices[0] if tp_prices else signal.entry_price * 1.02,
+                        'sl': signal.sl_price,
+                        'confidence': signal.confidence,
+                        'status': 'OPEN',
+                        'ict_setup': 'ICT',
+                        'alert_80_triggered': False
+                    }
+                    
+                    self.active_trades[trade_id] = trade
+                    
+                    # Simulate trade on future data
                     result = self.simulate_trade(
                         entry=signal.entry_price,
                         sl=signal.sl_price,
-                        tp_levels=[signal.tp1_price, signal.tp2_price, signal.tp3_price],
+                        tp_levels=tp_prices if tp_prices else [signal.entry_price * 1.02],
                         future_df=future_df,
                         bias=signal.bias
                     )
                     
-                    trades.append({
-                        'timestamp': past_df.iloc[-1]['timestamp'],
-                        'bias': signal.bias. value,
+                    # Record trade result
+                    trade_record = {
+                        'id': trade_id,
+                        'timestamp': str(current_timestamp),
+                        'bias': signal.bias.value,
                         'entry':  signal.entry_price,
                         'sl': signal.sl_price,
-                        'tp3': signal.tp3_price,
+                        'tp': trade['tp'],
                         'result': result['result'],
-                        'pnl_pct':  result['pnl_pct']
-                    })
+                        'pnl_pct': result['pnl_pct'],
+                        'exit_price': result.get('exit_price', signal.entry_price)
+                    }
+                    
+                    trades.append(trade_record)
+                    
+                    # Generate final alert
+                    if 'TP' in result['result']:
+                        final_alert = {
+                            'trade_id': trade_id,
+                            'symbol': symbol,
+                            'result': 'WIN',
+                            'entry_price': signal.entry_price,
+                            'exit_price': result['exit_price'],
+                            'profit_percent': result['pnl_pct'],
+                            'entry_time': str(current_timestamp),
+                            'ict_setup': 'ICT'
+                        }
+                        total_win += 1
+                        print(f"\n✅ FINAL ALERT: {symbol} - WIN")
+                        print(f"   Entry: {signal.entry_price} → Exit: {result['exit_price']}")
+                        print(f"   Profit: {result['pnl_pct']:.2f}%")
+                    elif result['result'] == 'LOSS':
+                        final_alert = {
+                            'trade_id': trade_id,
+                            'symbol': symbol,
+                            'result': 'LOSS',
+                            'entry_price': signal.entry_price,
+                            'exit_price': result['exit_price'],
+                            'profit_percent': result['pnl_pct'],
+                            'entry_time': str(current_timestamp),
+                            'ict_setup': 'ICT'
+                        }
+                        total_loss += 1
+                        print(f"\n❌ FINAL ALERT: {symbol} - LOSS")
+                        print(f"   Entry: {signal.entry_price} → Exit: {result['exit_price']}")
+                        print(f"   Loss: {result['pnl_pct']:.2f}%")
+                    else:
+                        continue
+                    
+                    final_alerts.append(final_alert)
+                    
+                    # Remove from active trades
+                    if trade_id in self.active_trades:
+                        del self.active_trades[trade_id]
                     
             except Exception as e:
                 continue
         
         # Calculate stats
         if not trades:
-            return {'total_trades': 0, 'win_rate': 0, 'total_pnl': 0, 'avg_rr': 0}
+            results = {
+                'total_trades': 0,
+                'wins': 0,
+                'losses': 0,
+                'win_rate': 0,
+                'total_pnl': 0,
+                'avg_rr': 0,
+                'alerts_80': alerts_80,
+                'final_alerts': final_alerts,
+                'total_win': 0,
+                'total_loss': 0
+            }
+        else:
+            wins = [t for t in trades if 'TP' in t['result']]
+            losses = [t for t in trades if t['result'] == 'LOSS']
+            
+            win_rate = (len(wins) / len(trades)) * 100 if trades else 0
+            total_pnl = sum(t['pnl_pct'] for t in trades)
+            avg_win = np.mean([t['pnl_pct'] for t in wins]) if wins else 0
+            avg_loss = np.mean([t['pnl_pct'] for t in losses]) if losses else 0
+            
+            results = {
+                'total_trades': len(trades),
+                'wins': len(wins),
+                'losses': len(losses),
+                'win_rate': win_rate,
+                'total_pnl': total_pnl,
+                'avg_win': avg_win,
+                'avg_loss': avg_loss,
+                'avg_rr':  abs(avg_win / avg_loss) if avg_loss != 0 else 0,
+                'trades': trades,
+                'alerts_80': alerts_80,
+                'final_alerts': final_alerts,
+                'total_win': total_win,
+                'total_loss': total_loss
+            }
         
-        wins = [t for t in trades if 'TP' in t['result']]
-        losses = [t for t in trades if t['result'] == 'LOSS']
+        # Save results to JSON
+        self.save_backtest_results(symbol, timeframe, results)
         
-        win_rate = (len(wins) / len(trades)) * 100 if trades else 0
-        total_pnl = sum(t['pnl_pct'] for t in trades)
-        avg_win = np.mean([t['pnl_pct'] for t in wins]) if wins else 0
-        avg_loss = np.mean([t['pnl_pct'] for t in losses]) if losses else 0
+        return results
+    
+    def _df_to_klines(self, df):
+        """Convert DataFrame to klines list format"""
+        klines = []
+        for idx, row in df.iterrows():
+            kline = [
+                int(idx.timestamp() * 1000) if hasattr(idx, 'timestamp') else int(row['timestamp'].timestamp() * 1000),
+                str(row['open']),
+                str(row['high']),
+                str(row['low']),
+                str(row['close']),
+                str(row['volume']),
+                0, 0, 0, 0, 0, 0
+            ]
+            klines.append(kline)
+        return klines
+    
+    def save_backtest_results(self, symbol: str, timeframe: str, results: Dict):
+        """Save backtest results to JSON"""
+        results_dir = Path("backtest_results")
+        results_dir.mkdir(exist_ok=True)
         
-        return {
-            'total_trades': len(trades),
-            'wins': len(wins),
-            'losses': len(losses),
-            'win_rate': win_rate,
-            'total_pnl': total_pnl,
-            'avg_win': avg_win,
-            'avg_loss': avg_loss,
-            'avg_rr':  abs(avg_win / avg_loss) if avg_loss != 0 else 0,
-            'trades': trades
+        filename = results_dir / f"{symbol}_{timeframe}_backtest.json"
+        
+        # Convert to serializable format
+        serializable_results = {
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'timestamp': datetime.now().isoformat(),
+            'total_trades': results.get('total_trades', 0),
+            'total_win': results.get('total_win', 0),
+            'total_loss': results.get('total_loss', 0),
+            'win_rate': results.get('win_rate', 0),
+            'total_pnl': results.get('total_pnl', 0),
+            'alerts_80_count': len(results.get('alerts_80', [])),
+            'final_alerts_count': len(results.get('final_alerts', [])),
+            'trades': results.get('trades', []),
+            'alerts_80': results.get('alerts_80', []),
+            'final_alerts': results.get('final_alerts', [])
         }
+        
+        with open(filename, 'w') as f:
+            json.dump(serializable_results, f, indent=2, default=str)
+        
+        print(f"\n💾 Results saved: {filename}")
 
 # Test script
 async def main():
