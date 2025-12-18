@@ -1,6 +1,7 @@
 """
 🎯 ICT Strategy Backtest Engine
 Tests optimized SL logic with structure awareness
+Includes 80% TP alerts and final WIN/LOSS tracking
 """
 
 import asyncio
@@ -9,12 +10,24 @@ from datetime import datetime, timedelta
 import json
 import pandas as pd
 import numpy as np
-from typing import Dict, List
+from typing import Dict, List, Optional
+from pathlib import Path
 from ict_signal_engine import ICTSignalEngine, MarketBias
+
+# Import 80% Alert Handler
+try:
+    from ict_80_alert_handler import ICT80AlertHandler
+    ALERT_HANDLER_AVAILABLE = True
+except ImportError:
+    ALERT_HANDLER_AVAILABLE = False
+    print("⚠️ ICT 80% Alert Handler not available")
 
 class ICTBacktestEngine: 
     def __init__(self):
-        self. ict_engine = ICTSignalEngine()
+        self.ict_engine = ICTSignalEngine()
+        self.alert_handler = ICT80AlertHandler(self.ict_engine) if ALERT_HANDLER_AVAILABLE else None
+        self.active_trades = {}  # Track active trades for 80% TP alerts
+        self.trade_counter = 0  # Unique trade ID counter
         
     async def fetch_klines(self, symbol: str, timeframe: str, days: int = 30):
         """Fetch historical klines from Binance"""
@@ -67,7 +80,191 @@ class ICTBacktestEngine:
         
         return df
     
-    def simulate_trade(self, entry:  float, sl: float, tp_levels: List[float], 
+    def _df_to_klines(self, df: pd.DataFrame) -> List:
+        """Convert DataFrame to klines list format"""
+        klines = []
+        for idx, row in df.iterrows():
+            timestamp = row.get('timestamp', idx)
+            if isinstance(timestamp, pd.Timestamp):
+                ts_ms = int(timestamp.timestamp() * 1000)
+            elif isinstance(timestamp, datetime):
+                ts_ms = int(timestamp.timestamp() * 1000)
+            else:
+                ts_ms = 0
+            
+            kline = [
+                ts_ms,
+                str(row['open']),
+                str(row['high']),
+                str(row['low']),
+                str(row['close']),
+                str(row.get('volume', 0)),
+                0, 0, 0, 0, 0, 0
+            ]
+            klines.append(kline)
+        return klines
+    
+    def open_trade(self, signal, entry_price: float, timestamp) -> Dict:
+        """Open a new trade based on signal"""
+        self.trade_counter += 1
+        trade_id = f"trade_{self.trade_counter}"
+        
+        # Determine direction
+        if hasattr(signal, 'signal_type'):
+            direction = 'BUY' if 'BUY' in str(signal.signal_type.value) else 'SELL'
+        elif hasattr(signal, 'bias'):
+            direction = 'BUY' if signal.bias == MarketBias.BULLISH else 'SELL'
+        else:
+            direction = 'HOLD'
+        
+        # Get TP (use first TP if multiple)
+        if hasattr(signal, 'tp_prices') and signal.tp_prices:
+            tp = signal.tp_prices[0]
+        elif hasattr(signal, 'tp1_price'):
+            tp = signal.tp1_price
+        else:
+            tp = entry_price * 1.02 if direction == 'BUY' else entry_price * 0.98
+        
+        # Get SL
+        if hasattr(signal, 'sl_price'):
+            sl = signal.sl_price
+        else:
+            sl = entry_price * 0.99 if direction == 'BUY' else entry_price * 1.01
+        
+        trade = {
+            'id': trade_id,
+            'symbol': signal.symbol,
+            'direction': direction,
+            'entry_price': entry_price,
+            'entry_time': timestamp,
+            'tp': tp,
+            'sl': sl,
+            'confidence': getattr(signal, 'confidence', 70),
+            'status': 'OPEN',
+            'alert_80_triggered': False
+        }
+        
+        return trade
+    
+    def check_trade_closure(self, current_price: float, timestamp) -> List[Dict]:
+        """Check if any trades should be closed"""
+        closed_trades = []
+        
+        for trade_id, trade in list(self.active_trades.items()):
+            if trade['direction'] == 'BUY':
+                if current_price >= trade['tp']:
+                    trade['result'] = 'WIN'
+                    trade['exit_price'] = current_price
+                    trade['exit_time'] = timestamp
+                    trade['profit_percent'] = ((current_price - trade['entry_price']) / trade['entry_price']) * 100
+                    closed_trades.append(trade)
+                elif current_price <= trade['sl']:
+                    trade['result'] = 'LOSS'
+                    trade['exit_price'] = current_price
+                    trade['exit_time'] = timestamp
+                    trade['profit_percent'] = ((current_price - trade['entry_price']) / trade['entry_price']) * 100
+                    closed_trades.append(trade)
+            
+            elif trade['direction'] == 'SELL':
+                if current_price <= trade['tp']:
+                    trade['result'] = 'WIN'
+                    trade['exit_price'] = current_price
+                    trade['exit_time'] = timestamp
+                    trade['profit_percent'] = ((trade['entry_price'] - current_price) / trade['entry_price']) * 100
+                    closed_trades.append(trade)
+                elif current_price >= trade['sl']:
+                    trade['result'] = 'LOSS'
+                    trade['exit_price'] = current_price
+                    trade['exit_time'] = timestamp
+                    trade['profit_percent'] = ((trade['entry_price'] - current_price) / trade['entry_price']) * 100
+                    closed_trades.append(trade)
+        
+        return closed_trades
+    
+    def generate_final_alert(self, trade: Dict) -> Dict:
+        """Generate final WIN/LOSS alert"""
+        result_emoji = "✅" if trade['result'] == 'WIN' else "❌"
+        
+        # Calculate duration
+        if isinstance(trade['entry_time'], pd.Timestamp):
+            entry_dt = trade['entry_time'].to_pydatetime()
+        elif isinstance(trade['entry_time'], datetime):
+            entry_dt = trade['entry_time']
+        else:
+            entry_dt = datetime.now()
+        
+        if isinstance(trade['exit_time'], pd.Timestamp):
+            exit_dt = trade['exit_time'].to_pydatetime()
+        elif isinstance(trade['exit_time'], datetime):
+            exit_dt = trade['exit_time']
+        else:
+            exit_dt = datetime.now()
+        
+        duration_hours = (exit_dt - entry_dt).total_seconds() / 3600
+        
+        alert = {
+            'trade_id': trade['id'],
+            'symbol': trade['symbol'],
+            'result': trade['result'],
+            'entry_price': trade['entry_price'],
+            'exit_price': trade['exit_price'],
+            'profit_percent': trade['profit_percent'],
+            'entry_time': str(entry_dt),
+            'exit_time': str(exit_dt),
+            'duration_hours': duration_hours
+        }
+        
+        print(f"\n{result_emoji} FINAL ALERT: {trade['symbol']}")
+        print(f"   Result: {trade['result']}")
+        print(f"   Entry: {trade['entry_price']} → Exit: {trade['exit_price']}")
+        print(f"   Profit: {trade['profit_percent']:.2f}%")
+        print(f"   Duration: {duration_hours:.1f}h")
+        
+        return alert
+    
+    def save_backtest_results(self, symbol: str, timeframe: str, results: Dict):
+        """Save backtest results to JSON"""
+        results_dir = Path("backtest_results")
+        results_dir.mkdir(exist_ok=True)
+        
+        filename = results_dir / f"{symbol}_{timeframe}_backtest.json"
+        
+        # Convert to serializable format
+        serializable_results = {
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'total_trades': len(results['trades']),
+            'total_win': results['total_win'],
+            'total_loss': results['total_loss'],
+            'win_rate': (results['total_win'] / len(results['trades']) * 100) if results['trades'] else 0,
+            'alerts_80_count': len(results['alerts_80']),
+            'final_alerts_count': len(results['final_alerts']),
+            'trades': self._serialize_trades(results['trades']),
+            'alerts_80': results['alerts_80'],
+            'final_alerts': results['final_alerts']
+        }
+        
+        with open(filename, 'w') as f:
+            json.dump(serializable_results, f, indent=2, default=str)
+        
+        print(f"\n💾 Results saved: {filename}")
+    
+    def _serialize_trades(self, trades: List[Dict]) -> List[Dict]:
+        """Convert trades to JSON-serializable format"""
+        serialized = []
+        for trade in trades:
+            t = {}
+            for key, value in trade.items():
+                if isinstance(value, (pd.Timestamp, datetime)):
+                    t[key] = str(value)
+                elif isinstance(value, (np.integer, np.floating)):
+                    t[key] = float(value)
+                else:
+                    t[key] = value
+            serialized.append(t)
+        return serialized
+    
+    def simulate_trade(self, entry: float, sl: float, tp_levels: List[float], 
                       future_df: pd.DataFrame, bias: MarketBias) -> Dict:
         """Simulate trade execution"""
         for idx, row in future_df.iterrows():
@@ -99,8 +296,8 @@ class ICTBacktestEngine:
         return {'result': 'TIMEOUT', 'pnl_pct': 0, 'exit_price': entry}
     
     async def run_backtest(self, symbol: str, timeframe: str, days: int = 30) -> Dict:
-        """Run ICT backtest"""
-        print(f"\n📊 ICT Backtest:  {symbol} {timeframe} ({days} days)")
+        """Run ICT backtest with 80% TP alerts and final WIN/LOSS tracking"""
+        print(f"\n📊 ICT Backtest: {symbol} {timeframe} ({days} days)")
         
         # Fetch data
         df = await self.fetch_klines(symbol, timeframe, days)
@@ -108,64 +305,139 @@ class ICTBacktestEngine:
             return {'error': 'Insufficient data'}
         
         df = self.add_indicators(df)
+        df.set_index('timestamp', inplace=True, drop=False)
         
-        trades = []
+        results = {
+            'trades': [],
+            'alerts_80': [],  # 80% TP alerts
+            'final_alerts': [],  # Final WIN/LOSS alerts
+            'total_win': 0,
+            'total_loss': 0
+        }
+        
         lookback = 50
-        lookahead = 20
         
-        for i in range(lookback, len(df) - lookahead, 5):  # Every 5 candles
-            past_df = df.iloc[: i+1]. copy()
-            future_df = df.iloc[i+1:i+lookahead+1].copy()
+        for i in range(lookback, len(df)):
+            current_bar = df.iloc[:i+1].copy()
+            current_price = df.iloc[i]['close']
+            current_timestamp = df.iloc[i]['timestamp']
             
-            # Try to generate signal
-            try:
-                signal = self. ict_engine.generate_signal(past_df, symbol, timeframe)
+            # Check for 80% TP on active trades
+            for trade_id, trade in list(self.active_trades.items()):
+                entry_price = trade['entry_price']
+                tp_price = trade['tp']
                 
-                if signal and signal. entry_price: 
-                    # Simulate trade
-                    result = self.simulate_trade(
-                        entry=signal.entry_price,
-                        sl=signal.sl_price,
-                        tp_levels=[signal.tp1_price, signal.tp2_price, signal.tp3_price],
-                        future_df=future_df,
-                        bias=signal.bias
-                    )
+                # Calculate distance to TP
+                if trade['direction'] == 'BUY':
+                    distance_to_tp = tp_price - entry_price
+                    current_distance = current_price - entry_price
+                elif trade['direction'] == 'SELL':
+                    distance_to_tp = entry_price - tp_price
+                    current_distance = entry_price - current_price
+                else:
+                    continue
+                
+                percent_to_tp = (current_distance / distance_to_tp) * 100 if distance_to_tp > 0 else 0
+                
+                # Trigger at 80% (+/- 5%)
+                if 75 <= percent_to_tp <= 85 and not trade.get('alert_80_triggered'):
+                    trade['alert_80_triggered'] = True
                     
-                    trades.append({
-                        'timestamp': past_df.iloc[-1]['timestamp'],
-                        'bias': signal.bias. value,
-                        'entry':  signal.entry_price,
-                        'sl': signal.sl_price,
-                        'tp3': signal.tp3_price,
-                        'result': result['result'],
-                        'pnl_pct':  result['pnl_pct']
-                    })
+                    # Use ICT 80 Alert Handler for re-analysis if available
+                    if self.alert_handler:
+                        klines_list = self._df_to_klines(df.iloc[max(0, i-100):i+1])
+                        
+                        alert_result = await self.alert_handler.analyze_position(
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            signal_type=trade['direction'],
+                            entry_price=entry_price,
+                            tp_price=tp_price,
+                            current_price=current_price,
+                            original_confidence=trade['confidence'],
+                            klines=klines_list
+                        )
+                    else:
+                        alert_result = {
+                            'recommendation': 'HOLD',
+                            'confidence': trade['confidence'],
+                            'reasoning': 'Alert handler not available',
+                            'score_hold': 0,
+                            'score_close': 0
+                        }
                     
-            except Exception as e:
-                continue
+                    alert = {
+                        'trade_id': trade_id,
+                        'symbol': symbol,
+                        'timestamp': str(current_timestamp),
+                        'current_price': current_price,
+                        'percent_to_tp': percent_to_tp,
+                        'recommendation': alert_result.get('recommendation', 'HOLD'),
+                        'confidence': alert_result.get('confidence', 0),
+                        'reasoning': alert_result.get('reasoning', ''),
+                        'score_hold': alert_result.get('score_hold', 0),
+                        'score_close': alert_result.get('score_close', 0)
+                    }
+                    
+                    results['alerts_80'].append(alert)
+                    
+                    print(f"\n🔔 80% TP ALERT: {symbol}")
+                    print(f"   Trade: {trade['direction']} @ {entry_price}")
+                    print(f"   Current: {current_price} ({percent_to_tp:.1f}% to TP)")
+                    print(f"   📊 Recommendation: {alert['recommendation']}")
+                    print(f"   Confidence: {alert['confidence']:.1f}%")
+            
+            # Check for trade closure
+            closed_trades = self.check_trade_closure(current_price, current_timestamp)
+            for closed_trade in closed_trades:
+                final_alert = self.generate_final_alert(closed_trade)
+                results['final_alerts'].append(final_alert)
+                results['trades'].append(closed_trade)
+                
+                if closed_trade['result'] == 'WIN':
+                    results['total_win'] += 1
+                else:
+                    results['total_loss'] += 1
+                
+                del self.active_trades[closed_trade['id']]
+            
+            # Generate new signals every 5 candles
+            if i % 5 == 0:
+                try:
+                    signal = self.ict_engine.generate_signal(current_bar, symbol, timeframe)
+                    
+                    if signal and signal.entry_price and signal.confidence >= 70:
+                        trade = self.open_trade(signal, current_price, current_timestamp)
+                        self.active_trades[trade['id']] = trade
+                        
+                except Exception as e:
+                    continue
+        
+        # Close any remaining active trades
+        for trade_id, trade in list(self.active_trades.items()):
+            trade['result'] = 'TIMEOUT'
+            trade['exit_price'] = df.iloc[-1]['close']
+            trade['exit_time'] = df.iloc[-1]['timestamp']
+            trade['profit_percent'] = 0
+            results['trades'].append(trade)
+            del self.active_trades[trade_id]
+        
+        # Save results to JSON
+        self.save_backtest_results(symbol, timeframe, results)
         
         # Calculate stats
-        if not trades:
-            return {'total_trades': 0, 'win_rate': 0, 'total_pnl': 0, 'avg_rr': 0}
-        
-        wins = [t for t in trades if 'TP' in t['result']]
-        losses = [t for t in trades if t['result'] == 'LOSS']
-        
-        win_rate = (len(wins) / len(trades)) * 100 if trades else 0
-        total_pnl = sum(t['pnl_pct'] for t in trades)
-        avg_win = np.mean([t['pnl_pct'] for t in wins]) if wins else 0
-        avg_loss = np.mean([t['pnl_pct'] for t in losses]) if losses else 0
+        total_trades = len(results['trades'])
+        win_rate = (results['total_win'] / total_trades * 100) if total_trades > 0 else 0
         
         return {
-            'total_trades': len(trades),
-            'wins': len(wins),
-            'losses': len(losses),
+            'total_trades': total_trades,
+            'wins': results['total_win'],
+            'losses': results['total_loss'],
             'win_rate': win_rate,
-            'total_pnl': total_pnl,
-            'avg_win': avg_win,
-            'avg_loss': avg_loss,
-            'avg_rr':  abs(avg_win / avg_loss) if avg_loss != 0 else 0,
-            'trades': trades
+            'total_pnl': sum(t.get('profit_percent', 0) for t in results['trades']),
+            'alerts_80_count': len(results['alerts_80']),
+            'final_alerts_count': len(results['final_alerts']),
+            'trades': results['trades']
         }
 
 # Test script

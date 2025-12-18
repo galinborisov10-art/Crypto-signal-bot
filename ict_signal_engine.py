@@ -672,8 +672,6 @@ class ICTSignalEngine:
         # Calculate ATR
         df['atr'] = self._calculate_atr(df, period=14)
         
-        # Calculate EMAs
-        
         # Calculate volume metrics
         if 'volume' in df.columns:
             df['volume_ma'] = df['volume'].rolling(window=20).mean()
