@@ -19,5 +19,11 @@
   "ict_weight": 0.6,
   "traditional_weight": 0.4,
   "cache_ttl_seconds": 3600,
-  "cache_max_size": 100
+  "cache_max_size": 100,
+  "use_chart_visualization": true,
+  "chart_style": "professional",
+  "chart_dpi": 100,
+  "max_zones_per_chart": 10,
+  "include_volume_subplot": true,
+  "cache_charts": false
 }
