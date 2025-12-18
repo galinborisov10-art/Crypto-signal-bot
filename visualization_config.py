@@ -24,8 +24,8 @@ COLOR_SCHEMES = {
         'mitigation_bearish': '#9B59B6',
         'sibi': '#F39C12',
         'ssib': '#34495E',
-        'fvg_bullish': 'rgba(46,204,113,0.3)',
-        'fvg_bearish': 'rgba(231,76,60,0.3)',
+        'fvg_bullish': '#2ECC71',
+        'fvg_bearish': '#E74C3C',
         'liquidity_buy': '#16A085',
         'liquidity_sell': '#C0392B'
     },
@@ -43,8 +43,8 @@ COLOR_SCHEMES = {
         'mitigation_bearish': '#AB47BC',
         'sibi': '#FFCA28',
         'ssib': '#78909C',
-        'fvg_bullish': 'rgba(102,187,106,0.3)',
-        'fvg_bearish': 'rgba(239,83,80,0.3)',
+        'fvg_bullish': '#66BB6A',
+        'fvg_bearish': '#EF5350',
         'liquidity_buy': '#00897B',
         'liquidity_sell': '#D32F2F'
     }

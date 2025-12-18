@@ -37,8 +37,8 @@ class ChartGenerator:
         'mitigation_bearish': '#9B59B6', # Purple
         'sibi': '#F39C12',               # Yellow
         'ssib': '#34495E',               # Dark gray
-        'fvg_bullish': 'rgba(46,204,113,0.3)',   # Light green
-        'fvg_bearish': 'rgba(231,76,60,0.3)',    # Light red
+        'fvg_bullish': '#2ECC71',        # Light green (will use alpha in plotting)
+        'fvg_bearish': '#E74C3C',        # Light red (will use alpha in plotting)
         'liquidity_buy': '#16A085',      # Dark teal
         'liquidity_sell': '#C0392B',     # Dark red
         'background': '#FFFFFF',
