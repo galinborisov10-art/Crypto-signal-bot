@@ -1442,9 +1442,9 @@ class ICTSignalEngine:
                 'displacement_detected': 1 if displacement else 0,
                 'structure_break_detected': 1 if structure_break else 0,
                 
-                # Market context
-                'btc_correlation': 0.0,  # Placeholder
-                'sentiment_score': 0.0,  # Placeholder
+                # Market context (TODO: Implement if needed for ML models)
+                'btc_correlation': 0.0,  # Placeholder - correlation with BTC price movement
+                'sentiment_score': 0.0,  # Placeholder - news/social sentiment score
             }
             
             return features
@@ -1491,9 +1491,8 @@ class ICTSignalEngine:
             # ═══════════════════════════════════════════════
             
             if ml_confidence > 80 and mtf_confluence > 0.6:
-                # Find closest OB/FVG to current entry
+                # Find closest OB to current entry
                 order_blocks = components.get('order_blocks', [])
-                fvgs = components.get('fvgs', [])
                 
                 best_entry_zone = None
                 min_distance = float('inf')
@@ -1527,9 +1526,9 @@ class ICTSignalEngine:
                 new_sl_distance = sl_distance * 1.1
                 
                 if bias == MarketBias.BULLISH:
-                    optimized_sl = entry_price - new_sl_distance  # ПОД entry
+                    optimized_sl = optimized_entry - new_sl_distance  # ПОД entry
                 else:
-                    optimized_sl = entry_price + new_sl_distance  # НАД entry
+                    optimized_sl = optimized_entry + new_sl_distance  # НАД entry
                 
                 logger.info(f"🛡️ ML widening SL due to low confidence: {stop_loss:.2f} → {optimized_sl:.2f}")
             
@@ -1567,9 +1566,9 @@ class ICTSignalEngine:
                 )
                 
                 if bias == MarketBias.BULLISH:
-                    optimized_sl = entry_price - new_sl_distance  # ПОД entry
+                    optimized_sl = optimized_entry - new_sl_distance  # ПОД entry
                 else:
-                    optimized_sl = entry_price + new_sl_distance  # НАД entry
+                    optimized_sl = optimized_entry + new_sl_distance  # НАД entry
                 
                 logger.info(f"🎯 ML tightening SL: {stop_loss:.2f} → {optimized_sl:.2f}")
                 logger.info(f"   (Keeping SL {'ПОД' if bias == MarketBias.BULLISH else 'НАД'} nearest OB)")
