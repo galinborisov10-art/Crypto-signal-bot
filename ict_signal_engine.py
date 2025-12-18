@@ -103,6 +103,21 @@ except ImportError:
     FEATURE_FLAGS_AVAILABLE = False
     logging.warning("Feature flags not available")
 
+# ML Integration
+try:
+    from ml_engine import MLTradingEngine
+    ML_ENGINE_AVAILABLE = True
+except ImportError:
+    ML_ENGINE_AVAILABLE = False
+    logging.warning("MLTradingEngine not available")
+
+try:
+    from ml_predictor import MLPredictor, get_ml_predictor
+    ML_PREDICTOR_AVAILABLE = True
+except ImportError:
+    ML_PREDICTOR_AVAILABLE = False
+    logging.warning("MLPredictor not available")
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -296,6 +311,26 @@ class ICTSignalEngine:
         else:
             self.cache_manager = None
         
+        # Initialize ML engines (if available)
+        self.ml_engine = None
+        self.ml_predictor = None
+        self.use_ml = self.config.get('use_ml', True)
+
+        if self.use_ml:
+            if ML_ENGINE_AVAILABLE:
+                try:
+                    self.ml_engine = MLTradingEngine()
+                    logger.info("✅ ML Trading Engine initialized")
+                except Exception as e:
+                    logger.warning(f"⚠️ ML Engine initialization failed: {e}")
+            
+            if ML_PREDICTOR_AVAILABLE:
+                try:
+                    self.ml_predictor = get_ml_predictor()
+                    logger.info("✅ ML Predictor initialized")
+                except Exception as e:
+                    logger.warning(f"⚠️ ML Predictor initialization failed: {e}")
+        
         logger.info("ICT Signal Engine initialized")
         logger.info(f"Order Blocks: {ORDER_BLOCK_AVAILABLE}")
         logger.info(f"FVG: {FVG_AVAILABLE}")
@@ -331,6 +366,16 @@ class ICTSignalEngine:
             'mtf_weight': 0.1,             # Weight for MTF confluence
             'structure_break_threshold': 1.0,  # 1% threshold for structure break
             'entry_adjustment_pct': 0.5,   # 0.5% entry price adjustment
+            
+            # ML Configuration
+            'use_ml': True,                    # Enable ML optimization
+            'ml_min_confidence_boost': -20,    # Min confidence adjustment
+            'ml_max_confidence_boost': 20,     # Max confidence adjustment
+            'ml_entry_adjustment_max': 0.005,  # Max entry adjustment (0.5%)
+            'ml_sl_tighten_max': 0.95,         # Max SL tighten multiplier
+            'ml_sl_widen_max': 1.10,           # Max SL widen multiplier
+            'ml_tp_extension_max': 1.15,       # Max TP extension (15%)
+            'ml_override_threshold': 15,       # Min confidence diff for ML override
         }
     
     def generate_signal(
@@ -408,8 +453,8 @@ class ICTSignalEngine:
             logger.info(f"Risk/reward too low: {risk_reward_ratio:.2f}")
             return None
         
-        # Step 9: Calculate signal confidence
-        confidence = self._calculate_signal_confidence(
+        # Step 9: Calculate BASE ICT confidence (without ML)
+        base_confidence = self._calculate_signal_confidence(
             ict_components=ict_components,
             mtf_analysis=mtf_analysis,
             bias=bias,
@@ -417,11 +462,137 @@ class ICTSignalEngine:
             displacement_detected=displacement_detected,
             risk_reward_ratio=risk_reward_ratio
         )
+
+        logger.info(f"Base ICT confidence: {base_confidence:.1f}%")
+
+        # ═══════════════════════════════════════════════
+        # NEW: Step 9.5: ML PREDICTION & OPTIMIZATION
+        # ═══════════════════════════════════════════════
+
+        ml_confidence_adjustment = 0.0
+        ml_mode = "ICT Only"
+        ml_features = {}
+
+        if self.use_ml and (self.ml_engine or self.ml_predictor):
+            # Extract ML features
+            ml_features = self._extract_ml_features(
+                df=df,
+                components=ict_components,
+                mtf_analysis=mtf_analysis,
+                bias=bias,
+                displacement=displacement_detected,
+                structure_break=structure_broken
+            )
+            
+            # Update ICT confidence in features
+            ml_features['ict_confidence'] = base_confidence / 100.0
+            
+            # Try ML Engine (hybrid prediction)
+            if self.ml_engine and self.ml_engine.model is not None:
+                try:
+                    # Map bias to signal type
+                    classical_signal = 'BUY' if bias == MarketBias.BULLISH else 'SELL' if bias == MarketBias.BEARISH else 'HOLD'
+                    
+                    ml_signal, ml_confidence, ml_mode = self.ml_engine.predict_signal(
+                        analysis=ml_features,
+                        classical_signal=classical_signal,
+                        classical_confidence=base_confidence
+                    )
+                    
+                    # Check if ML changes the signal direction
+                    if ml_signal != classical_signal:
+                        logger.warning(f"⚠️ ML suggests {ml_signal} vs ICT {classical_signal}")
+                        
+                        # SAFETY: Only allow ML override if confidence difference > 15%
+                        if abs(ml_confidence - base_confidence) > self.config['ml_override_threshold']:
+                            logger.warning(f"⚠️ ML override: {ml_signal} with {ml_confidence:.1f}% confidence")
+                            # Update bias based on ML
+                            if ml_signal == 'BUY':
+                                bias = MarketBias.BULLISH
+                            elif ml_signal == 'SELL':
+                                bias = MarketBias.BEARISH
+                            else:
+                                logger.info("ML suggests HOLD, returning no signal")
+                                return None
+                        else:
+                            logger.info(f"✅ ML adjustment too small, keeping ICT signal")
+                            ml_confidence = base_confidence
+                    
+                    ml_confidence_adjustment = ml_confidence - base_confidence
+                    
+                    # Clamp adjustment to configured limits
+                    ml_confidence_adjustment = max(
+                        self.config['ml_min_confidence_boost'],
+                        min(self.config['ml_max_confidence_boost'], ml_confidence_adjustment)
+                    )
+                    
+                    logger.info(f"ML confidence adjustment: {ml_confidence_adjustment:+.1f}% (Mode: {ml_mode})")
+                    
+                except Exception as e:
+                    logger.error(f"❌ ML Engine prediction error: {e}")
+            
+            # Try ML Predictor (win probability) if ML Engine not available
+            elif self.ml_predictor and self.ml_predictor.is_trained:
+                try:
+                    # Prepare trade data
+                    trade_data = {
+                        'entry_price': entry_price,
+                        'analysis_data': ml_features
+                    }
+                    
+                    # Get win probability
+                    win_probability = self.ml_predictor.predict(trade_data)
+                    
+                    if win_probability is not None:
+                        # Get confidence adjustment
+                        ml_confidence_adjustment = self.ml_predictor.get_confidence_adjustment(
+                            ml_probability=win_probability,
+                            current_confidence=base_confidence
+                        )
+                        
+                        logger.info(f"ML win probability: {win_probability:.1f}%")
+                        logger.info(f"ML confidence adjustment: {ml_confidence_adjustment:+.1f}%")
+                        ml_mode = f"ML Predictor (Win: {win_probability:.1f}%)"
+                        
+                except Exception as e:
+                    logger.error(f"❌ ML Predictor error: {e}")
+
+        # Calculate FINAL confidence
+        final_confidence = base_confidence + ml_confidence_adjustment
+
+        # Clamp confidence to [0, 100]
+        final_confidence = max(0.0, min(100.0, final_confidence))
+
+        logger.info(f"Final confidence: {final_confidence:.1f}% (Base: {base_confidence:.1f}%, ML: {ml_confidence_adjustment:+.1f}%)")
+
+        # Use final_confidence for the rest of the method
+        confidence = final_confidence
         
         # Check minimum confidence
         if confidence < self.config['min_confidence']:
             logger.info(f"Confidence too low: {confidence:.1f}%")
             return None
+        
+        # ═══════════════════════════════════════════════
+        # NEW: Step 9.8: ML-BASED ENTRY/SL/TP OPTIMIZATION
+        # ═══════════════════════════════════════════════
+
+        if self.use_ml and ml_features:
+            entry_price, sl_price, tp_prices = self._apply_ml_optimization(
+                entry_price=entry_price,
+                stop_loss=sl_price,
+                take_profit=tp_prices,
+                ml_features=ml_features,
+                bias=bias,
+                components=ict_components
+            )
+            
+            # Recalculate risk/reward after optimization
+            risk = abs(entry_price - sl_price)
+            reward = abs(tp_prices[0] - entry_price) if tp_prices else 0
+            risk_reward_ratio = reward / risk if risk > 0 else 0
+            
+            logger.info(f"After ML optimization - RR: {risk_reward_ratio:.2f}")
         
         # Step 10: Calculate signal strength
         signal_strength = self._calculate_signal_strength(confidence, risk_reward_ratio, ict_components)
@@ -1159,6 +1330,324 @@ class ICTSignalEngine:
                 warnings.append("Below average volume")
         
         return warnings
+    
+    def _extract_ml_features(
+        self,
+        df: pd.DataFrame,
+        components: Dict,
+        mtf_analysis: Optional[Dict],
+        bias: 'MarketBias',
+        displacement: bool,
+        structure_break: bool
+    ) -> Dict:
+        """
+        Extract ML features from ICT analysis
+        
+        CRITICAL: NO EMA/MACD/MA - ONLY ICT + NEUTRAL INDICATORS
+        
+        Returns:
+            Dictionary of ML features
+        """
+        try:
+            current_price = df['close'].iloc[-1]
+            
+            # ═══════════════════════════════════════════════
+            # NEUTRAL TECHNICAL INDICATORS
+            # ═══════════════════════════════════════════════
+            
+            # RSI
+            if 'rsi' in df.columns:
+                rsi = df['rsi'].iloc[-1]
+            else:
+                # Calculate RSI if not present
+                delta = df['close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                rs = gain / loss.replace(0, 1)
+                rsi = 100 - (100 / (1 + rs.iloc[-1]))
+            
+            # Volume metrics
+            avg_volume = df['volume'].iloc[-20:].mean()
+            current_volume = df['volume'].iloc[-1]
+            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+            
+            # Volatility (ATR-based)
+            returns = df['close'].pct_change()
+            volatility = returns.std() * 100
+            
+            # Price change
+            price_change_pct = ((current_price - df['close'].iloc[-20]) / df['close'].iloc[-20]) * 100
+            
+            # Bollinger Bands position (neutral indicator)
+            bb_sma = df['close'].rolling(20).mean().iloc[-1]
+            bb_std = df['close'].rolling(20).std().iloc[-1]
+            bb_upper = bb_sma + (2 * bb_std)
+            bb_lower = bb_sma - (2 * bb_std)
+            bb_position = (current_price - bb_lower) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0.5
+            
+            # ═══════════════════════════════════════════════
+            # PURE ICT METRICS
+            # ═══════════════════════════════════════════════
+            
+            num_order_blocks = len(components.get('order_blocks', []))
+            num_fvgs = len(components.get('fvgs', []))
+            num_whale_blocks = len(components.get('whale_blocks', []))
+            num_liquidity_zones = len(components.get('liquidity_zones', []))
+            num_ilp = len(components.get('internal_liquidity', []))
+            
+            # Calculate liquidity strength
+            liquidity_strength = 0.0
+            for liq_zone in components.get('liquidity_zones', []):
+                if hasattr(liq_zone, 'strength'):
+                    liquidity_strength += liq_zone.strength
+            liquidity_strength = liquidity_strength / max(num_liquidity_zones, 1)
+            
+            # MTF confluence
+            mtf_confluence = 0.0
+            if mtf_analysis:
+                aligned_tfs = 0
+                total_tfs = 0
+                for tf, tf_data in mtf_analysis.items():
+                    if isinstance(tf_data, dict) and 'bias' in tf_data:
+                        total_tfs += 1
+                        if tf_data['bias'] == bias:
+                            aligned_tfs += 1
+                mtf_confluence = aligned_tfs / max(total_tfs, 1)
+            
+            # Bias strength
+            bias_strength = 1.0 if bias == MarketBias.BULLISH else -1.0 if bias == MarketBias.BEARISH else 0.0
+            
+            # ═══════════════════════════════════════════════
+            # CONSTRUCT FEATURE DICT
+            # ═══════════════════════════════════════════════
+            
+            features = {
+                # Technical indicators (for ml_engine compatibility)
+                'rsi': rsi,
+                'price_change_pct': price_change_pct,
+                'volume_ratio': volume_ratio,
+                'volatility': volatility,
+                'bb_position': bb_position,
+                'ict_confidence': 0.5,  # Will be updated after confidence calculation
+                
+                # ICT-specific features
+                'num_order_blocks': num_order_blocks,
+                'num_fvgs': num_fvgs,
+                'num_whale_blocks': num_whale_blocks,
+                'num_liquidity_zones': num_liquidity_zones,
+                'num_ilp': num_ilp,
+                'liquidity_strength': liquidity_strength,
+                'mtf_confluence': mtf_confluence,
+                'bias_strength': bias_strength,
+                'displacement_detected': 1 if displacement else 0,
+                'structure_break_detected': 1 if structure_break else 0,
+                
+                # Market context
+                'btc_correlation': 0.0,  # Placeholder
+                'sentiment_score': 0.0,  # Placeholder
+            }
+            
+            return features
+            
+        except Exception as e:
+            logger.error(f"❌ ML feature extraction error: {e}")
+            return {}
+    
+    def _apply_ml_optimization(
+        self,
+        entry_price: float,
+        stop_loss: float,
+        take_profit: List[float],
+        ml_features: Dict,
+        bias: 'MarketBias',
+        components: Dict
+    ) -> Tuple[float, float, List[float]]:
+        """
+        Apply ML-based optimization to Entry/SL/TP
+        
+        CRITICAL RULES:
+        - Entry can be adjusted ±0.5% max
+        - SL can ONLY move AWAY from entry (more conservative)
+        - BULLISH: SL stays ПОД Order Block
+        - BEARISH: SL stays НАД Order Block
+        - TP can be extended based on liquidity zones
+        - NEVER violates ICT Order Block placement
+        
+        Returns:
+            (optimized_entry, optimized_sl, optimized_tp_list)
+        """
+        try:
+            optimized_entry = entry_price
+            optimized_sl = stop_loss
+            optimized_tp = take_profit.copy()
+            
+            # Get ML confidence metrics
+            ml_confidence = ml_features.get('ict_confidence', 0.5) * 100
+            liquidity_strength = ml_features.get('liquidity_strength', 0.0)
+            mtf_confluence = ml_features.get('mtf_confluence', 0.0)
+            
+            # ═══════════════════════════════════════════════
+            # 1. ENTRY OPTIMIZATION (±0.5% max)
+            # ═══════════════════════════════════════════════
+            
+            if ml_confidence > 80 and mtf_confluence > 0.6:
+                # Find closest OB/FVG to current entry
+                order_blocks = components.get('order_blocks', [])
+                fvgs = components.get('fvgs', [])
+                
+                best_entry_zone = None
+                min_distance = float('inf')
+                
+                for ob in order_blocks:
+                    if hasattr(ob, 'zone_high') and hasattr(ob, 'zone_low'):
+                        ob_mid = (ob.zone_high + ob.zone_low) / 2
+                        distance = abs(ob_mid - entry_price) / entry_price
+                        
+                        # Only consider OBs within 0.5% of entry
+                        if distance < 0.005 and distance < min_distance:
+                            # Check if OB aligns with bias
+                            if bias == MarketBias.BULLISH and hasattr(ob, 'type') and 'BULLISH' in str(ob.type.value):
+                                best_entry_zone = ob_mid
+                                min_distance = distance
+                            elif bias == MarketBias.BEARISH and hasattr(ob, 'type') and 'BEARISH' in str(ob.type.value):
+                                best_entry_zone = ob_mid
+                                min_distance = distance
+                
+                if best_entry_zone is not None:
+                    logger.info(f"🎯 ML optimizing entry: {entry_price:.2f} → {best_entry_zone:.2f}")
+                    optimized_entry = best_entry_zone
+            
+            # ═══════════════════════════════════════════════
+            # 2. STOP LOSS OPTIMIZATION
+            # ═══════════════════════════════════════════════
+            
+            # If ML confidence is LOW, widen SL
+            if ml_confidence < 60:
+                sl_distance = abs(stop_loss - entry_price)
+                new_sl_distance = sl_distance * 1.1
+                
+                if bias == MarketBias.BULLISH:
+                    optimized_sl = entry_price - new_sl_distance  # ПОД entry
+                else:
+                    optimized_sl = entry_price + new_sl_distance  # НАД entry
+                
+                logger.info(f"🛡️ ML widening SL due to low confidence: {stop_loss:.2f} → {optimized_sl:.2f}")
+            
+            # If ML confidence is HIGH, tighten SL (but never closer than nearest OB)
+            elif ml_confidence > 85 and liquidity_strength > 0.7:
+                order_blocks = components.get('order_blocks', [])
+                
+                # Find nearest OB in SL direction
+                nearest_ob_distance = float('inf')
+                
+                for ob in order_blocks:
+                    if hasattr(ob, 'zone_high') and hasattr(ob, 'zone_low'):
+                        
+                        if bias == MarketBias.BULLISH:
+                            # BULLISH: Check OB below entry (SL should be ПОД OB)
+                            ob_edge = ob.zone_low  # Bottom of OB
+                            
+                            if ob_edge < entry_price:  # OB is below entry
+                                distance = abs(entry_price - ob_edge)
+                                nearest_ob_distance = min(nearest_ob_distance, distance)
+                        
+                        elif bias == MarketBias.BEARISH:
+                            # BEARISH: Check OB above entry (SL should be НАД OB)
+                            ob_edge = ob.zone_high  # Top of OB
+                            
+                            if ob_edge > entry_price:  # OB is above entry
+                                distance = abs(ob_edge - entry_price)
+                                nearest_ob_distance = min(nearest_ob_distance, distance)
+                
+                # Tighten SL, but NOT closer than OB + 5% buffer
+                sl_distance = abs(stop_loss - entry_price)
+                new_sl_distance = max(
+                    sl_distance * 0.95,              # Tighten by 5%
+                    nearest_ob_distance * 1.05       # BUT keep 5% beyond OB
+                )
+                
+                if bias == MarketBias.BULLISH:
+                    optimized_sl = entry_price - new_sl_distance  # ПОД entry
+                else:
+                    optimized_sl = entry_price + new_sl_distance  # НАД entry
+                
+                logger.info(f"🎯 ML tightening SL: {stop_loss:.2f} → {optimized_sl:.2f}")
+                logger.info(f"   (Keeping SL {'ПОД' if bias == MarketBias.BULLISH else 'НАД'} nearest OB)")
+            
+            # ═══════════════════════════════════════════════
+            # 3. TAKE PROFIT OPTIMIZATION
+            # ═══════════════════════════════════════════════
+            
+            if liquidity_strength > 0.6:
+                liquidity_zones = components.get('liquidity_zones', [])
+                
+                for i, tp in enumerate(take_profit):
+                    extended_tp = tp
+                    
+                    for liq_zone in liquidity_zones:
+                        if hasattr(liq_zone, 'price_level'):
+                            liq_price = liq_zone.price_level
+                            
+                            # Check if liquidity is in profit direction
+                            if bias == MarketBias.BULLISH and liq_price > tp and liq_price < tp * 1.15:
+                                extended_tp = max(extended_tp, liq_price)
+                            elif bias == MarketBias.BEARISH and liq_price < tp and liq_price > tp * 0.85:
+                                extended_tp = min(extended_tp, liq_price)
+                    
+                    if extended_tp != tp:
+                        logger.info(f"💎 ML extending TP{i+1}: {tp:.2f} → {extended_tp:.2f} (liquidity target)")
+                        optimized_tp[i] = extended_tp
+            
+            return optimized_entry, optimized_sl, optimized_tp
+            
+        except Exception as e:
+            logger.error(f"❌ ML optimization error: {e}")
+            return entry_price, stop_loss, take_profit
+    
+    def record_signal_outcome(
+        self,
+        signal_id: str,
+        outcome: str,  # 'WIN', 'LOSS', 'BE' (break-even)
+        actual_rr: float,
+        signal_data: Optional[Dict] = None
+    ) -> None:
+        """
+        Record signal outcome for ML training
+        
+        Args:
+            signal_id: Unique signal identifier
+            outcome: Trade outcome
+            actual_rr: Actual risk/reward achieved
+            signal_data: Original signal data with ML features
+        """
+        try:
+            if not self.use_ml or not signal_data:
+                return
+            
+            # Record in ML Engine
+            if self.ml_engine:
+                ml_features = signal_data.get('ml_features', {})
+                success = outcome == 'WIN'
+                
+                # Extract required fields
+                symbol = signal_data.get('symbol', 'UNKNOWN')
+                timeframe = signal_data.get('timeframe', '1h')
+                signal_type = signal_data.get('signal_type', 'HOLD')
+                confidence = signal_data.get('confidence', 50.0)
+                
+                self.ml_engine.record_outcome(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    signal=signal_type,
+                    confidence=confidence,
+                    features=ml_features,
+                    success=success
+                )
+                
+                logger.info(f"✅ ML outcome recorded: {signal_id} - {outcome} (RR: {actual_rr:.2f})")
+            
+        except Exception as e:
+            logger.error(f"❌ ML outcome recording error: {e}")
 
 
 # Example usage
