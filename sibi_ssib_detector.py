@@ -11,7 +11,6 @@ These are advanced ICT concepts combining:
 from typing import List, Optional, Dict
 from dataclasses import dataclass
 import pandas as pd
-import numpy as np
 import logging
 
 logger = logging.getLogger(__name__)
@@ -42,6 +41,7 @@ class SIBISSIBZone:
             'displacement_size': self.displacement_size,
             'displacement_direction': self.displacement_direction,
             'fvg_count': self.fvg_count,
+            'liquidity_void': self.liquidity_void,
             'strength': self.strength,
             'explanation': self.explanation
         }
@@ -167,7 +167,14 @@ class SIBISSIBDetector:
         nearby = []
         
         for fvg in fvgs:
-            fvg_index = fvg.index if hasattr(fvg, 'index') else fvg.candle_index if hasattr(fvg, 'candle_index') else 0
+            # Get FVG index with fallback logic
+            if hasattr(fvg, 'index'):
+                fvg_index = fvg.index
+            elif hasattr(fvg, 'candle_index'):
+                fvg_index = fvg.candle_index
+            else:
+                fvg_index = 0
+            
             if abs(fvg_index - index) <= lookback:
                 nearby.append(fvg)
         

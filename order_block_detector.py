@@ -17,7 +17,7 @@ Date: 2025-12-12
 
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -104,7 +104,7 @@ class OrderBlock:
 @dataclass
 class MitigationBlock:
     """Mitigation Block - Retested OB with increased strength"""
-    original_ob: Any  # Reference to original OrderBlock
+    original_ob: Union[OrderBlock, Dict]  # Reference to original OrderBlock or dict representation
     retest_count: int
     price_low: float
     price_high: float
