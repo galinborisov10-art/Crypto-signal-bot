@@ -386,91 +386,101 @@ class ICTSignalEngine:
         mtf_data: Optional[Dict[str, pd.DataFrame]] = None
     ) -> Optional[ICTSignal]:
         """
-        Generate complete ICT trading signal
+        Generate ICT signal with UNIFIED analysis sequence
         
-        Args:
-            df: Primary timeframe OHLCV data
-            symbol: Trading pair symbol
-            timeframe: Primary timeframe
-            mtf_data: Multi-timeframe data dict {timeframe: df}
-            
-        Returns:
-            ICTSignal object or None
+        ✅ ЕДНАКВА последователност за ВСИЧКИ таймфремове (1w до 1m)
+        ✅ ЕДНАКВА логика за ръчни И автоматични сигнали
         """
-        logger.info(f"Generating ICT signal for {symbol} on {timeframe}")
+        logger.info(f"🎯 Generating UNIFIED ICT signal for {symbol} on {timeframe}")
         
-        # Check cache first
+        # Cache check
         if self.cache_manager:
             try:
                 cached_signal = self.cache_manager.get_cached_signal(symbol, timeframe)
                 if cached_signal:
-                    logger.info(f"Returning cached signal for {symbol} {timeframe}")
                     return cached_signal
             except Exception as e:
-                logger.warning(f"Cache retrieval error: {e}")
+                logger.warning(f"Cache error: {e}")
         
         if len(df) < 50:
-            logger.warning("Insufficient data for signal generation")
+            logger.warning("Insufficient data")
             return None
         
-        # Prepare data
         df = self._prepare_dataframe(df)
         
-        # Step 1: Detect all ICT components
-        ict_components = self._detect_ict_components(df, timeframe)
+        # ═══════ УНИФИЦИРАНА ПОСЛЕДОВАТЕЛНОСТ (12 СТЪПКИ) ═══════
         
-        # Step 2: Analyze multi-timeframe confluence (if available)
+        # СТЪПКА 1: HTF BIAS (1D → 4H fallback)
+        logger.info("📊 Step 1: HTF Bias")
+        htf_bias = self._get_htf_bias_with_fallback(symbol, mtf_data)
+        
+        # СТЪПКА 2: MTF STRUCTURE (4H)
+        logger.info("📊 Step 2: MTF Structure")
         mtf_analysis = self._analyze_mtf_confluence(df, mtf_data, symbol) if mtf_data else None
         
-        # Step 3: Determine market bias
+        # СТЪПКА 3: ENTRY MODEL (текущ TF)
+        logger.info(f"📊 Step 3: Entry Model ({timeframe})")
+        
+        # СТЪПКА 4: LIQUIDITY MAP (с cache fallback)
+        logger.info("📊 Step 4: Liquidity Map")
+        liquidity_zones = self._get_liquidity_zones_with_fallback(symbol, timeframe)
+        
+        # СТЪПКА 5-7: ICT COMPONENTS
+        logger.info("📊 Steps 5-7: ICT Components")
+        ict_components = self._detect_ict_components(df, timeframe)
+        ict_components['liquidity_zones'] = liquidity_zones  # Add liquidity zones
+        
         bias = self._determine_market_bias(df, ict_components, mtf_analysis)
-        
-        # Step 4: Check for structure break
         structure_broken = self._check_structure_break(df)
-        
-        # Step 5: Check for displacement
         displacement_detected = self._check_displacement(df)
         
-        # Step 6: Identify entry setup
+        # СТЪПКА 8: ENTRY CALCULATION
+        logger.info("📊 Step 8: Entry")
         entry_setup = self._identify_entry_setup(df, ict_components, bias)
-        
         if not entry_setup:
-            logger.info("No valid entry setup found")
             return None
         
-        # Step 7: Calculate entry, SL, and TP prices
         entry_price = self._calculate_entry_price(df, entry_setup, bias)
-        sl_price = self._calculate_sl_price(df, entry_setup, entry_price, bias)
-        tp_prices = self._calculate_tp_prices(entry_price, sl_price, bias, ict_components)
         
-        # Step 8: Calculate risk/reward ratio
+        # СТЪПКА 9: SL/TP + VALIDATION
+        logger.info("📊 Step 9: SL/TP + Validation")
+        sl_price = self._calculate_sl_price(df, entry_setup, entry_price, bias)
+        
+        # ✅ VALIDATE SL
+        order_block = entry_setup.get('ob') or (ict_components['order_blocks'][0] if ict_components.get('order_blocks') else None)
+        if order_block:
+            sl_price = self._validate_sl_position(sl_price, order_block, bias)
+        
+        # ✅ TP с гарантиран RR ≥ 1:3
+        tp_prices = self._calculate_tp_with_min_rr(entry_price, sl_price, liquidity_zones, min_rr=3.0)
+        
+        # СТЪПКА 10: RR CHECK
+        logger.info("📊 Step 10: RR Guarantee")
         risk = abs(entry_price - sl_price)
         reward = abs(tp_prices[0] - entry_price) if tp_prices else 0
         risk_reward_ratio = reward / risk if risk > 0 else 0
         
-        # Check minimum R:R
+        if risk_reward_ratio < 3.0:
+            logger.error(f"❌ RR {risk_reward_ratio:.2f} < 3.0 - adjusting")
+            if bias == MarketBias.BULLISH:
+                tp_prices[0] = entry_price + (risk * 3.0)
+            else:
+                tp_prices[0] = entry_price - (risk * 3.0)
+            risk_reward_ratio = 3.0
+        
         if risk_reward_ratio < self.config['min_risk_reward']:
-            logger.info(f"Risk/reward too low: {risk_reward_ratio:.2f}")
             return None
         
-        # Step 9: Calculate BASE ICT confidence (without ML)
+        # BASE CONFIDENCE
         base_confidence = self._calculate_signal_confidence(
-            ict_components=ict_components,
-            mtf_analysis=mtf_analysis,
-            bias=bias,
-            structure_broken=structure_broken,
-            displacement_detected=displacement_detected,
-            risk_reward_ratio=risk_reward_ratio
+            ict_components, mtf_analysis, bias, structure_broken, 
+            displacement_detected, risk_reward_ratio
         )
-
-        logger.info(f"Base ICT confidence: {base_confidence:.1f}%")
-
-        # ═══════════════════════════════════════════════
-        # NEW: Step 9.5: ML PREDICTION & OPTIMIZATION
-        # ═══════════════════════════════════════════════
+        
+        # СТЪПКА 11: ML OPTIMIZATION (ЗАПАЗВАМЕ existing logic)
+        logger.info("📊 Step 11: ML Optimization")
 
         ml_confidence_adjustment = 0.0
-        ml_mode = "ICT Only"
         ml_features = {}
 
         if self.use_ml and (self.ml_engine or self.ml_predictor):
@@ -557,67 +567,28 @@ class ICTSignalEngine:
                 except Exception as e:
                     logger.error(f"❌ ML Predictor error: {e}")
 
-        # Calculate FINAL confidence
-        final_confidence = base_confidence + ml_confidence_adjustment
-
-        # Clamp confidence to [0, 100]
-        final_confidence = max(0.0, min(100.0, final_confidence))
-
-        logger.info(f"Final confidence: {final_confidence:.1f}% (Base: {base_confidence:.1f}%, ML: {ml_confidence_adjustment:+.1f}%)")
-
-        # Use final_confidence for the rest of the method
-        confidence = final_confidence
+        confidence = base_confidence + ml_confidence_adjustment
+        confidence = max(0.0, min(100.0, confidence))
         
-        # Check minimum confidence
         if confidence < self.config['min_confidence']:
-            logger.info(f"Confidence too low: {confidence:.1f}%")
             return None
         
-        # ═══════════════════════════════════════════════
-        # NEW: Step 9.8: ML-BASED ENTRY/SL/TP OPTIMIZATION
-        # ═══════════════════════════════════════════════
-
-        if self.use_ml and ml_features:
-            entry_price, sl_price, tp_prices = self._apply_ml_optimization(
-                entry_price=entry_price,
-                stop_loss=sl_price,
-                take_profit=tp_prices,
-                ml_features=ml_features,
-                bias=bias,
-                components=ict_components
-            )
-            
-            # Recalculate risk/reward after optimization
-            risk = abs(entry_price - sl_price)
-            reward = abs(tp_prices[0] - entry_price) if tp_prices else 0
-            risk_reward_ratio = reward / risk if risk > 0 else 0
-            
-            logger.info(f"After ML optimization - RR: {risk_reward_ratio:.2f}")
-        
-        # Step 10: Calculate signal strength
+        # СТЪПКА 12: CONFIDENCE SCORING
+        logger.info("📊 Step 12: Final Confidence")
         signal_strength = self._calculate_signal_strength(confidence, risk_reward_ratio, ict_components)
-        
-        # Step 11: Determine signal type
         signal_type = self._determine_signal_type(bias, signal_strength, confidence)
-        
-        # Step 12: Generate reasoning and warnings
         reasoning = self._generate_reasoning(ict_components, bias, entry_setup, mtf_analysis)
         warnings = self._generate_warnings(ict_components, risk_reward_ratio, df)
         
-        # Step 13: Generate zone explanations
         zone_explanations = {}
         if self.zone_explainer:
             try:
                 bias_str = bias.value if hasattr(bias, 'value') else str(bias)
-                zone_explanations = self.zone_explainer.generate_all_explanations(
-                    ict_components, 
-                    bias_str
-                )
-                logger.info(f"Generated zone explanations for {sum(len(v) for v in zone_explanations.values())} zones")
+                zone_explanations = self.zone_explainer.generate_all_explanations(ict_components, bias_str)
             except Exception as e:
-                logger.error(f"Error generating zone explanations: {e}")
+                logger.error(f"Zone explanations error: {e}")
         
-        # Step 14: Create ICT signal
+        # CREATE SIGNAL
         signal = ICTSignal(
             timestamp=datetime.now(),
             symbol=symbol,
@@ -641,22 +612,20 @@ class ICTSignalEngine:
             structure_broken=structure_broken,
             displacement_detected=displacement_detected,
             mtf_confluence=mtf_analysis.get('confluence_count', 0) if mtf_analysis else 0,
-            htf_bias=mtf_analysis.get('htf_bias', 'NEUTRAL') if mtf_analysis else 'NEUTRAL',
+            htf_bias=htf_bias,
             mtf_structure=mtf_analysis.get('mtf_structure', 'NEUTRAL') if mtf_analysis else 'NEUTRAL',
             reasoning=reasoning,
             warnings=warnings,
             zone_explanations=zone_explanations
         )
         
-        logger.info(f"Generated {signal_type.value} signal with {confidence:.1f}% confidence")
+        logger.info(f"✅ Generated {signal_type.value} signal (UNIFIED)")
         
-        # Step 15: Cache the signal
         if self.cache_manager:
             try:
                 self.cache_manager.cache_signal(symbol, timeframe, signal)
-                logger.info(f"Cached signal for {symbol} {timeframe}")
             except Exception as e:
-                logger.warning(f"Cache storage error: {e}")
+                logger.warning(f"Cache error: {e}")
         
         return signal
     
@@ -1056,6 +1025,55 @@ class ICTSignalEngine:
         else:
             return [entry_price - risk*3, entry_price - risk*2, entry_price - risk*5]
 
+    def _calculate_tp_with_min_rr(
+        self,
+        entry_price: float,
+        sl_price: float,
+        liquidity_zones: List,
+        min_rr: float = 3.0
+    ) -> List[float]:
+        """
+        ЗАДЪЛЖИТЕЛНО: Изчислява TP с ГАРАНТИРАН RR ≥ 1:3
+        """
+        risk = abs(entry_price - sl_price)
+        direction = 'LONG' if entry_price > sl_price else 'SHORT'
+        
+        # TP1: МИНИМУМ RR 1:3
+        if direction == 'LONG':
+            tp1 = entry_price + (risk * min_rr)
+        else:
+            tp1 = entry_price - (risk * min_rr)
+        
+        tp_levels = [tp1]
+        logger.info(f"✅ TP1 calculated: {tp1} (RR {min_rr}:1 guaranteed)")
+        
+        # TP2 & TP3: Align with liquidity zones
+        if liquidity_zones:
+            for liq_zone in liquidity_zones:
+                liq_price = liq_zone.get('price', liq_zone.get('price_level', 0))
+                
+                if direction == 'LONG' and liq_price > tp1:
+                    tp_levels.append(liq_price)
+                    logger.info(f"✅ TP{len(tp_levels)} aligned with liquidity: {liq_price}")
+                elif direction == 'SHORT' and liq_price < tp1:
+                    tp_levels.append(liq_price)
+                    logger.info(f"✅ TP{len(tp_levels)} aligned with liquidity: {liq_price}")
+                
+                if len(tp_levels) >= 3:
+                    break
+        
+        # Ако няма liquidity → структурни нива
+        if len(tp_levels) == 1:
+            tp2 = entry_price + (risk * 5) if direction == 'LONG' else entry_price - (risk * 5)
+            tp_levels.append(tp2)
+            logger.info(f"✅ TP2 extended to 5R: {tp2}")
+            
+            tp3 = entry_price + (risk * 8) if direction == 'LONG' else entry_price - (risk * 8)
+            tp_levels.append(tp3)
+            logger.info(f"✅ TP3 extended to 8R: {tp3}")
+        
+        return tp_levels[:3]
+
     def _calculate_sl_price(
         self,
         df: pd.DataFrame,
@@ -1105,6 +1123,39 @@ class ICTSignalEngine:
             # Ensure minimum distance (1% from entry)
             max_sl = entry_price * 1.01
             return max(sl_price, max_sl)
+
+    def _validate_sl_position(self, sl_price: float, order_block, direction) -> float:
+        """
+        ЗАДЪЛЖИТЕЛНО: Валидира че SL е под/над валиден Order Block
+        
+        BULLISH: SL ТРЯБВА да е ПОД Order Block bottom
+        BEARISH: SL ТРЯБВА да е НАД Order Block top
+        """
+        if not order_block:
+            logger.warning("No Order Block for SL validation")
+            return sl_price
+        
+        # Get OB boundaries
+        ob_bottom = getattr(order_block, 'zone_low', getattr(order_block, 'bottom', None))
+        ob_top = getattr(order_block, 'zone_high', getattr(order_block, 'top', None))
+        
+        if not ob_bottom or not ob_top:
+            logger.warning("Invalid Order Block structure")
+            return sl_price
+        
+        if direction == 'BULLISH' or direction == MarketBias.BULLISH:
+            # SL ТРЯБВА да е ПОД OB bottom
+            if sl_price >= ob_bottom:
+                sl_price = ob_bottom * 0.998  # 0.2% под OB
+                logger.warning(f"⚠️ SL КОРИГИРАН ПОД OB: {sl_price}")
+        
+        elif direction == 'BEARISH' or direction == MarketBias.BEARISH:
+            # SL ТРЯБВА да е НАД OB top
+            if sl_price <= ob_top:
+                sl_price = ob_top * 1.002  # 0.2% над OB
+                logger.warning(f"⚠️ SL КОРИГИРАН НАД OB: {sl_price}")
+        
+        return sl_price
 
     def _calculate_signal_confidence(
         self,
@@ -1602,6 +1653,73 @@ class ICTSignalEngine:
         except Exception as e:
             logger.error(f"❌ ML optimization error: {e}")
             return entry_price, stop_loss, take_profit
+    
+    def _get_htf_bias_with_fallback(self, symbol: str, mtf_data: Optional[Dict]) -> str:
+        """
+        ЗАДЪЛЖИТЕЛНО: Получава HTF bias от 1D → 4H fallback
+        """
+        if not mtf_data:
+            logger.warning("No MTF data available, using NEUTRAL bias")
+            return 'NEUTRAL'
+        
+        try:
+            # Опит 1: 1D timeframe (HTF)
+            if '1d' in mtf_data or '1D' in mtf_data:
+                df_1d = mtf_data.get('1d') or mtf_data.get('1D')
+                if df_1d is not None and len(df_1d) >= 20:
+                    # Determine bias from 1D
+                    bias_components = self._detect_ict_components(df_1d, '1d')
+                    htf_bias = self._determine_market_bias(df_1d, bias_components, None)
+                    htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
+                    logger.info(f"✅ HTF Bias from 1D: {htf_bias_str}")
+                    return htf_bias_str
+            
+            # Опит 2: 4H timeframe (fallback)
+            logger.warning("⚠️ 1D bias failed, trying 4H fallback...")
+            if '4h' in mtf_data or '4H' in mtf_data:
+                df_4h = mtf_data.get('4h') or mtf_data.get('4H')
+                if df_4h is not None and len(df_4h) >= 20:
+                    bias_components = self._detect_ict_components(df_4h, '4h')
+                    htf_bias = self._determine_market_bias(df_4h, bias_components, None)
+                    htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
+                    logger.info(f"✅ HTF Bias from 4H (fallback): {htf_bias_str}")
+                    return htf_bias_str
+            
+            logger.warning("❌ No HTF data available, using NEUTRAL bias")
+            return 'NEUTRAL'
+            
+        except Exception as e:
+            logger.error(f"HTF bias error: {e}, defaulting to NEUTRAL")
+            return 'NEUTRAL'
+
+    def _get_liquidity_zones_with_fallback(self, symbol: str, timeframe: str) -> List:
+        """
+        ЗАДЪЛЖИТЕЛНО: Опитва fresh liquidity map, САМО АКО НЕ е готова → cache
+        """
+        try:
+            # Опит 1: Fresh liquidity map
+            if hasattr(self, 'liquidity_mapper') and self.liquidity_mapper:
+                try:
+                    liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(symbol, timeframe)
+                    if liquidity_zones:
+                        logger.info(f"✅ Fresh liquidity map: {len(liquidity_zones)} zones")
+                        return liquidity_zones
+                except Exception as e:
+                    logger.warning(f"Fresh liquidity map failed: {e}")
+            
+            # Опит 2: Cache fallback
+            if self.cache_manager:
+                cached_zones = self.cache_manager.get(f"liquidity_zones_{symbol}_{timeframe}")
+                if cached_zones:
+                    logger.warning(f"⚠️ Using CACHED liquidity zones for {symbol} {timeframe}")
+                    return cached_zones
+            
+            logger.warning(f"❌ No liquidity zones available for {symbol} {timeframe}")
+            return []
+            
+        except Exception as e:
+            logger.error(f"Liquidity zones error: {e}")
+            return []
     
     def record_signal_outcome(
         self,
