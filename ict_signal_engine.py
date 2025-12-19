@@ -2347,7 +2347,12 @@ class ICTSignalEngine:
                     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
                     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
                     rs = gain / loss.replace(0, 1)
-                    rsi = 100 - (100 / (1 + rs.iloc[-1]))
+                    rs_value = rs.iloc[-1]
+                    # Validate RSI calculation
+                    if pd.notna(rs_value) and rs_value != float('inf'):
+                        rsi = 100 - (100 / (1 + rs_value))
+                    else:
+                        rsi = None
             
             # Determine signal direction from bias
             signal_direction = None
@@ -2370,7 +2375,7 @@ class ICTSignalEngine:
                 'signal_direction': signal_direction
             }
         except Exception as e:
-            logger.warning(f"Error extracting context data: {e}")
+            logger.warning(f"Error extracting context data for bias {bias}: {e}", exc_info=True)
             return {
                 'current_price': None,
                 'price_change_24h': None,
