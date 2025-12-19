@@ -6053,24 +6053,36 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             df[col] = df[col].astype(float)
         
         # Generate ICT signal
-        signal = ict_engine.generate_signal(
+        result = ict_engine.generate_signal(
             df=df,
             symbol=symbol,
             timeframe=timeframe,
             mtf_data=None  # TODO: Add MTF data fetching
         )
         
-        if not signal:
+        # Check if result is a "NO_TRADE" message (Dict) or a signal (ICTSignal object)
+        if result is None:
             await processing_msg.edit_text(
                 f"❌ <b>No ICT signal generated for {symbol}</b>\n\n"
-                f"Conditions not met for high-quality signal (minimum 70% confidence required).",
+                f"Conditions not met for high-quality signal (minimum confidence: 60%, RR: 1:3).",
                 parse_mode='HTML'
             )
             return
         
-        # Format and send signal
+        # Handle NO_TRADE messages (Dict)
+        if isinstance(result, dict) and result.get('type') == 'NO_TRADE':
+            no_trade_msg = format_no_trade_message(result)
+            await processing_msg.edit_text(
+                no_trade_msg,
+                parse_mode='HTML'
+            )
+            return
+        
+        # Handle valid signal (ICTSignal object)
+        signal = result
+        
         # === COOLDOWN CHECK ===
-        signal_key = f"{symbol}_{timeframe}_{signal. signal_type.value}"
+        signal_key = f"{symbol}_{timeframe}_{signal.signal_type.value}"
         
         if is_signal_already_sent(
             symbol=symbol,
@@ -6082,14 +6094,15 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ):
             await processing_msg.edit_text(
                 f"⏳ <b>Signal for {symbol} {timeframe} already sent recently</b>\n\n"
-                f"Cooldown:  60 minutes\n"
+                f"Cooldown: 60 minutes\n"
                 f"Please wait before requesting again.",
                 parse_mode='HTML'
             )
             return
         # === END COOLDOWN CHECK ===
 
-        signal_msg = format_ict_signal(signal)
+        # Use standardized format (STRICT ICT)
+        signal_msg = format_standardized_signal(signal, "MANUAL")
         
         # NEW: Generate chart visualization
         chart_sent = False
@@ -6108,7 +6121,7 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # Send text first
                     await processing_msg.edit_text(
                         signal_msg,
-                        parse_mode='Markdown',
+                        parse_mode='HTML',
                         disable_web_page_preview=True
                     )
                     
@@ -6124,7 +6137,7 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # Send text only
                     await processing_msg.edit_text(
                         signal_msg,
-                        parse_mode='Markdown',
+                        parse_mode='HTML',
                         disable_web_page_preview=True
                     )
             
@@ -6134,7 +6147,7 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not chart_sent:
                     await processing_msg.edit_text(
                         signal_msg,
-                        parse_mode='Markdown',
+                        parse_mode='HTML',
                         disable_web_page_preview=True
                     )
                     await update.message.reply_text(
@@ -6144,7 +6157,7 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Chart visualization not available, send text only
             await processing_msg.edit_text(
                 signal_msg,
-                parse_mode='Markdown',
+                parse_mode='HTML',
                 disable_web_page_preview=True
             )
         
@@ -6225,8 +6238,163 @@ def format_ict_signal(signal: ICTSignal) -> str:
     return msg
 
 
+def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -> str:
+    """
+    СТАНДАРТИЗИРАН формат за ВСИЧКИ типове сигнали (STRICT ICT)
+    
+    Еднакъв breakdown за:
+    - Автоматични сигнали
+    - Ръчни сигнали (/signal, /ict)
+    - Тестови сигнали
+    - Backtest сигнали
+    
+    Включва:
+    - Entry, SL, TP (с правилен знак: - за SELL, + за BUY)
+    - RR (гарантирано ≥ 3.0)
+    - Confidence (≥ 60%)
+    - MultiTF breakdown
+    - ICT компоненти (OB, FVG, LuxAlgo, Whale zones)
+    - Warnings
+    
+    Args:
+        signal: ICT signal object
+        signal_source: "AUTO", "MANUAL", "TEST", "BACKTEST"
+        
+    Returns:
+        Formatted standardized message string
+    """
+    # Signal type emoji
+    signal_emoji = {
+        'BUY': '🟢',
+        'SELL': '🔴',
+        'STRONG_BUY': '💚',
+        'STRONG_SELL': '❤️',
+        'HOLD': '⚪'
+    }
+    
+    emoji = signal_emoji.get(signal.signal_type.value, '⚪')
+    strength_stars = '🔥' * signal.signal_strength.value
+    
+    # Определи знака за TP процентите
+    is_buy = signal.signal_type.value in ['BUY', 'STRONG_BUY']
+    tp_sign = '+' if is_buy else '-'
+    
+    # Изчисли TP процентите спрямо Entry
+    tp1_pct = abs((signal.tp_prices[0] - signal.entry_price) / signal.entry_price * 100) if signal.tp_prices else 0
+    tp2_pct = abs((signal.tp_prices[1] - signal.entry_price) / signal.entry_price * 100) if len(signal.tp_prices) > 1 else 0
+    tp3_pct = abs((signal.tp_prices[2] - signal.entry_price) / signal.entry_price * 100) if len(signal.tp_prices) > 2 else 0
+    
+    # Source badge
+    source_badge = {
+        "AUTO": "🤖 АВТОМАТИЧЕН",
+        "MANUAL": "👤 РЪЧЕН",
+        "TEST": "🧪 ТЕСТОВ",
+        "BACKTEST": "📊 BACKTEST"
+    }.get(signal_source, "📊 СИГНАЛ")
+    
+    msg = f"""{emoji} <b>ICT {signal.signal_type.value} SIGNAL</b> {emoji}
+{source_badge}
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📊 ОСНОВНА ИНФОРМАЦИЯ</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+💰 <b>Символ:</b> {signal.symbol}
+⏰ <b>Таймфрейм:</b> {signal.timeframe}
+💪 <b>Сила:</b> {strength_stars} ({signal.signal_strength.value}/5)
+🎯 <b>Увереност:</b> {signal.confidence:.1f}%
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>💼 TRADE SETUP</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>📍 ENTRY:</b> ${signal.entry_price:,.4f}
+
+<b>🛑 STOP LOSS:</b> ${signal.sl_price:,.4f}
+
+<b>🎯 TAKE PROFITS:</b>
+   • TP1: ${signal.tp_prices[0]:,.4f} ({tp_sign}{tp1_pct:.2f}%)
+   • TP2: ${signal.tp_prices[1]:,.4f} ({tp_sign}{tp2_pct:.2f}%)
+   • TP3: ${signal.tp_prices[2]:,.4f} ({tp_sign}{tp3_pct:.2f}%)
+
+<b>⚖️ RISK/REWARD:</b> 1:{signal.risk_reward_ratio:.2f} {'✅' if signal.risk_reward_ratio >= 3.0 else '⚠️'}
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📊 MULTI-TIMEFRAME CONSENSUS</b>
+━━━━━━━━━━━━━━━━━━━━━━
+"""
+    
+    # MTF Consensus breakdown
+    if hasattr(signal, 'mtf_consensus_data') and signal.mtf_consensus_data:
+        consensus_pct = signal.mtf_consensus_data.get('consensus_pct', 0)
+        breakdown = signal.mtf_consensus_data.get('breakdown', {})
+        
+        msg += f"<b>Consensus:</b> {consensus_pct:.1f}% {'✅' if consensus_pct >= 50 else '❌'}\n"
+        msg += f"<b>Aligned:</b> {signal.mtf_consensus_data.get('aligned_count', 0)}/{signal.mtf_consensus_data.get('total_count', 0)} TFs\n\n"
+        
+        # Показвай breakdown за ключовите TF
+        key_timeframes = ['1m', '15m', '1h', '4h', '1d']
+        msg += "<b>Breakdown:</b>\n"
+        for tf in key_timeframes:
+            if tf in breakdown:
+                data = breakdown[tf]
+                bias = data.get('bias', 'N/A')
+                conf = data.get('confidence', 0)
+                aligned = data.get('aligned', False)
+                emoji_tf = "✅" if aligned else "❌"
+                
+                if bias != 'NO_DATA':
+                    msg += f"{emoji_tf} {tf}: {bias} ({conf:.0f}%)\n"
+    else:
+        msg += "⚠️ MTF данни не са налични\n"
+    
+    msg += f"""
+━━━━━━━━━━━━━━━━━━━━━━
+<b>🔍 ICT КОМПОНЕНТИ</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>Bias:</b>
+   • Текущ: {signal.bias.value}
+   • HTF: {signal.htf_bias}
+   • MTF Structure: {signal.mtf_structure}
+
+<b>Structure:</b>
+   • Broken: {'✅ YES' if signal.structure_broken else '❌ NO'}
+   • Displacement: {'✅ YES' if signal.displacement_detected else '❌ NO'}
+
+<b>Order Blocks:</b> {len(signal.order_blocks)} 📦
+<b>FVG:</b> {len(signal.fair_value_gaps)} 🔲
+<b>Liquidity Zones:</b> {len(signal.liquidity_zones)} 💧
+<b>Whale Blocks:</b> {len(signal.whale_blocks)} 🐋
+"""
+    
+    # LuxAlgo информация (ако има)
+    if hasattr(signal, 'luxalgo_sr') and signal.luxalgo_sr:
+        msg += f"\n<b>LuxAlgo SR:</b> ✅ Activated\n"
+    
+    msg += f"""
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📝 ОБОСНОВКА</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+{signal.reasoning}
+"""
+    
+    # Warnings
+    if signal.warnings:
+        msg += f"\n<b>⚠️ ПРЕДУПРЕЖДЕНИЯ:</b>\n"
+        for warning in signal.warnings:
+            msg += f"   • {warning}\n"
+    
+    msg += f"\n<i>⏰ {signal.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}</i>"
+    
+    return msg
+
+
 def format_ict_signal_13_point(signal: ICTSignal) -> str:
     """
+    DEPRECATED: Използвай format_standardized_signal() вместо това
+    
     Format ICT signal with enhanced 13-point output for Telegram
     
     13 Key Points:
@@ -6250,71 +6418,61 @@ def format_ict_signal_13_point(signal: ICTSignal) -> str:
     Returns:
         Formatted 13-point message string
     """
-    # Signal type emoji
-    signal_emoji = {
-        'BUY': '🟢',
-        'SELL': '🔴',
-        'STRONG_BUY': '💚',
-        'STRONG_SELL': '❤️',
-        'HOLD': '⚪'
-    }
+    # Redirect to standardized format
+    return format_standardized_signal(signal, "MANUAL")
+
+
+def format_no_trade_message(no_trade_data: Dict) -> str:
+    """
+    Форматира "Няма подходящ трейд" съобщение (STRICT ICT)
     
-    emoji = signal_emoji.get(signal.signal_type.value, '⚪')
-    strength_stars = '🔥' * signal.signal_strength.value
+    Args:
+        no_trade_data: Dictionary с данни от _create_no_trade_message()
+        
+    Returns:
+        Formatted message string
+    """
+    if 'message' in no_trade_data:
+        # Вече е форматирано от engine - използвай го директно
+        return no_trade_data['message']
     
-    # Calculate average TP for simpler display
-    avg_tp = sum(signal.tp_prices) / len(signal.tp_prices) if signal.tp_prices and len(signal.tp_prices) > 0 else 0
+    # Fallback форматиране
+    symbol = no_trade_data.get('symbol', 'N/A')
+    timeframe = no_trade_data.get('timeframe', 'N/A')
+    reason = no_trade_data.get('reason', 'Непозната причина')
+    details = no_trade_data.get('details', '')
     
-    msg = f"""{emoji} <b>ICT SIGNAL - {signal.signal_type.value}</b> {emoji}
+    msg = f"""
+❌ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>
 
-📊 <b>Symbol:</b> {signal.symbol}
-⏰ <b>Timeframe:</b> {signal.timeframe}
-💪 <b>Strength:</b> {strength_stars} ({signal.signal_strength.value}/5)
+💰 <b>Символ:</b> {symbol}
+⏰ <b>Таймфрейм:</b> {timeframe}
 
-<b>━━━━━ 13-POINT ICT ANALYSIS ━━━━━</b>
-
-<b>1️⃣ CONFIDENCE:</b> {signal.confidence:.1f}%
-
-<b>2️⃣ ENTRY:</b> ${signal.entry_price:,.4f}
-
-<b>3️⃣ STOP LOSS:</b> ${signal.sl_price:,.4f}
-
-<b>4️⃣ TAKE PROFITS:</b>
-   • TP1: ${signal.tp_prices[0]:,.4f}
-   • TP2: ${signal.tp_prices[1]:,.4f}
-   • TP3: ${signal.tp_prices[2]:,.4f}
-
-<b>5️⃣ RISK/REWARD:</b> {signal.risk_reward_ratio:.2f}:1
-
-<b>6️⃣ MARKET BIAS:</b>
-   • Current: {signal.bias.value}
-   • HTF: {signal.htf_bias}
-   • MTF Structure: {signal.mtf_structure}
-
-<b>7️⃣ STRUCTURE:</b>
-   • Broken: {'✅ YES' if signal.structure_broken else '❌ NO'}
-   • Displacement: {'✅ YES' if signal.displacement_detected else '❌ NO'}
-
-<b>8️⃣ ORDER BLOCKS:</b> {len(signal.order_blocks)} detected
-
-<b>9️⃣ LIQUIDITY ZONES:</b> {len(signal.liquidity_zones)} identified
-
-<b>🔟 FAIR VALUE GAPS:</b> {len(signal.fair_value_gaps)} found
-
-<b>1️⃣1️⃣ MTF CONFLUENCE:</b> {signal.mtf_confluence} timeframes aligned
-
-<b>1️⃣2️⃣ WHALE BLOCKS:</b> {len(signal.whale_blocks)} institutional zones
-
-<b>1️⃣3️⃣ ICT REASONING:</b>
-{signal.reasoning}
+🚫 <b>Причина:</b> {reason}
 """
     
-    if signal.warnings:
-        msg += f"\n<b>⚠️ WARNINGS:</b>\n"
-        for warning in signal.warnings:
-            msg += f"   • {warning}\n"
+    if details:
+        msg += f"📋 <b>Детайли:</b> {details}\n"
     
-    msg += f"\n<i>⏰ Generated: {signal.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}</i>"
+    # MTF Breakdown
+    mtf_breakdown = no_trade_data.get('mtf_breakdown', {})
+    if mtf_breakdown:
+        msg += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        msg += "📊 <b>MTF Breakdown:</b>\n"
+        
+        key_timeframes = ['1m', '15m', '1h', '4h', '1d']
+        for tf in key_timeframes:
+            if tf in mtf_breakdown:
+                data = mtf_breakdown[tf]
+                bias = data.get('bias', 'N/A')
+                confidence = data.get('confidence', 0)
+                aligned = data.get('aligned', False)
+                
+                emoji = "✅" if aligned else "❌"
+                if bias != 'NO_DATA':
+                    msg += f"{emoji} {tf}: {bias} ({confidence:.0f}%)\n"
+    
+    msg += "\n💡 <b>Препоръка:</b> Изчакайте по-добри условия или проверете друг таймфрейм"
     
     return msg
 
