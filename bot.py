@@ -1,4 +1,5 @@
 # Auto-deploy test - Dec 7, 2025 14:20 UTC
+from typing import Dict, List, Optional, Tuple, Any
 # Second auto-deploy test - confirming deployment works
 import requests
 import json
