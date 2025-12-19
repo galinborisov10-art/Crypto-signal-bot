@@ -194,9 +194,12 @@ class RealTimePositionMonitor:
             self.remove_signal(signal_id)
             
     async def _fetch_current_price(self, symbol: str) -> Optional[float]:
-        """Fetch current price from Binance"""
+        """Fetch current price from Binance (async)"""
         try:
-            response = requests.get(
+            import asyncio
+            # Use asyncio.to_thread to run sync request in thread pool
+            response = await asyncio.to_thread(
+                requests.get,
                 self.binance_price_url,
                 params={'symbol': symbol},
                 timeout=5
@@ -218,9 +221,12 @@ class RealTimePositionMonitor:
         return None
         
     async def _fetch_klines(self, symbol: str, timeframe: str, limit: int = 100) -> Optional[List]:
-        """Fetch klines data from Binance"""
+        """Fetch klines data from Binance (async)"""
         try:
-            response = requests.get(
+            import asyncio
+            # Use asyncio.to_thread to run sync request in thread pool
+            response = await asyncio.to_thread(
+                requests.get,
                 self.binance_klines_url,
                 params={
                     'symbol': symbol,
@@ -281,6 +287,18 @@ class RealTimePositionMonitor:
         else:  # SELL
             return current_price <= tp_price
             
+    def _calculate_profit_pct(
+        self,
+        signal_type: str,
+        entry_price: float,
+        current_price: float
+    ) -> float:
+        """Calculate profit/loss percentage"""
+        if signal_type == 'BUY':
+            return ((current_price - entry_price) / entry_price) * 100
+        else:  # SELL
+            return ((entry_price - current_price) / entry_price) * 100
+            
     async def _send_80_percent_alert(
         self,
         signal_id: str,
@@ -326,7 +344,11 @@ class RealTimePositionMonitor:
             
             signal_emoji = '🟢' if signal['signal_type'] == 'BUY' else '🔴'
             
-            profit_pct = ((current_price - signal['entry_price']) / signal['entry_price'] * 100) if signal['signal_type'] == 'BUY' else ((signal['entry_price'] - current_price) / signal['entry_price'] * 100)
+            profit_pct = self._calculate_profit_pct(
+                signal['signal_type'],
+                signal['entry_price'],
+                current_price
+            )
             
             message = f"""🎯 <b>80% TP ALERT!</b> {emoji}
 
@@ -379,7 +401,11 @@ class RealTimePositionMonitor:
     ) -> None:
         """Send WIN alert when TP is reached"""
         try:
-            profit_pct = ((current_price - signal['entry_price']) / signal['entry_price'] * 100) if signal['signal_type'] == 'BUY' else ((signal['entry_price'] - current_price) / signal['entry_price'] * 100)
+            profit_pct = self._calculate_profit_pct(
+                signal['signal_type'],
+                signal['entry_price'],
+                current_price
+            )
             
             signal_emoji = '🟢' if signal['signal_type'] == 'BUY' else '🔴'
             
@@ -420,7 +446,11 @@ class RealTimePositionMonitor:
     ) -> None:
         """Send LOSS alert when SL is hit"""
         try:
-            loss_pct = ((current_price - signal['entry_price']) / signal['entry_price'] * 100) if signal['signal_type'] == 'BUY' else ((signal['entry_price'] - current_price) / signal['entry_price'] * 100)
+            loss_pct = self._calculate_profit_pct(
+                signal['signal_type'],
+                signal['entry_price'],
+                current_price
+            )
             
             signal_emoji = '🟢' if signal['signal_type'] == 'BUY' else '🔴'
             

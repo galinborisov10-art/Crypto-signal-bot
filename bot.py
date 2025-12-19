@@ -6263,7 +6263,7 @@ def format_ict_signal_13_point(signal: ICTSignal) -> str:
     strength_stars = '🔥' * signal.signal_strength.value
     
     # Calculate average TP for simpler display
-    avg_tp = sum(signal.tp_prices) / len(signal.tp_prices) if signal.tp_prices else signal.tp_prices[0] if len(signal.tp_prices) > 0 else 0
+    avg_tp = sum(signal.tp_prices) / len(signal.tp_prices) if signal.tp_prices and len(signal.tp_prices) > 0 else 0
     
     msg = f"""{emoji} <b>ICT SIGNAL - {signal.signal_type.value}</b> {emoji}
 
@@ -11974,8 +11974,9 @@ def main():
                         binance_klines_url=BINANCE_KLINES_URL
                     )
                     
-                    # Start monitoring as a background task
-                    asyncio.create_task(real_time_monitor_global.start_monitoring())
+                    # Start monitoring as a background task and store reference
+                    monitor_task = asyncio.create_task(real_time_monitor_global.start_monitoring())
+                    monitor_task.set_name("real_time_position_monitor")
                     
                     logger.info("🎯 Real-time Position Monitor STARTED (30s interval)")
                     logger.info("✅ 80% TP alerts and WIN/LOSS notifications enabled")
