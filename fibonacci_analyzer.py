@@ -46,6 +46,16 @@ class FibonacciAnalyzer:
     Calculates retracement and extension levels based on swing points.
     Identifies OTE zones for optimal entries.
     Provides TP targets aligned with Fibonacci levels.
+    
+    Args:
+        retracement_levels: List of Fibonacci retracement levels (default: [0.236, 0.382, 0.5, 0.618, 0.786])
+        extension_levels: List of Fibonacci extension levels (default: [1.272, 1.414, 1.618, 2.0, 2.618])
+        ote_range: Tuple defining OTE zone range (default: (0.62, 0.79))
+        
+    Example:
+        >>> analyzer = FibonacciAnalyzer()
+        >>> result = analyzer.analyze(df, bias='BULLISH', lookback=50)
+        >>> print(f"In OTE Zone: {result['in_ote_zone']}")
     """
     
     def __init__(

@@ -92,7 +92,7 @@ except ImportError as e:
 
 # ICT Signal Engine - New Complete System
 try:
-    from ict_signal_engine import ICTSignalEngine, ICTSignal
+    from ict_signal_engine import ICTSignalEngine, ICTSignal, MarketBias
     from ict_80_alert_handler import ICT80AlertHandler
     from order_block_detector import OrderBlockDetector
     from fvg_detector import FVGDetector
@@ -10062,7 +10062,6 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 bias_str = signal.bias.value if hasattr(signal.bias, 'value') else str(signal.bias)
                                 
                                 # Map string bias to MarketBias enum
-                                from ict_signal_engine import MarketBias
                                 if 'BULLISH' in bias_str.upper():
                                     bias_enum = MarketBias.BULLISH
                                 elif 'BEARISH' in bias_str.upper():

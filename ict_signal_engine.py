@@ -1189,7 +1189,7 @@ class ICTSignalEngine:
         bias: Optional[str] = None
     ) -> List[float]:
         """
-        ЗАДЪЛЖИТЕЛНО: Изчислява TP с ГАРАНТИРАН RR ≥ 1:3
+        MANDATORY: Calculate TP with GUARANTEED RR >= 1:3
         Now with Fibonacci integration for optimal TP placement
         """
         risk = abs(entry_price - sl_price)
@@ -1243,7 +1243,7 @@ class ICTSignalEngine:
                 if len(tp_levels) >= 3:
                     break
         
-        # Final fallback: структурни нива
+        # Final fallback: structural levels
         if len(tp_levels) == 1:
             tp2 = entry_price + (risk * 5) if direction == 'LONG' else entry_price - (risk * 5)
             tp_levels.append(tp2)
@@ -2024,7 +2024,7 @@ class ICTSignalEngine:
                 
                 '12_next_liquidity_forecast': {
                     'nearest_liquidity': signal.liquidity_zones[0] if signal.liquidity_zones else None,
-                    'target_type': 'BUY_SIDE' if signal.bias.value == 'BULLISH' else 'SELL_SIDE',
+                    'target_type': 'BUY_SIDE' if (hasattr(signal.bias, 'value') and signal.bias.value == 'BULLISH') else 'SELL_SIDE',
                     'estimated_distance': self._calculate_liquidity_distance(current_price, signal.liquidity_zones)
                 },
                 
