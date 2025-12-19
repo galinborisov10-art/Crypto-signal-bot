@@ -238,6 +238,10 @@ class ICTSignal:
     mtf_structure: str = "NEUTRAL"
     mtf_consensus_data: Dict = field(default_factory=dict)  # NEW: MTF consensus breakdown
     
+    # Entry Zone (NEW - ICT-Compliant)
+    entry_zone: Dict = field(default_factory=dict)  # NEW: Entry zone details
+    entry_status: str = "UNKNOWN"  # NEW: Entry zone status (VALID_WAIT/VALID_NEAR/etc)
+    
     # Explanation
     reasoning: str = ""
     warnings: List[str] = field(default_factory=list)
@@ -488,13 +492,50 @@ class ICTSignalEngine:
         structure_broken = self._check_structure_break(df)
         displacement_detected = self._check_displacement(df)
         
-        # СТЪПКА 8: ENTRY CALCULATION
-        logger.info("📊 Step 8: Entry")
+        # СТЪПКА 8: ENTRY CALCULATION WITH ICT-COMPLIANT ZONE
+        logger.info("📊 Step 8: Entry + ICT Zone Validation")
+        
+        # Get current price
+        current_price = df['close'].iloc[-1]
+        
+        # Calculate ICT-compliant entry zone
+        bias_str = bias.value if hasattr(bias, 'value') else str(bias)
+        fvg_zones = ict_components.get('fvgs', [])
+        order_blocks = ict_components.get('order_blocks', [])
+        sr_levels = ict_components.get('luxalgo_sr', {})
+        
+        entry_zone, entry_status = self._calculate_ict_compliant_entry_zone(
+            current_price=current_price,
+            direction=bias_str,
+            fvg_zones=fvg_zones,
+            order_blocks=order_blocks,
+            sr_levels=sr_levels
+        )
+        
+        # Validate entry zone timing
+        if entry_status in ['TOO_LATE', 'NO_ZONE']:
+            logger.error(f"❌ Entry zone validation failed: {entry_status}")
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason=f"Entry zone validation failed: {entry_status}",
+                details=f"Current price: ${current_price:.2f}. No valid entry zone found in acceptable range (0.5%-3%).",
+                mtf_breakdown={}
+            )
+        
+        # Use entry zone center as entry price
+        entry_price = entry_zone['center']
+        logger.info(f"✅ Entry price set to entry zone center: ${entry_price:.2f}")
+        
+        # Keep existing entry setup for SL calculation (fallback)
         entry_setup = self._identify_entry_setup(df, ict_components, bias)
         if not entry_setup:
-            return None
-        
-        entry_price = self._calculate_entry_price(df, entry_setup, bias)
+            # Use entry_zone as fallback entry_setup
+            entry_setup = {
+                'type': f"{bias_str.lower()}_zone",
+                'price_zone': (entry_zone['low'], entry_zone['high']),
+                'source': entry_zone['source']
+            }
         
         # СТЪПКА 9: SL/TP + VALIDATION
         logger.info("📊 Step 9: SL/TP + Validation")
@@ -728,6 +769,8 @@ class ICTSignalEngine:
             htf_bias=htf_bias,
             mtf_structure=mtf_analysis.get('mtf_structure', 'NEUTRAL') if mtf_analysis else 'NEUTRAL',
             mtf_consensus_data=mtf_consensus_data,
+            entry_zone=entry_zone,  # NEW: Entry zone details
+            entry_status=entry_status,  # NEW: Entry zone status
             reasoning=reasoning,
             warnings=warnings,
             zone_explanations=zone_explanations

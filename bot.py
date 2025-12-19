@@ -6313,6 +6313,25 @@ def format_ict_signal(signal: ICTSignal) -> str:
 {signal.reasoning}
 """
     
+    # Add entry guidance if available (NEW - ICT-Compliant Entry Zones)
+    if signal.entry_zone and signal.entry_status:
+        try:
+            # Get current price from entry_price (or we could pass it separately)
+            current_price = signal.entry_price
+            bias_str = signal.bias.value if hasattr(signal.bias, 'value') else str(signal.bias)
+            
+            # Format entry guidance
+            entry_guidance = _format_entry_guidance(
+                entry_zone=signal.entry_zone,
+                entry_status=signal.entry_status,
+                current_price=current_price,
+                direction=bias_str
+            )
+            
+            msg += entry_guidance
+        except Exception as e:
+            logger.error(f"Error formatting entry guidance: {e}")
+    
     if signal.warnings:
         msg += f"\n\n⚠️ **Warnings:**\n"
         for warning in signal.warnings:
