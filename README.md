@@ -1,7 +1,7 @@
 # 🤖 Crypto Signal Bot - Professional Edition
 
-**Версия:** 2.0  
-**Последна актуализация:** 06 Декември 2025  
+**Версия:** 2.0.0 - Security Hardening  
+**Последна актуализация:** 19 Декември 2025  
 **Автор:** galinborisov10-art
 
 ---
@@ -135,6 +135,64 @@ python bot.py
 - Всички sensitive файлове са в `.gitignore`
 - Админ парола: SHA-256 хеширана
 - Достъп само за owner chat_id
+
+---
+
+## 🔒 Security Features (NEW - v2.0.0)
+
+After the recent security incident (token compromise on 2025-12-17), we've implemented comprehensive security measures:
+
+### ✨ Security Features:
+
+- **🛡️ Rate Limiting:** 20 requests/minute, 100 requests/hour per user
+- **🚫 Auto-ban:** Automatic ban after 3 violations (60 minutes)
+- **🔐 Authentication:** Blacklist/Whitelist support with admin controls
+- **🔒 Encrypted Token Storage:** Secure token encryption using Fernet (AES-256)
+- **📊 Security Monitoring:** Real-time threat detection and event logging
+- **⚠️ Threat Assessment:** LOW/MEDIUM/HIGH/CRITICAL threat levels
+- **👮 Admin Controls:** Blacklist, unban, security statistics
+
+### 🛠️ Admin Setup:
+
+Set admin user IDs in `.env`:
+```bash
+# Admin User IDs (comma-separated Telegram user IDs)
+ADMIN_USER_IDS=123456789,987654321
+```
+
+Get your Telegram user ID from [@userinfobot](https://t.me/userinfobot)
+
+### 🔐 New Security Commands:
+
+- `/blacklist USER_ID [REASON]` - Block a user from using the bot
+- `/unblacklist USER_ID` - Remove user from blacklist
+- `/security_stats` - Show security statistics and threat level
+- `/unban USER_ID` - Manually unban rate-limited user
+- `/version` - Show bot version with security features
+
+### 📖 Security Documentation:
+
+Full security guide: [`docs/SECURITY_GUIDE.md`](docs/SECURITY_GUIDE.md)
+
+**Topics covered:**
+- Rate limiting configuration
+- Authentication modes (Public/Whitelist)
+- Token encryption setup
+- Security monitoring and incident response
+- Best practices and troubleshooting
+
+### ⚙️ Configuration (.env):
+
+```bash
+# Security Settings (optional, defaults shown)
+MAX_REQUESTS_PER_MINUTE=20
+MAX_REQUESTS_PER_HOUR=100
+BAN_DURATION_MINUTES=60
+
+# Whitelist Mode (optional, disabled by default)
+WHITELIST_MODE=false
+# WHITELISTED_USER_IDS=111111111,222222222,333333333
+```
 
 ---
 
