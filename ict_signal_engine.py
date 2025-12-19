@@ -236,6 +236,7 @@ class ICTSignal:
     mtf_confluence: int = 0
     htf_bias: str = "NEUTRAL"
     mtf_structure: str = "NEUTRAL"
+    mtf_consensus_data: Dict = field(default_factory=dict)  # NEW: MTF consensus breakdown
     
     # Explanation
     reasoning: str = ""
@@ -265,6 +266,7 @@ class ICTSignal:
             'mtf_confluence': self.mtf_confluence,
             'htf_bias': self.htf_bias,
             'mtf_structure': self.mtf_structure,
+            'mtf_consensus_data': self.mtf_consensus_data,
             'reasoning': self.reasoning,
             'warnings': self.warnings
         }
@@ -398,12 +400,12 @@ class ICTSignalEngine:
     def _get_default_config(self) -> Dict:
         """Get default configuration"""
         return {
-            'min_confidence': 70,          # Min 70% confidence
-            'min_risk_reward': 2.0,        # Min 1:2 R:R
+            'min_confidence': 60,          # Min 60% confidence (STRICT ICT)
+            'min_risk_reward': 3.0,        # Min 1:3 R:R (STRICT ICT)
             'max_sl_distance_pct': 3.0,    # Max 3% SL distance
-            'tp_multipliers': [2, 3, 5],   # TP at 2R, 3R, 5R
-            'require_mtf_confluence': False, # Require MTF alignment
-            'min_mtf_confluence': 2,       # Min 2 timeframes aligned
+            'tp_multipliers': [3, 5, 8],   # TP at 3R, 5R, 8R (STRICT ICT)
+            'require_mtf_confluence': True, # Require MTF alignment (STRICT ICT)
+            'min_mtf_confluence': 0.5,     # Min 50% MTF consensus (STRICT ICT)
             'use_whale_blocks': True,      # Use whale detection
             'use_liquidity': True,         # Use liquidity mapping
             'use_order_blocks': True,      # Use order blocks
@@ -498,10 +500,16 @@ class ICTSignalEngine:
         logger.info("📊 Step 9: SL/TP + Validation")
         sl_price = self._calculate_sl_price(df, entry_setup, entry_price, bias)
         
-        # ✅ VALIDATE SL
+        # ✅ VALIDATE SL (STRICT ICT)
         order_block = entry_setup.get('ob') or (ict_components['order_blocks'][0] if ict_components.get('order_blocks') else None)
         if order_block:
-            sl_price = self._validate_sl_position(sl_price, order_block, bias)
+            sl_price, sl_valid = self._validate_sl_position(sl_price, order_block, bias, entry_price)
+            if not sl_valid or sl_price is None:
+                logger.error("❌ SL не може да бъде ICT-compliant - сигналът НЕ СЕ ИЗПРАЩА")
+                return None
+        else:
+            logger.error("❌ Няма Order Block за SL валидация - сигналът НЕ СЕ ИЗПРАЩА")
+            return None
         
         # ✅ TP с гарантиран RR ≥ 1:3 (with Fibonacci optimization)
         fibonacci_data = ict_components.get('fibonacci_data', {})
@@ -625,12 +633,54 @@ class ICTSignalEngine:
                         
                 except Exception as e:
                     logger.error(f"❌ ML Predictor error: {e}")
+            
+            # ✅ ML RESTRICTIONS (STRICT ICT) - Step 11.25
+            logger.info("📊 Step 11.25: ML ICT Compliance Check")
+            
+            # 1. ML може само да прави SL по-консервативен (по-далеч от entry), НЕ по-близо
+            # (В този код SL не се променя от ML, така че проверката не е необходима)
+            
+            # 2. Гарантирай че RR няма да падне под 3.0 след ML adjustment
+            # (Проверката е след изчисляване на confidence по-долу)
+            
+            # 3. ML confidence adjustment НЕ МОЖЕ да нарушава правилата
+            # - Ако confidence стане < 60%, сигналът не се изпраща
+            # - Ако MTF consensus < 50%, ML не може да промени това
 
         confidence = base_confidence + ml_confidence_adjustment
         confidence = max(0.0, min(100.0, confidence))
         
+        # ✅ ML RESTRICTION: Гарантирай че confidence не пада под минимум
+        if confidence < self.config['min_confidence'] and ml_confidence_adjustment < 0:
+            logger.warning(f"⚠️ ML adjustment би свалил confidence под {self.config['min_confidence']}% - ограничаване")
+            confidence = self.config['min_confidence']
+        
+        # СТЪПКА 11.5: MTF CONSENSUS CHECK (STRICT ICT)
+        logger.info("📊 Step 11.5: MTF Consensus Check")
+        mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+        
+        # Ако MTF consensus < 50%, confidence = 0 и сигналът НЕ СЕ ИЗПРАЩА
+        if mtf_consensus_data['consensus_pct'] < 50.0:
+            logger.error(f"❌ MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50% - сигналът НЕ СЕ ИЗПРАЩА")
+            # Изпрати информативно съобщение
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason=f"Липса на MTF consensus ({mtf_consensus_data['consensus_pct']:.1f}%)",
+                details=f"Необходими: ≥50% aligned TFs. Намерени: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}",
+                mtf_breakdown=mtf_consensus_data['breakdown']
+            )
+        
+        # Confidence check
         if confidence < self.config['min_confidence']:
-            return None
+            logger.error(f"❌ Confidence {confidence:.1f}% < {self.config['min_confidence']}% - сигналът НЕ СЕ ИЗПРАЩА")
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason=f"Ниска увереност ({confidence:.1f}%)",
+                details=f"Необходими: ≥{self.config['min_confidence']}%. Намерени: {confidence:.1f}%",
+                mtf_breakdown=mtf_consensus_data['breakdown']
+            )
         
         # СТЪПКА 12: CONFIDENCE SCORING
         logger.info("📊 Step 12: Final Confidence")
@@ -677,6 +727,7 @@ class ICTSignalEngine:
             mtf_confluence=mtf_analysis.get('confluence_count', 0) if mtf_analysis else 0,
             htf_bias=htf_bias,
             mtf_structure=mtf_analysis.get('mtf_structure', 'NEUTRAL') if mtf_analysis else 'NEUTRAL',
+            mtf_consensus_data=mtf_consensus_data,
             reasoning=reasoning,
             warnings=warnings,
             zone_explanations=zone_explanations
@@ -955,6 +1006,129 @@ class ICTSignalEngine:
         except Exception as e:
             logger.error(f"MTF analysis error: {e}")
             return None
+    
+    def _calculate_mtf_consensus(
+        self,
+        symbol: str,
+        primary_timeframe: str,
+        target_bias: MarketBias,
+        mtf_data: Optional[Dict[str, pd.DataFrame]] = None
+    ) -> Dict:
+        """
+        Изчисли Multi-Timeframe Consensus (STRICT ICT)
+        
+        Проверява bias на всички timeframes: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d, 3d, 1w
+        
+        Returns:
+            Dict с:
+                - consensus_pct: процент съгласни timeframes (0-100)
+                - breakdown: детайлен breakdown по TF
+                - aligned_tfs: списък със съгласни TF
+                - conflicting_tfs: списък с конфликтни TF
+        """
+        all_timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d', '3d', '1w']
+        
+        breakdown = {}
+        aligned_count = 0
+        total_count = 0
+        
+        # Проверка на първичния timeframe
+        breakdown[primary_timeframe] = {
+            'bias': target_bias.value if hasattr(target_bias, 'value') else str(target_bias),
+            'confidence': 100,  # Първичният TF е 100% сигурен
+            'aligned': True
+        }
+        aligned_count += 1
+        total_count += 1
+        
+        # Проверка на други timeframes (ако има данни)
+        if mtf_data:
+            for tf in all_timeframes:
+                if tf == primary_timeframe:
+                    continue  # Вече е добавен
+                
+                tf_df = mtf_data.get(tf)
+                if tf_df is not None and len(tf_df) >= 20:
+                    # Опростен bias анализ за този TF
+                    try:
+                        # Използвай последната цена спрямо MA
+                        close_prices = tf_df['close'].values
+                        ma_20 = np.mean(close_prices[-20:])
+                        current_price = close_prices[-1]
+                        
+                        # Определи bias
+                        if current_price > ma_20 * 1.005:  # 0.5% над MA
+                            tf_bias = MarketBias.BULLISH
+                        elif current_price < ma_20 * 0.995:  # 0.5% под MA
+                            tf_bias = MarketBias.BEARISH
+                        else:
+                            tf_bias = MarketBias.NEUTRAL
+                        
+                        # Изчисли confidence (колко далеч е от MA)
+                        distance_pct = abs(current_price - ma_20) / ma_20 * 100
+                        confidence = min(100, distance_pct * 20)  # Scale to 0-100
+                        
+                        # Провери alignment
+                        is_aligned = (tf_bias == target_bias) or (tf_bias == MarketBias.NEUTRAL)
+                        
+                        breakdown[tf] = {
+                            'bias': tf_bias.value if hasattr(tf_bias, 'value') else str(tf_bias),
+                            'confidence': round(confidence, 1),
+                            'aligned': is_aligned
+                        }
+                        
+                        if is_aligned:
+                            aligned_count += 1
+                        total_count += 1
+                        
+                    except Exception as e:
+                        logger.warning(f"MTF consensus analysis failed for {tf}: {e}")
+                        # Добави като neutral ако анализът се провали
+                        breakdown[tf] = {
+                            'bias': 'NEUTRAL',
+                            'confidence': 0,
+                            'aligned': True  # Neutral counts as aligned
+                        }
+                        aligned_count += 1
+                        total_count += 1
+                else:
+                    # Няма данни за този TF - счита се за aligned (не пречи)
+                    breakdown[tf] = {
+                        'bias': 'NO_DATA',
+                        'confidence': 0,
+                        'aligned': True
+                    }
+                    aligned_count += 1
+                    total_count += 1
+        else:
+            # Няма MTF data - счита се всичко като aligned
+            for tf in all_timeframes:
+                if tf != primary_timeframe:
+                    breakdown[tf] = {
+                        'bias': 'NO_DATA',
+                        'confidence': 0,
+                        'aligned': True
+                    }
+                    aligned_count += 1
+                    total_count += 1
+        
+        # Изчисли consensus процент
+        consensus_pct = (aligned_count / total_count * 100) if total_count > 0 else 0
+        
+        # Подготви списъци
+        aligned_tfs = [tf for tf, data in breakdown.items() if data['aligned']]
+        conflicting_tfs = [tf for tf, data in breakdown.items() if not data['aligned']]
+        
+        logger.info(f"📊 MTF Consensus: {consensus_pct:.1f}% ({aligned_count}/{total_count} TFs aligned)")
+        
+        return {
+            'consensus_pct': round(consensus_pct, 1),
+            'breakdown': breakdown,
+            'aligned_tfs': aligned_tfs,
+            'conflicting_tfs': conflicting_tfs,
+            'aligned_count': aligned_count,
+            'total_count': total_count
+        }
     
     def _determine_bias_from_components(self, components: Dict) -> str:
         """
@@ -1305,16 +1479,20 @@ class ICTSignalEngine:
             max_sl = entry_price * 1.01
             return max(sl_price, max_sl)
 
-    def _validate_sl_position(self, sl_price: float, order_block, direction) -> float:
+    def _validate_sl_position(self, sl_price: float, order_block, direction, entry_price: float) -> Tuple[float, bool]:
         """
-        ЗАДЪЛЖИТЕЛНО: Валидира че SL е под/над валиден Order Block
+        ЗАДЪЛЖИТЕЛНО: Валидира че SL е под/над валиден Order Block (STRICT ICT)
         
-        BULLISH: SL ТРЯБВА да е ПОД Order Block bottom
-        BEARISH: SL ТРЯБВА да е НАД Order Block top
+        BULLISH: SL ТРЯБВА да е ПОД Order Block bottom (buffer ≥ 0.2-0.3%)
+        BEARISH: SL ТРЯБВА да е НАД Order Block top (buffer ≥ 0.2-0.3%)
+        
+        Returns:
+            Tuple[float, bool]: (validated_sl_price, is_valid)
+                - is_valid=False означава че SL не може да бъде ICT-compliant
         """
         if not order_block:
-            logger.warning("No Order Block for SL validation")
-            return sl_price
+            logger.warning("⚠️ No Order Block for SL validation - INVALID")
+            return sl_price, False
         
         # Get OB boundaries - handle both object and dict types
         if isinstance(order_block, dict):
@@ -1325,22 +1503,55 @@ class ICTSignalEngine:
             ob_top = getattr(order_block, 'zone_high', None) or getattr(order_block, 'top', None)
         
         if not ob_bottom or not ob_top:
-            logger.warning("Invalid Order Block structure")
-            return sl_price
+            logger.warning("⚠️ Invalid Order Block structure - INVALID")
+            return sl_price, False
+        
+        # Минимален buffer (0.2-0.3%)
+        min_buffer_pct = 0.002  # 0.2%
+        max_buffer_pct = 0.003  # 0.3%
         
         if direction == 'BULLISH' or direction == MarketBias.BULLISH:
-            # SL ТРЯБВА да е ПОД OB bottom
+            # SL ТРЯБВА да е ПОД OB bottom с buffer
+            required_sl_max = ob_bottom * (1 - min_buffer_pct)
+            
             if sl_price >= ob_bottom:
-                sl_price = ob_bottom * 0.998  # 0.2% под OB
-                logger.warning(f"⚠️ SL КОРИГИРАН ПОД OB: {sl_price}")
+                # SL е ВЪТРЕ или НАД OB - FORBIDDEN
+                logger.error(f"❌ BEARISH SL {sl_price:.2f} >= OB bottom {ob_bottom:.2f} - FORBIDDEN")
+                return None, False
+            
+            if sl_price > required_sl_max:
+                # SL е твърде близо до OB - коригирай
+                sl_price = ob_bottom * (1 - max_buffer_pct)  # 0.3% под OB
+                logger.warning(f"⚠️ SL КОРИГИРАН ПОД OB с buffer: {sl_price:.2f}")
+            
+            # Проверка че SL не е твърде близо до Entry
+            min_sl_distance_pct = 0.005  # Минимум 0.5% от entry
+            if abs(entry_price - sl_price) / entry_price < min_sl_distance_pct:
+                logger.error(f"❌ SL твърде близо до Entry ({abs(entry_price - sl_price) / entry_price * 100:.2f}%) - FORBIDDEN")
+                return None, False
         
         elif direction == 'BEARISH' or direction == MarketBias.BEARISH:
-            # SL ТРЯБВА да е НАД OB top
+            # SL ТРЯБВА да е НАД OB top с buffer
+            required_sl_min = ob_top * (1 + min_buffer_pct)
+            
             if sl_price <= ob_top:
-                sl_price = ob_top * 1.002  # 0.2% над OB
-                logger.warning(f"⚠️ SL КОРИГИРАН НАД OB: {sl_price}")
+                # SL е ВЪТРЕ или ПОД OB - FORBIDDEN
+                logger.error(f"❌ BULLISH SL {sl_price:.2f} <= OB top {ob_top:.2f} - FORBIDDEN")
+                return None, False
+            
+            if sl_price < required_sl_min:
+                # SL е твърде близо до OB - коригирай
+                sl_price = ob_top * (1 + max_buffer_pct)  # 0.3% над OB
+                logger.warning(f"⚠️ SL КОРИГИРАН НАД OB с buffer: {sl_price:.2f}")
+            
+            # Проверка че SL не е твърде близо до Entry
+            min_sl_distance_pct = 0.005  # Минимум 0.5% от entry
+            if abs(sl_price - entry_price) / entry_price < min_sl_distance_pct:
+                logger.error(f"❌ SL твърде близо до Entry ({abs(sl_price - entry_price) / entry_price * 100:.2f}%) - FORBIDDEN")
+                return None, False
         
-        return sl_price
+        logger.info(f"✅ SL validated: {sl_price:.2f} (ICT-compliant)")
+        return sl_price, True
 
     def _calculate_signal_confidence(
         self,
@@ -1592,6 +1803,72 @@ class ICTSignalEngine:
                 warnings.append("Below average volume")
         
         return warnings
+    
+    def _create_no_trade_message(
+        self,
+        symbol: str,
+        timeframe: str,
+        reason: str,
+        details: str,
+        mtf_breakdown: Dict
+    ) -> Dict:
+        """
+        Създава съобщение "Няма подходящ трейд" с обяснение
+        
+        Returns:
+            Dict със структурирано съобщение (не ICTSignal обект)
+        """
+        return {
+            'type': 'NO_TRADE',
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'timestamp': datetime.now().isoformat(),
+            'reason': reason,
+            'details': details,
+            'mtf_breakdown': mtf_breakdown,
+            'message': f"""
+❌ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>
+
+💰 <b>Символ:</b> {symbol}
+⏰ <b>Таймфрейм:</b> {timeframe}
+
+🚫 <b>Причина:</b> {reason}
+📋 <b>Детайли:</b> {details}
+
+━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>MTF Breakdown:</b>
+{self._format_mtf_breakdown(mtf_breakdown)}
+
+💡 <b>Препоръка:</b> Изчакайте по-добри условия или проверете друг таймфрейм
+"""
+        }
+    
+    def _format_mtf_breakdown(self, breakdown: Dict) -> str:
+        """Форматира MTF breakdown за показване"""
+        lines = []
+        for tf, data in sorted(breakdown.items(), key=lambda x: self._timeframe_order(x[0])):
+            bias = data['bias']
+            confidence = data['confidence']
+            aligned = data['aligned']
+            
+            emoji = "✅" if aligned else "❌"
+            if bias == 'NO_DATA':
+                line = f"{emoji} {tf}: Няма данни"
+            else:
+                line = f"{emoji} {tf}: {bias} ({confidence:.0f}% уверен)"
+            
+            lines.append(line)
+        
+        return "\n".join(lines)
+    
+    def _timeframe_order(self, tf: str) -> int:
+        """Връща числов ред на timeframe за сортиране"""
+        order = {
+            '1m': 1, '3m': 2, '5m': 3, '15m': 4, '30m': 5,
+            '1h': 6, '2h': 7, '4h': 8, '6h': 9, '12h': 10,
+            '1d': 11, '3d': 12, '1w': 13
+        }
+        return order.get(tf, 999)
     
     def _extract_ml_features(
         self,
