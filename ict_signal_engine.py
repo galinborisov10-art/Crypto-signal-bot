@@ -118,6 +118,30 @@ except ImportError:
     ML_PREDICTOR_AVAILABLE = False
     logging.warning("MLPredictor not available")
 
+# Fibonacci Analyzer
+try:
+    from fibonacci_analyzer import FibonacciAnalyzer, FibonacciLevel
+    FIBONACCI_AVAILABLE = True
+except ImportError:
+    FIBONACCI_AVAILABLE = False
+    logging.warning("FibonacciAnalyzer not available")
+
+# LuxAlgo Combined Analysis
+try:
+    from luxalgo_ict_analysis import CombinedLuxAlgoAnalysis
+    LUXALGO_COMBINED_AVAILABLE = True
+except ImportError:
+    LUXALGO_COMBINED_AVAILABLE = False
+    logging.warning("CombinedLuxAlgoAnalysis not available")
+
+# Chart Generator
+try:
+    from chart_generator import ChartGenerator
+    CHART_GENERATOR_AVAILABLE = True
+except ImportError:
+    CHART_GENERATOR_AVAILABLE = False
+    logging.warning("ChartGenerator not available")
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -198,6 +222,12 @@ class ICTSignal:
     breaker_blocks: List[Dict] = field(default_factory=list)
     mitigation_blocks: List[Dict] = field(default_factory=list)
     sibi_ssib_zones: List[Dict] = field(default_factory=list)
+    
+    # New Components
+    fibonacci_data: Dict = field(default_factory=dict)
+    luxalgo_sr: Dict = field(default_factory=dict)
+    luxalgo_ict: Dict = field(default_factory=dict)
+    luxalgo_combined: Dict = field(default_factory=dict)
     
     # Market Analysis
     bias: MarketBias = MarketBias.NEUTRAL
@@ -298,6 +328,25 @@ class ICTSignalEngine:
         use_zone_explanations = self.config.get('use_zone_explanations', True)
         self.zone_explainer = ZoneExplainer() if ZONE_EXPLAINER_AVAILABLE and use_zone_explanations else None
         
+        # Initialize Fibonacci Analyzer
+        self.fibonacci_analyzer = FibonacciAnalyzer(
+            retracement_levels=[0.236, 0.382, 0.5, 0.618, 0.786],
+            extension_levels=[1.272, 1.414, 1.618, 2.0, 2.618],
+            ote_range=(0.62, 0.79)
+        ) if FIBONACCI_AVAILABLE else None
+        
+        # Initialize LuxAlgo Combined Analysis
+        self.luxalgo_combined = CombinedLuxAlgoAnalysis(
+            sr_detection_length=15,
+            sr_margin=2.0,
+            ict_swing_length=10,
+            enable_sr=True,
+            enable_ict=True
+        ) if LUXALGO_COMBINED_AVAILABLE else None
+        
+        # Initialize Chart Generator
+        self.chart_generator = ChartGenerator() if CHART_GENERATOR_AVAILABLE else None
+        
         # Initialize cache manager
         use_cache = self.config.get('use_cache', True)
         if CACHE_MANAGER_AVAILABLE and use_cache:
@@ -342,6 +391,9 @@ class ICTSignalEngine:
         logger.info(f"SIBI/SSIB: {SIBI_SSIB_AVAILABLE}")
         logger.info(f"Zone Explainer: {ZONE_EXPLAINER_AVAILABLE}")
         logger.info(f"Cache Manager: {self.cache_manager is not None}")
+        logger.info(f"Fibonacci Analyzer: {FIBONACCI_AVAILABLE}")
+        logger.info(f"LuxAlgo Combined: {LUXALGO_COMBINED_AVAILABLE}")
+        logger.info(f"Chart Generator: {CHART_GENERATOR_AVAILABLE}")
     
     def _get_default_config(self) -> Dict:
         """Get default configuration"""
@@ -608,6 +660,10 @@ class ICTSignalEngine:
             breaker_blocks=[bb.to_dict() for bb in ict_components.get('breaker_blocks', [])],
             mitigation_blocks=[mb.to_dict() for mb in ict_components.get('mitigation_blocks', [])],
             sibi_ssib_zones=[sz.to_dict() for sz in ict_components.get('sibi_ssib_zones', [])],
+            fibonacci_data=ict_components.get('fibonacci_data', {}),
+            luxalgo_sr=ict_components.get('luxalgo_sr', {}),
+            luxalgo_ict=ict_components.get('luxalgo_ict', {}),
+            luxalgo_combined=ict_components.get('luxalgo_combined', {}),
             bias=bias,
             structure_broken=structure_broken,
             displacement_detected=displacement_detected,
@@ -792,6 +848,45 @@ class ICTSignalEngine:
         else:
             components['sibi_ssib_zones'] = []
         
+        # Run LuxAlgo Combined Analysis
+        if self.luxalgo_combined:
+            try:
+                luxalgo_result = self.luxalgo_combined.analyze(df)
+                components['luxalgo_sr'] = luxalgo_result.get('sr_data', {})
+                components['luxalgo_ict'] = luxalgo_result.get('ict_data', {})
+                components['luxalgo_combined'] = luxalgo_result.get('combined_signal', {})
+                
+                logger.info(f"LuxAlgo Combined analysis complete - "
+                           f"S/R zones: {len(components['luxalgo_sr'].get('support_zones', []))} + "
+                           f"{len(components['luxalgo_sr'].get('resistance_zones', []))}, "
+                           f"Entry valid: {luxalgo_result.get('entry_valid', False)}")
+            except Exception as e:
+                logger.error(f"LuxAlgo Combined analysis error: {e}")
+                components['luxalgo_sr'] = {}
+                components['luxalgo_ict'] = {}
+                components['luxalgo_combined'] = {}
+        else:
+            components['luxalgo_sr'] = {}
+            components['luxalgo_ict'] = {}
+            components['luxalgo_combined'] = {}
+        
+        # Run Fibonacci Analysis
+        # Determine bias from existing components
+        bias_str = self._determine_bias_from_components(components)
+        if self.fibonacci_analyzer:
+            try:
+                fibonacci_data = self.fibonacci_analyzer.analyze(df, bias_str, lookback=50)
+                components['fibonacci_data'] = fibonacci_data
+                
+                logger.info(f"Fibonacci analysis complete - "
+                           f"In OTE: {fibonacci_data.get('in_ote_zone', False)}, "
+                           f"Nearest level: {fibonacci_data.get('nearest_level', {}).get('level') if fibonacci_data.get('nearest_level') else None}")
+            except Exception as e:
+                logger.error(f"Fibonacci analysis error: {e}")
+                components['fibonacci_data'] = {}
+        else:
+            components['fibonacci_data'] = {}
+        
         return components
     
     def _analyze_mtf_confluence(
@@ -832,6 +927,37 @@ class ICTSignalEngine:
         except Exception as e:
             logger.error(f"MTF analysis error: {e}")
             return None
+    
+    def _determine_bias_from_components(self, components: Dict) -> str:
+        """
+        Helper to determine bias string from components for Fibonacci analysis
+        
+        Args:
+            components: ICT components dictionary
+            
+        Returns:
+            'BULLISH' or 'BEARISH' string
+        """
+        bullish_count = 0
+        bearish_count = 0
+        
+        # Count bullish/bearish order blocks
+        for ob in components.get('order_blocks', []):
+            ob_type = str(ob.get('type', '')) if isinstance(ob, dict) else str(getattr(ob, 'type', ''))
+            if 'BULLISH' in ob_type.upper():
+                bullish_count += 1
+            elif 'BEARISH' in ob_type.upper():
+                bearish_count += 1
+        
+        # Count FVGs
+        for fvg in components.get('fvgs', []):
+            fvg_type = str(fvg.get('type', '')) if isinstance(fvg, dict) else str(getattr(fvg, 'type', ''))
+            if 'BULLISH' in fvg_type.upper():
+                bullish_count += 1
+            elif 'BEARISH' in fvg_type.upper():
+                bearish_count += 1
+        
+        return 'BULLISH' if bullish_count >= bearish_count else 'BEARISH'
     
     def _determine_market_bias(
         self,
@@ -1236,6 +1362,32 @@ class ICTSignalEngine:
         # Bias penalty
         if bias == MarketBias.NEUTRAL or bias == MarketBias.RANGING:
             confidence *= 0.8
+        
+        # LuxAlgo confidence boost
+        luxalgo_sr = ict_components.get('luxalgo_sr', {})
+        luxalgo_combined = ict_components.get('luxalgo_combined', {})
+        
+        # Check if price near S/R zone (+15%)
+        if luxalgo_sr and (luxalgo_sr.get('support_zones') or luxalgo_sr.get('resistance_zones')):
+            confidence += 15
+            logger.info("✅ LuxAlgo S/R zones present: +15% confidence")
+        
+        # Check entry validation (+10%)
+        if luxalgo_combined.get('entry_valid', False):
+            confidence += 10
+            logger.info("✅ LuxAlgo entry validation passed: +10% confidence")
+        
+        # Check bias alignment (+10%)
+        luxalgo_bias = luxalgo_combined.get('bias', 'neutral')
+        if luxalgo_bias != 'neutral' and luxalgo_bias.upper() == str(bias).split('.')[-1]:
+            confidence += 10
+            logger.info(f"✅ LuxAlgo bias aligned with {bias}: +10% confidence")
+        
+        # Fibonacci OTE zone boost (+10%)
+        fibonacci_data = ict_components.get('fibonacci_data', {})
+        if fibonacci_data.get('in_ote_zone', False):
+            confidence += 10
+            logger.info("✅ Price in Fibonacci OTE zone: +10% confidence")
         
         return min(100, max(0, confidence))
     
