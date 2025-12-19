@@ -4,6 +4,12 @@ admin/admin_password.json
 *.env
 .env
 
+# Security (NEW - v2.0.0)
+.encryption_key
+.bot_token_encrypted
+.bot_token_hash
+.token_backups/
+
 # Python
 __pycache__/
 *.py[cod]
