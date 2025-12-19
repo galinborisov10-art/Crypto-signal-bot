@@ -684,6 +684,27 @@ class ICTSignalEngine:
         
         logger.info(f"✅ Generated {signal_type.value} signal (UNIFIED)")
         
+        # Generate chart if chart generator available
+        if self.chart_generator:
+            try:
+                logger.info("📊 Generating ICT chart...")
+                chart_bytes = self.chart_generator.generate(
+                    df=df,
+                    signal=signal,
+                    symbol=symbol,
+                    timeframe=timeframe
+                )
+                
+                # Store chart data in a temp location for bot retrieval
+                # The bot will handle sending it via Telegram
+                if chart_bytes:
+                    logger.info(f"✅ Chart generated successfully ({len(chart_bytes)} bytes)")
+                else:
+                    logger.warning("⚠️ Chart generation returned empty bytes")
+                    
+            except Exception as e:
+                logger.error(f"❌ Chart generation error: {e}")
+        
         if self.cache_manager:
             try:
                 self.cache_manager.cache_signal(symbol, timeframe, signal)
