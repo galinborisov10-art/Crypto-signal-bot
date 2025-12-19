@@ -1344,6 +1344,351 @@ class ICTSignalEngine:
         
         return entry
     
+    def _calculate_ict_compliant_entry_zone(
+        self,
+        current_price: float,
+        direction: str,  # 'BULLISH' or 'BEARISH'
+        fvg_zones: List,
+        order_blocks: List,
+        sr_levels: Dict
+    ) -> Tuple[Optional[Dict], str]:
+        """
+        Calculate ICT-compliant entry zone based on price structure.
+        
+        CRITICAL RULES:
+        1. BEARISH (SELL): Entry zone MUST be ABOVE current price
+           - Search for: Bearish FVG, Bearish OB, or Resistance level
+           - Zone must be > current_price * 1.005 (at least 0.5% above)
+        
+        2. BULLISH (BUY): Entry zone MUST be BELOW current price
+           - Search for: Bullish FVG, Bullish OB, or Support level
+           - Zone must be < current_price * 0.995 (at least 0.5% below)
+        
+        3. Distance limits:
+           - Minimum: 0.5% from current price
+           - Maximum: 3.0% from current price
+        
+        4. Entry buffer: ±0.2% around zone boundaries
+        
+        Returns:
+            (entry_zone_dict, status)
+            
+            entry_zone_dict structure:
+            {
+                'source': str,  # 'FVG', 'OB', or 'S/R'
+                'low': float,
+                'high': float,
+                'center': float,
+                'quality': int,  # 0-100
+                'distance_pct': float,  # % distance from current price
+                'distance_price': float  # absolute price distance
+            }
+            
+            status codes:
+            - 'VALID_WAIT': Entry zone found, wait for pullback (distance > 1.5%)
+            - 'VALID_NEAR': Entry zone found, price approaching (0.5% - 1.5%)
+            - 'TOO_LATE': Price already passed the entry zone
+            - 'NO_ZONE': No valid entry zone found in acceptable range
+        """
+        min_distance_pct = 0.005  # 0.5%
+        max_distance_pct = 0.030  # 3.0%
+        entry_buffer_pct = 0.002  # 0.2%
+        
+        valid_zones = []
+        
+        # Normalize direction
+        direction_upper = direction.upper() if isinstance(direction, str) else str(direction).upper()
+        is_bearish = 'BEARISH' in direction_upper
+        is_bullish = 'BULLISH' in direction_upper
+        
+        # ==== SEARCH FOR VALID ZONES ====
+        
+        if is_bearish:
+            # BEARISH (SELL): Look for zones ABOVE current price
+            
+            # Check FVG zones
+            for fvg in fvg_zones:
+                fvg_type = str(fvg.get('type', '')) if isinstance(fvg, dict) else str(getattr(fvg, 'type', ''))
+                if 'BEARISH' not in fvg_type.upper():
+                    continue
+                
+                # Get FVG boundaries
+                if isinstance(fvg, dict):
+                    fvg_low = fvg.get('bottom', fvg.get('low', 0))
+                    fvg_high = fvg.get('top', fvg.get('high', 0))
+                else:
+                    fvg_low = getattr(fvg, 'bottom', getattr(fvg, 'low', 0))
+                    fvg_high = getattr(fvg, 'top', getattr(fvg, 'high', 0))
+                
+                if not fvg_low or not fvg_high:
+                    continue
+                
+                # Check if FVG is ABOVE current price (min distance)
+                if fvg_low > current_price * (1 + min_distance_pct):
+                    distance_pct = (fvg_low - current_price) / current_price
+                    
+                    # Check max distance
+                    if distance_pct <= max_distance_pct:
+                        # Get quality
+                        quality = fvg.get('strength', 70) if isinstance(fvg, dict) else getattr(fvg, 'strength', 70)
+                        if not isinstance(quality, (int, float)):
+                            quality = 70
+                        
+                        valid_zones.append({
+                            'source': 'FVG',
+                            'low': fvg_low,
+                            'high': fvg_high,
+                            'quality': quality,
+                            'distance_pct': distance_pct,
+                            'distance_price': fvg_low - current_price
+                        })
+            
+            # Check Order Blocks
+            for ob in order_blocks:
+                ob_type = str(ob.get('type', '')) if isinstance(ob, dict) else str(getattr(ob, 'type', ''))
+                if 'BEARISH' not in ob_type.upper():
+                    continue
+                
+                # Get OB boundaries
+                if isinstance(ob, dict):
+                    ob_low = ob.get('zone_low', ob.get('bottom', 0))
+                    ob_high = ob.get('zone_high', ob.get('top', 0))
+                else:
+                    ob_low = getattr(ob, 'zone_low', getattr(ob, 'bottom', 0))
+                    ob_high = getattr(ob, 'zone_high', getattr(ob, 'top', 0))
+                
+                if not ob_low or not ob_high:
+                    continue
+                
+                # Check if OB is ABOVE current price
+                if ob_low > current_price * (1 + min_distance_pct):
+                    distance_pct = (ob_low - current_price) / current_price
+                    
+                    if distance_pct <= max_distance_pct:
+                        quality = ob.get('strength', 75) if isinstance(ob, dict) else getattr(ob, 'strength', 75)
+                        if not isinstance(quality, (int, float)):
+                            quality = 75
+                        
+                        valid_zones.append({
+                            'source': 'OB',
+                            'low': ob_low,
+                            'high': ob_high,
+                            'quality': quality,
+                            'distance_pct': distance_pct,
+                            'distance_price': ob_low - current_price
+                        })
+            
+            # Check Resistance levels
+            resistance_zones = sr_levels.get('resistance_zones', []) if isinstance(sr_levels, dict) else []
+            for res in resistance_zones:
+                res_price = res.get('price', res.get('price_level', 0)) if isinstance(res, dict) else getattr(res, 'price', 0)
+                
+                if not res_price:
+                    continue
+                
+                # Resistance must be ABOVE current price
+                if res_price > current_price * (1 + min_distance_pct):
+                    distance_pct = (res_price - current_price) / current_price
+                    
+                    if distance_pct <= max_distance_pct:
+                        quality = res.get('strength', 60) if isinstance(res, dict) else getattr(res, 'strength', 60)
+                        if not isinstance(quality, (int, float)):
+                            quality = 60
+                        
+                        # Create zone with small buffer around resistance
+                        zone_width = res_price * 0.002  # 0.2% width
+                        valid_zones.append({
+                            'source': 'S/R',
+                            'low': res_price - zone_width,
+                            'high': res_price + zone_width,
+                            'quality': quality,
+                            'distance_pct': distance_pct,
+                            'distance_price': res_price - current_price
+                        })
+        
+        elif is_bullish:
+            # BULLISH (BUY): Look for zones BELOW current price
+            
+            # Check FVG zones
+            for fvg in fvg_zones:
+                fvg_type = str(fvg.get('type', '')) if isinstance(fvg, dict) else str(getattr(fvg, 'type', ''))
+                if 'BULLISH' not in fvg_type.upper():
+                    continue
+                
+                # Get FVG boundaries
+                if isinstance(fvg, dict):
+                    fvg_low = fvg.get('bottom', fvg.get('low', 0))
+                    fvg_high = fvg.get('top', fvg.get('high', 0))
+                else:
+                    fvg_low = getattr(fvg, 'bottom', getattr(fvg, 'low', 0))
+                    fvg_high = getattr(fvg, 'top', getattr(fvg, 'high', 0))
+                
+                if not fvg_low or not fvg_high:
+                    continue
+                
+                # Check if FVG is BELOW current price (min distance)
+                if fvg_high < current_price * (1 - min_distance_pct):
+                    distance_pct = (current_price - fvg_high) / current_price
+                    
+                    if distance_pct <= max_distance_pct:
+                        quality = fvg.get('strength', 70) if isinstance(fvg, dict) else getattr(fvg, 'strength', 70)
+                        if not isinstance(quality, (int, float)):
+                            quality = 70
+                        
+                        valid_zones.append({
+                            'source': 'FVG',
+                            'low': fvg_low,
+                            'high': fvg_high,
+                            'quality': quality,
+                            'distance_pct': distance_pct,
+                            'distance_price': current_price - fvg_high
+                        })
+            
+            # Check Order Blocks
+            for ob in order_blocks:
+                ob_type = str(ob.get('type', '')) if isinstance(ob, dict) else str(getattr(ob, 'type', ''))
+                if 'BULLISH' not in ob_type.upper():
+                    continue
+                
+                # Get OB boundaries
+                if isinstance(ob, dict):
+                    ob_low = ob.get('zone_low', ob.get('bottom', 0))
+                    ob_high = ob.get('zone_high', ob.get('top', 0))
+                else:
+                    ob_low = getattr(ob, 'zone_low', getattr(ob, 'bottom', 0))
+                    ob_high = getattr(ob, 'zone_high', getattr(ob, 'top', 0))
+                
+                if not ob_low or not ob_high:
+                    continue
+                
+                # Check if OB is BELOW current price
+                if ob_high < current_price * (1 - min_distance_pct):
+                    distance_pct = (current_price - ob_high) / current_price
+                    
+                    if distance_pct <= max_distance_pct:
+                        quality = ob.get('strength', 75) if isinstance(ob, dict) else getattr(ob, 'strength', 75)
+                        if not isinstance(quality, (int, float)):
+                            quality = 75
+                        
+                        valid_zones.append({
+                            'source': 'OB',
+                            'low': ob_low,
+                            'high': ob_high,
+                            'quality': quality,
+                            'distance_pct': distance_pct,
+                            'distance_price': current_price - ob_high
+                        })
+            
+            # Check Support levels
+            support_zones = sr_levels.get('support_zones', []) if isinstance(sr_levels, dict) else []
+            for sup in support_zones:
+                sup_price = sup.get('price', sup.get('price_level', 0)) if isinstance(sup, dict) else getattr(sup, 'price', 0)
+                
+                if not sup_price:
+                    continue
+                
+                # Support must be BELOW current price
+                if sup_price < current_price * (1 - min_distance_pct):
+                    distance_pct = (current_price - sup_price) / current_price
+                    
+                    if distance_pct <= max_distance_pct:
+                        quality = sup.get('strength', 60) if isinstance(sup, dict) else getattr(sup, 'strength', 60)
+                        if not isinstance(quality, (int, float)):
+                            quality = 60
+                        
+                        # Create zone with small buffer around support
+                        zone_width = sup_price * 0.002  # 0.2% width
+                        valid_zones.append({
+                            'source': 'S/R',
+                            'low': sup_price - zone_width,
+                            'high': sup_price + zone_width,
+                            'quality': quality,
+                            'distance_pct': distance_pct,
+                            'distance_price': current_price - sup_price
+                        })
+        
+        # ==== EVALUATE ZONES ====
+        
+        if not valid_zones:
+            # Check if there are zones in the WRONG direction (price already passed)
+            zones_behind = []
+            
+            if is_bearish:
+                # Check for bearish zones BELOW current price (too late)
+                for fvg in fvg_zones:
+                    fvg_type = str(fvg.get('type', '')) if isinstance(fvg, dict) else str(getattr(fvg, 'type', ''))
+                    if 'BEARISH' in fvg_type.upper():
+                        fvg_high = fvg.get('top', fvg.get('high', 0)) if isinstance(fvg, dict) else getattr(fvg, 'top', getattr(fvg, 'high', 0))
+                        if fvg_high and fvg_high < current_price:
+                            zones_behind.append(fvg)
+                
+                for ob in order_blocks:
+                    ob_type = str(ob.get('type', '')) if isinstance(ob, dict) else str(getattr(ob, 'type', ''))
+                    if 'BEARISH' in ob_type.upper():
+                        ob_high = ob.get('zone_high', ob.get('top', 0)) if isinstance(ob, dict) else getattr(ob, 'zone_high', getattr(ob, 'top', 0))
+                        if ob_high and ob_high < current_price:
+                            zones_behind.append(ob)
+            
+            elif is_bullish:
+                # Check for bullish zones ABOVE current price (too late)
+                for fvg in fvg_zones:
+                    fvg_type = str(fvg.get('type', '')) if isinstance(fvg, dict) else str(getattr(fvg, 'type', ''))
+                    if 'BULLISH' in fvg_type.upper():
+                        fvg_low = fvg.get('bottom', fvg.get('low', 0)) if isinstance(fvg, dict) else getattr(fvg, 'bottom', getattr(fvg, 'low', 0))
+                        if fvg_low and fvg_low > current_price:
+                            zones_behind.append(fvg)
+                
+                for ob in order_blocks:
+                    ob_type = str(ob.get('type', '')) if isinstance(ob, dict) else str(getattr(ob, 'type', ''))
+                    if 'BULLISH' in ob_type.upper():
+                        ob_low = ob.get('zone_low', ob.get('bottom', 0)) if isinstance(ob, dict) else getattr(ob, 'zone_low', getattr(ob, 'bottom', 0))
+                        if ob_low and ob_low > current_price:
+                            zones_behind.append(ob)
+            
+            if zones_behind:
+                logger.warning(f"❌ Entry zones exist but price already passed them (TOO_LATE)")
+                return None, 'TOO_LATE'
+            else:
+                logger.warning(f"❌ No valid entry zones found in acceptable range (NO_ZONE)")
+                return None, 'NO_ZONE'
+        
+        # ==== SELECT BEST ZONE ====
+        
+        # Priority: quality * (1 - distance_pct * 10)
+        # Prefer closer zones with high quality
+        for zone in valid_zones:
+            zone['priority'] = zone['quality'] * (1 - zone['distance_pct'] * 10)
+        
+        best_zone = max(valid_zones, key=lambda z: z['priority'])
+        
+        # ==== BUILD ENTRY ZONE DICT ====
+        
+        entry_zone = {
+            'source': best_zone['source'],
+            'low': best_zone['low'] * (1 - entry_buffer_pct),
+            'high': best_zone['high'] * (1 + entry_buffer_pct),
+            'center': (best_zone['low'] + best_zone['high']) / 2,
+            'quality': int(best_zone['quality']),
+            'distance_pct': best_zone['distance_pct'] * 100,  # Convert to percentage
+            'distance_price': best_zone['distance_price']
+        }
+        
+        # ==== DETERMINE STATUS ====
+        
+        distance_pct = best_zone['distance_pct']
+        
+        if distance_pct > 0.015:  # > 1.5%
+            status = 'VALID_WAIT'
+            logger.info(f"✅ Entry zone found: {entry_zone['source']} at ${entry_zone['center']:.2f} ({entry_zone['distance_pct']:.1f}% away) - WAIT for pullback")
+        elif distance_pct >= 0.005:  # 0.5% - 1.5%
+            status = 'VALID_NEAR'
+            logger.info(f"✅ Entry zone found: {entry_zone['source']} at ${entry_zone['center']:.2f} ({entry_zone['distance_pct']:.1f}% away) - Price APPROACHING")
+        else:
+            # Too close, should have been caught earlier but safety check
+            status = 'TOO_LATE'
+            logger.warning(f"⚠️ Entry zone too close: {entry_zone['distance_pct']:.1f}%")
+        
+        return entry_zone, status
 
     def _calculate_tp_prices(self, entry_price: float, sl_price: float, bias, ict_components: dict) -> list:
         """Calculate TP levels with 1:2, 1:3, 1:5 RR"""
