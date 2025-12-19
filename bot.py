@@ -198,9 +198,30 @@ except ImportError as e:
     FEATURE_FLAGS = {'use_ict_enhancer': False}
     ict_enhancer = None
 
+# ================= SECURITY MODULES (NEW - v2.0.0) =================
+try:
+    from security.token_manager import get_secure_token, token_manager
+    from security.rate_limiter import check_rate_limit, rate_limiter
+    from security.auth import require_auth, require_admin, auth_manager
+    from security.security_monitor import log_security_event, security_monitor
+    from version import get_version_string, get_full_version_info
+    SECURITY_MODULES_AVAILABLE = True
+    logger.info("✅ Security Modules loaded (v2.0.0)")
+except ImportError as e:
+    SECURITY_MODULES_AVAILABLE = False
+    logger.warning(f"⚠️ Security Modules not available: {e}")
+
 # ================= НАСТРОЙКИ (от .env файл) =================
-# Зареди от environment variables
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+# Зареди от environment variables - use secure token manager if available
+if SECURITY_MODULES_AVAILABLE:
+    TELEGRAM_BOT_TOKEN = get_secure_token()
+    if not TELEGRAM_BOT_TOKEN:
+        logger.error("❌ Failed to get bot token from SecureTokenManager!")
+        logger.info("💡 Falling back to environment variable...")
+        TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+else:
+    TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
 OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '7003238836'))
 
 # ================= USER ACCESS CONTROL =================
@@ -3807,6 +3828,43 @@ def calculate_tp_probability(analysis, tp_price, signal):
         return 50.0  # По подразбиране
 
 
+# ================= SECURITY DECORATORS =================
+
+def rate_limited(func):
+    """
+    Decorator to enforce rate limiting
+    
+    Usage:
+        @rate_limited
+        async def my_command(update, context):
+            ...
+    """
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not SECURITY_MODULES_AVAILABLE:
+            return await func(update, context)
+        
+        user_id = update.effective_user.id
+        
+        if not check_rate_limit(user_id):
+            ban_time = rate_limiter.get_ban_time_remaining(user_id)
+            if ban_time > 0:
+                minutes = ban_time // 60
+                await update.message.reply_text(
+                    f"🚫 You are temporarily banned for {minutes} minutes.\n"
+                    f"Reason: Rate limit violations"
+                )
+            else:
+                await update.message.reply_text(
+                    "⚠️ Rate limit exceeded. Please try again later."
+                )
+            log_security_event("RATE_LIMIT_EXCEEDED", user_id, func.__name__)
+            return
+        
+        return await func(update, context)
+    
+    return wrapper
+
+
 # ================= КОМАНДИ =================
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4075,42 +4133,62 @@ ORDER_BLOCKS_GUIDE.md
 
 
 async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показва текущата версия на бота"""
+    """Показва текущата версия на бота с пълна информация"""
     try:
-        # Read VERSION file from BASE_PATH
-        version = "2.0"  # Default
-        version_file = os.path.join(BASE_PATH, 'VERSION')
-        try:
-            with open(version_file, 'r') as f:
-                version = f.read().strip()
-        except FileNotFoundError:
-            pass
-        
-        # Read deployment info from BASE_PATH
-        deployment_info = {}
-        deployment_file = os.path.join(BASE_PATH, '.deployment-info')
-        try:
-            if os.path.exists(deployment_file):
-                with open(deployment_file, 'r') as f:
-                    deployment_info = json.load(f)
-        except Exception:
-            pass
-        
-        # Get python-telegram-bot version
-        import telegram
-        ptb_version = telegram.__version__
-        
-        # Get Python version (sys is already imported at the top)
-        python_version = sys.version.split()[0]
-        
-        # Calculate bot uptime
-        uptime = datetime.now(timezone.utc) - BOT_START_TIME
-        uptime_str = str(uptime).split('.')[0]  # Remove microseconds
-        
-        # Format bot start time (already in UTC)
-        bot_start_utc = BOT_START_TIME.strftime('%Y-%m-%d %H:%M:%S UTC')
-        
-        message = f"""
+        # Use new version module if available
+        if SECURITY_MODULES_AVAILABLE:
+            version_info = get_full_version_info()
+            
+            # Add runtime information
+            import telegram
+            ptb_version = telegram.__version__
+            python_version = sys.version.split()[0]
+            
+            # Calculate bot uptime
+            uptime = datetime.now(timezone.utc) - BOT_START_TIME
+            uptime_str = str(uptime).split('.')[0]  # Remove microseconds
+            bot_start_utc = BOT_START_TIME.strftime('%Y-%m-%d %H:%M:%S UTC')
+            
+            runtime_info = f"\n\n**Runtime Info:**\n"
+            runtime_info += f"• Python: {python_version}\n"
+            runtime_info += f"• python-telegram-bot: {ptb_version}\n"
+            runtime_info += f"• Started: {bot_start_utc}\n"
+            runtime_info += f"• Uptime: {uptime_str}\n"
+            
+            # Read deployment info
+            deployment_info = {}
+            deployment_file = os.path.join(BASE_PATH, '.deployment-info')
+            try:
+                if os.path.exists(deployment_file):
+                    with open(deployment_file, 'r') as f:
+                        deployment_info = json.load(f)
+                        runtime_info += f"\n**Deployment:**\n"
+                        runtime_info += f"• Last Deploy: {deployment_info.get('last_deployed', 'N/A')}\n"
+                        runtime_info += f"• Commit: {deployment_info.get('commit_sha', 'N/A')[:8]}\n"
+            except Exception:
+                pass
+            
+            full_message = version_info + runtime_info
+            await update.message.reply_text(full_message, parse_mode='Markdown')
+        else:
+            # Fallback to old version display
+            version = "2.0"  # Default
+            version_file = os.path.join(BASE_PATH, 'VERSION')
+            try:
+                with open(version_file, 'r') as f:
+                    version = f.read().strip()
+            except FileNotFoundError:
+                pass
+            
+            import telegram
+            ptb_version = telegram.__version__
+            python_version = sys.version.split()[0]
+            
+            uptime = datetime.now(timezone.utc) - BOT_START_TIME
+            uptime_str = str(uptime).split('.')[0]
+            bot_start_utc = BOT_START_TIME.strftime('%Y-%m-%d %H:%M:%S UTC')
+            
+            message = f"""
 🤖 <b>CRYPTO SIGNAL BOT - VERSION INFO</b>
 
 📦 <b>Bot Version:</b> v{version}
@@ -4120,22 +4198,9 @@ async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ⏰ <b>Bot Process Started:</b> {bot_start_utc}
 ⏱️ <b>Uptime:</b> {uptime_str}
 
-"""
-        
-        if deployment_info:
-            message += f"""
-📊 <b>Deployment Info:</b>
-🕐 <b>Last Deploy:</b> {deployment_info.get('last_deployed', 'N/A')}
-🔖 <b>Commit SHA:</b> {deployment_info.get('commit_sha', 'N/A')}
-🚀 <b>Deployed From:</b> {deployment_info.get('deployed_from', 'N/A')}
-"""
-        
-        message += f"""
 ✅ <b>Status:</b> Operational
-🔄 <b>Auto-Deploy:</b> Active (Daily at 04:00 BG time)
 """
-        
-        await update.message.reply_text(message, parse_mode='HTML')
+            await update.message.reply_text(message, parse_mode='HTML')
         
     except Exception as e:
         logger.error(f"Error in version_cmd: {e}")
@@ -4992,6 +5057,7 @@ async def analyze_market_sentiment(market_data):
         return {'sentiment': 'NEUTRAL', 'emoji': '➡️', 'score': 50, 'description': 'Неизвестно'}
 
 
+@rate_limited
 async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Дневен анализ за всички интегрирани валути с новини и sentiment"""
     logger.info(f"User {update.effective_user.id} executed /market")
@@ -5229,6 +5295,7 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+@rate_limited
 async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Анализ и сигнал в реално време"""
     logger.info(f"User {update.effective_user.id} executed /signal with args: {context.args}")
@@ -5772,6 +5839,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@rate_limited
 async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     🎯 ICT Complete Analysis Command
@@ -6036,6 +6104,7 @@ def format_ict_signal(signal: ICTSignal) -> str:
     return msg
 
 
+@rate_limited
 async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Последни новини от крипто света - Топ надеждни източници"""
     logger.info(f"User {update.effective_user.id} executed /news")
@@ -9060,6 +9129,147 @@ async def admin_docs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+# ================= NEW SECURITY ADMIN COMMANDS (v2.0.0) =================
+
+async def admin_blacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Blacklist a user (Admin only)"""
+    if not SECURITY_MODULES_AVAILABLE:
+        await update.message.reply_text("❌ Security modules not available")
+        return
+    
+    # Use new auth manager
+    if not auth_manager.is_admin(update.effective_user.id):
+        await update.message.reply_text("🚫 This command requires admin privileges.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "**Usage:** /blacklist USER_ID [REASON]\n\n"
+            "**Example:** /blacklist 123456789 Spam\n\n"
+            "Get user ID from Telegram or from security logs.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        reason = ' '.join(context.args[1:]) if len(context.args) > 1 else "Admin decision"
+        
+        auth_manager.blacklist_user(user_id, reason)
+        log_security_event("USER_BLACKLISTED", user_id, f"By admin {update.effective_user.id}, reason: {reason}")
+        
+        await update.message.reply_text(
+            f"✅ **User {user_id} blacklisted**\n\n"
+            f"**Reason:** {reason}\n\n"
+            f"This user can no longer use the bot.",
+            parse_mode='Markdown'
+        )
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID. Must be a number.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
+async def admin_unblacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove user from blacklist (Admin only)"""
+    if not SECURITY_MODULES_AVAILABLE:
+        await update.message.reply_text("❌ Security modules not available")
+        return
+    
+    if not auth_manager.is_admin(update.effective_user.id):
+        await update.message.reply_text("🚫 This command requires admin privileges.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "**Usage:** /unblacklist USER_ID\n\n"
+            "**Example:** /unblacklist 123456789",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        
+        auth_manager.unblacklist_user(user_id)
+        log_security_event("USER_UNBLACKLISTED", user_id, f"By admin {update.effective_user.id}")
+        
+        await update.message.reply_text(
+            f"✅ **User {user_id} removed from blacklist**\n\n"
+            f"This user can now use the bot again.",
+            parse_mode='Markdown'
+        )
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID. Must be a number.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
+async def admin_security_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show security statistics (Admin only)"""
+    if not SECURITY_MODULES_AVAILABLE:
+        await update.message.reply_text("❌ Security modules not available")
+        return
+    
+    if not auth_manager.is_admin(update.effective_user.id):
+        await update.message.reply_text("🚫 This command requires admin privileges.")
+        return
+    
+    try:
+        # Get security report
+        report = security_monitor.get_security_report()
+        
+        # Get auth stats
+        auth_stats = auth_manager.get_auth_stats()
+        
+        # Combine into full report
+        full_report = report + "\n\n"
+        full_report += "**Authentication Stats:**\n"
+        full_report += f"• Admins: {auth_stats['total_admins']}\n"
+        full_report += f"• Blacklisted: {auth_stats['total_blacklisted']}\n"
+        full_report += f"• Whitelisted: {auth_stats['total_whitelisted']}\n"
+        full_report += f"• Whitelist Mode: {'ON' if auth_stats['whitelist_mode'] else 'OFF'}\n"
+        
+        await update.message.reply_text(full_report, parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
+async def admin_unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Unban a rate-limited user (Admin only)"""
+    if not SECURITY_MODULES_AVAILABLE:
+        await update.message.reply_text("❌ Security modules not available")
+        return
+    
+    if not auth_manager.is_admin(update.effective_user.id):
+        await update.message.reply_text("🚫 This command requires admin privileges.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "**Usage:** /unban USER_ID\n\n"
+            "**Example:** /unban 123456789",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        
+        rate_limiter.unban_user(user_id)
+        log_security_event("USER_UNBANNED", user_id, f"By admin {update.effective_user.id}")
+        
+        await update.message.reply_text(
+            f"✅ **User {user_id} unbanned**\n\n"
+            f"Rate limit ban has been lifted.",
+            parse_mode='Markdown'
+        )
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID. Must be a number.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
 # ================= АВТОМАТИЧНО ИЗПРАЩАНЕ НА ОТЧЕТИ =================
 
 async def send_auto_news(bot):
@@ -9976,6 +10186,7 @@ async def backtest_results_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
     
     await message.reply_text(text, parse_mode='HTML')
 
+@rate_limited
 async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Изпълнява ICT back-test на стратегията
@@ -11204,6 +11415,14 @@ def main():
     app.add_handler(CommandHandler("admin_weekly", admin_weekly_cmd))
     app.add_handler(CommandHandler("admin_monthly", admin_monthly_cmd))
     app.add_handler(CommandHandler("admin_docs", admin_docs_cmd))
+    
+    # Security Admin Commands (NEW - v2.0.0)
+    if SECURITY_MODULES_AVAILABLE:
+        app.add_handler(CommandHandler("blacklist", admin_blacklist_cmd))  # 🚫 Blacklist user
+        app.add_handler(CommandHandler("unblacklist", admin_unblacklist_cmd))  # ✅ Remove from blacklist
+        app.add_handler(CommandHandler("security_stats", admin_security_stats_cmd))  # 🔒 Security statistics
+        app.add_handler(CommandHandler("unban", admin_unban_cmd))  # 🔓 Unban rate-limited user
+    
     app.add_handler(CommandHandler("update", auto_update_cmd))  # 🔄 Обновяване на бота от GitHub (БЕЗ ПАРОЛА)
     app.add_handler(CommandHandler("auto_update", auto_update_cmd))  # 🔄 Auto-update от GitHub (същата функция)
     app.add_handler(CommandHandler("test", test_system_cmd))  # Тест и автоматично отстраняване на грешки
