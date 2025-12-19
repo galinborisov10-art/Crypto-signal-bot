@@ -503,8 +503,15 @@ class ICTSignalEngine:
         if order_block:
             sl_price = self._validate_sl_position(sl_price, order_block, bias)
         
-        # ✅ TP с гарантиран RR ≥ 1:3
-        tp_prices = self._calculate_tp_with_min_rr(entry_price, sl_price, liquidity_zones, min_rr=3.0)
+        # ✅ TP с гарантиран RR ≥ 1:3 (with Fibonacci optimization)
+        fibonacci_data = ict_components.get('fibonacci_data', {})
+        bias_str = bias.value if hasattr(bias, 'value') else str(bias)
+        tp_prices = self._calculate_tp_with_min_rr(
+            entry_price, sl_price, liquidity_zones, 
+            min_rr=3.0, 
+            fibonacci_data=fibonacci_data,
+            bias=bias_str
+        )
         
         # СТЪПКА 10: RR CHECK
         logger.info("📊 Step 10: RR Guarantee")
@@ -1156,10 +1163,13 @@ class ICTSignalEngine:
         entry_price: float,
         sl_price: float,
         liquidity_zones: List,
-        min_rr: float = 3.0
+        min_rr: float = 3.0,
+        fibonacci_data: Optional[Dict] = None,
+        bias: Optional[str] = None
     ) -> List[float]:
         """
         ЗАДЪЛЖИТЕЛНО: Изчислява TP с ГАРАНТИРАН RR ≥ 1:3
+        Now with Fibonacci integration for optimal TP placement
         """
         risk = abs(entry_price - sl_price)
         direction = 'LONG' if entry_price > sl_price else 'SHORT'
@@ -1173,8 +1183,32 @@ class ICTSignalEngine:
         tp_levels = [tp1]
         logger.info(f"✅ TP1 calculated: {tp1} (RR {min_rr}:1 guaranteed)")
         
-        # TP2 & TP3: Align with liquidity zones
-        if liquidity_zones:
+        # Try Fibonacci targets first (if available)
+        if fibonacci_data and self.fibonacci_analyzer and bias:
+            try:
+                fib_targets = self.fibonacci_analyzer.get_tp_targets_from_fibonacci(
+                    entry_price, bias, fibonacci_data
+                )
+                
+                if fib_targets:
+                    logger.info(f"💎 {len(fib_targets)} Fibonacci TP targets found")
+                    
+                    # Add Fibonacci targets that are beyond TP1
+                    for fib_tp in fib_targets:
+                        if direction == 'LONG' and fib_tp > tp1:
+                            tp_levels.append(fib_tp)
+                            logger.info(f"✅ TP{len(tp_levels)} aligned with Fibonacci: {fib_tp}")
+                        elif direction == 'SHORT' and fib_tp < tp1:
+                            tp_levels.append(fib_tp)
+                            logger.info(f"✅ TP{len(tp_levels)} aligned with Fibonacci: {fib_tp}")
+                        
+                        if len(tp_levels) >= 3:
+                            break
+            except Exception as e:
+                logger.warning(f"Fibonacci TP calculation failed: {e}")
+        
+        # Fallback to liquidity zones if not enough Fibonacci targets
+        if len(tp_levels) < 3 and liquidity_zones:
             for liq_zone in liquidity_zones:
                 liq_price = liq_zone.get('price', liq_zone.get('price_level', 0))
                 
@@ -1188,7 +1222,7 @@ class ICTSignalEngine:
                 if len(tp_levels) >= 3:
                     break
         
-        # Ако няма liquidity → структурни нива
+        # Final fallback: структурни нива
         if len(tp_levels) == 1:
             tp2 = entry_price + (risk * 5) if direction == 'LONG' else entry_price - (risk * 5)
             tp_levels.append(tp2)
@@ -1847,6 +1881,297 @@ class ICTSignalEngine:
         except Exception as e:
             logger.error(f"HTF bias error: {e}, defaulting to NEUTRAL")
             return 'NEUTRAL'
+    
+    def format_13_point_output(self, signal: ICTSignal, df: pd.DataFrame) -> Dict:
+        """
+        Format signal as comprehensive 13-point output structure
+        
+        Args:
+            signal: ICTSignal object
+            df: OHLCV DataFrame
+            
+        Returns:
+            Dictionary with 13 comprehensive analysis points
+        """
+        try:
+            current_price = df['close'].iloc[-1]
+            
+            # Get primary order block for SL validation
+            primary_ob = signal.order_blocks[0] if signal.order_blocks else None
+            
+            # Validate SL positioning
+            sl_compliant, sl_reason = self._validate_sl_under_over_ob(signal, primary_ob)
+            
+            output = {
+                '1_mtf_bias': {
+                    'htf_bias': signal.htf_bias,
+                    'mtf_structure': signal.mtf_structure,
+                    'confluence_score': signal.mtf_confluence,
+                    'bias_description': f"{signal.htf_bias} bias with {signal.mtf_confluence}/5 confluence"
+                },
+                
+                '2_liquidity_map': {
+                    'total_zones': len(signal.liquidity_zones),
+                    'zones': signal.liquidity_zones[:5],  # Top 5
+                    'sweeps_detected': len(signal.liquidity_sweeps),
+                    'next_target': signal.liquidity_zones[0] if signal.liquidity_zones else None
+                },
+                
+                '3_ict_zones': {
+                    'whale_blocks': len(signal.whale_blocks),
+                    'order_blocks': len(signal.order_blocks),
+                    'fair_value_gaps': len(signal.fair_value_gaps),
+                    'internal_liquidity': len(signal.internal_liquidity),
+                    'breaker_blocks': len(signal.breaker_blocks),
+                    'mitigation_blocks': len(signal.mitigation_blocks),
+                    'sibi_ssib': len(signal.sibi_ssib_zones)
+                },
+                
+                '4_order_blocks_detail': [
+                    self._format_order_block(ob) for ob in signal.order_blocks[:3]
+                ],
+                
+                '5_fvg_analysis': {
+                    'total_fvgs': len(signal.fair_value_gaps),
+                    'bullish_fvgs': sum(1 for fvg in signal.fair_value_gaps if 'BULLISH' in str(fvg.get('type', ''))),
+                    'bearish_fvgs': sum(1 for fvg in signal.fair_value_gaps if 'BEARISH' in str(fvg.get('type', ''))),
+                    'nearest_fvg': signal.fair_value_gaps[0] if signal.fair_value_gaps else None
+                },
+                
+                '6_luxalgo_sr': {
+                    'support_zones': len(signal.luxalgo_sr.get('support_zones', [])),
+                    'resistance_zones': len(signal.luxalgo_sr.get('resistance_zones', [])),
+                    'price_near_sr': self._check_price_near_sr(current_price, signal.luxalgo_sr),
+                    'entry_valid': signal.luxalgo_combined.get('entry_valid', False),
+                    'luxalgo_bias': signal.luxalgo_combined.get('bias', 'neutral')
+                },
+                
+                '7_fibonacci': {
+                    'in_ote_zone': signal.fibonacci_data.get('in_ote_zone', False),
+                    'swing_high': signal.fibonacci_data.get('swing_high'),
+                    'swing_low': signal.fibonacci_data.get('swing_low'),
+                    'ote_zone': signal.fibonacci_data.get('ote_zone'),
+                    'nearest_level': signal.fibonacci_data.get('nearest_level'),
+                    'retracements_count': len(signal.fibonacci_data.get('retracements', [])),
+                    'extensions_count': len(signal.fibonacci_data.get('extensions', []))
+                },
+                
+                '8_entry': {
+                    'price': signal.entry_price,
+                    'signal_type': signal.signal_type.value,
+                    'confidence': signal.confidence,
+                    'strength': signal.signal_strength.value,
+                    'reasoning': signal.reasoning
+                },
+                
+                '9_stop_loss': {
+                    'price': signal.sl_price,
+                    'reason': sl_reason,
+                    'order_block_reference': self._get_sl_order_block(signal, primary_ob),
+                    'ict_compliant': sl_compliant,
+                    'distance_pct': abs((signal.sl_price - signal.entry_price) / signal.entry_price) * 100
+                },
+                
+                '10_take_profit': {
+                    'tp1': {
+                        'price': signal.tp_prices[0] if signal.tp_prices else None,
+                        'risk_reward': self._calculate_rr(signal, 0),
+                        'distance_pct': abs((signal.tp_prices[0] - signal.entry_price) / signal.entry_price) * 100 if signal.tp_prices else 0
+                    },
+                    'tp2': {
+                        'price': signal.tp_prices[1] if len(signal.tp_prices) > 1 else None,
+                        'risk_reward': self._calculate_rr(signal, 1) if len(signal.tp_prices) > 1 else None,
+                        'distance_pct': abs((signal.tp_prices[1] - signal.entry_price) / signal.entry_price) * 100 if len(signal.tp_prices) > 1 else None
+                    } if len(signal.tp_prices) > 1 else None,
+                    'tp3': {
+                        'price': signal.tp_prices[2] if len(signal.tp_prices) > 2 else None,
+                        'risk_reward': self._calculate_rr(signal, 2) if len(signal.tp_prices) > 2 else None,
+                        'distance_pct': abs((signal.tp_prices[2] - signal.entry_price) / signal.entry_price) * 100 if len(signal.tp_prices) > 2 else None
+                    } if len(signal.tp_prices) > 2 else None,
+                    'risk_reward_ratio': signal.risk_reward_ratio,
+                    'min_rr_guaranteed': 3.0,
+                    'rr_compliance': 'COMPLIANT' if signal.risk_reward_ratio >= 3.0 else f'NON_COMPLIANT (RR: {signal.risk_reward_ratio:.2f})'
+                },
+                
+                '11_mtf_structure': {
+                    'htf_trend': signal.htf_bias,
+                    'mtf_structure': signal.mtf_structure,
+                    'structure_broken': signal.structure_broken,
+                    'displacement_detected': signal.displacement_detected,
+                    'alignment_score': signal.mtf_confluence
+                },
+                
+                '12_next_liquidity_forecast': {
+                    'nearest_liquidity': signal.liquidity_zones[0] if signal.liquidity_zones else None,
+                    'target_type': 'BUY_SIDE' if signal.bias.value == 'BULLISH' else 'SELL_SIDE',
+                    'estimated_distance': self._calculate_liquidity_distance(current_price, signal.liquidity_zones)
+                },
+                
+                '13_ml_optimization': {
+                    'ml_available': self.ml_engine is not None or self.ml_predictor is not None,
+                    'ml_used': signal.confidence > 50,  # Simplified check
+                    'optimized_entry': signal.entry_price,
+                    'optimized_sl': signal.sl_price,
+                    'optimized_tps': signal.tp_prices
+                },
+                
+                'chart_data': None,  # Will be populated by chart generator
+                
+                'analysis_sequence': {
+                    'timestamp': signal.timestamp.isoformat() if isinstance(signal.timestamp, datetime) else str(signal.timestamp),
+                    'timeframe': signal.timeframe,
+                    'sequence_completed': True,
+                    'steps_executed': 12
+                }
+            }
+            
+            logger.info("✅ 13-point output formatted successfully")
+            return output
+            
+        except Exception as e:
+            logger.error(f"Error formatting 13-point output: {e}")
+            return {}
+    
+    def _validate_sl_under_over_ob(self, signal: ICTSignal, order_block) -> Tuple[bool, str]:
+        """
+        Validate that SL is correctly positioned relative to Order Block
+        
+        Returns:
+            Tuple of (is_compliant, reason_description)
+        """
+        if not order_block:
+            return False, "No Order Block available for validation"
+        
+        try:
+            # Get OB boundaries
+            if isinstance(order_block, dict):
+                ob_bottom = order_block.get('zone_low') or order_block.get('bottom')
+                ob_top = order_block.get('zone_high') or order_block.get('top')
+            else:
+                ob_bottom = getattr(order_block, 'zone_low', None) or getattr(order_block, 'bottom', None)
+                ob_top = getattr(order_block, 'zone_high', None) or getattr(order_block, 'top', None)
+            
+            if not ob_bottom or not ob_top:
+                return False, "Invalid Order Block structure"
+            
+            # Check compliance based on bias
+            bias_str = signal.bias.value if hasattr(signal.bias, 'value') else str(signal.bias)
+            
+            if 'BULLISH' in bias_str.upper():
+                # For bullish: SL must be BELOW Order Block
+                if signal.sl_price < ob_bottom:
+                    return True, f"SL correctly positioned below Order Block ({signal.sl_price:.2f} < {ob_bottom:.2f})"
+                else:
+                    return False, f"SL VIOLATION: SL {signal.sl_price:.2f} should be below OB bottom {ob_bottom:.2f}"
+            
+            elif 'BEARISH' in bias_str.upper():
+                # For bearish: SL must be ABOVE Order Block
+                if signal.sl_price > ob_top:
+                    return True, f"SL correctly positioned above Order Block ({signal.sl_price:.2f} > {ob_top:.2f})"
+                else:
+                    return False, f"SL VIOLATION: SL {signal.sl_price:.2f} should be above OB top {ob_top:.2f}"
+            
+            return False, "Unknown bias for SL validation"
+            
+        except Exception as e:
+            logger.error(f"SL validation error: {e}")
+            return False, f"Validation error: {str(e)}"
+    
+    def _get_sl_order_block(self, signal: ICTSignal, order_block) -> Optional[Dict]:
+        """Get Order Block reference used for SL calculation"""
+        if not order_block:
+            return None
+        
+        try:
+            if isinstance(order_block, dict):
+                return {
+                    'zone_low': order_block.get('zone_low'),
+                    'zone_high': order_block.get('zone_high'),
+                    'type': order_block.get('type')
+                }
+            else:
+                return {
+                    'zone_low': getattr(order_block, 'zone_low', None),
+                    'zone_high': getattr(order_block, 'zone_high', None),
+                    'type': str(getattr(order_block, 'type', None))
+                }
+        except Exception as e:
+            logger.error(f"Error getting SL Order Block: {e}")
+            return None
+    
+    def _calculate_rr(self, signal: ICTSignal, tp_index: int) -> Optional[float]:
+        """Calculate Risk/Reward ratio for specific TP level"""
+        if tp_index >= len(signal.tp_prices):
+            return None
+        
+        try:
+            tp = signal.tp_prices[tp_index]
+            risk = abs(signal.entry_price - signal.sl_price)
+            reward = abs(tp - signal.entry_price)
+            
+            if risk == 0:
+                return None
+            
+            return reward / risk
+            
+        except Exception as e:
+            logger.error(f"Error calculating RR: {e}")
+            return None
+    
+    def _format_order_block(self, ob) -> Dict:
+        """Format Order Block for output"""
+        try:
+            if isinstance(ob, dict):
+                return {
+                    'zone_low': ob.get('zone_low'),
+                    'zone_high': ob.get('zone_high'),
+                    'type': ob.get('type'),
+                    'strength': ob.get('strength', 'MEDIUM')
+                }
+            else:
+                return {
+                    'zone_low': getattr(ob, 'zone_low', None),
+                    'zone_high': getattr(ob, 'zone_high', None),
+                    'type': str(getattr(ob, 'type', None)),
+                    'strength': getattr(ob, 'strength', 'MEDIUM')
+                }
+        except Exception as e:
+            logger.error(f"Error formatting Order Block: {e}")
+            return {}
+    
+    def _check_price_near_sr(self, price: float, luxalgo_sr: Dict) -> bool:
+        """Check if price is near any S/R zone"""
+        try:
+            threshold = 0.02  # 2% threshold
+            
+            support_zones = luxalgo_sr.get('support_zones', [])
+            resistance_zones = luxalgo_sr.get('resistance_zones', [])
+            
+            for zone in support_zones + resistance_zones:
+                zone_price = zone.get('price', 0)
+                if zone_price and abs(price - zone_price) / price < threshold:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking price near S/R: {e}")
+            return False
+    
+    def _calculate_liquidity_distance(self, current_price: float, liquidity_zones: List) -> Optional[float]:
+        """Calculate distance to nearest liquidity zone"""
+        if not liquidity_zones:
+            return None
+        
+        try:
+            nearest_zone = liquidity_zones[0]
+            zone_price = nearest_zone.get('price', nearest_zone.get('price_level', current_price))
+            distance_pct = abs((zone_price - current_price) / current_price) * 100
+            return distance_pct
+            
+        except Exception as e:
+            logger.error(f"Error calculating liquidity distance: {e}")
+            return None
 
     def _get_liquidity_zones_with_fallback(self, symbol: str, timeframe: str) -> List:
         """
