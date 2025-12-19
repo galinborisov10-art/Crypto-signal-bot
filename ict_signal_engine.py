@@ -515,12 +515,18 @@ class ICTSignalEngine:
         # Validate entry zone timing
         if entry_status in ['TOO_LATE', 'NO_ZONE']:
             logger.error(f"❌ Entry zone validation failed: {entry_status}")
+            context = self._extract_context_data(df, bias)
             return self._create_no_trade_message(
                 symbol=symbol,
                 timeframe=timeframe,
                 reason=f"Entry zone validation failed: {entry_status}",
                 details=f"Current price: ${current_price:.2f}. No valid entry zone found in acceptable range (0.5%-3%).",
-                mtf_breakdown={}
+                mtf_breakdown={},
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=None
             )
         
         # Use entry zone center as entry price
@@ -577,7 +583,20 @@ class ICTSignalEngine:
             risk_reward_ratio = 3.0
         
         if risk_reward_ratio < self.config['min_risk_reward']:
-            return None
+            logger.error(f"❌ RR {risk_reward_ratio:.2f} < {self.config['min_risk_reward']} - сигналът НЕ СЕ ИЗПРАЩА")
+            context = self._extract_context_data(df, bias)
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason=f"Risk/Reward под минимум ({risk_reward_ratio:.2f})",
+                details=f"Необходими: RR ≥{self.config['min_risk_reward']}. Намерени: {risk_reward_ratio:.2f}",
+                mtf_breakdown={},
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=None
+            )
         
         # BASE CONFIDENCE
         base_confidence = self._calculate_signal_confidence(
@@ -704,23 +723,35 @@ class ICTSignalEngine:
         if mtf_consensus_data['consensus_pct'] < 50.0:
             logger.error(f"❌ MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50% - сигналът НЕ СЕ ИЗПРАЩА")
             # Изпрати информативно съобщение
+            context = self._extract_context_data(df, bias)
             return self._create_no_trade_message(
                 symbol=symbol,
                 timeframe=timeframe,
                 reason=f"Липса на MTF consensus ({mtf_consensus_data['consensus_pct']:.1f}%)",
                 details=f"Необходими: ≥50% aligned TFs. Намерени: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}",
-                mtf_breakdown=mtf_consensus_data['breakdown']
+                mtf_breakdown=mtf_consensus_data['breakdown'],
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=confidence
             )
         
         # Confidence check
         if confidence < self.config['min_confidence']:
             logger.error(f"❌ Confidence {confidence:.1f}% < {self.config['min_confidence']}% - сигналът НЕ СЕ ИЗПРАЩА")
+            context = self._extract_context_data(df, bias)
             return self._create_no_trade_message(
                 symbol=symbol,
                 timeframe=timeframe,
                 reason=f"Ниска увереност ({confidence:.1f}%)",
                 details=f"Необходими: ≥{self.config['min_confidence']}%. Намерени: {confidence:.1f}%",
-                mtf_breakdown=mtf_consensus_data['breakdown']
+                mtf_breakdown=mtf_consensus_data['breakdown'],
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=confidence
             )
         
         # СТЪПКА 12: CONFIDENCE SCORING
@@ -2198,14 +2229,38 @@ class ICTSignalEngine:
         timeframe: str,
         reason: str,
         details: str,
-        mtf_breakdown: Dict
+        mtf_breakdown: Dict,
+        current_price: float = None,
+        price_change_24h: float = None,
+        rsi: float = None,
+        signal_direction: str = None,
+        confidence: float = None
     ) -> Dict:
         """
         Създава съобщение "Няма подходящ трейд" с обяснение
         
+        Args:
+            symbol: Trading pair symbol
+            timeframe: Analysis timeframe
+            reason: Main reason for blocking the trade
+            details: Detailed explanation with values
+            mtf_breakdown: Multi-timeframe analysis breakdown
+            current_price: Current price of the asset
+            price_change_24h: 24h price change percentage
+            rsi: RSI indicator value
+            signal_direction: Signal direction (BUY/SELL)
+            confidence: Signal confidence percentage
+        
         Returns:
             Dict със структурирано съобщение (не ICTSignal обект)
         """
+        # Calculate MTF consensus percentage
+        mtf_consensus_pct = 0.0
+        if mtf_breakdown:
+            aligned_count = sum(1 for data in mtf_breakdown.values() if data.get('aligned', False))
+            total_count = len(mtf_breakdown)
+            mtf_consensus_pct = (aligned_count / total_count * 100) if total_count > 0 else 0.0
+        
         return {
             'type': 'NO_TRADE',
             'symbol': symbol,
@@ -2214,6 +2269,13 @@ class ICTSignalEngine:
             'reason': reason,
             'details': details,
             'mtf_breakdown': mtf_breakdown,
+            'mtf_consensus_pct': mtf_consensus_pct,
+            'current_price': current_price,
+            'price_change_24h': price_change_24h,
+            'rsi': rsi,
+            'signal_direction': signal_direction,
+            'confidence': confidence,
+            # Keep legacy message field for backward compatibility (will be ignored by new format)
             'message': f"""
 ❌ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>
 
@@ -2257,6 +2319,64 @@ class ICTSignalEngine:
             '1d': 11, '3d': 12, '1w': 13
         }
         return order.get(tf, 999)
+    
+    def _extract_context_data(self, df: pd.DataFrame, bias: 'MarketBias') -> Dict:
+        """
+        Extract context data for no-trade messages
+        
+        Returns:
+            Dict with current_price, price_change_24h, rsi, signal_direction
+        """
+        try:
+            current_price = df['close'].iloc[-1]
+            
+            # Calculate 24h price change (if enough data)
+            price_change_24h = None
+            if len(df) >= 24:
+                price_24h_ago = df['close'].iloc[-24]
+                price_change_24h = ((current_price - price_24h_ago) / price_24h_ago) * 100
+            
+            # Calculate RSI
+            rsi = None
+            if 'rsi' in df.columns:
+                rsi = df['rsi'].iloc[-1]
+            else:
+                # Calculate RSI if not present
+                if len(df) >= 15:
+                    delta = df['close'].diff()
+                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                    rs = gain / loss.replace(0, 1)
+                    rsi = 100 - (100 / (1 + rs.iloc[-1]))
+            
+            # Determine signal direction from bias
+            signal_direction = None
+            if hasattr(bias, 'value'):
+                bias_val = bias.value
+            else:
+                bias_val = str(bias)
+            
+            if 'BULLISH' in bias_val.upper() or 'BUY' in bias_val.upper():
+                signal_direction = 'BUY'
+            elif 'BEARISH' in bias_val.upper() or 'SELL' in bias_val.upper():
+                signal_direction = 'SELL'
+            else:
+                signal_direction = 'NEUTRAL'
+            
+            return {
+                'current_price': current_price,
+                'price_change_24h': price_change_24h,
+                'rsi': rsi,
+                'signal_direction': signal_direction
+            }
+        except Exception as e:
+            logger.warning(f"Error extracting context data: {e}")
+            return {
+                'current_price': None,
+                'price_change_24h': None,
+                'rsi': None,
+                'signal_direction': None
+            }
     
     def _extract_ml_features(
         self,
