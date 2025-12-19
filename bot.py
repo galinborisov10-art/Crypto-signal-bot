@@ -8157,6 +8157,35 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                 timeframe=timeframe,
                 timestamp=datetime.now()
             )
+            
+            # === ДОБАВИ В REAL-TIME MONITOR (v2.1.0) ===
+            if real_time_monitor_global and analysis['signal'] in ['BUY', 'SELL']:
+                try:
+                    signal_id = f"{symbol}_{analysis['signal']}_{int(datetime.now(timezone.utc).timestamp())}"
+                    
+                    real_time_monitor_global.add_signal(
+                        signal_id=signal_id,
+                        symbol=symbol,
+                        signal_type=analysis['signal'],
+                        entry_price=price,
+                        tp_price=analysis['tp'],
+                        sl_price=analysis['sl'],
+                        confidence=best_confidence,
+                        timeframe=timeframe,
+                        user_chat_id=chat_id
+                    )
+                    
+                    logger.info(f"✅ Auto-signal {signal_id} added to real-time monitor")
+                    
+                    # Notify user about monitoring
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="🎯 <i>Signal added to real-time monitor for 80% TP alerts and WIN/LOSS tracking</i>",
+                        parse_mode='HTML',
+                        disable_notification=True
+                    )
+                except Exception as monitor_error:
+                    logger.error(f"❌ Failed to add auto-signal to monitor: {monitor_error}")
         
         except Exception as e:
             logger.error(f"Грешка при изпращане на alert: {e}")
