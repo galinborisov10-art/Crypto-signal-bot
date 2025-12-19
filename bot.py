@@ -96,13 +96,16 @@ try:
     from ict_80_alert_handler import ICT80AlertHandler
     from order_block_detector import OrderBlockDetector
     from fvg_detector import FVGDetector
+    from real_time_monitor import RealTimePositionMonitor
     ICT_SIGNAL_ENGINE_AVAILABLE = True
     logger.info("✅ ICT Signal Engine loaded")
     ict_engine_global = ICTSignalEngine()  # Global initialization for logs
     ict_80_handler_global = ICT80AlertHandler(ict_engine_global)  # 80% alert handler
+    real_time_monitor_global = None  # Will be initialized in main() with bot instance
 except ImportError as e:
     ICT_SIGNAL_ENGINE_AVAILABLE = False
     logger.warning(f"⚠️ ICT Signal Engine not available: {e}")
+    real_time_monitor_global = None
 
 # Chart Visualization System
 try:
@@ -5370,6 +5373,124 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Използвай custom timeframe ако е подаден, иначе настройката на потребителя
     timeframe = custom_timeframe if custom_timeframe else settings['timeframe']
     
+    # === NEW: USE ICT ENGINE FOR ENHANCED ANALYSIS ===
+    if ICT_SIGNAL_ENGINE_AVAILABLE:
+        try:
+            # Send processing message
+            processing_msg = await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"🔍 <b>Running ICT analysis for {symbol} ({timeframe})...</b>",
+                parse_mode='HTML'
+            )
+            
+            # Fetch klines for ICT analysis
+            klines_response = requests.get(
+                BINANCE_KLINES_URL,
+                params={'symbol': symbol, 'interval': timeframe, 'limit': 200},
+                timeout=10
+            )
+            
+            if klines_response.status_code != 200:
+                await processing_msg.edit_text("❌ Failed to fetch market data")
+                return
+            
+            klines_data = klines_response.json()
+            
+            # Prepare dataframe
+            df = pd.DataFrame(klines_data, columns=[
+                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                'taker_buy_quote', 'ignore'
+            ])
+            
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = df[col].astype(float)
+            
+            # Generate ICT signal
+            ict_engine = ICTSignalEngine()
+            ict_signal = ict_engine.generate_signal(
+                df=df,
+                symbol=symbol,
+                timeframe=timeframe,
+                mtf_data=None
+            )
+            
+            if not ict_signal:
+                await processing_msg.edit_text(
+                    f"⚪ <b>No high-quality ICT signal for {symbol}</b>\n\n"
+                    f"Market conditions do not meet minimum criteria (70% confidence required).",
+                    parse_mode='HTML'
+                )
+                return
+            
+            # Format with 13-point output
+            signal_msg = format_ict_signal_13_point(ict_signal)
+            
+            # Generate and send chart
+            chart_sent = False
+            if CHART_VISUALIZATION_AVAILABLE:
+                try:
+                    generator = ChartGenerator()
+                    chart_bytes = generator.generate(df, ict_signal, symbol, timeframe)
+                    
+                    if chart_bytes:
+                        # Send chart first
+                        await context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=BytesIO(chart_bytes),
+                            caption=f"📊 <b>{symbol} ({timeframe}) - ICT Chart</b>",
+                            parse_mode='HTML'
+                        )
+                        chart_sent = True
+                        logger.info(f"✅ Chart sent for {symbol} {timeframe}")
+                except Exception as chart_error:
+                    logger.warning(f"⚠️ Chart generation failed: {chart_error}")
+            
+            # Send 13-point text analysis
+            await processing_msg.edit_text(
+                signal_msg,
+                parse_mode='HTML',
+                disable_web_page_preview=True
+            )
+            
+            # Add signal to real-time monitor
+            if real_time_monitor_global and ict_signal.signal_type.value in ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']:
+                signal_id = f"{symbol}_{ict_signal.signal_type.value}_{int(datetime.now(timezone.utc).timestamp())}"
+                
+                real_time_monitor_global.add_signal(
+                    signal_id=signal_id,
+                    symbol=symbol,
+                    signal_type=ict_signal.signal_type.value.replace('STRONG_', ''),  # Normalize to BUY/SELL
+                    entry_price=ict_signal.entry_price,
+                    tp_price=ict_signal.tp_prices[0],  # Use TP1
+                    sl_price=ict_signal.sl_price,
+                    confidence=ict_signal.confidence,
+                    timeframe=timeframe,
+                    user_chat_id=update.effective_chat.id
+                )
+                
+                logger.info(f"✅ Signal {signal_id} added to real-time monitor")
+                
+                # Notify user
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="🎯 <b>Signal added to real-time monitor!</b>\n\n"
+                         "You'll receive alerts at:\n"
+                         "• 80% progress to TP (with ICT re-analysis)\n"
+                         "• Final WIN/LOSS when TP/SL reached",
+                    parse_mode='HTML'
+                )
+            
+            logger.info(f"✅ ICT signal sent for {symbol}: {ict_signal.signal_type.value}")
+            return
+            
+        except Exception as ict_error:
+            logger.error(f"❌ ICT analysis failed: {ict_error}")
+            # Fall back to old analysis
+            logger.info("⚠️ Falling back to traditional analysis")
+    
+    # === FALLBACK: OLD ANALYSIS (if ICT not available) ===
     # Извлечи 24h данни
     params_24h = {'symbol': symbol}
     data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
@@ -6100,6 +6221,100 @@ def format_ict_signal(signal: ICTSignal) -> str:
             msg += f"• {warning}\n"
     
     msg += f"\n\n⏰ _Generated: {signal.timestamp.strftime('%Y-%m-%d %H:%M:%S')}_"
+    
+    return msg
+
+
+def format_ict_signal_13_point(signal: ICTSignal) -> str:
+    """
+    Format ICT signal with enhanced 13-point output for Telegram
+    
+    13 Key Points:
+    1. Signal Type & Confidence
+    2. Entry Price
+    3. Stop Loss
+    4. Take Profit (TP1, TP2, TP3)
+    5. Risk/Reward Ratio
+    6. Market Bias & HTF Bias
+    7. Structure Analysis (Broken/Displacement)
+    8. Order Blocks Count
+    9. Liquidity Zones Count
+    10. Fair Value Gaps Count
+    11. MTF Confluence Score
+    12. Whale Blocks Detection
+    13. ICT Reasoning & Warnings
+    
+    Args:
+        signal: ICT signal object
+        
+    Returns:
+        Formatted 13-point message string
+    """
+    # Signal type emoji
+    signal_emoji = {
+        'BUY': '🟢',
+        'SELL': '🔴',
+        'STRONG_BUY': '💚',
+        'STRONG_SELL': '❤️',
+        'HOLD': '⚪'
+    }
+    
+    emoji = signal_emoji.get(signal.signal_type.value, '⚪')
+    strength_stars = '🔥' * signal.signal_strength.value
+    
+    # Calculate average TP for simpler display
+    avg_tp = sum(signal.tp_prices) / len(signal.tp_prices) if signal.tp_prices else signal.tp_prices[0] if len(signal.tp_prices) > 0 else 0
+    
+    msg = f"""{emoji} <b>ICT SIGNAL - {signal.signal_type.value}</b> {emoji}
+
+📊 <b>Symbol:</b> {signal.symbol}
+⏰ <b>Timeframe:</b> {signal.timeframe}
+💪 <b>Strength:</b> {strength_stars} ({signal.signal_strength.value}/5)
+
+<b>━━━━━ 13-POINT ICT ANALYSIS ━━━━━</b>
+
+<b>1️⃣ CONFIDENCE:</b> {signal.confidence:.1f}%
+
+<b>2️⃣ ENTRY:</b> ${signal.entry_price:,.4f}
+
+<b>3️⃣ STOP LOSS:</b> ${signal.sl_price:,.4f}
+
+<b>4️⃣ TAKE PROFITS:</b>
+   • TP1: ${signal.tp_prices[0]:,.4f}
+   • TP2: ${signal.tp_prices[1]:,.4f}
+   • TP3: ${signal.tp_prices[2]:,.4f}
+
+<b>5️⃣ RISK/REWARD:</b> {signal.risk_reward_ratio:.2f}:1
+
+<b>6️⃣ MARKET BIAS:</b>
+   • Current: {signal.bias.value}
+   • HTF: {signal.htf_bias}
+   • MTF Structure: {signal.mtf_structure}
+
+<b>7️⃣ STRUCTURE:</b>
+   • Broken: {'✅ YES' if signal.structure_broken else '❌ NO'}
+   • Displacement: {'✅ YES' if signal.displacement_detected else '❌ NO'}
+
+<b>8️⃣ ORDER BLOCKS:</b> {len(signal.order_blocks)} detected
+
+<b>9️⃣ LIQUIDITY ZONES:</b> {len(signal.liquidity_zones)} identified
+
+<b>🔟 FAIR VALUE GAPS:</b> {len(signal.fair_value_gaps)} found
+
+<b>1️⃣1️⃣ MTF CONFLUENCE:</b> {signal.mtf_confluence} timeframes aligned
+
+<b>1️⃣2️⃣ WHALE BLOCKS:</b> {len(signal.whale_blocks)} institutional zones
+
+<b>1️⃣3️⃣ ICT REASONING:</b>
+{signal.reasoning}
+"""
+    
+    if signal.warnings:
+        msg += f"\n<b>⚠️ WARNINGS:</b>\n"
+        for warning in signal.warnings:
+            msg += f"   • {warning}\n"
+    
+    msg += f"\n<i>⏰ Generated: {signal.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}</i>"
     
     return msg
 
@@ -11717,6 +11932,29 @@ def main():
             
             scheduler.start()
             logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST")
+            
+            # 🎯 INITIALIZE AND START REAL-TIME POSITION MONITOR (v2.1.0)
+            global real_time_monitor_global
+            if ICT_SIGNAL_ENGINE_AVAILABLE and ict_80_handler_global:
+                try:
+                    real_time_monitor_global = RealTimePositionMonitor(
+                        bot=application.bot,
+                        ict_80_handler=ict_80_handler_global,
+                        owner_chat_id=OWNER_CHAT_ID,
+                        binance_price_url=BINANCE_PRICE_URL,
+                        binance_klines_url=BINANCE_KLINES_URL
+                    )
+                    
+                    # Start monitoring as a background task
+                    asyncio.create_task(real_time_monitor_global.start_monitoring())
+                    
+                    logger.info("🎯 Real-time Position Monitor STARTED (30s interval)")
+                    logger.info("✅ 80% TP alerts and WIN/LOSS notifications enabled")
+                except Exception as monitor_error:
+                    logger.error(f"❌ Failed to start real-time monitor: {monitor_error}")
+                    real_time_monitor_global = None
+            else:
+                logger.warning("⚠️ Real-time monitor not available (ICT engine required)")
         
         async def enable_auto_alerts():
             """Автоматично активиране на alerts за owner при стартиране"""
