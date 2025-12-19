@@ -32,11 +32,14 @@ class SecureTokenManager:
     """
     
     def __init__(self):
-        # Auto-detect BASE_PATH
+        # Auto-detect BASE_PATH - use current working directory if standard paths don't exist
         if os.path.exists('/root/Crypto-signal-bot'):
             self.base_path = Path('/root/Crypto-signal-bot')
-        else:
+        elif os.path.exists('/workspaces/Crypto-signal-bot'):
             self.base_path = Path('/workspaces/Crypto-signal-bot')
+        else:
+            # Fallback to current working directory
+            self.base_path = Path.cwd()
         
         self.encryption_key = self._get_or_create_encryption_key()
         self.cipher = None
@@ -51,8 +54,11 @@ class SecureTokenManager:
         self.token_hash_file = self.base_path / '.bot_token_hash'
         self.token_backup_dir = self.base_path / '.token_backups'
         
-        # Create backup directory
-        self.token_backup_dir.mkdir(exist_ok=True)
+        # Create backup directory with parents
+        try:
+            self.token_backup_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.error(f"❌ Failed to create backup directory: {e}")
         
         logger.info("✅ Secure Token Manager initialized")
     

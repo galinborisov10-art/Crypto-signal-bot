@@ -7,8 +7,16 @@ import os
 import logging
 import secrets
 from typing import Set, Optional
-from telegram import Update
-from telegram.ext import ContextTypes
+
+try:
+    from telegram import Update
+    from telegram.ext import ContextTypes
+    TELEGRAM_AVAILABLE = True
+except ImportError:
+    TELEGRAM_AVAILABLE = False
+    # Define placeholder types when telegram is not available
+    Update = None
+    ContextTypes = None
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +279,11 @@ def require_auth(func):
         async def my_command(update, context):
             ...
     """
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not TELEGRAM_AVAILABLE:
+        # If telegram not available, return function as-is
+        return func
+    
+    async def wrapper(update, context):
         user_id = update.effective_user.id
         
         if not auth_manager.is_authorized(user_id):
@@ -295,7 +307,11 @@ def require_admin(func):
         async def my_admin_command(update, context):
             ...
     """
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not TELEGRAM_AVAILABLE:
+        # If telegram not available, return function as-is
+        return func
+    
+    async def wrapper(update, context):
         user_id = update.effective_user.id
         
         if not auth_manager.is_admin(user_id):
