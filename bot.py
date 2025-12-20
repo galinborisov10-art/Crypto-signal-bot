@@ -50,7 +50,6 @@ sys.path.append(f'{BASE_PATH}/admin')
 try:
     from admin_module import (
         set_admin_password, verify_admin_password, is_admin,
-        generate_daily_report, generate_weekly_report, generate_monthly_report,
         get_latest_report
     )
     ADMIN_MODULE_AVAILABLE = True
@@ -9942,33 +9941,6 @@ async def send_auto_news(bot):
         logger.error(f"❌ Грешка при изпращане на автоматични новини: {e}")
 
 
-async def send_auto_report(report_type, bot):
-    """Автоматично изпраща отчети на админа"""
-    try:
-        if report_type == 'daily':
-            report, file_path = generate_daily_report()
-            caption = "📊 Автоматичен дневен отчет"
-        elif report_type == 'weekly':
-            report, file_path = generate_weekly_report()
-            caption = "📈 Автоматичен седмичен отчет"
-        elif report_type == 'monthly':
-            report, file_path = generate_monthly_report()
-            caption = "🎯 Автоматичен месечен отчет"
-        else:
-            return
-        
-        with open(file_path, 'rb') as f:
-            await bot.send_document(
-                chat_id=OWNER_CHAT_ID,
-                document=f,
-                filename=os.path.basename(file_path),
-                caption=f"🔔🔊 АЛАРМА! {caption}\n\n📊 Новият отчет е готов!",
-                disable_notification=False  # Включена звукова аларма
-            )
-        logger.info(f"✅ Автоматичен {report_type} отчет изпратен")
-    except Exception as e:
-        logger.error(f"❌ Грешка при автоматичен отчет: {e}")
-
 
 def run_diagnostics():
     """Изпълнява диагностика на системата"""
@@ -12258,32 +12230,6 @@ def main():
             from apscheduler.schedulers.asyncio import AsyncIOScheduler
             scheduler = AsyncIOScheduler(timezone="UTC")
             
-            # Дневен отчет всеки ден в 08:00 UTC
-            scheduler.add_job(
-                lambda: asyncio.create_task(send_auto_report('daily', application.bot)),
-                'cron',
-                hour=8,
-                minute=0
-            )
-            
-            # Седмичен отчет всеки понеделник в 08:00 UTC
-            scheduler.add_job(
-                lambda: asyncio.create_task(send_auto_report('weekly', application.bot)),
-                'cron',
-                day_of_week='mon',
-                hour=8,
-                minute=0
-            )
-            
-            # Месечен отчет на 1-во число в 08:00 UTC
-            scheduler.add_job(
-                lambda: asyncio.create_task(send_auto_report('monthly', application.bot)),
-                'cron',
-                day=1,
-                hour=8,
-                minute=0
-            )
-            
             # ДНЕВНИ ОТЧЕТИ ЗА СИГНАЛИ - Всеки ден в 08:00 BG време (06:00 UTC)
             async def send_daily_signal_report_job():
                 """Wrapper за изпращане на дневен отчет за сигнали"""
@@ -12296,12 +12242,15 @@ def main():
                 send_daily_signal_report_job,
                 'cron',
                 hour=6,  # 08:00 BG = 06:00 UTC
-                minute=0
+                minute=0,
+                id='daily_signal_report',
+                replace_existing=True
             )
             logger.info("✅ Daily signal reports scheduled at 08:00 BG time (previous day analysis)")
             
-            # НОВИ ДНЕВНИ ОТЧЕТИ (ако има външен engine) - Всеки ден в 08:00 BG време
+            # НОВИ ДНЕВНИ/СЕДМИЧНИ/МЕСЕЧНИ ОТЧЕТИ (ако има външен engine) - Използва daily_reports.py
             if REPORTS_AVAILABLE:
+                # ДНЕВЕН ОТЧЕТ - Всеки ден в 08:00 BG време (06:00 UTC)
                 async def send_daily_auto_report():
                     """Изпраща автоматичен дневен отчет към owner за предходния ден"""
                     try:
@@ -12310,21 +12259,113 @@ def main():
                             message = report_engine.format_report_message(report)
                             await application.bot.send_message(
                                 chat_id=OWNER_CHAT_ID,
-                                text=f"🔔 <b>ДОПЪЛНИТЕЛЕН ДНЕВЕН ОТЧЕТ</b>\n\n{message}",
+                                text=message,
                                 parse_mode='HTML',
-                                disable_notification=True
+                                disable_notification=False  # Включена звукова аларма
                             )
-                            logger.info("✅ Additional daily report sent")
+                            logger.info("✅ Daily report sent successfully")
                     except Exception as e:
-                        logger.error(f"❌ Additional report error: {e}")
+                        logger.error(f"❌ Daily report error: {e}")
                 
                 scheduler.add_job(
                     send_daily_auto_report,
                     'cron',
                     hour=6,  # 08:00 BG = 06:00 UTC
-                    minute=5  # 5 минути след основния отчет
+                    minute=0,
+                    id='daily_report',
+                    replace_existing=True
                 )
-                logger.info("✅ Additional daily reports scheduled (08:00:05 BG time)")
+                
+                # СЕДМИЧЕН ОТЧЕТ - Само понеделници в 08:00 BG време (06:00 UTC)
+                async def send_weekly_auto_report():
+                    """Изпраща седмичен отчет към owner за предходната седмица (Пн-Нд)"""
+                    try:
+                        summary = report_engine.get_weekly_summary()
+                        
+                        if summary:
+                            message = f"""📊 <b>СЕДМИЧЕН ОТЧЕТ - АНАЛИЗ НА ЕФЕКТИВНОСТ</b>
+📅 {summary['period']} (Миналата седмица Пн-Нд)
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 Общо сигнали: {summary['total_signals']}
+🟢 Печеливши: {summary['wins']} ({summary['accuracy']:.1f}%)
+🔴 Загубени: {summary['losses']} ({100-summary['accuracy']:.1f}%)
+💰 Средна печалба: {summary['avg_win']:+.2f}%
+💸 Средна загуба: {summary['avg_loss']:+.2f}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ Генериран: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
+"""
+                            
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=message,
+                                parse_mode='HTML',
+                                disable_notification=False  # Включена звукова аларма
+                            )
+                            logger.info("✅ Weekly report sent successfully")
+                        else:
+                            logger.warning("⚠️ No weekly data to send")
+                    except Exception as e:
+                        logger.error(f"❌ Weekly report error: {e}")
+                
+                scheduler.add_job(
+                    send_weekly_auto_report,
+                    'cron',
+                    day_of_week='mon',  # Само понеделник
+                    hour=6,  # 08:00 BG = 06:00 UTC
+                    minute=0,
+                    id='weekly_report',
+                    replace_existing=True
+                )
+                
+                # МЕСЕЧЕН ОТЧЕТ - Само на 1-во число в 08:00 BG време (06:00 UTC)
+                async def send_monthly_auto_report():
+                    """Изпраща месечен отчет към owner за предходния месец"""
+                    try:
+                        summary = report_engine.get_monthly_summary()
+                        
+                        if summary:
+                            message = f"""📊 <b>МЕСЕЧЕН ОТЧЕТ - АНАЛИЗ НА ЕФЕКТИВНОСТ</b>
+📅 {summary['period']}
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 Общо сигнали: {summary['total_signals']}
+🟢 Печеливши: {summary['wins']} ({summary['accuracy']:.1f}%)
+🔴 Загубени: {summary['losses']} ({100-summary['accuracy']:.1f}%)
+💰 Средна печалба: {summary['avg_win']:+.2f}%
+💸 Средна загуба: {summary['avg_loss']:+.2f}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ Генериран: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
+"""
+                            
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=message,
+                                parse_mode='HTML',
+                                disable_notification=False  # Включена звукова аларма
+                            )
+                            logger.info("✅ Monthly report sent successfully")
+                        else:
+                            logger.warning("⚠️ No monthly data to send")
+                    except Exception as e:
+                        logger.error(f"❌ Monthly report error: {e}")
+                
+                scheduler.add_job(
+                    send_monthly_auto_report,
+                    'cron',
+                    day=1,  # Само на 1-во число
+                    hour=6,  # 08:00 BG = 06:00 UTC
+                    minute=0,
+                    id='monthly_report',
+                    replace_existing=True
+                )
+                
+                logger.info("✅ Daily/Weekly/Monthly reports scheduled using daily_reports.py:")
+                logger.info("   📊 Daily: Every day at 08:00 BG (06:00 UTC)")
+                logger.info("   📈 Weekly: Mondays only at 08:00 BG (06:00 UTC)")
+                logger.info("   📅 Monthly: 1st of month only at 08:00 BG (06:00 UTC)")
             
             # Автоматична диагностика всеки ден в 01:00 UTC (03:00 BG време)
             scheduler.add_job(
