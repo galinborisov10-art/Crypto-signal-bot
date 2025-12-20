@@ -9656,71 +9656,97 @@ async def admin_setpass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Генерирай дневен отчет"""
+    """Генерирай дневен отчет (използва daily_reports.py)"""
     if not is_admin(update.effective_chat.id):
         await update.message.reply_text("❌ Моля, влезте с /admin_login ПАРОЛА")
+        return
+    
+    if not REPORTS_AVAILABLE:
+        await update.message.reply_text("❌ Reports модул не е наличен")
         return
     
     await update.message.reply_text("📊 Генерирам дневен отчет...")
     
     try:
-        report, file_path = generate_daily_report()
+        report = report_engine.generate_daily_report()
         
-        # Изпрати отчета като файл със звукова аларма
-        with open(file_path, 'rb') as f:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=f,
-                filename=os.path.basename(file_path),
-                caption="🔔🔊 📊 Дневен отчет",
-                disable_notification=False
-            )
+        if report:
+            message = report_engine.format_report_message(report)
+            await update.message.reply_text(message, parse_mode='HTML')
+        else:
+            await update.message.reply_text("❌ Грешка при генериране на отчет")
     except Exception as e:
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
 async def admin_weekly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Генерирай седмичен отчет"""
+    """Генерирай седмичен отчет (използва daily_reports.py)"""
     if not is_admin(update.effective_chat.id):
         await update.message.reply_text("❌ Моля, влезте с /admin_login ПАРОЛА")
+        return
+    
+    if not REPORTS_AVAILABLE:
+        await update.message.reply_text("❌ Reports модул не е наличен")
         return
     
     await update.message.reply_text("📈 Генерирам седмичен отчет...")
     
     try:
-        report, file_path = generate_weekly_report()
+        summary = report_engine.get_weekly_summary()
         
-        with open(file_path, 'rb') as f:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=f,
-                filename=os.path.basename(file_path),
-                caption="🔔🔊 📈 Седмичен отчет",
-                disable_notification=False
-            )
+        if summary:
+            message = f"""📊 <b>СЕДМИЧЕН ОТЧЕТ - АНАЛИЗ НА ЕФЕКТИВНОСТ</b>
+📅 {summary['period']} (Миналата седмица Пн-Нд)
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 Общо сигнали: {summary['total_signals']}
+🟢 Печеливши: {summary['wins']} ({summary['accuracy']:.1f}%)
+🔴 Загубени: {summary['losses']} ({100-summary['accuracy']:.1f}%)
+💰 Средна печалба: {summary['avg_win']:+.2f}%
+💸 Средна загуба: {summary['avg_loss']:+.2f}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ Генериран: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
+"""
+            await update.message.reply_text(message, parse_mode='HTML')
+        else:
+            await update.message.reply_text("❌ Няма данни за седмицата")
     except Exception as e:
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
 async def admin_monthly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Генерирай месечен отчет"""
+    """Генерирай месечен отчет (използва daily_reports.py)"""
     if not is_admin(update.effective_chat.id):
         await update.message.reply_text("❌ Моля, влезте с /admin_login ПАРОЛА")
+        return
+    
+    if not REPORTS_AVAILABLE:
+        await update.message.reply_text("❌ Reports модул не е наличен")
         return
     
     await update.message.reply_text("🎯 Генерирам месечен отчет...")
     
     try:
-        report, file_path = generate_monthly_report()
+        summary = report_engine.get_monthly_summary()
         
-        with open(file_path, 'rb') as f:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=f,
-                filename=os.path.basename(file_path),
-                caption="🔔🔊 🎯 Месечен отчет",
-                disable_notification=False
-            )
+        if summary:
+            message = f"""📊 <b>МЕСЕЧЕН ОТЧЕТ - АНАЛИЗ НА ЕФЕКТИВНОСТ</b>
+📅 {summary['period']}
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 Общо сигнали: {summary['total_signals']}
+🟢 Печеливши: {summary['wins']} ({summary['accuracy']:.1f}%)
+🔴 Загубени: {summary['losses']} ({100-summary['accuracy']:.1f}%)
+💰 Средна печалба: {summary['avg_win']:+.2f}%
+💸 Средна загуба: {summary['avg_loss']:+.2f}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ Генериран: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
+"""
+            await update.message.reply_text(message, parse_mode='HTML')
+        else:
+            await update.message.reply_text("❌ Няма данни за месеца")
     except Exception as e:
         await update.message.reply_text(f"❌ Грешка: {e}")
 
