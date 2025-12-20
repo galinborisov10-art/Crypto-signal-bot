@@ -6,6 +6,9 @@
 from datetime import datetime, timedelta
 import json
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DailyReportEngine:
     def __init__(self):
@@ -15,50 +18,99 @@ class DailyReportEngine:
         else:
             base_path = '/workspaces/Crypto-signal-bot'
         
+        # НОВО: Главен източник е ml_journal.json
+        self.journal_path = f'{base_path}/ml_journal.json'
+        # Резервен към bot_stats.json
         self.stats_path = f'{base_path}/bot_stats.json'
         self.reports_path = f'{base_path}/daily_reports.json'
     
     def generate_daily_report(self):
         """Генерира дневен отчет с анализ на точност и успеваемост"""
         try:
-            # Зареди статистика
-            if not os.path.exists(self.stats_path):
-                return None
+            logger.info("📊 Starting daily report generation...")
             
-            with open(self.stats_path, 'r') as f:
-                stats = json.load(f)
+            # Зареди данни от ml_journal.json първо, резервно bot_stats.json
+            stats = None
+            
+            # Try ml_journal.json first (preferred)
+            if os.path.exists(self.journal_path):
+                try:
+                    logger.debug(f"Loading data from ml_journal.json: {self.journal_path}")
+                    with open(self.journal_path, 'r') as f:
+                        journal = json.load(f)
+                    stats = {'signals': journal.get('trades', [])}
+                    logger.info(f"✅ Loaded {len(stats['signals'])} trades from ml_journal.json")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to load ml_journal.json: {e}")
+            
+            # Fallback to bot_stats.json
+            if not stats and os.path.exists(self.stats_path):
+                try:
+                    logger.debug(f"Fallback: Loading data from bot_stats.json: {self.stats_path}")
+                    with open(self.stats_path, 'r') as f:
+                        stats = json.load(f)
+                    logger.info(f"✅ Loaded {len(stats.get('signals', []))} signals from bot_stats.json")
+                except Exception as e:
+                    logger.error(f"❌ Failed to load bot_stats.json: {e}")
+            
+            if not stats:
+                logger.warning("⚠️ No data source available for report")
+                return None
             
             # Филтрирай ВЧЕРАШНИ сигнали (не днешни!)
             today = datetime.now().date()
             yesterday = today - timedelta(days=1)
+            logger.debug(f"Filtering trades for yesterday: {yesterday}")
+            
             yesterday_signals = [
-                s for s in stats['signals']
+                s for s in stats.get('signals', [])
                 if datetime.fromisoformat(s['timestamp']).date() == yesterday
             ]
             
+            logger.info(f"📅 Found {len(yesterday_signals)} signals for yesterday ({yesterday})")
+            
             if not yesterday_signals:
+                logger.info("No signals for yesterday, generating empty report")
                 return self._generate_no_signals_report(yesterday)
             
             # === ОСНОВНИ СТАТИСТИКИ ===
             total = len(yesterday_signals)
             buy_signals = len([s for s in yesterday_signals if s['type'] == 'BUY'])
             sell_signals = len([s for s in yesterday_signals if s['type'] == 'SELL'])
+            logger.debug(f"Basic stats: Total={total}, BUY={buy_signals}, SELL={sell_signals}")
             
             # === АНАЛИЗ НА ТОЧНОСТ ===
-            completed_signals = [s for s in yesterday_signals if s.get('status') == 'COMPLETED']
-            active_signals = [s for s in yesterday_signals if s.get('status') == 'ACTIVE']
+            # Използвай status: WIN/LOSS/PENDING или outcome: WIN/LOSS
+            completed_signals = [
+                s for s in yesterday_signals 
+                if s.get('status') in ['WIN', 'LOSS'] or s.get('outcome') in ['WIN', 'LOSS']
+            ]
+            active_signals = [
+                s for s in yesterday_signals 
+                if s.get('status') == 'PENDING' or (s.get('status') not in ['WIN', 'LOSS'] and s.get('outcome') not in ['WIN', 'LOSS'])
+            ]
+            
+            logger.debug(f"Completed: {len(completed_signals)}, Active: {len(active_signals)}")
             
             # Точност (Accuracy) - колко сигнала са завършени успешно
             if completed_signals:
-                wins = len([s for s in completed_signals if s.get('result') == 'WIN'])
-                losses = len([s for s in completed_signals if s.get('result') == 'LOSS'])
+                wins = len([
+                    s for s in completed_signals 
+                    if s.get('status') == 'WIN' or s.get('outcome') == 'WIN' or s.get('result') == 'WIN'
+                ])
+                losses = len([
+                    s for s in completed_signals 
+                    if s.get('status') == 'LOSS' or s.get('outcome') == 'LOSS' or s.get('result') == 'LOSS'
+                ])
                 breakeven = len([s for s in completed_signals if s.get('result') == 'BREAKEVEN'])
                 
                 accuracy = (wins / len(completed_signals) * 100) if completed_signals else 0
                 win_rate = (wins / len(completed_signals) * 100) if completed_signals else 0
+                logger.info(f"🎯 Accuracy: {accuracy:.1f}% (Wins: {wins}, Losses: {losses})")
             else:
                 wins = losses = breakeven = 0
                 accuracy = win_rate = 0
+                logger.info("⏳ No completed trades yet")
             
             # === УСПЕВАЕМОСТ (Performance) ===
             total_profit = 0
@@ -68,20 +120,22 @@ class DailyReportEngine:
             worst_trade = None
             
             if completed_signals:
-                profitable_trades = [s for s in completed_signals if s.get('profit_pct', 0) > 0]
-                losing_trades = [s for s in completed_signals if s.get('profit_pct', 0) < 0]
+                profitable_trades = [s for s in completed_signals if s.get('profit_loss_pct', s.get('profit_pct', 0)) > 0]
+                losing_trades = [s for s in completed_signals if s.get('profit_loss_pct', s.get('profit_pct', 0)) < 0]
                 
-                # Общ profit
-                total_profit = sum([s.get('profit_pct', 0) for s in completed_signals])
+                # Общ profit (използвай profit_loss_pct или profit_pct)
+                total_profit = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in completed_signals])
                 
                 # Среден печеливш и губещ trade
                 if profitable_trades:
-                    avg_win = sum([s['profit_pct'] for s in profitable_trades]) / len(profitable_trades)
-                    best_trade = max(profitable_trades, key=lambda x: x['profit_pct'])
+                    avg_win = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in profitable_trades]) / len(profitable_trades)
+                    best_trade = max(profitable_trades, key=lambda x: x.get('profit_loss_pct', x.get('profit_pct', 0)))
                 
                 if losing_trades:
-                    avg_loss = sum([s['profit_pct'] for s in losing_trades]) / len(losing_trades)
-                    worst_trade = min(losing_trades, key=lambda x: x['profit_pct'])
+                    avg_loss = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in losing_trades]) / len(losing_trades)
+                    worst_trade = min(losing_trades, key=lambda x: x.get('profit_loss_pct', x.get('profit_pct', 0)))
+                
+                logger.info(f"💰 Total profit: {total_profit:+.2f}%, Avg win: +{avg_win:.2f}%, Avg loss: {avg_loss:.2f}%")
             
             # === СТАТИСТИКА ПО CONFIDENCE ===
             avg_confidence = sum([s['confidence'] for s in yesterday_signals]) / total if total > 0 else 0
@@ -92,7 +146,10 @@ class DailyReportEngine:
                 range_signals = [s for s in completed_signals 
                                 if self._in_confidence_range(s['confidence'], range_name)]
                 if range_signals:
-                    range_wins = len([s for s in range_signals if s.get('result') == 'WIN'])
+                    range_wins = len([
+                        s for s in range_signals 
+                        if s.get('status') == 'WIN' or s.get('outcome') == 'WIN' or s.get('result') == 'WIN'
+                    ])
                     confidence_accuracy[range_name] = {
                         'total': len(range_signals),
                         'wins': range_wins,
@@ -105,12 +162,18 @@ class DailyReportEngine:
             
             for symbol in symbols_traded:
                 symbol_signals = [s for s in yesterday_signals if s['symbol'] == symbol]
-                symbol_completed = [s for s in symbol_signals if s.get('status') == 'COMPLETED']
+                symbol_completed = [
+                    s for s in symbol_signals 
+                    if s.get('status') in ['WIN', 'LOSS'] or s.get('outcome') in ['WIN', 'LOSS']
+                ]
                 
                 if symbol_completed:
-                    symbol_wins = len([s for s in symbol_completed if s.get('result') == 'WIN'])
+                    symbol_wins = len([
+                        s for s in symbol_completed 
+                        if s.get('status') == 'WIN' or s.get('outcome') == 'WIN' or s.get('result') == 'WIN'
+                    ])
                     symbol_accuracy = (symbol_wins / len(symbol_completed) * 100)
-                    symbol_profit = sum([s.get('profit_pct', 0) for s in symbol_completed])
+                    symbol_profit = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in symbol_completed])
                 else:
                     symbol_wins = 0
                     symbol_accuracy = 0
@@ -126,10 +189,16 @@ class DailyReportEngine:
             
             # === ML СТАТИСТИКА ===
             ml_signals = [s for s in yesterday_signals if s.get('ml_mode')]
-            ml_completed = [s for s in ml_signals if s.get('status') == 'COMPLETED']
+            ml_completed = [
+                s for s in ml_signals 
+                if s.get('status') in ['WIN', 'LOSS'] or s.get('outcome') in ['WIN', 'LOSS']
+            ]
             
             if ml_completed:
-                ml_wins = len([s for s in ml_completed if s.get('result') == 'WIN'])
+                ml_wins = len([
+                    s for s in ml_completed 
+                    if s.get('status') == 'WIN' or s.get('outcome') == 'WIN' or s.get('result') == 'WIN'
+                ])
                 ml_accuracy = (ml_wins / len(ml_completed) * 100)
             else:
                 ml_wins = 0
@@ -178,12 +247,11 @@ class DailyReportEngine:
             # Запази отчета
             self._save_report(report)
             
+            logger.info(f"✅ Daily report generated successfully for {yesterday}")
             return report
             
         except Exception as e:
-            print(f"❌ Report generation error: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"❌ Report generation error: {e}", exc_info=True)
             return None
     
     def _in_confidence_range(self, confidence, range_name):
@@ -391,22 +459,55 @@ class DailyReportEngine:
         return message
     
     def get_weekly_summary(self):
-        """Седмичен обобщен отчет с точност и успеваемост"""
+        """Седмичен обобщен отчет за ИЗМИНАЛАТА СЕДМИЦА (Понеделник-Неделя)"""
         try:
-            if not os.path.exists(self.stats_path):
+            logger.info("📅 Starting weekly summary generation...")
+            
+            # Зареди данни от ml_journal.json първо, резервно bot_stats.json
+            stats = None
+            
+            # Try ml_journal.json first (preferred)
+            if os.path.exists(self.journal_path):
+                try:
+                    logger.debug(f"Loading data from ml_journal.json: {self.journal_path}")
+                    with open(self.journal_path, 'r') as f:
+                        journal = json.load(f)
+                    stats = {'signals': journal.get('trades', [])}
+                    logger.info(f"✅ Loaded {len(stats['signals'])} trades from ml_journal.json")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to load ml_journal.json: {e}")
+            
+            # Fallback to bot_stats.json
+            if not stats and os.path.exists(self.stats_path):
+                try:
+                    logger.debug(f"Fallback: Loading data from bot_stats.json: {self.stats_path}")
+                    with open(self.stats_path, 'r') as f:
+                        stats = json.load(f)
+                    logger.info(f"✅ Loaded {len(stats.get('signals', []))} signals from bot_stats.json")
+                except Exception as e:
+                    logger.error(f"❌ Failed to load bot_stats.json: {e}")
+            
+            if not stats:
+                logger.warning("⚠️ No data source available for weekly summary")
                 return None
             
-            with open(self.stats_path, 'r') as f:
-                stats = json.load(f)
+            # Изчисли ИЗМИНАЛАТА СЕДМИЦА (Понеделник-Неделя)
+            today = datetime.now().date()
+            days_since_monday = today.weekday()  # 0 = понеделник
+            last_monday = today - timedelta(days=days_since_monday + 7)
+            last_sunday = last_monday + timedelta(days=6)
             
-            # Последните 7 дни
-            week_ago = datetime.now().date() - timedelta(days=7)
+            logger.info(f"📅 Weekly period: {last_monday} (Mon) - {last_sunday} (Sun)")
+            
             weekly_signals = [
-                s for s in stats['signals']
-                if datetime.fromisoformat(s['timestamp']).date() >= week_ago
+                s for s in stats.get('signals', [])
+                if last_monday <= datetime.fromisoformat(s['timestamp']).date() <= last_sunday
             ]
             
+            logger.info(f"Found {len(weekly_signals)} signals for the week")
+            
             if not weekly_signals:
+                logger.warning("No signals for last week")
                 return None
             
             # Основни статистики
@@ -414,30 +515,44 @@ class DailyReportEngine:
             buy_signals = len([s for s in weekly_signals if s['type'] == 'BUY'])
             sell_signals = len([s for s in weekly_signals if s['type'] == 'SELL'])
             
-            # Завършени trades
-            completed = [s for s in weekly_signals if s.get('status') == 'COMPLETED']
-            active = [s for s in weekly_signals if s.get('status') == 'ACTIVE']
+            # Завършени trades (използвай status: WIN/LOSS/PENDING или outcome)
+            completed = [
+                s for s in weekly_signals 
+                if s.get('status') in ['WIN', 'LOSS'] or s.get('outcome') in ['WIN', 'LOSS']
+            ]
+            active = [
+                s for s in weekly_signals 
+                if s.get('status') == 'PENDING' or (s.get('status') not in ['WIN', 'LOSS'] and s.get('outcome') not in ['WIN', 'LOSS'])
+            ]
             
             # Точност
             if completed:
-                wins = len([s for s in completed if s.get('result') == 'WIN'])
-                losses = len([s for s in completed if s.get('result') == 'LOSS'])
+                wins = len([
+                    s for s in completed 
+                    if s.get('status') == 'WIN' or s.get('outcome') == 'WIN' or s.get('result') == 'WIN'
+                ])
+                losses = len([
+                    s for s in completed 
+                    if s.get('status') == 'LOSS' or s.get('outcome') == 'LOSS' or s.get('result') == 'LOSS'
+                ])
                 accuracy = (wins / len(completed) * 100)
+                logger.info(f"🎯 Weekly accuracy: {accuracy:.1f}% (Wins: {wins}, Losses: {losses})")
             else:
                 wins = losses = 0
                 accuracy = 0
+                logger.info("⏳ No completed trades for the week")
             
-            # Успеваемост
-            total_profit = sum([s.get('profit_pct', 0) for s in completed])
+            # Успеваемост (използвай profit_loss_pct или profit_pct)
+            total_profit = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in completed])
             
             if completed:
-                profitable = [s for s in completed if s.get('profit_pct', 0) > 0]
-                losing = [s for s in completed if s.get('profit_pct', 0) < 0]
+                profitable = [s for s in completed if s.get('profit_loss_pct', s.get('profit_pct', 0)) > 0]
+                losing = [s for s in completed if s.get('profit_loss_pct', s.get('profit_pct', 0)) < 0]
                 
-                avg_win = sum([s['profit_pct'] for s in profitable]) / len(profitable) if profitable else 0
-                avg_loss = sum([s['profit_pct'] for s in losing]) / len(losing) if losing else 0
-                best_trade = max(completed, key=lambda x: x.get('profit_pct', 0)) if completed else None
-                worst_trade = min(completed, key=lambda x: x.get('profit_pct', 0)) if completed else None
+                avg_win = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in profitable]) / len(profitable) if profitable else 0
+                avg_loss = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in losing]) / len(losing) if losing else 0
+                best_trade = max(completed, key=lambda x: x.get('profit_loss_pct', x.get('profit_pct', 0))) if completed else None
+                worst_trade = min(completed, key=lambda x: x.get('profit_loss_pct', x.get('profit_pct', 0))) if completed else None
             else:
                 avg_win = avg_loss = 0
                 best_trade = worst_trade = None
@@ -445,38 +560,72 @@ class DailyReportEngine:
             # Confidence
             avg_confidence = sum([s['confidence'] for s in weekly_signals]) / total_signals
             
-            # По дни
+            # TOP 3 СИМВОЛА по печалба
+            symbols_profit = {}
+            symbols = list(set([s['symbol'] for s in weekly_signals]))
+            
+            for symbol in symbols:
+                symbol_signals = [s for s in weekly_signals if s['symbol'] == symbol]
+                symbol_completed = [
+                    s for s in symbol_signals 
+                    if s.get('status') in ['WIN', 'LOSS'] or s.get('outcome') in ['WIN', 'LOSS']
+                ]
+                
+                if symbol_completed:
+                    symbol_profit = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in symbol_completed])
+                    symbols_profit[symbol] = symbol_profit
+            
+            # Сортирай и вземи топ 3
+            top_symbols = sorted(symbols_profit.items(), key=lambda x: x[1], reverse=True)[:3]
+            top_symbols_str = ""
+            for i, (symbol, profit) in enumerate(top_symbols, 1):
+                top_symbols_str += f" {i}. {symbol}: {profit:+.2f}%\n"
+            
+            if not top_symbols_str:
+                top_symbols_str = " Няма данни\n"
+            
+            # Дневен breakdown (по 7 дни)
             daily_breakdown = {}
             for i in range(7):
-                day = datetime.now().date() - timedelta(days=i)
+                day = last_monday + timedelta(days=i)
+                day_name = ['Понеделник', 'Вторник', 'Сряда', 'Четвъртък', 'Петък', 'Събота', 'Неделя'][i]
+                
                 day_signals = [s for s in weekly_signals 
                              if datetime.fromisoformat(s['timestamp']).date() == day]
-                day_completed = [s for s in day_signals if s.get('status') == 'COMPLETED']
+                day_completed = [
+                    s for s in day_signals 
+                    if s.get('status') in ['WIN', 'LOSS'] or s.get('outcome') in ['WIN', 'LOSS']
+                ]
                 
                 if day_completed:
-                    day_wins = len([s for s in day_completed if s.get('result') == 'WIN'])
+                    day_wins = len([
+                        s for s in day_completed 
+                        if s.get('status') == 'WIN' or s.get('outcome') == 'WIN' or s.get('result') == 'WIN'
+                    ])
                     day_accuracy = (day_wins / len(day_completed) * 100)
-                    day_profit = sum([s.get('profit_pct', 0) for s in day_completed])
+                    day_profit = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in day_completed])
                 else:
                     day_accuracy = 0
                     day_profit = 0
                 
-                daily_breakdown[day.isoformat()] = {
+                daily_breakdown[day_name] = {
+                    'date': day.isoformat(),
                     'total': len(day_signals),
                     'completed': len(day_completed),
                     'accuracy': day_accuracy,
                     'profit': day_profit
                 }
             
+            logger.info(f"✅ Weekly summary generated successfully")
+            
             return {
-                'period': '7 дни',
-                'start_date': week_ago.isoformat(),
-                'end_date': datetime.now().date().isoformat(),
+                'period': 'Изминала седмица',
+                'period_start': last_monday.strftime('%d.%m.%Y'),
+                'period_end': last_sunday.strftime('%d.%m.%Y'),
                 'total_signals': total_signals,
                 'buy_signals': buy_signals,
                 'sell_signals': sell_signals,
-                'active_signals': len(active),
-                'completed_signals': len(completed),
+                'pending': len(active),
                 'wins': wins,
                 'losses': losses,
                 'accuracy': accuracy,
@@ -486,32 +635,66 @@ class DailyReportEngine:
                 'avg_confidence': avg_confidence,
                 'best_trade': best_trade,
                 'worst_trade': worst_trade,
-                'daily_breakdown': daily_breakdown
+                'daily_breakdown': daily_breakdown,
+                'top_symbols_str': top_symbols_str
             }
             
         except Exception as e:
-            print(f"❌ Weekly summary error: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"❌ Weekly summary error: {e}", exc_info=True)
             return None
     
     def get_monthly_summary(self):
-        """Месечен обобщен отчет с точност и успеваемост"""
+        """Месечен обобщен отчет за ИЗМИНАЛИЯ МЕСЕЦ (1-во - последно число)"""
         try:
-            if not os.path.exists(self.stats_path):
+            logger.info("📆 Starting monthly summary generation...")
+            
+            # Зареди данни от ml_journal.json първо, резервно bot_stats.json
+            stats = None
+            
+            # Try ml_journal.json first (preferred)
+            if os.path.exists(self.journal_path):
+                try:
+                    logger.debug(f"Loading data from ml_journal.json: {self.journal_path}")
+                    with open(self.journal_path, 'r') as f:
+                        journal = json.load(f)
+                    stats = {'signals': journal.get('trades', [])}
+                    logger.info(f"✅ Loaded {len(stats['signals'])} trades from ml_journal.json")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to load ml_journal.json: {e}")
+            
+            # Fallback to bot_stats.json
+            if not stats and os.path.exists(self.stats_path):
+                try:
+                    logger.debug(f"Fallback: Loading data from bot_stats.json: {self.stats_path}")
+                    with open(self.stats_path, 'r') as f:
+                        stats = json.load(f)
+                    logger.info(f"✅ Loaded {len(stats.get('signals', []))} signals from bot_stats.json")
+                except Exception as e:
+                    logger.error(f"❌ Failed to load bot_stats.json: {e}")
+            
+            if not stats:
+                logger.warning("⚠️ No data source available for monthly summary")
                 return None
             
-            with open(self.stats_path, 'r') as f:
-                stats = json.load(f)
+            # Изчисли ИЗМИНАЛИЯ МЕСЕЦ (1-во - последно число)
+            today = datetime.now().date()
+            first_day_this_month = today.replace(day=1)
+            last_day_prev_month = first_day_this_month - timedelta(days=1)
+            first_day_prev_month = last_day_prev_month.replace(day=1)
             
-            # Последните 30 дни
-            month_ago = datetime.now().date() - timedelta(days=30)
+            month_name = first_day_prev_month.strftime('%B %Y')
+            
+            logger.info(f"📆 Monthly period: {first_day_prev_month} - {last_day_prev_month}")
+            
             monthly_signals = [
-                s for s in stats['signals']
-                if datetime.fromisoformat(s['timestamp']).date() >= month_ago
+                s for s in stats.get('signals', [])
+                if first_day_prev_month <= datetime.fromisoformat(s['timestamp']).date() <= last_day_prev_month
             ]
             
+            logger.info(f"Found {len(monthly_signals)} signals for the month")
+            
             if not monthly_signals:
+                logger.warning("No signals for last month")
                 return None
             
             # Основни статистики
@@ -519,30 +702,44 @@ class DailyReportEngine:
             buy_signals = len([s for s in monthly_signals if s['type'] == 'BUY'])
             sell_signals = len([s for s in monthly_signals if s['type'] == 'SELL'])
             
-            # Завършени trades
-            completed = [s for s in monthly_signals if s.get('status') == 'COMPLETED']
-            active = [s for s in monthly_signals if s.get('status') == 'ACTIVE']
+            # Завършени trades (използвай status: WIN/LOSS/PENDING или outcome)
+            completed = [
+                s for s in monthly_signals 
+                if s.get('status') in ['WIN', 'LOSS'] or s.get('outcome') in ['WIN', 'LOSS']
+            ]
+            active = [
+                s for s in monthly_signals 
+                if s.get('status') == 'PENDING' or (s.get('status') not in ['WIN', 'LOSS'] and s.get('outcome') not in ['WIN', 'LOSS'])
+            ]
             
             # Точност
             if completed:
-                wins = len([s for s in completed if s.get('result') == 'WIN'])
-                losses = len([s for s in completed if s.get('result') == 'LOSS'])
+                wins = len([
+                    s for s in completed 
+                    if s.get('status') == 'WIN' or s.get('outcome') == 'WIN' or s.get('result') == 'WIN'
+                ])
+                losses = len([
+                    s for s in completed 
+                    if s.get('status') == 'LOSS' or s.get('outcome') == 'LOSS' or s.get('result') == 'LOSS'
+                ])
                 accuracy = (wins / len(completed) * 100)
+                logger.info(f"🎯 Monthly accuracy: {accuracy:.1f}% (Wins: {wins}, Losses: {losses})")
             else:
                 wins = losses = 0
                 accuracy = 0
+                logger.info("⏳ No completed trades for the month")
             
-            # Успеваемост
-            total_profit = sum([s.get('profit_pct', 0) for s in completed])
+            # Успеваемост (използвай profit_loss_pct или profit_pct)
+            total_profit = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in completed])
             
             if completed:
-                profitable = [s for s in completed if s.get('profit_pct', 0) > 0]
-                losing = [s for s in completed if s.get('profit_pct', 0) < 0]
+                profitable = [s for s in completed if s.get('profit_loss_pct', s.get('profit_pct', 0)) > 0]
+                losing = [s for s in completed if s.get('profit_loss_pct', s.get('profit_pct', 0)) < 0]
                 
-                avg_win = sum([s['profit_pct'] for s in profitable]) / len(profitable) if profitable else 0
-                avg_loss = sum([s['profit_pct'] for s in losing]) / len(losing) if losing else 0
-                best_trade = max(completed, key=lambda x: x.get('profit_pct', 0)) if completed else None
-                worst_trade = min(completed, key=lambda x: x.get('profit_pct', 0)) if completed else None
+                avg_win = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in profitable]) / len(profitable) if profitable else 0
+                avg_loss = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in losing]) / len(losing) if losing else 0
+                best_trade = max(completed, key=lambda x: x.get('profit_loss_pct', x.get('profit_pct', 0))) if completed else None
+                worst_trade = min(completed, key=lambda x: x.get('profit_loss_pct', x.get('profit_pct', 0))) if completed else None
                 profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 else 0
             else:
                 avg_win = avg_loss = profit_factor = 0
@@ -551,65 +748,84 @@ class DailyReportEngine:
             # Confidence
             avg_confidence = sum([s['confidence'] for s in monthly_signals]) / total_signals
             
-            # Статистика по символи
-            symbols_stats = {}
+            # TOP 3 СИМВОЛА по печалба
+            symbols_profit = {}
             symbols = list(set([s['symbol'] for s in monthly_signals]))
             
             for symbol in symbols:
                 symbol_signals = [s for s in monthly_signals if s['symbol'] == symbol]
-                symbol_completed = [s for s in symbol_signals if s.get('status') == 'COMPLETED']
+                symbol_completed = [
+                    s for s in symbol_signals 
+                    if s.get('status') in ['WIN', 'LOSS'] or s.get('outcome') in ['WIN', 'LOSS']
+                ]
                 
                 if symbol_completed:
-                    symbol_wins = len([s for s in symbol_completed if s.get('result') == 'WIN'])
-                    symbol_accuracy = (symbol_wins / len(symbol_completed) * 100)
-                    symbol_profit = sum([s.get('profit_pct', 0) for s in symbol_completed])
-                else:
-                    symbol_wins = 0
-                    symbol_accuracy = 0
-                    symbol_profit = 0
-                
-                symbols_stats[symbol] = {
-                    'total': len(symbol_signals),
-                    'completed': len(symbol_completed),
-                    'wins': symbol_wins,
-                    'accuracy': symbol_accuracy,
-                    'profit': symbol_profit
-                }
+                    symbol_profit = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in symbol_completed])
+                    symbols_profit[symbol] = symbol_profit
             
-            # По седмици
+            # Сортирай и вземи топ 3
+            top_symbols = sorted(symbols_profit.items(), key=lambda x: x[1], reverse=True)[:3]
+            top_symbols_str = ""
+            for i, (symbol, profit) in enumerate(top_symbols, 1):
+                top_symbols_str += f" {i}. {symbol}: {profit:+.2f}%\n"
+            
+            if not top_symbols_str:
+                top_symbols_str = " Няма данни\n"
+            
+            # Седмичен breakdown (разбий месеца на седмици)
             weekly_breakdown = {}
-            for week in range(4):
-                week_start = datetime.now().date() - timedelta(days=(week + 1) * 7)
-                week_end = datetime.now().date() - timedelta(days=week * 7)
+            current_week_start = first_day_prev_month
+            week_num = 1
+            
+            while current_week_start <= last_day_prev_month:
+                # Изчисли края на седмицата (неделя или край на месеца)
+                current_week_end = min(
+                    current_week_start + timedelta(days=6),
+                    last_day_prev_month
+                )
                 
-                week_signals = [s for s in monthly_signals 
-                              if week_start <= datetime.fromisoformat(s['timestamp']).date() < week_end]
-                week_completed = [s for s in week_signals if s.get('status') == 'COMPLETED']
+                week_signals = [
+                    s for s in monthly_signals 
+                    if current_week_start <= datetime.fromisoformat(s['timestamp']).date() <= current_week_end
+                ]
+                week_completed = [
+                    s for s in week_signals 
+                    if s.get('status') in ['WIN', 'LOSS'] or s.get('outcome') in ['WIN', 'LOSS']
+                ]
                 
                 if week_completed:
-                    week_wins = len([s for s in week_completed if s.get('result') == 'WIN'])
+                    week_wins = len([
+                        s for s in week_completed 
+                        if s.get('status') == 'WIN' or s.get('outcome') == 'WIN' or s.get('result') == 'WIN'
+                    ])
                     week_accuracy = (week_wins / len(week_completed) * 100)
-                    week_profit = sum([s.get('profit_pct', 0) for s in week_completed])
+                    week_profit = sum([s.get('profit_loss_pct', s.get('profit_pct', 0)) for s in week_completed])
                 else:
                     week_accuracy = 0
                     week_profit = 0
                 
-                weekly_breakdown[f'Week {4-week}'] = {
+                weekly_breakdown[f'Седмица {week_num}'] = {
+                    'period': f"{current_week_start.strftime('%d.%m')} - {current_week_end.strftime('%d.%m')}",
                     'total': len(week_signals),
                     'completed': len(week_completed),
                     'accuracy': week_accuracy,
                     'profit': week_profit
                 }
+                
+                current_week_start = current_week_end + timedelta(days=1)
+                week_num += 1
+            
+            logger.info(f"✅ Monthly summary generated successfully")
             
             return {
-                'period': '30 дни',
-                'start_date': month_ago.isoformat(),
-                'end_date': datetime.now().date().isoformat(),
+                'period': 'Изминал месец',
+                'month_name': month_name,
+                'period_start': first_day_prev_month.strftime('%d.%m.%Y'),
+                'period_end': last_day_prev_month.strftime('%d.%m.%Y'),
                 'total_signals': total_signals,
                 'buy_signals': buy_signals,
                 'sell_signals': sell_signals,
-                'active_signals': len(active),
-                'completed_signals': len(completed),
+                'pending': len(active),
                 'wins': wins,
                 'losses': losses,
                 'accuracy': accuracy,
@@ -620,15 +836,86 @@ class DailyReportEngine:
                 'avg_confidence': avg_confidence,
                 'best_trade': best_trade,
                 'worst_trade': worst_trade,
-                'symbols_stats': symbols_stats,
-                'weekly_breakdown': weekly_breakdown
+                'weekly_breakdown': weekly_breakdown,
+                'top_symbols_str': top_symbols_str
             }
             
         except Exception as e:
-            print(f"❌ Monthly summary error: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"❌ Monthly summary error: {e}", exc_info=True)
             return None
+    
+    def format_weekly_message(self, summary):
+        """Форматира седмичния отчет за Telegram"""
+        if not summary:
+            return "⚠️ Няма данни за седмичен отчет"
+        
+        msg = f"""📅 <b>СЕДМИЧЕН ОТЧЕТ</b>
+📆 {summary['period_start']} - {summary['period_end']}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>ОБЩА СТАТИСТИКА:</b>
+🔢 Общо сигнали: {summary['total_signals']}
+🟢 КУПУВА: {summary['buy_signals']}
+🔴 ПРОДАВА: {summary['sell_signals']}
+✅ Успешни: {summary['wins']} ({summary['accuracy']:.1f}%)
+❌ Неуспешни: {summary['losses']}
+⏳ В изчакване: {summary['pending']}
+
+💰 <b>ЕФЕКТИВНОСТ:</b>
+📈 Обща печалба/загуба: <b>{summary['total_profit']:+.2f}%</b>
+💎 Среден печеливш trade: <b>+{summary['avg_win']:.2f}%</b>
+💔 Среден губещ trade: <b>{summary['avg_loss']:.2f}%</b>
+💪 Средна увереност: {summary['avg_confidence']:.1f}%
+
+💰 <b>ТОП СИМВОЛИ:</b>
+{summary['top_symbols_str']}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ Генериран: {datetime.now().strftime('%d.%m.%Y %H:%M')}
+"""
+        return msg
+    
+    def format_monthly_message(self, summary):
+        """Форматира месечен отчет за Telegram"""
+        if not summary:
+            return "⚠️ Няма данни за месечен отчет"
+        
+        # Weekly breakdown formatting
+        weekly_str = ""
+        if summary.get('weekly_breakdown'):
+            for week_name, week_data in summary['weekly_breakdown'].items():
+                weekly_str += f" • {week_name} ({week_data['period']}): {week_data['completed']} trades, {week_data['profit']:+.2f}%\n"
+        
+        msg = f"""📆 <b>МЕСЕЧЕН ОТЧЕТ</b>
+🗓️ {summary['month_name']}
+📅 {summary['period_start']} - {summary['period_end']}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>ОБЩА СТАТИСТИКА:</b>
+🔢 Общо сигнали: {summary['total_signals']}
+🟢 КУПУВА: {summary['buy_signals']}
+🔴 ПРОДАВА: {summary['sell_signals']}
+✅ Успешни: {summary['wins']} ({summary['accuracy']:.1f}%)
+❌ Неуспешни: {summary['losses']}
+⏳ В изчакване: {summary['pending']}
+
+💰 <b>ЕФЕКТИВНОСТ:</b>
+📈 Обща печалба/загуба: <b>{summary['total_profit']:+.2f}%</b>
+💎 Среден печеливш trade: <b>+{summary['avg_win']:.2f}%</b>
+💔 Среден губещ trade: <b>{summary['avg_loss']:.2f}%</b>
+⚖️ Фактор печалба: <b>{summary['profit_factor']:.2f}</b>
+💪 Средна увереност: {summary['avg_confidence']:.1f}%
+
+📊 <b>ПО СЕДМИЦИ:</b>
+{weekly_str}
+
+💰 <b>ТОП 3 СИМВОЛА:</b>
+{summary['top_symbols_str']}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ Генериран: {datetime.now().strftime('%d.%m.%Y %H:%M')}
+"""
+        return msg
 
 
 # Global report instance
