@@ -1875,8 +1875,9 @@ class ICTSignalEngine:
             sl_price = min(sl_from_zone, sl_from_swing)
             
             # Ensure minimum distance (1% from entry)
+            # ✅ BULLISH: SL MUST be BELOW entry, so use max() to push SL downward
             min_sl = entry_price * 0.99
-            return min(sl_price, min_sl)
+            return max(sl_price, min_sl)  # FIXED: Changed min() to max()
         
         else:  # BEARISH
             # SL above last swing high OR above OB/FVG zone
@@ -1895,8 +1896,9 @@ class ICTSignalEngine:
             sl_price = max(sl_from_zone, sl_from_swing)
             
             # Ensure minimum distance (1% from entry)
+            # ✅ BEARISH: SL MUST be ABOVE entry, so use min() to keep SL tight but compliant
             max_sl = entry_price * 1.01
-            return max(sl_price, max_sl)
+            return min(sl_price, max_sl)  # FIXED: Changed max() to min()
 
     def _validate_sl_position(self, sl_price: float, order_block, direction, entry_price: float) -> Tuple[float, bool]:
         """
