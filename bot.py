@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 import matplotlib
 matplotlib.use('Agg')  # Използвай non-GUI backend
 import matplotlib.pyplot as plt
@@ -12302,29 +12303,101 @@ def main():
             
             # НОВИ ДНЕВНИ ОТЧЕТИ (ако има външен engine) - Всеки ден в 08:00 BG време
             if REPORTS_AVAILABLE:
-                async def send_daily_auto_report():
-                    """Изпраща автоматичен дневен отчет към owner за предходния ден"""
+                async def send_daily_report_auto():
+                    """Автоматично изпраща дневен отчет за ВЧЕРА"""
                     try:
+                        logger.info("📊 [AUTO] Генериране на дневен отчет за ВЧЕРА...")
+                        from daily_reports import report_engine
+                        
                         report = report_engine.generate_daily_report()
                         if report:
                             message = report_engine.format_report_message(report)
                             await application.bot.send_message(
                                 chat_id=OWNER_CHAT_ID,
-                                text=f"🔔 <b>ДОПЪЛНИТЕЛЕН ДНЕВЕН ОТЧЕТ</b>\n\n{message}",
+                                text=message,
                                 parse_mode='HTML',
-                                disable_notification=True
+                                disable_notification=False
                             )
-                            logger.info("✅ Additional daily report sent")
+                            logger.info("✅ [AUTO] Дневният отчет е изпратен успешно")
+                        else:
+                            logger.warning("⚠️ [AUTO] Няма данни за дневния отчет")
                     except Exception as e:
-                        logger.error(f"❌ Additional report error: {e}")
+                        logger.error(f"❌ [AUTO] Грешка в дневния отчет: {e}", exc_info=True)
                 
+                async def send_weekly_report_auto():
+                    """Автоматично изпраща седмичен отчет за ИЗМИНАЛАТА СЕДМИЦА"""
+                    try:
+                        logger.info("📅 [AUTO] Генериране на седмичен отчет за ПОСЛЕДНАТА СЕДМИЦА...")
+                        from daily_reports import report_engine
+                        
+                        summary = report_engine.get_weekly_summary()
+                        if summary:
+                            message = report_engine.format_weekly_message(summary)
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=message,
+                                parse_mode='HTML',
+                                disable_notification=False
+                            )
+                            logger.info("✅ [AUTO] Седмичният отчет е изпратен успешно")
+                        else:
+                            logger.warning("⚠️ [AUTO] Няма данни за седмичния отчет")
+                    except Exception as e:
+                        logger.error(f"❌ [AUTO] Грешка в седмичния отчет: {e}", exc_info=True)
+                
+                async def send_monthly_report_auto():
+                    """Автоматично изпраща месечен отчет за ИЗМИНАЛИЯ МЕСЕЦ"""
+                    try:
+                        logger.info("📆 [AUTO] Генериране на месечен отчет за ПОСЛЕДНИЯ МЕСЕЦ...")
+                        from daily_reports import report_engine
+                        
+                        summary = report_engine.get_monthly_summary()
+                        if summary:
+                            message = report_engine.format_monthly_message(summary)
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=message,
+                                parse_mode='HTML',
+                                disable_notification=False
+                            )
+                            logger.info("✅ [AUTO] Месечният отчет е изпратен успешно")
+                        else:
+                            logger.warning("⚠️ [AUTO] Няма данни за месечен отчет")
+                    except Exception as e:
+                        logger.error(f"❌ [AUTO] Грешка в месечния отчет: {e}", exc_info=True)
+                
+                # 1. Дневен - ВСЕКИ ДЕН в 06:00 UTC (08:00 BG време)
                 scheduler.add_job(
-                    send_daily_auto_report,
-                    'cron',
-                    hour=6,  # 08:00 BG = 06:00 UTC
-                    minute=5  # 5 минути след основния отчет
+                    lambda: asyncio.create_task(send_daily_report_auto()),
+                    CronTrigger(hour=6, minute=0, timezone='UTC'),
+                    id='daily_report_auto',
+                    replace_existing=True,
+                    name='Дневен отчет (Автоматично)',
+                    misfire_grace_time=300
                 )
-                logger.info("✅ Additional daily reports scheduled (08:00:05 BG time)")
+                logger.info("✅ Планирано: Дневен отчет → Всеки ден в 06:00 UTC (08:00 BG)")
+                
+                # 2. Седмичен - ВСЕКИ ПОНЕДЕЛНИК в 06:00 UTC (08:00 BG време)
+                scheduler.add_job(
+                    lambda: asyncio.create_task(send_weekly_report_auto()),
+                    CronTrigger(day_of_week='mon', hour=6, minute=0, timezone='UTC'),
+                    id='weekly_report_auto',
+                    replace_existing=True,
+                    name='Седмичен отчет (Автоматично)',
+                    misfire_grace_time=300
+                )
+                logger.info("✅ Планирано: Седмичен отчет → Всеки понеделник в 06:00 UTC (08:00 BG)")
+                
+                # 3. Месечен - 1-ВО ЧИСЛО в 06:00 UTC (08:00 BG време)
+                scheduler.add_job(
+                    lambda: asyncio.create_task(send_monthly_report_auto()),
+                    CronTrigger(day=1, hour=6, minute=0, timezone='UTC'),
+                    id='monthly_report_auto',
+                    replace_existing=True,
+                    name='Месечен отчет (Автоматично)',
+                    misfire_grace_time=300
+                )
+                logger.info("✅ Планирано: Месечен отчет → 1-ви от месеца в 06:00 UTC (08:00 BG)")
             
             # Автоматична диагностика всеки ден в 01:00 UTC (03:00 BG време)
             scheduler.add_job(
