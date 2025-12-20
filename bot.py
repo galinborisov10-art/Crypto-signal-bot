@@ -11618,6 +11618,271 @@ async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(overview, parse_mode='HTML', reply_markup=reply_markup)
 
 
+async def generate_trading_report(update: Update, context: ContextTypes.DEFAULT_TYPE, days=None):
+    """
+    Generates AGGREGATED trading report across ALL symbols and ALL timeframes.
+    
+    This fixes the problem where Reports button shows only single symbol (BTCUSDT)
+    and single timeframe (4h). Now shows complete trading analysis.
+    
+    Args:
+        update: Telegram update object
+        context: Telegram context
+        days: Number of days to include (7, 30, 90, or None for ALL)
+    
+    Data source: ml_journal.json (completed trades only)
+    
+    Displays:
+    - Total trades across ALL symbols (XRPUSDT, BTCUSDT, SOLUSDT, ETHUSDT, BNBUSDT, ADAUSDT)
+    - Total trades across ALL timeframes (1h, 4h, 1d, 1w)
+    - Overall statistics (total trades, WR, P/L, avg win/loss)
+    - Breakdown by symbol (sorted by P/L)
+    - Breakdown by timeframe (sorted by WR)
+    - Best performance stats
+    - Current timestamp
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Load ML Journal
+        import json
+        import os
+        from datetime import datetime, timedelta
+        from collections import defaultdict
+        
+        ml_journal_file = f'{BASE_PATH}/ml_journal.json'
+        backtest_file = f'{BASE_PATH}/backtest_results.json'
+        
+        all_trades = []
+        cutoff_date = None
+        
+        if days:
+            cutoff_date = datetime.now() - timedelta(days=days)
+        
+        # Try loading from ml_journal.json first
+        if os.path.exists(ml_journal_file):
+            try:
+                with open(ml_journal_file, 'r') as f:
+                    ml_journal = json.load(f)
+                
+                for trade in ml_journal.get('trades', []):
+                    # Skip if not completed
+                    if trade.get('status') != 'COMPLETED':
+                        continue
+                    
+                    # Parse timestamp
+                    try:
+                        trade_date = datetime.fromisoformat(trade.get('timestamp', ''))
+                    except:
+                        continue
+                    
+                    # Filter by date if specified
+                    if cutoff_date and trade_date < cutoff_date:
+                        continue
+                    
+                    all_trades.append(trade)
+            except Exception as e:
+                logger.error(f"Error loading ml_journal.json: {e}")
+        
+        # Fallback to backtest_results.json if ml_journal didn't provide data
+        if not all_trades and os.path.exists(backtest_file):
+            try:
+                with open(backtest_file, 'r') as f:
+                    data = json.load(f)
+                    backtests = data.get('backtests', [])
+                    
+                    # Aggregate all trades from all backtests
+                    for backtest in backtests:
+                        for trade in backtest.get('trades', []):
+                            # Add symbol and timeframe info to trade
+                            trade['symbol'] = backtest.get('symbol', 'UNKNOWN')
+                            trade['timeframe'] = backtest.get('timeframe', 'UNKNOWN')
+                            
+                            # Normalize result field
+                            if 'result' not in trade:
+                                if trade.get('profit_pct', 0) > 0:
+                                    trade['result'] = 'WIN'
+                                else:
+                                    trade['result'] = 'LOSS'
+                            
+                            all_trades.append(trade)
+            except Exception as e:
+                logger.error(f"Error loading backtest_results.json: {e}")
+        
+        # If no trades found
+        if not all_trades:
+            period_text = f"последните {days} дни" if days else "всичко време"
+            await query.edit_message_text(
+                f"📊 <b>ОТЧЕТ ЗА ТЪРГОВИЯ</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"⚠️ Няма завършени trades за {period_text}\n\n"
+                f"💡 Trades се записват автоматично при затваряне",
+                parse_mode='HTML'
+            )
+            return
+        
+        # ━━━ OVERALL STATISTICS ━━━
+        total_trades = len(all_trades)
+        wins = [t for t in all_trades if t.get('result') == 'WIN']
+        losses = [t for t in all_trades if t.get('result') == 'LOSS']
+        
+        win_count = len(wins)
+        loss_count = len(losses)
+        win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0
+        
+        # Calculate P/L (support both pnl_percent and profit_pct field names)
+        total_pnl = sum(t.get('pnl_percent', t.get('profit_pct', 0)) for t in all_trades)
+        avg_pnl = total_pnl / total_trades if total_trades > 0 else 0
+        
+        avg_win = sum(t.get('pnl_percent', t.get('profit_pct', 0)) for t in wins) / len(wins) if wins else 0
+        avg_loss = sum(t.get('pnl_percent', t.get('profit_pct', 0)) for t in losses) / len(losses) if losses else 0
+        
+        # ━━━ BY SYMBOL ━━━
+        by_symbol = defaultdict(lambda: {'trades': [], 'wins': 0, 'losses': 0, 'pnl': 0})
+        
+        for trade in all_trades:
+            symbol = trade.get('symbol', 'UNKNOWN')
+            by_symbol[symbol]['trades'].append(trade)
+            by_symbol[symbol]['pnl'] += trade.get('pnl_percent', trade.get('profit_pct', 0))
+            
+            if trade.get('result') == 'WIN':
+                by_symbol[symbol]['wins'] += 1
+            elif trade.get('result') == 'LOSS':
+                by_symbol[symbol]['losses'] += 1
+        
+        # Sort by P/L descending
+        symbol_stats = []
+        for symbol, data in by_symbol.items():
+            total = len(data['trades'])
+            wr = (data['wins'] / total * 100) if total > 0 else 0
+            symbol_stats.append({
+                'symbol': symbol,
+                'trades': total,
+                'wr': wr,
+                'pnl': data['pnl']
+            })
+        symbol_stats.sort(key=lambda x: x['pnl'], reverse=True)
+        
+        # ━━━ BY TIMEFRAME ━━━
+        by_tf = defaultdict(lambda: {'trades': [], 'wins': 0, 'losses': 0, 'pnl': 0})
+        
+        for trade in all_trades:
+            tf = trade.get('timeframe', 'UNKNOWN')
+            by_tf[tf]['trades'].append(trade)
+            by_tf[tf]['pnl'] += trade.get('pnl_percent', trade.get('profit_pct', 0))
+            
+            if trade.get('result') == 'WIN':
+                by_tf[tf]['wins'] += 1
+            elif trade.get('result') == 'LOSS':
+                by_tf[tf]['losses'] += 1
+        
+        # Sort by WR descending
+        tf_stats = []
+        for tf, data in by_tf.items():
+            total = len(data['trades'])
+            wr = (data['wins'] / total * 100) if total > 0 else 0
+            tf_stats.append({
+                'tf': tf,
+                'trades': total,
+                'wr': wr,
+                'pnl': data['pnl']
+            })
+        tf_stats.sort(key=lambda x: x['wr'], reverse=True)
+        
+        # ━━━ BEST PERFORMANCE ━━━
+        best_symbol = symbol_stats[0] if symbol_stats else None
+        best_tf = tf_stats[0] if tf_stats else None
+        
+        # Calculate longest win/loss streaks
+        max_win_streak = 0
+        max_loss_streak = 0
+        current_win_streak = 0
+        current_loss_streak = 0
+        
+        for trade in all_trades:
+            if trade.get('result') == 'WIN':
+                current_win_streak += 1
+                current_loss_streak = 0
+                max_win_streak = max(max_win_streak, current_win_streak)
+            elif trade.get('result') == 'LOSS':
+                current_loss_streak += 1
+                current_win_streak = 0
+                max_loss_streak = max(max_loss_streak, current_loss_streak)
+        
+        # ━━━ BUILD REPORT MESSAGE ━━━
+        period_text = f"Последните {days} дни" if days else "Всичко време"
+        symbols_list = ', '.join([s['symbol'] for s in symbol_stats[:6]])
+        tf_list = ', '.join([t['tf'] for t in tf_stats[:4]])
+        
+        report = (
+            f"📊 <b>ОТЧЕТ ЗА ТЪРГОВИЯ</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"💰 Символи: {len(symbol_stats)} ({symbols_list})\n"
+            f"⏰ Таймфреймове: {len(tf_stats)} ({tf_list})\n"
+            f"📅 Период: {period_text}\n\n"
+            
+            f"━━━ ОБЩА СТАТИСТИКА ━━━\n"
+            f"   📊 Общо trades: {total_trades}\n"
+            f"   🟢 Печеливши: {win_count} ({win_rate:.1f}%)\n"
+            f"   🔴 Загубени: {loss_count} ({100-win_rate:.1f}%)\n"
+            f"   🎯 Win Rate: {win_rate:.1f}%\n"
+            f"   💰 Обща печалба: {total_pnl:+.2f}%\n"
+            f"   📊 Средно на trade: {avg_pnl:+.2f}%\n"
+            f"   💵 Средна печалба: {avg_win:+.2f}%\n"
+            f"   💸 Средна загуба: {avg_loss:+.2f}%\n\n"
+        )
+        
+        # Add symbol breakdown (top 6)
+        report += "━━━ ПО СИМВОЛ ━━━\n"
+        medals = ['🥇', '🥈', '🥉']
+        for i, s in enumerate(symbol_stats[:6]):
+            medal = medals[i] if i < 3 else '  •'
+            report += f"   {medal} {s['symbol']}: {s['trades']} trades, {s['wr']:.0f}% WR, {s['pnl']:+.1f}% P/L\n"
+        report += "\n"
+        
+        # Add timeframe breakdown (top 4)
+        report += "━━━ ПО ТАЙМФРЕЙМ ━━━\n"
+        for i, t in enumerate(tf_stats[:4]):
+            medal = medals[i] if i < 3 else '  •'
+            report += f"   {medal} {t['tf']}: {t['trades']} trades, {t['wr']:.0f}% WR, {t['pnl']:+.1f}% P/L\n"
+        report += "\n"
+        
+        # Add best performance
+        report += "━━━ BEST PERFORMANCE ━━━\n"
+        if best_symbol:
+            report += f"   💎 Най-добър символ: {best_symbol['symbol']} ({best_symbol['pnl']:+.1f}%)\n"
+        if best_tf:
+            report += f"   ⏰ Най-добър TF: {best_tf['tf']} ({best_tf['wr']:.0f}% WR)\n"
+        report += f"   📈 Най-дълга серия: {max_win_streak} печеливши trades\n"
+        report += f"   📉 Най-дълга загуба: {max_loss_streak} загубени trades\n\n"
+        
+        # Add footer
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        report += (
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⏰ Генериран: {now}\n"
+            f"💡 Общо {total_trades} завършени trades"
+        )
+        
+        await query.edit_message_text(report, parse_mode='HTML')
+        
+    except FileNotFoundError:
+        await query.edit_message_text(
+            "❌ <b>ГРЕШКА</b>\n\n"
+            "Файлът `ml_journal.json` не съществува.\n"
+            "Моля първо направи backtest или затвори trades.",
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        logger.error(f"Error generating trading report: {e}", exc_info=True)
+        await query.edit_message_text(
+            f"❌ <b>ГРЕШКА</b>\n\n"
+            f"Не мога да генерирам отчета:\n{str(e)}",
+            parse_mode='HTML'
+        )
+
+
 async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработва callbacks от reports меню"""
     query = update.callback_query
@@ -11723,6 +11988,88 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     
     elif query.data == "report_backtest":
+        # Show period selection menu for trading reports
+        keyboard = [
+            [InlineKeyboardButton("🗓️ Последните 7 дни", callback_data="report_7d")],
+            [InlineKeyboardButton("🗓️ Последните 30 дни", callback_data="report_30d")],
+            [InlineKeyboardButton("🗓️ Последните 90 дни", callback_data="report_90d")],
+            [InlineKeyboardButton("🗓️ Всичко време (ALL)", callback_data="report_all")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="back_to_reports")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "📊 <b>ОТЧЕТИ ЗА ТЪРГОВИЯ</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Избери период за отчета:",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+    
+    elif query.data == "back_to_reports":
+        # Return to reports menu - recreate the inline keyboard
+        keyboard = [
+            [
+                InlineKeyboardButton("📊 Дневен отчет", callback_data="report_daily"),
+                InlineKeyboardButton("📈 Седмичен", callback_data="report_weekly"),
+                InlineKeyboardButton("📆 Месечен", callback_data="report_monthly")
+            ],
+            [
+                InlineKeyboardButton("📉 Back-test резултати", callback_data="report_backtest"),
+                InlineKeyboardButton("🤖 ML статистика", callback_data="report_ml"),
+            ],
+            [
+                InlineKeyboardButton("📋 Bot статистика", callback_data="report_stats"),
+                InlineKeyboardButton("🔄 Refresh", callback_data="report_refresh"),
+            ],
+            [
+                InlineKeyboardButton("🏠 Главно меню", callback_data="back_to_menu"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Покажи overview
+        overview = "📋 <b>ЦЕНТЪР ЗА ОТЧЕТИ</b>\n\n"
+        overview += "Избери тип отчет за преглед:\n\n"
+        
+        # Бърз преглед на статуса
+        if REPORTS_AVAILABLE:
+            try:
+                import os
+                reports_file = f'{BASE_PATH}/daily_reports.json'
+                if os.path.exists(reports_file):
+                    import json
+                    with open(reports_file, 'r') as f:
+                        data = json.load(f)
+                        reports_count = len(data.get('reports', []))
+                        overview += f"📊 Запазени дневни отчети: {reports_count}\n"
+            except:
+                pass
+        
+        if ML_AVAILABLE:
+            status = ml_engine.get_status()
+            overview += f"🤖 ML модел: {'✅ Trained' if status['model_trained'] else '⚠️ Not trained'}\n"
+            overview += f"📈 Training samples: {status['training_samples']}\n"
+        
+        if BACKTEST_AVAILABLE:
+            try:
+                import os
+                backtest_file = f'{BASE_PATH}/backtest_results.json'
+                if os.path.exists(backtest_file):
+                    import json
+                    with open(backtest_file, 'r') as f:
+                        data = json.load(f)
+                        bt_count = len(data.get('backtests', []))
+                        overview += f"📉 Back-test резултати: {bt_count}\n"
+            except:
+                pass
+        
+        overview += "\n💡 <i>Избери бутон за детайли</i>"
+        
+        await query.edit_message_text(overview, parse_mode='HTML', reply_markup=reply_markup)
+    
+    elif query.data == "report_backtest_old":
+        # Old implementation kept for reference (not used anymore)
         # Back-test резултати - AGGREGATED from ALL symbols and ALL timeframes
         # This fixes the problem where button shows only single symbol (BTCUSDT)
         # and old archive data. Now shows complete trading history across all assets.
@@ -12225,7 +12572,26 @@ def main():
     app.add_handler(CallbackQueryHandler(signal_callback, pattern='^back_to_menu$'))
     app.add_handler(CallbackQueryHandler(signal_callback, pattern='^back_to_signal_menu$'))
     app.add_handler(CallbackQueryHandler(timeframe_callback, pattern='^timeframe_'))
-    app.add_handler(CallbackQueryHandler(reports_callback, pattern='^report_'))  # Reports menu
+    
+    # Reports period selection callbacks (must come BEFORE general report_ pattern)
+    app.add_handler(CallbackQueryHandler(
+        lambda u, c: generate_trading_report(u, c, days=7), 
+        pattern="^report_7d$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        lambda u, c: generate_trading_report(u, c, days=30), 
+        pattern="^report_30d$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        lambda u, c: generate_trading_report(u, c, days=90), 
+        pattern="^report_90d$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        lambda u, c: generate_trading_report(u, c, days=None), 
+        pattern="^report_all$"
+    ))
+    
+    app.add_handler(CallbackQueryHandler(reports_callback, pattern='^report_'))  # Reports menu (general)
     
     # Message handler за текстови бутони от клавиатурата
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
