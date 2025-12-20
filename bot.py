@@ -11723,47 +11723,198 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     
     elif query.data == "report_backtest":
-        # Back-test резултати
-        if not BACKTEST_AVAILABLE:
-            await query.edit_message_text("❌ Backtesting модул не е наличен")
-            return
+        # Back-test резултати - AGGREGATED from ALL symbols and ALL timeframes
+        # This fixes the problem where button shows only single symbol (BTCUSDT)
+        # and old archive data. Now shows complete trading history across all assets.
         
         try:
             import os
             import json
+            from datetime import datetime, timedelta
+            
+            # Try ml_journal.json first (preferred), then backtest_results.json (fallback)
+            ml_journal_file = f'{BASE_PATH}/ml_journal.json'
             backtest_file = f'{BASE_PATH}/backtest_results.json'
-            if os.path.exists(backtest_file):
-                with open(backtest_file, 'r') as f:
-                    data = json.load(f)
-                    backtests = data.get('backtests', [])
+            
+            all_trades = []
+            data_source = None
+            
+            # Try loading from ml_journal.json first
+            if os.path.exists(ml_journal_file):
+                try:
+                    with open(ml_journal_file, 'r') as f:
+                        ml_journal = json.load(f)
                     
-                    if backtests:
-                        latest = backtests[-1]
-                        message = f"""📉 <b>ПОСЛЕДЕН BACK-TEST</b>
+                    # Filter completed trades from last 30 days
+                    cutoff_date = datetime.now() - timedelta(days=30)
+                    
+                    for trade in ml_journal.get('trades', []):
+                        # Skip if not completed
+                        if trade.get('status') != 'COMPLETED':
+                            continue
+                        
+                        # Parse timestamp
+                        try:
+                            trade_date = datetime.fromisoformat(trade.get('timestamp', ''))
+                        except:
+                            continue
+                        
+                        # Filter by date (last 30 days)
+                        if trade_date >= cutoff_date:
+                            all_trades.append(trade)
+                    
+                    data_source = "ml_journal"
+                except Exception as e:
+                    logger.error(f"Error loading ml_journal.json: {e}")
+            
+            # Fallback to backtest_results.json if ml_journal didn't provide data
+            if not all_trades and os.path.exists(backtest_file):
+                try:
+                    with open(backtest_file, 'r') as f:
+                        data = json.load(f)
+                        backtests = data.get('backtests', [])
+                        
+                        # Aggregate all trades from all backtests
+                        for backtest in backtests:
+                            for trade in backtest.get('trades', []):
+                                # Add symbol and timeframe info to trade
+                                trade['symbol'] = backtest.get('symbol', 'UNKNOWN')
+                                trade['timeframe'] = backtest.get('timeframe', 'UNKNOWN')
+                                
+                                # Normalize result field
+                                if 'result' not in trade:
+                                    if trade.get('profit_pct', 0) > 0:
+                                        trade['result'] = 'WIN'
+                                    else:
+                                        trade['result'] = 'LOSS'
+                                
+                                all_trades.append(trade)
+                    
+                    data_source = "backtest_results"
+                except Exception as e:
+                    logger.error(f"Error loading backtest_results.json: {e}")
+            
+            # If no trades found
+            if not all_trades:
+                await query.edit_message_text(
+                    "📉 <b>ПОСЛЕДЕН BACK-TEST</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "⚠️ Няма завършени trades за последните 30 дни\n\n"
+                    "💡 Trades се записват автоматично при затваряне",
+                    parse_mode='HTML'
+                )
+                return
+            
+            # Calculate OVERALL statistics
+            total_trades = len(all_trades)
+            wins = [t for t in all_trades if t.get('result') == 'WIN']
+            losses = [t for t in all_trades if t.get('result') == 'LOSS']
+            
+            win_count = len(wins)
+            loss_count = len(losses)
+            win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0
+            
+            total_pnl = sum(t.get('profit_pct', 0) for t in all_trades)
+            avg_per_trade = total_pnl / total_trades if total_trades > 0 else 0
+            
+            # Group by SYMBOL
+            symbols_data = {}
+            for trade in all_trades:
+                symbol = trade.get('symbol', 'UNKNOWN')
+                if symbol not in symbols_data:
+                    symbols_data[symbol] = {
+                        'trades': [],
+                        'wins': 0,
+                        'losses': 0,
+                        'pnl': 0
+                    }
+                
+                symbols_data[symbol]['trades'].append(trade)
+                symbols_data[symbol]['pnl'] += trade.get('profit_pct', 0)
+                
+                if trade.get('result') == 'WIN':
+                    symbols_data[symbol]['wins'] += 1
+                else:
+                    symbols_data[symbol]['losses'] += 1
+            
+            # Group by TIMEFRAME
+            timeframes_data = {}
+            for trade in all_trades:
+                tf = trade.get('timeframe', 'UNKNOWN')
+                if tf not in timeframes_data:
+                    timeframes_data[tf] = {
+                        'total': 0,
+                        'wins': 0
+                    }
+                
+                timeframes_data[tf]['total'] += 1
+                if trade.get('result') == 'WIN':
+                    timeframes_data[tf]['wins'] += 1
+            
+            # Get unique symbols and timeframes
+            all_symbols = list(symbols_data.keys())
+            all_timeframes = list(timeframes_data.keys())
+            
+            # Format message
+            message = f"""📉 <b>ПОСЛЕДЕН BACK-TEST</b>
+━━━━━━━━━━━━━━━━━━━━
 
-💰 <b>Символ:</b> {latest['symbol']}
-⏰ <b>Таймфрейм:</b> {latest['timeframe']}
-📅 <b>Период:</b> {latest['period_days']} дни
+💰 <b>Символи:</b> {len(all_symbols)} ({', '.join(all_symbols)})
+⏰ <b>Таймфреймове:</b> {len(all_timeframes)} ({', '.join(all_timeframes)})
+📅 <b>Период:</b> 30 дни
 
-<b>Резултати:</b>
-   Общо trades: {latest['total_trades']}
-   🟢 Печеливши: {latest['wins']}
-   🔴 Загубени: {latest['losses']}
-   🎯 Win Rate: {latest['win_rate']:.1f}%
-   💰 Обща печалба: {latest['total_profit_pct']:+.2f}%
-   📊 Средно на trade: {latest['avg_profit_per_trade']:+.2f}%
+━━━ <b>РЕЗУЛТАТИ</b> ━━━
+   📊 Общо trades: {total_trades}
+   🟢 Печеливши: {win_count} ({win_rate:.1f}%)
+   🔴 Загубени: {loss_count} ({100-win_rate:.1f}%)
+   🎯 Win Rate: {win_rate:.1f}%
+   💰 Обща печалба: {total_pnl:+.2f}%
+   📊 Средно на trade: {avg_per_trade:+.2f}%
 
-⏰ <b>Дата:</b> {latest['timestamp'][:10]}
-
-💡 Общо {len(backtests)} back-test(s) в архива
+━━━ <b>ПО СИМВОЛ</b> ━━━
 """
-                        await query.edit_message_text(message, parse_mode='HTML')
-                    else:
-                        await query.edit_message_text("❌ Няма back-test резултати. Използвай /backtest")
-            else:
-                await query.edit_message_text("❌ Няма back-test резултати. Използвай /backtest")
+            
+            # Sort symbols by total trades (descending)
+            for symbol in sorted(symbols_data.keys(), key=lambda s: len(symbols_data[s]['trades']), reverse=True):
+                data = symbols_data[symbol]
+                symbol_total = len(data['trades'])
+                symbol_wr = (data['wins'] / symbol_total * 100) if symbol_total > 0 else 0
+                symbol_pnl = data['pnl']
+                
+                message += f"   • {symbol}: {symbol_total} trades, {symbol_wr:.0f}% WR, {symbol_pnl:+.1f}% P/L\n"
+            
+            message += "\n━━━ <b>ПО ТАЙМФРЕЙМ</b> ━━━\n"
+            
+            # Sort timeframes by total trades (descending)
+            for tf in sorted(timeframes_data.keys(), key=lambda t: timeframes_data[t]['total'], reverse=True):
+                data = timeframes_data[tf]
+                tf_total = data['total']
+                tf_wr = (data['wins'] / tf_total * 100) if tf_total > 0 else 0
+                
+                message += f"   • {tf}: {tf_total} trades, {tf_wr:.0f}% WR\n"
+            
+            message += f"\n━━━━━━━━━━━━━━━━━━━━\n"
+            message += f"⏰ Дата: {datetime.now().strftime('%Y-%m-%d')}\n"
+            message += f"💡 Общо {total_trades} завършени trades"
+            
+            await query.edit_message_text(message, parse_mode='HTML')
+            
+        except FileNotFoundError:
+            await query.edit_message_text(
+                "❌ <b>ML Journal не е намерен</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Файлът `ml_journal.json` липсва.\n"
+                "Trades се записват автоматично при затваряне.",
+                parse_mode='HTML'
+            )
         except Exception as e:
-            await query.edit_message_text(f"❌ Грешка: {e}")
+            logger.error(f"Error in backtest button: {e}", exc_info=True)
+            await query.edit_message_text(
+                f"❌ <b>Грешка при зареждане на данни</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"Error: {str(e)}",
+                parse_mode='HTML'
+            )
 
 
 async def toggle_ict_command(update, context):
