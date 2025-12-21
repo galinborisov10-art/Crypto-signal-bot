@@ -63,3 +63,6 @@ active_auto_signals.json
 ml_model.pkl
 ml_scaler.pkl
 *.pkl
+
+# Verification and test scripts (temporary)
+verify_*.py
