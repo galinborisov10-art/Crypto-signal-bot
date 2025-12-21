@@ -5625,6 +5625,475 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "The advanced signal analysis system is currently unavailable.",
         parse_mode='HTML'
     )
+    
+    # === FALLBACK: OLD ANALYSIS (if ICT not available) ===
+    # Извлечи 24h данни
+    params_24h = {'symbol': symbol}
+    data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
+    
+    if not data_24h or isinstance(data_24h, list):
+        # Ако е списък, намери нашия символ
+        if isinstance(data_24h, list):
+            data_24h = next((s for s in data_24h if s['symbol'] == symbol), None)
+    
+    if not data_24h:
+        await update.message.reply_text("❌ Грешка при извличане на данни")
+        return
+    
+    # Извлечи исторически данни (klines)
+    klines = await fetch_klines(symbol, timeframe, limit=100)
+    
+    if not klines:
+        await update.message.reply_text("❌ Грешка при извличане на исторически данни")
+        return
+    
+    # Анализирай
+    analysis = analyze_signal(data_24h, klines, symbol, timeframe)
+    
+    if not analysis:
+        await update.message.reply_text("❌ Грешка при анализ")
+        return
+    
+    # === BTC CORRELATION ANALYSIS ===
+    btc_correlation = await analyze_btc_correlation(symbol, timeframe)
+    
+    # === ORDER BOOK ANALYSIS ===
+    order_book = await analyze_order_book(symbol, analysis['price'])
+    
+    # === MULTI-TIMEFRAME CONFIRMATION ===
+    mtf_confirmation = await get_higher_timeframe_confirmation(symbol, timeframe, analysis['signal'])
+    
+    # === NEWS SENTIMENT ANALYSIS ===
+    sentiment = await analyze_news_sentiment(symbol)
+    
+    # === MULTI-TIMEFRAME ANALYSIS ===
+    logger.info(f"Starting multi-timeframe analysis for {symbol}")
+    mtf_analysis = await get_multi_timeframe_analysis(symbol, timeframe)
+    logger.info(f"MTF analysis result: {mtf_analysis}")
+    
+    # Коригирай confidence според допълнителните анализи
+    final_confidence = analysis['confidence']
+    
+    # Order Book корекция
+    if order_book:
+        if order_book['pressure'] == analysis['signal']:
+            final_confidence += 10
+            analysis['reasons'].append(f"Order Book натиск: {order_book['pressure']}")
+        elif order_book['pressure'] != 'NEUTRAL' and order_book['pressure'] != analysis['signal']:
+            final_confidence -= 8
+            analysis['reasons'].append(f"Order Book противоречи ({order_book['pressure']})")
+        
+        # Ако има близки стени
+        if order_book['closest_support'] and analysis['signal'] == 'BUY':
+            support_price = order_book['closest_support'][0]
+            if abs(analysis['price'] - support_price) / analysis['price'] < 0.02:  # В рамките на 2%
+                final_confidence += 8
+                analysis['reasons'].append(f"Силна support стена на ${support_price:,.2f}")
+        
+        if order_book['closest_resistance'] and analysis['signal'] == 'SELL':
+            resistance_price = order_book['closest_resistance'][0]
+            if abs(resistance_price - analysis['price']) / analysis['price'] < 0.02:
+                final_confidence += 8
+                analysis['reasons'].append(f"Силна resistance стена на ${resistance_price:,.2f}")
+    
+    # Multi-timeframe корекция
+    if mtf_confirmation and mtf_confirmation['confirmed']:
+        final_confidence += 15
+        analysis['reasons'].append(f"Потвърждение от {mtf_confirmation['timeframe']}")
+    elif mtf_confirmation and not mtf_confirmation['confirmed']:
+        final_confidence -= 10
+        analysis['reasons'].append(f"{mtf_confirmation['timeframe']} не потвърждава")
+    
+    # BTC Correlation корекция
+    if btc_correlation:
+        if btc_correlation['trend'] == analysis['signal']:
+            boost = min(btc_correlation['strength'] / 2, 12)  # Max 12%
+            final_confidence += boost
+            analysis['reasons'].append(f"BTC {btc_correlation['trend']} ({btc_correlation['change']:+.1f}%)")
+        elif btc_correlation['trend'] != 'NEUTRAL' and btc_correlation['trend'] != analysis['signal']:
+            penalty = min(btc_correlation['strength'] / 3, 10)
+            final_confidence -= penalty
+            analysis['reasons'].append(f"⚠️ BTC противоречи ({btc_correlation['trend']} {btc_correlation['change']:+.1f}%)")
+    
+    # Sentiment корекция
+    if sentiment and sentiment['sentiment'] != 'NEUTRAL':
+        if sentiment['sentiment'] == analysis['signal']:
+            final_confidence += sentiment['confidence']
+            analysis['reasons'].append(f"Новини {sentiment['sentiment']}: +{sentiment['confidence']:.0f}%")
+        else:
+            final_confidence -= sentiment['confidence'] / 2
+            analysis['reasons'].append(f"Новини противоречат ({sentiment['sentiment']})")
+    
+    # Обнови confidence и has_good_trade
+    final_confidence = max(0, min(final_confidence, 95))
+    analysis['confidence'] = final_confidence
+    analysis['has_good_trade'] = analysis['signal'] in ['BUY', 'SELL'] and final_confidence >= 65
+    
+    # Използвай adaptive TP/SL вместо фиксирани настройки
+    adaptive_levels = analysis['adaptive_tp_sl']
+    tp_pct = adaptive_levels['tp']
+    sl_pct = adaptive_levels['sl']
+    
+    # Изчисли TP и SL нива
+    price = analysis['price']
+    
+    if analysis['signal'] == 'BUY':
+        tp_price = price * (1 + tp_pct / 100)
+        sl_price = price * (1 - sl_pct / 100)
+        signal_emoji = "🟢"
+    elif analysis['signal'] == 'SELL':
+        tp_price = price * (1 - tp_pct / 100)
+        sl_price = price * (1 + sl_pct / 100)
+        signal_emoji = "🔴"
+    else:
+        tp_price = price * (1 + tp_pct / 100)
+        sl_price = price * (1 - sl_pct / 100)
+        signal_emoji = "⚪"
+    
+    # Запиши ВСЕКИ сигнал в статистиката (не само good trades)
+    signal_id = record_signal(
+        symbol, 
+        timeframe, 
+        analysis['signal'], 
+        final_confidence,
+        entry_price=price,
+        tp_price=tp_price,
+        sl_price=sl_price
+    )
+    
+    # 🎯 ДОБАВИ СИГНАЛА ЗА TRACKING (80% alert, TP/SL monitoring)
+    add_signal_to_tracking(
+        symbol=symbol,
+        signal_type=analysis['signal'],
+        entry_price=price,
+        tp_price=tp_price,
+        sl_price=sl_price,
+        confidence=final_confidence,
+        timeframe=timeframe,
+        timestamp=datetime.now()
+    )
+    
+    # 📝 ML Journal - запиши ВСЕКИ сигнал за ML обучение (не само good trades)
+    # Подготви analysis_data за ML журнала (pure ICT strategy)
+    analysis_data = {
+        'rsi': analysis.get('rsi'),
+        'volume_ratio': analysis.get('volume_ratio'),
+        'volatility': analysis.get('volatility'),
+        'trend': analysis.get('trend'),
+        'btc_correlation': btc_correlation,
+        'sentiment': sentiment,
+        'has_good_trade': analysis.get('has_good_trade', False)  # Добави като feature
+    }
+    
+    # Логвай в Trading Journal за ML самообучение
+    journal_id = log_trade_to_journal(
+        symbol=symbol,
+        timeframe=timeframe,
+        signal_type=analysis['signal'],
+        confidence=final_confidence,
+        entry_price=price,
+        tp_price=tp_price,
+        sl_price=sl_price,
+        analysis_data=analysis_data
+    )
+    
+    if journal_id:
+        logger.info(f"📝 Trade #{journal_id} logged to ML journal (ALL signals)")
+    
+    # === ML PREDICTION - за ВСИЧКИ сигнали ===
+    ml_probability = None
+    ml_message = ""
+    
+    if ML_PREDICTOR_AVAILABLE:
+        try:
+            ml_predictor = get_ml_predictor()
+            
+            # Подготви данни за ML прогноза
+            ml_trade_data = {
+                'signal_type': analysis['signal'],
+                'confidence': final_confidence,
+                'entry_price': price,
+                'analysis_data': analysis_data
+            }
+            
+            # Получи ML прогноза
+            ml_probability = ml_predictor.predict(ml_trade_data)
+            
+            if ml_probability is not None:
+                logger.info(f"🤖 ML Prediction: {ml_probability:.1f}% вероятност за успех")
+                
+                # Изчисли корекция на confidence
+                ml_adjustment = ml_predictor.get_confidence_adjustment(ml_probability, final_confidence)
+                
+                # Определи ML emoji според вероятността
+                if ml_probability >= 80:
+                    ml_emoji = "🤖💎"
+                    ml_quality = "Отлична"
+                elif ml_probability >= 70:
+                    ml_emoji = "🤖✅"
+                    ml_quality = "Много добра"
+                elif ml_probability >= 60:
+                    ml_emoji = "🤖👍"
+                    ml_quality = "Добра"
+                elif ml_probability >= 50:
+                    ml_emoji = "🤖⚠️"
+                    ml_quality = "Средна"
+                else:
+                    ml_emoji = "🤖❌"
+                    ml_quality = "Ниска"
+                
+                ml_message = f"\n🤖 <b>ML ПРОГНОЗА:</b> {ml_probability:.1f}% ({ml_quality}) {ml_emoji}\n"
+                
+                if abs(ml_adjustment) >= 5:
+                    if ml_adjustment > 0:
+                        ml_message += f"   💡 ML модел повишава увереността с +{ml_adjustment:.0f}%\n"
+                    else:
+                        ml_message += f"   ⚠️ ML модел понижава увереността с {ml_adjustment:.0f}%\n"
+                
+                # Добави ML причина в analysis
+                analysis['reasons'].append(f"ML прогноза: {ml_probability:.1f}% успех")
+                
+        except Exception as e:
+            logger.error(f"❌ Грешка при ML прогноза: {e}")
+    
+    
+    # Генерирай графика с luxalgo_ict данни
+    luxalgo_ict_data = analysis.get('luxalgo_ict')
+    try:
+        chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe, luxalgo_ict_data)
+        if not chart_buffer:
+            logger.warning(f"⚠️ Chart generation returned None for {symbol} {timeframe}")
+    except Exception as e:
+        logger.error(f"❌ Chart generation failed for {symbol} {timeframe}: {e}")
+        chart_buffer = None
+    
+    # Изчисли вероятност за достигане на TP
+    tp_probability = calculate_tp_probability(analysis, tp_price, analysis['signal'])
+    
+    # Изчисли оптимални entry zones
+    entry_zones = calculate_entry_zones(
+        price, 
+        analysis['signal'], 
+        analysis['closes'], 
+        analysis['highs'], 
+        analysis['lows'],
+        analysis
+    )
+    
+    # Форматирай съобщението с emoji
+    confidence_emoji = "🔥" if analysis['confidence'] >= 80 else "💪" if analysis['confidence'] >= 70 else "👍" if analysis['confidence'] >= 60 else "🤔"
+    change_emoji = "📈" if analysis['change_24h'] > 0 else "📉" if analysis['change_24h'] < 0 else "➡️"
+    
+    message = f"{signal_emoji} <b>СИГНАЛ: {symbol}</b>\n\n"
+    message += f"📊 <b>Анализ ({timeframe}):</b>\n"
+    message += f"Сигнал: <b>{analysis['signal']}</b> {signal_emoji}\n"
+    message += f"Увереност: {analysis['confidence']}% {confidence_emoji}\n"
+    
+    # Добави ML прогноза ако е налична
+    if ml_message:
+        message += ml_message
+    
+    message += f"\n💰 <b>Текуща цена:</b> ${price:,.4f}\n"
+    message += f"{change_emoji} 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
+    
+    # Обединена секция за ВСИЧКИ нива (Entry, TP, SL)
+    message += f"🎯 <b>Нива за търговия:</b>\n\n"
+    
+    # Entry zone с quality badge
+    if entry_zones['quality'] >= 75:
+        quality_badge = "💎 Отлична"
+        quality_emoji = "💎"
+    elif entry_zones['quality'] >= 60:
+        quality_badge = "🟢 Много добра"
+        quality_emoji = "🟢"
+    elif entry_zones['quality'] >= 45:
+        quality_badge = "🟡 Добра"
+        quality_emoji = "🟡"
+    else:
+        quality_badge = "🟠 Приемлива"
+        quality_emoji = "🟠"
+    
+    message += f"📍 <b>ENTRY ZONE</b> ({quality_badge} - {entry_zones['quality']}/100):\n"
+    message += f"   Оптимален вход: <b>${entry_zones['best_entry']:,.4f}</b>\n"
+    message += f"   Зона: ${entry_zones['entry_zone_low']:,.4f} - ${entry_zones['entry_zone_high']:,.4f}\n"
+    
+    # Support/Resistance ако има
+    if analysis['signal'] == 'BUY' and entry_zones['supports']:
+        message += f"   Support: ${entry_zones['supports'][0]:,.4f}\n"
+    elif analysis['signal'] == 'SELL' and entry_zones['resistances']:
+        message += f"   Resistance: ${entry_zones['resistances'][0]:,.4f}\n"
+    
+    # Entry препоръка
+    price_vs_entry = (price - entry_zones['best_entry']) / price * 100
+    if abs(price_vs_entry) < 0.5:
+        entry_recommendation = "✅ Добър момент за вход - цената е близо до оптималния вход"
+    elif (analysis['signal'] == 'BUY' and price > entry_zones['best_entry']) or \
+         (analysis['signal'] == 'SELL' and price < entry_zones['best_entry']):
+        entry_recommendation = "⏳ По-добре изчакай pullback към зоната"
+    else:
+        entry_recommendation = "⚡ Цената е в entry зоната - разгледай вход"
+    
+    message += f"   💡 <i>{entry_recommendation}</i>\n\n"
+    
+    # Take Profit & Stop Loss (продължава в същата секция "Нива за търговия")
+    message += f"🎯 <b>TAKE PROFIT:</b> ${tp_price:,.4f} (<b>{tp_pct:+.1f}%</b>)\n"
+    
+    # TP вероятност с интерпретация
+    if tp_probability >= 76:
+        tp_interpretation = "💚 Много добър шанс"
+    elif tp_probability >= 66:
+        tp_interpretation = "🟢 Добър шанс"
+    elif tp_probability >= 56:
+        tp_interpretation = "🟡 Среден шанс"
+    elif tp_probability >= 36:
+        tp_interpretation = "🟠 Нисък шанс"
+    else:
+        tp_interpretation = "🔴 Много нисък шанс"
+    
+    message += f"   🎲 Вероятност: {tp_probability}% ({tp_interpretation})\n"
+    
+    # Очаквано време за изпълнение
+    timeframe_hours = {
+        '1m': 0.017, '5m': 0.083, '15m': 0.25, '30m': 0.5,
+        '1h': 1, '2h': 2, '4h': 4, '1d': 24, '1w': 168
+    }
+    estimated_hours = timeframe_hours.get(timeframe, 4) * 3
+    
+    if estimated_hours < 1:
+        time_str = f"{int(estimated_hours * 60)} минути"
+    elif estimated_hours < 24:
+        time_str = f"{estimated_hours:.1f} часа"
+    else:
+        time_str = f"{estimated_hours / 24:.1f} дни"
+    
+    message += f"   ⏱️ Очаквано време: ~{time_str}\n\n"
+    
+    message += f"🛡️ <b>STOP LOSS:</b> ${sl_price:,.4f} (<b>{-sl_pct:.1f}%</b>)\n"
+    message += f"⚖️ <b>Risk/Reward:</b> 1:{settings['rr']}\n\n"
+    
+    # === MULTI-TIMEFRAME КОНСЕНСУС ===
+    if mtf_analysis and len(mtf_analysis['signals']) >= 2:
+        message += f"🔍 <b>Multi-Timeframe Анализ:</b>\n"
+        
+        # Покажи сигналите от различните таймфреймове
+        for tf, sig in mtf_analysis['signals'].items():
+            sig_emoji = "🟢" if sig['signal'] == 'BUY' else "🔴" if sig['signal'] == 'SELL' else "⚪"
+            current_marker = " ← текущ" if tf == timeframe else ""
+            message += f"{tf}: {sig['signal']} {sig_emoji} ({sig['confidence']:.0f}%){current_marker}\n"
+        
+        # Консенсус
+        consensus_emoji = "🟢" if mtf_analysis['consensus'] == 'BUY' else "🔴" if mtf_analysis['consensus'] == 'SELL' else "⚪"
+        message += f"\n💎 <b>Консенсус:</b> {mtf_analysis['consensus']} {consensus_emoji}\n"
+        message += f"💪 <b>Сила:</b> {mtf_analysis['consensus_strength']} ({mtf_analysis['agreement']:.0f}% съгласие)\n"
+        
+        # Препоръка според консенсуса
+        if mtf_analysis['consensus'] == analysis['signal'] and mtf_analysis['consensus_strength'] == 'Силен':
+            message += f"✅ <i>Всички таймфреймове потвърждават сигнала!</i>\n"
+        elif mtf_analysis['consensus'] != analysis['signal']:
+            message += f"⚠️ <i>Внимание: По-големите таймфреймове показват {mtf_analysis['consensus']}</i>\n"
+        
+        message += "\n"
+    
+    message += f"📊 <b>Индикатори:</b>\n"
+    if analysis['rsi']:
+        message += f"RSI(14): {analysis['rsi']:.1f}\n"
+    # MA removed - pure ICT strategy without moving averages
+    
+    if analysis['reasons']:
+        message += f"\n💡 <b>Причини:</b>\n"
+        for reason in analysis['reasons']:
+            message += f"• {reason}\n"
+    
+    message += f"\n⚠️ <i>Това не е финансов съвет!</i>"
+    
+    # Провери дали има подходящ трейд
+    if not analysis.get('has_good_trade', False):
+        # Няма подходящ трейд
+        no_trade_message = f"⚪ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>\n\n"
+        no_trade_message += f"📊 <b>{symbol} ({timeframe})</b>\n\n"
+        no_trade_message += f"💰 Цена: ${price:,.4f}\n"
+        no_trade_message += f"📈 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
+        no_trade_message += f"📊 <b>Индикатори:</b>\n"
+        if analysis['rsi']:
+            no_trade_message += f"RSI(14): {analysis['rsi']:.1f}\n"
+        # MA removed - pure ICT strategy
+        no_trade_message += f"\nСигнал: {analysis['signal']}\n"
+        no_trade_message += f"Увереност: {analysis['confidence']}%\n\n"
+        no_trade_message += f"⚠️ <i>Пазарните условия не са подходящи за трейд в момента.</i>"
+        
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=no_trade_message,
+            parse_mode='HTML'
+        )
+        return
+    
+    # Изпрати високо-приоритетна нотификация при confidence ≥ 70%
+    if analysis['confidence'] >= 70:
+        await send_high_confidence_alert(
+            symbol, 
+            analysis['confidence'], 
+            analysis['signal'], 
+            price, 
+            tp_price, 
+            context
+        )
+    
+    # Опитай се да вземеш TradingView chart snapshot
+    tradingview_chart = await fetch_tradingview_chart_image(symbol, timeframe)
+    
+    # Ако имаме TradingView snapshot, използвай го
+    if tradingview_chart:
+        short_caption = f"{signal_emoji} <b>{signal} {symbol}</b> ({timeframe})\n"
+        short_caption += f"💰 ${price:,.4f} | 🎯 {analysis['confidence']:.0f}%\n"
+        short_caption += f"✅ TP: ${tp_price:,.4f} (+{tp_pct:.2f}%)\n"
+        short_caption += f"🛑 SL: ${sl_price:,.4f} (-{sl_pct:.2f}%)"
+        
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=tradingview_chart,
+            caption=f"🔔🔊 {short_caption}",
+            parse_mode='HTML',
+            disable_notification=False
+        )
+        
+        # Изпрати пълното съобщение като текст
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=message,
+            parse_mode='HTML',
+            disable_notification=True
+        )
+    # Fallback - използвай matplotlib графиката
+    elif chart_buffer:
+        short_caption = f"{signal_emoji} <b>{signal} {symbol}</b> ({timeframe})\n"
+        short_caption += f"💰 ${price:,.4f} | 🎯 {analysis['confidence']:.0f}%\n"
+        short_caption += f"✅ TP: ${tp_price:,.4f} (+{tp_pct:.2f}%)\n"
+        short_caption += f"🛑 SL: ${sl_price:,.4f} (-{sl_pct:.2f}%)"
+        
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=chart_buffer,
+            caption=f"🔔🔊 {short_caption}",
+            parse_mode='HTML',
+            disable_notification=False
+        )
+        
+        # Изпрати пълното съобщение като текст
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=message,
+            parse_mode='HTML',
+            disable_notification=True
+        )
+    else:
+        # Няма графика - изпрати само текст
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"🔔🔊 {message}",
+            parse_mode='HTML',
+            disable_notification=False
+        )
 
 
 @rate_limited
