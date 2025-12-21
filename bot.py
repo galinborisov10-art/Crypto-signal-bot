@@ -3232,7 +3232,7 @@ def fetch_mtf_data(symbol: str, timeframe: str, primary_df: pd.DataFrame) -> dic
 
 def format_no_trade_message(no_trade_data: dict) -> str:
     """
-    Format NO_TRADE message with detailed MTF breakdown
+    Format NO_TRADE message with detailed MTF breakdown and ICT analysis
     
     Args:
         no_trade_data: Dictionary from ICTSignalEngine._create_no_trade_message()
@@ -3254,6 +3254,12 @@ def format_no_trade_message(no_trade_data: dict) -> str:
     signal_direction = no_trade_data.get('signal_direction')
     confidence = no_trade_data.get('confidence')
     mtf_consensus_pct = no_trade_data.get('mtf_consensus_pct')
+    
+    # Extract NEW ICT analysis data
+    ict_components = no_trade_data.get('ict_components')
+    entry_status = no_trade_data.get('entry_status')
+    structure_broken = no_trade_data.get('structure_broken', False)
+    displacement_detected = no_trade_data.get('displacement_detected', False)
     
     # Build message
     msg = f"""❌ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>
@@ -3281,18 +3287,107 @@ def format_no_trade_message(no_trade_data: dict) -> str:
         direction_emoji = "🟢" if signal_direction == 'BUY' else "🔴" if signal_direction == 'SELL' else "⚪"
         msg += f"\n{direction_emoji} <b>Посока:</b> {signal_direction}"
     
-    if confidence is not None:
-        msg += f"\n🎲 <b>Confidence:</b> {confidence:.1f}%"
+    # Add ICT Analysis section
+    msg += "\n\n━━━━━━━━━━━━━━━━━━━━━━"
+    msg += "\n🔍 <b>ICT АНАЛИЗ - Защо няма трейд:</b>\n"
+    
+    if ict_components:
+        # Entry Zone Analysis
+        msg += "\n📍 <b>Entry Zone:</b>"
+        if entry_status == 'NO_ZONE':
+            msg += "\n   └─ ❌ ЛИПСВА"
+            msg += "\n   └─ Не е открита валидна entry zone в диапазон 0.5%-3% от текущата цена"
+            if current_price:
+                msg += f"\n   └─ Текуща цена (${current_price:,.2f}) е извън приемливите нива за вход"
+        elif entry_status == 'TOO_LATE':
+            msg += "\n   └─ ❌ ТВЪРДЕ КЪСНО"
+            msg += "\n   └─ Цената вече е излязла от валидната entry zone"
+        else:
+            msg += "\n   └─ ⚠️ Проверка"
+        
+        # Order Blocks Analysis
+        order_blocks = ict_components.get('order_blocks', [])
+        bullish_obs = [ob for ob in order_blocks if hasattr(ob, 'ob_type') and 'BULLISH' in str(ob.ob_type)]
+        bearish_obs = [ob for ob in order_blocks if hasattr(ob, 'ob_type') and 'BEARISH' in str(ob.ob_type)]
+        
+        msg += "\n\n🎯 <b>Order Blocks:</b>"
+        if not order_blocks:
+            msg += "\n   └─ ❌ Не са открити валидни Order Blocks"
+        else:
+            msg += "\n   └─ ⚠️ Проверка"
+            if bullish_obs:
+                msg += f"\n   └─ Bullish OB: {len(bullish_obs)} намерени"
+            else:
+                msg += "\n   └─ Bullish OB: Не са открити валидни"
+            
+            if bearish_obs:
+                msg += f"\n   └─ Bearish OB: {len(bearish_obs)} намерени"
+            else:
+                msg += "\n   └─ Bearish OB: Не са открити валидни"
+        
+        # FVG Analysis
+        fvgs = ict_components.get('fvgs', [])
+        bullish_fvgs = [fvg for fvg in fvgs if hasattr(fvg, 'fvg_type') and 'BULLISH' in str(fvg.fvg_type)]
+        bearish_fvgs = [fvg for fvg in fvgs if hasattr(fvg, 'fvg_type') and 'BEARISH' in str(fvg.fvg_type)]
+        
+        msg += "\n\n📊 <b>FVG (Fair Value Gaps):</b>"
+        if not fvgs:
+            msg += "\n   └─ ❌ Не са открити валидни FVG"
+        else:
+            msg += "\n   └─ ⚠️ Проверка"
+            if bullish_fvgs:
+                msg += f"\n   └─ Bullish FVG: {len(bullish_fvgs)} намерени"
+            else:
+                msg += "\n   └─ Bullish FVG: Не са открити"
+            
+            if bearish_fvgs:
+                msg += f"\n   └─ Bearish FVG: {len(bearish_fvgs)} намерени"
+            else:
+                msg += "\n   └─ Bearish FVG: Не са открити"
+        
+        # Structure Break
+        msg += "\n\n🔄 <b>Structure Break (BOS/CHOCH):</b>"
+        if structure_broken:
+            msg += "\n   └─ ✅ ПОТВЪРДЕН - Открит пробив на swing high/low"
+        else:
+            msg += "\n   └─ ❌ НЕ Е ПОТВЪРДЕН"
+            msg += "\n   └─ Няма пробив на swing high/low в последните свещи"
+        
+        # Displacement
+        msg += "\n\n💨 <b>Displacement:</b>"
+        if displacement_detected:
+            msg += "\n   └─ ✅ ОТКРИТ - Силно движение ≥ 0.5%"
+        else:
+            msg += "\n   └─ ❌ НЕ Е ОТКРИТ"
+            msg += "\n   └─ Не е открито значимо движение"
+        
+        # Liquidity Levels
+        liquidity_zones = ict_components.get('liquidity_zones', [])
+        msg += "\n\n📈 <b>Liquidity Levels:</b>"
+        if liquidity_zones:
+            msg += f"\n   └─ {len(liquidity_zones)} liquidity zones намерени"
+        else:
+            msg += "\n   └─ ⚠️ Не са открити liquidity zones"
+        
+        # Confidence Score
+        msg += "\n\n🎲 <b>Confidence Score:</b>"
+        if confidence is not None and confidence > 0:
+            msg += f"\n   └─ {confidence:.1f}% (Минимум: 60%)"
+        else:
+            msg += "\n   └─ 0%"
+            msg += "\n   └─ Причина: Entry zone validation failed"
+    else:
+        msg += "\n⚠️ Няма налични ICT данни"
     
     # MTF Breakdown section
-    msg += """
-
-━━━━━━━━━━━━━━━━━━━━━━
-📊 <b>MTF Breakdown:</b>
-"""
+    msg += "\n\n━━━━━━━━━━━━━━━━━━━━━━"
+    msg += "\n📊 <b>MTF Breakdown:</b>\n"
     
     if mtf_breakdown:
         # Sort timeframes by order (1m → 1w)
+        aligned_tfs = []
+        conflicting_tfs = []
+        
         for tf, data in sorted(mtf_breakdown.items(), key=lambda x: _timeframe_order(x[0])):
             bias = data.get('bias', 'UNKNOWN')
             aligned = data.get('aligned', False)
@@ -3303,21 +3398,44 @@ def format_no_trade_message(no_trade_data: dict) -> str:
             
             # Format line
             if bias == 'NO_DATA':
-                msg += f"{emoji} <b>{tf}</b>: Няма данни\n"
+                line = f"{emoji} <b>{tf}</b>: Няма данни"
             else:
                 # Add current timeframe marker
                 current_marker = " ← текущ" if tf == timeframe else ""
-                msg += f"{emoji} <b>{tf}</b>: {bias} ({tf_confidence:.0f}%){current_marker}\n"
+                line = f"{emoji} <b>{tf}</b>: {bias} ({tf_confidence:.0f}%){current_marker}"
+                
+                # Track conflicting timeframes
+                if not aligned and bias != 'NO_DATA':
+                    conflicting_tfs.append(f"{tf} ({bias})")
+                elif aligned and bias != 'NO_DATA':
+                    aligned_tfs.append(tf)
+            
+            msg += line + "\n"
         
-        # Add consensus summary if available
+        # Add consensus summary
         if mtf_consensus_pct is not None:
             consensus_emoji = "✅" if mtf_consensus_pct >= 50 else "❌"
             msg += f"\n{consensus_emoji} <b>MTF Consensus:</b> {mtf_consensus_pct:.1f}%"
+            
+            # Count aligned/conflicting
+            total_with_data = len([d for d in mtf_breakdown.values() if d.get('bias') != 'NO_DATA'])
+            aligned_count = len([d for d in mtf_breakdown.values() if d.get('aligned', False) and d.get('bias') != 'NO_DATA'])
+            conflicting_count = total_with_data - aligned_count
+            
+            if total_with_data > 0:
+                msg += f"\n   └─ Aligned: {aligned_count}/{total_with_data} таймфрейма"
+                if conflicting_tfs:
+                    msg += f"\n   └─ Conflicting: {', '.join(conflicting_tfs)}"
     else:
         msg += "Няма налични MTF данни\n"
     
     # Add recommendation
-    msg += "\n\n💡 <b>Препоръка:</b> Изчакайте по-добри условия или проверете друг таймфрейм"
+    msg += "\n\n━━━━━━━━━━━━━━━━━━━━━━"
+    msg += "\n💡 <b>Препоръка:</b>"
+    msg += "\n• Изчакайте формиране на валидна entry zone (0.5%-3% от цената)"
+    msg += "\n• Проверете за structure break или displacement на текущия таймфрейм"
+    msg += "\n• Разгледайте други таймфрейми за по-добри условия"
+    msg += "\n• Следете за liquidity sweep преди вход"
     
     return msg
 

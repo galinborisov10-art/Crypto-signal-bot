@@ -492,6 +492,10 @@ class ICTSignalEngine:
         structure_broken = self._check_structure_break(df)
         displacement_detected = self._check_displacement(df)
         
+        # ✅ CALCULATE MTF CONSENSUS EARLY (needed for all NO_TRADE messages)
+        logger.info("📊 Early MTF Consensus Calculation")
+        mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+        
         # СТЪПКА 8: ENTRY CALCULATION WITH ICT-COMPLIANT ZONE
         logger.info("📊 Step 8: Entry + ICT Zone Validation")
         
@@ -521,12 +525,16 @@ class ICTSignalEngine:
                 timeframe=timeframe,
                 reason=f"Entry zone validation failed: {entry_status}",
                 details=f"Current price: ${current_price:.2f}. No valid entry zone found in acceptable range (0.5%-3%).",
-                mtf_breakdown={},
+                mtf_breakdown=mtf_consensus_data.get('breakdown', {}),
                 current_price=context['current_price'],
                 price_change_24h=context['price_change_24h'],
                 rsi=context['rsi'],
                 signal_direction=context['signal_direction'],
-                confidence=None
+                confidence=None,
+                ict_components=ict_components,
+                entry_status=entry_status,
+                structure_broken=structure_broken,
+                displacement_detected=displacement_detected
             )
         
         # Use entry zone center as entry price
@@ -590,12 +598,16 @@ class ICTSignalEngine:
                 timeframe=timeframe,
                 reason=f"Risk/Reward под минимум ({risk_reward_ratio:.2f})",
                 details=f"Необходими: RR ≥{self.config['min_risk_reward']}. Намерени: {risk_reward_ratio:.2f}",
-                mtf_breakdown={},
+                mtf_breakdown=mtf_consensus_data.get('breakdown', {}),
                 current_price=context['current_price'],
                 price_change_24h=context['price_change_24h'],
                 rsi=context['rsi'],
                 signal_direction=context['signal_direction'],
-                confidence=None
+                confidence=None,
+                ict_components=ict_components,
+                entry_status=entry_status,
+                structure_broken=structure_broken,
+                displacement_detected=displacement_detected
             )
         
         # BASE CONFIDENCE
@@ -717,7 +729,7 @@ class ICTSignalEngine:
         
         # СТЪПКА 11.5: MTF CONSENSUS CHECK (STRICT ICT)
         logger.info("📊 Step 11.5: MTF Consensus Check")
-        mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+        # MTF consensus already calculated earlier - just use it
         
         # Ако MTF consensus < 50%, confidence = 0 и сигналът НЕ СЕ ИЗПРАЩА
         if mtf_consensus_data['consensus_pct'] < 50.0:
@@ -734,7 +746,11 @@ class ICTSignalEngine:
                 price_change_24h=context['price_change_24h'],
                 rsi=context['rsi'],
                 signal_direction=context['signal_direction'],
-                confidence=confidence
+                confidence=confidence,
+                ict_components=ict_components,
+                entry_status=entry_status,
+                structure_broken=structure_broken,
+                displacement_detected=displacement_detected
             )
         
         # Confidence check
@@ -751,7 +767,11 @@ class ICTSignalEngine:
                 price_change_24h=context['price_change_24h'],
                 rsi=context['rsi'],
                 signal_direction=context['signal_direction'],
-                confidence=confidence
+                confidence=confidence,
+                ict_components=ict_components,
+                entry_status=entry_status,
+                structure_broken=structure_broken,
+                displacement_detected=displacement_detected
             )
         
         # СТЪПКА 12: CONFIDENCE SCORING
@@ -2236,7 +2256,11 @@ class ICTSignalEngine:
         price_change_24h: float = None,
         rsi: float = None,
         signal_direction: str = None,
-        confidence: float = None
+        confidence: float = None,
+        ict_components: Optional[Dict] = None,
+        entry_status: Optional[str] = None,
+        structure_broken: bool = False,
+        displacement_detected: bool = False
     ) -> Dict:
         """
         Създава съобщение "Няма подходящ трейд" с обяснение
@@ -2277,6 +2301,11 @@ class ICTSignalEngine:
             'rsi': rsi,
             'signal_direction': signal_direction,
             'confidence': confidence,
+            # NEW: ICT Analysis details
+            'ict_components': ict_components,
+            'entry_status': entry_status,
+            'structure_broken': structure_broken,
+            'displacement_detected': displacement_detected,
             # Keep legacy message field for backward compatibility (will be ignored by new format)
             'message': f"""
 ❌ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>
@@ -2321,6 +2350,112 @@ class ICTSignalEngine:
             '1d': 11, '3d': 12, '1w': 13
         }
         return order.get(tf, 999)
+    
+    def _format_ict_analysis_details(
+        self, 
+        ict_components: Optional[Dict], 
+        entry_status: Optional[str],
+        structure_broken: bool,
+        displacement_detected: bool,
+        confidence: Optional[float]
+    ) -> str:
+        """
+        Format detailed ICT analysis explaining why there's no trade
+        
+        Args:
+            ict_components: Dict with ICT components (order_blocks, fvgs, etc.)
+            entry_status: Entry zone status (NO_ZONE, TOO_LATE, etc.)
+            structure_broken: Whether structure break was detected
+            displacement_detected: Whether displacement was detected
+            confidence: Confidence score
+            
+        Returns:
+            Formatted HTML string with ICT analysis breakdown
+        """
+        if not ict_components:
+            return "⚠️ Няма налични ICT данни"
+        
+        lines = []
+        
+        # Entry Zone Analysis
+        lines.append("📍 <b>Entry Zone:</b>")
+        if entry_status == 'NO_ZONE':
+            lines.append("   └─ ❌ ЛИПСВА - Не е открита валидна entry zone в диапазон 0.5%-3% от текущата цена")
+        elif entry_status == 'TOO_LATE':
+            lines.append("   └─ ❌ ТВЪРДЕ КЪСНО - Цената вече е излязла от валидната entry zone")
+        elif entry_status:
+            lines.append(f"   └─ ✅ {entry_status}")
+        else:
+            lines.append("   └─ ⚠️ Няма информация")
+        
+        # Order Blocks Analysis
+        order_blocks = ict_components.get('order_blocks', [])
+        bullish_obs = [ob for ob in order_blocks if hasattr(ob, 'ob_type') and 'BULLISH' in str(ob.ob_type)]
+        bearish_obs = [ob for ob in order_blocks if hasattr(ob, 'ob_type') and 'BEARISH' in str(ob.ob_type)]
+        
+        lines.append("\n🎯 <b>Order Blocks:</b>")
+        if not order_blocks:
+            lines.append("   └─ ❌ Не са открити валидни Order Blocks")
+        else:
+            if bullish_obs:
+                lines.append(f"   └─ Bullish OB: {len(bullish_obs)} намерени")
+            else:
+                lines.append("   └─ Bullish OB: ❌ Не са открити")
+            
+            if bearish_obs:
+                lines.append(f"   └─ Bearish OB: {len(bearish_obs)} намерени")
+            else:
+                lines.append("   └─ Bearish OB: ❌ Не са открити")
+        
+        # FVG (Fair Value Gaps) Analysis
+        fvgs = ict_components.get('fvgs', [])
+        bullish_fvgs = [fvg for fvg in fvgs if hasattr(fvg, 'fvg_type') and 'BULLISH' in str(fvg.fvg_type)]
+        bearish_fvgs = [fvg for fvg in fvgs if hasattr(fvg, 'fvg_type') and 'BEARISH' in str(fvg.fvg_type)]
+        
+        lines.append("\n📊 <b>FVG (Fair Value Gaps):</b>")
+        if not fvgs:
+            lines.append("   └─ ❌ Не са открити валидни FVG")
+        else:
+            if bullish_fvgs:
+                lines.append(f"   └─ Bullish FVG: {len(bullish_fvgs)} намерени")
+            else:
+                lines.append("   └─ Bullish FVG: ❌ Не са открити")
+            
+            if bearish_fvgs:
+                lines.append(f"   └─ Bearish FVG: {len(bearish_fvgs)} намерени")
+            else:
+                lines.append("   └─ Bearish FVG: ❌ Не са открити")
+        
+        # Structure Break (BOS/CHOCH)
+        lines.append("\n🔄 <b>Structure Break (BOS/CHOCH):</b>")
+        if structure_broken:
+            lines.append("   └─ ✅ ПОТВЪРДЕН - Открит пробив на swing high/low")
+        else:
+            lines.append("   └─ ❌ НЕ Е ПОТВЪРДЕН - Няма пробив на swing high/low в последните свещи")
+        
+        # Displacement
+        lines.append("\n💨 <b>Displacement:</b>")
+        if displacement_detected:
+            lines.append("   └─ ✅ ОТКРИТ - Силно движение ≥ 0.5%")
+        else:
+            lines.append("   └─ ❌ НЕ Е ОТКРИТ - Не е открито значимо движение")
+        
+        # Liquidity Levels
+        liquidity_zones = ict_components.get('liquidity_zones', [])
+        lines.append("\n📈 <b>Liquidity Levels:</b>")
+        if liquidity_zones:
+            lines.append(f"   └─ {len(liquidity_zones)} liquidity zones намерени")
+        else:
+            lines.append("   └─ ⚠️ Не са открити liquidity zones")
+        
+        # Confidence Score
+        lines.append("\n🎲 <b>Confidence Score:</b>")
+        if confidence is not None:
+            lines.append(f"   └─ {confidence:.1f}% (Минимум необходим: 60%)")
+        else:
+            lines.append("   └─ 0% - Причина: Валидация на ICT условията не премина успешно")
+        
+        return "\n".join(lines)
     
     def _extract_context_data(self, df: pd.DataFrame, bias: 'MarketBias') -> Dict:
         """
