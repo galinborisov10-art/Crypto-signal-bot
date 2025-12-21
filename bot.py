@@ -3230,6 +3230,116 @@ def fetch_mtf_data(symbol: str, timeframe: str, primary_df: pd.DataFrame) -> dic
     return mtf_data
 
 
+def format_no_trade_message(no_trade_data: dict) -> str:
+    """
+    Format NO_TRADE message with detailed MTF breakdown
+    
+    Args:
+        no_trade_data: Dictionary from ICTSignalEngine._create_no_trade_message()
+        
+    Returns:
+        HTML-formatted Telegram message string
+    """
+    # Extract core data
+    symbol = no_trade_data.get('symbol', 'UNKNOWN')
+    timeframe = no_trade_data.get('timeframe', '?')
+    reason = no_trade_data.get('reason', 'Unknown reason')
+    details = no_trade_data.get('details', '')
+    mtf_breakdown = no_trade_data.get('mtf_breakdown', {})
+    
+    # Extract optional context data
+    current_price = no_trade_data.get('current_price')
+    price_change_24h = no_trade_data.get('price_change_24h')
+    rsi = no_trade_data.get('rsi')
+    signal_direction = no_trade_data.get('signal_direction')
+    confidence = no_trade_data.get('confidence')
+    mtf_consensus_pct = no_trade_data.get('mtf_consensus_pct')
+    
+    # Build message
+    msg = f"""❌ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>
+
+💰 <b>Символ:</b> {symbol}
+⏰ <b>Таймфрейм:</b> {timeframe}
+
+🚫 <b>Причина:</b> {reason}
+📋 <b>Детайли:</b> {details}
+"""
+    
+    # Add context information if available
+    if current_price is not None:
+        msg += f"\n💵 <b>Текуща цена:</b> ${current_price:,.2f}"
+    
+    if price_change_24h is not None:
+        change_emoji = "📈" if price_change_24h > 0 else "📉" if price_change_24h < 0 else "➡️"
+        msg += f"\n{change_emoji} <b>24ч промяна:</b> {price_change_24h:+.2f}%"
+    
+    if rsi is not None:
+        rsi_emoji = "🔥" if rsi > 70 else "❄️" if rsi < 30 else "📊"
+        msg += f"\n{rsi_emoji} <b>RSI(14):</b> {rsi:.1f}"
+    
+    if signal_direction:
+        direction_emoji = "🟢" if signal_direction == 'BUY' else "🔴" if signal_direction == 'SELL' else "⚪"
+        msg += f"\n{direction_emoji} <b>Посока:</b> {signal_direction}"
+    
+    if confidence is not None:
+        msg += f"\n🎲 <b>Confidence:</b> {confidence:.1f}%"
+    
+    # MTF Breakdown section
+    msg += """
+
+━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>MTF Breakdown:</b>
+"""
+    
+    if mtf_breakdown:
+        # Sort timeframes by order (1m → 1w)
+        for tf, data in sorted(mtf_breakdown.items(), key=lambda x: _timeframe_order(x[0])):
+            bias = data.get('bias', 'UNKNOWN')
+            aligned = data.get('aligned', False)
+            tf_confidence = data.get('confidence', 0)
+            
+            # Determine emoji
+            emoji = "✅" if aligned else "❌"
+            
+            # Format line
+            if bias == 'NO_DATA':
+                msg += f"{emoji} <b>{tf}</b>: Няма данни\n"
+            else:
+                # Add current timeframe marker
+                current_marker = " ← текущ" if tf == timeframe else ""
+                msg += f"{emoji} <b>{tf}</b>: {bias} ({tf_confidence:.0f}%){current_marker}\n"
+        
+        # Add consensus summary if available
+        if mtf_consensus_pct is not None:
+            consensus_emoji = "✅" if mtf_consensus_pct >= 50 else "❌"
+            msg += f"\n{consensus_emoji} <b>MTF Consensus:</b> {mtf_consensus_pct:.1f}%"
+    else:
+        msg += "Няма налични MTF данни\n"
+    
+    # Add recommendation
+    msg += "\n\n💡 <b>Препоръка:</b> Изчакайте по-добри условия или проверете друг таймфрейм"
+    
+    return msg
+
+
+def _timeframe_order(tf: str) -> int:
+    """
+    Helper for sorting timeframes (1m → 1w)
+    
+    Args:
+        tf: Timeframe string (e.g., '1m', '4h', '1d')
+        
+    Returns:
+        Integer order value for sorting
+    """
+    order = {
+        '1m': 1, '3m': 2, '5m': 3, '15m': 4, '30m': 5,
+        '1h': 6, '2h': 7, '3h': 8, '4h': 9, '6h': 10, '12h': 11,
+        '1d': 12, '3d': 13, '1w': 14
+    }
+    return order.get(tf.lower(), 999)  # Unknown TFs go to end
+
+
 def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
     """
     ⚠️ DEPRECATED: Use ICTSignalEngine.generate_signal() instead!
@@ -6132,171 +6242,6 @@ def format_ict_signal_13_point(signal: ICTSignal) -> str:
     """
     # Redirect to standardized format
     return format_standardized_signal(signal, "MANUAL")
-
-
-def format_no_trade_message(no_trade_data: Dict) -> str:
-    """
-    Форматира "Няма подходящ трейд" съобщение с детайлна информация (STRICT ICT)
-    
-    Args:
-        no_trade_data: Dictionary с данни от _create_no_trade_message()
-        
-    Returns:
-        Formatted message string with detailed blocking reason, MTF breakdown, and recommendations
-    """
-    # Extract data
-    symbol = no_trade_data.get('symbol', 'N/A')
-    timeframe = no_trade_data.get('timeframe', 'N/A')
-    reason = no_trade_data.get('reason', 'Непозната причина')
-    details = no_trade_data.get('details', '')
-    current_price = no_trade_data.get('current_price')
-    price_change_24h = no_trade_data.get('price_change_24h')
-    rsi = no_trade_data.get('rsi')
-    signal_direction = no_trade_data.get('signal_direction')
-    confidence = no_trade_data.get('confidence')
-    mtf_breakdown = no_trade_data.get('mtf_breakdown', {})
-    mtf_consensus_pct = no_trade_data.get('mtf_consensus_pct', 0.0)
-    
-    # Start building message
-    msg = f"⚪ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>\n\n"
-    
-    # Symbol and timeframe
-    msg += f"📊 <b>{symbol}</b> ({timeframe})\n"
-    
-    # Price info
-    if current_price:
-        msg += f"💰 Цена: ${current_price:.2f}\n"
-    if price_change_24h is not None:
-        change_emoji = "📈" if price_change_24h >= 0 else "📉"
-        msg += f"{change_emoji} 24ч промяна: {price_change_24h:+.2f}%\n"
-    
-    # Indicators section
-    if rsi is not None or signal_direction or confidence is not None:
-        msg += f"\n📊 <b>Индикатори:</b>\n"
-        if rsi is not None:
-            msg += f"RSI(14): {rsi:.1f}\n"
-        if signal_direction:
-            msg += f"\nСигнал: {signal_direction}\n"
-        if confidence is not None:
-            msg += f"Увереност: {confidence:.0f}%\n"
-    
-    # Main blocking reason section
-    msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
-    msg += f"🚫 <b>ПРИЧИНА ЗА БЛОКИРАНЕ:</b>\n\n"
-    msg += f"{reason}\n"
-    if details:
-        msg += f"\n📋 <b>Детайли:</b> {details}\n"
-    
-    # MTF Analysis section
-    if mtf_breakdown:
-        msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"📊 <b>MTF АНАЛИЗ:</b>\n\n"
-        
-        # Sort timeframes for display
-        key_timeframes = ['1m', '15m', '1h', '4h', '1d']
-        displayed_tfs = []
-        
-        for tf in key_timeframes:
-            if tf in mtf_breakdown:
-                data = mtf_breakdown[tf]
-                bias = data.get('bias', 'N/A')
-                tf_confidence = data.get('confidence', 0)
-                aligned = data.get('aligned', False)
-                
-                emoji = "✅" if aligned else "❌"
-                if bias == 'NO_DATA':
-                    line = f"{emoji} <b>{tf}:</b> Няма данни"
-                else:
-                    line = f"{emoji} <b>{tf}:</b> {bias} ({tf_confidence:.0f}% уверен)"
-                
-                displayed_tfs.append(line)
-        
-        # Display all timeframes from mtf_breakdown if not in key_timeframes
-        for tf in sorted(mtf_breakdown.keys(), key=lambda x: _timeframe_order_helper(x)):
-            if tf not in key_timeframes:
-                data = mtf_breakdown[tf]
-                bias = data.get('bias', 'N/A')
-                tf_confidence = data.get('confidence', 0)
-                aligned = data.get('aligned', False)
-                
-                emoji = "✅" if aligned else "❌"
-                if bias == 'NO_DATA':
-                    line = f"{emoji} <b>{tf}:</b> Няма данни"
-                else:
-                    line = f"{emoji} <b>{tf}:</b> {bias} ({tf_confidence:.0f}% уверен)"
-                
-                displayed_tfs.append(line)
-        
-        msg += "\n".join(displayed_tfs)
-        
-        # Show MTF consensus percentage
-        if mtf_consensus_pct > 0:
-            msg += f"\n\n<b>MTF Consensus: {mtf_consensus_pct:.0f}%</b> (< 50% required)\n"
-    
-    # Recommendations section
-    msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
-    msg += f"💡 <b>ПРЕПОРЪКА:</b>\n\n"
-    
-    # Generate specific recommendations based on the reason
-    recommendations = _generate_recommendations(reason, mtf_breakdown, confidence, mtf_consensus_pct)
-    msg += recommendations
-    
-    return msg
-
-
-def _timeframe_order_helper(tf: str) -> int:
-    """Helper function for timeframe ordering"""
-    order = {
-        '1m': 1, '3m': 2, '5m': 3, '15m': 4, '30m': 5,
-        '1h': 6, '2h': 7, '4h': 8, '6h': 9, '12h': 10,
-        '1d': 11, '3d': 12, '1w': 13
-    }
-    return order.get(tf, 999)
-
-
-def _generate_recommendations(reason: str, mtf_breakdown: Dict, confidence: float, mtf_consensus_pct: float) -> str:
-    """Generate actionable recommendations based on blocking reason"""
-    recommendations = []
-    
-    reason_lower = reason.lower()
-    
-    # MTF consensus recommendations
-    if 'mtf consensus' in reason_lower or 'mtf' in reason_lower:
-        recommendations.append("• Изчакайте различните таймфреймове да се align с главния bias")
-        if mtf_breakdown:
-            aligned_tfs = [tf for tf, data in mtf_breakdown.items() if data.get('aligned', False)]
-            non_aligned_tfs = [tf for tf, data in mtf_breakdown.items() if not data.get('aligned', False)]
-            if non_aligned_tfs:
-                recommendations.append(f"• Проблемни таймфреймове: {', '.join(non_aligned_tfs)}")
-        recommendations.append("• Или проверете друг символ/таймфрейм")
-    
-    # Confidence recommendations
-    elif 'увереност' in reason_lower or 'confidence' in reason_lower:
-        recommendations.append("• Изчакайте по-силни ICT структури (Order Blocks, FVGs)")
-        recommendations.append("• Търсете displacement и структурен пробив")
-        recommendations.append("• Проверете дали има whale activity в района")
-    
-    # Risk/Reward recommendations
-    elif 'risk' in reason_lower or 'reward' in reason_lower or 'rr' in reason_lower:
-        recommendations.append("• SL е твърде далеч от entry - изчакайте по-добра зона")
-        recommendations.append("• Или потърсете различен Order Block за по-добър RR")
-        recommendations.append("• Минимално необходим RR: 1:3 (ICT стандарт)")
-    
-    # Entry zone recommendations
-    elif 'entry zone' in reason_lower or 'entry' in reason_lower:
-        recommendations.append("• Цената е вече преминала оптималната entry зона")
-        recommendations.append("• Изчакайте нова ICT структура (retracement към FVG/OB)")
-        recommendations.append("• НЕ chase-вайте пазара!")
-    
-    # Generic recommendations
-    else:
-        recommendations.append("• Изчакайте по-добри пазарни условия")
-        recommendations.append("• Проверете друг символ или таймфрейм")
-    
-    # Always add ICT standards note
-    recommendations.append("• Текущият setup не отговаря на ICT стандартите")
-    
-    return "\n".join(recommendations)
 
 
 @rate_limited
