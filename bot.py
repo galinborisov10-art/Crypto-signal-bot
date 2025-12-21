@@ -8196,14 +8196,20 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Избор на таймфрейм - изпълни анализа
     if query.data.startswith("tf_"):
         try:
-            logger.info(f"Callback data: {query.data}")
+            logger.info(f"📞 SIGNAL_CALLBACK triggered - Callback data: {query.data}")
             parts = query.data.replace("tf_", "").split("_")
             symbol = parts[0]
             timeframe = parts[1]
-            logger.info(f"Processing signal for {symbol} on {timeframe}")
+            logger.info(f"🎯 Processing signal for {symbol} on {timeframe} via CALLBACK")
+            logger.info(f"🔍 ICT_SIGNAL_ENGINE_AVAILABLE = {ICT_SIGNAL_ENGINE_AVAILABLE}")
             
             # Изтрий предишното съобщение
-            await query.message.delete()
+            # Изтрий предишното съобщение (with error handling)
+            try:
+                await query.message.delete()
+                logger.info(f"✅ Previous message deleted successfully")
+            except Exception as delete_error:
+                logger.warning(f"⚠️ Could not delete previous message: {delete_error}")
             
             # === USE ICT ENGINE (same workflow as signal_cmd) ===
             if ICT_SIGNAL_ENGINE_AVAILABLE:
@@ -8215,6 +8221,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 # Fetch klines for ICT analysis
+                logger.info(f"📊 Fetching klines: {symbol}/{timeframe}/limit=200")
                 klines_response = requests.get(
                     BINANCE_KLINES_URL,
                     params={'symbol': symbol, 'interval': timeframe, 'limit': 200},
@@ -8222,10 +8229,13 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 if klines_response.status_code != 200:
-                    await processing_msg.edit_text("❌ Failed to fetch market data")
+                    error_msg = f"❌ Failed to fetch market data (Status: {klines_response.status_code})"
+                    logger.error(error_msg)
+                    await processing_msg.edit_text(error_msg)
                     return
                 
                 klines_data = klines_response.json()
+                logger.info(f"✅ Fetched {len(klines_data)} candles")
                 
                 # Prepare dataframe
                 df = pd.DataFrame(klines_data, columns=[
@@ -8237,37 +8247,52 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                 for col in ['open', 'high', 'low', 'close', 'volume']:
                     df[col] = df[col].astype(float)
+                logger.info(f"✅ DataFrame prepared: {len(df)} rows")
                 
                 # ✅ FETCH MTF DATA for ICT analysis
+                logger.info(f"📈 Fetching MTF data...")
                 mtf_data = fetch_mtf_data(symbol, timeframe, df)
+                logger.info(f"✅ MTF data: {len(mtf_data) if mtf_data else 0} timeframes")
                 
                 # Generate ICT signal WITH MTF DATA
+                logger.info(f"🔧 Initializing ICTSignalEngine...")
                 ict_engine = ICTSignalEngine()
+                logger.info(f"🚀 Generating ICT signal with MTF data...")
                 ict_signal = ict_engine.generate_signal(
                     df=df,
                     symbol=symbol,
                     timeframe=timeframe,
                     mtf_data=mtf_data
                 )
+                logger.info(f"✅ ICT signal generated: {type(ict_signal)}")
                 
                 # Check for NO_TRADE or None
+                logger.info(f"🔍 Checking signal type...")
                 if not ict_signal or (isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE'):
+                    logger.info(f"⚪ NO_TRADE detected: type={type(ict_signal)}")
                     # Format NO_TRADE message with details
                     if isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE':
+                        logger.info(f"📝 Formatting NO_TRADE message...")
                         no_trade_msg = format_no_trade_message(ict_signal)
                         await processing_msg.edit_text(no_trade_msg, parse_mode='HTML')
+                        logger.info(f"✅ NO_TRADE message sent")
                     else:
+                        logger.warning(f"⚠️ ICT signal is None or invalid")
                         await processing_msg.edit_text(
                             f"⚪ <b>No high-quality ICT signal for {symbol}</b>\n\n"
                             f"Market conditions do not meet minimum criteria.",
                             parse_mode='HTML'
                         )
+                        logger.info(f"✅ Fallback NO_TRADE sent")
                     return
                 
                 # Format with 13-point output
+                logger.info(f"📝 Formatting 13-point ICT signal...")
                 signal_msg = format_ict_signal_13_point(ict_signal)
+                logger.info(f"✅ Signal formatted ({len(signal_msg)} chars)")
                 
                 # Generate and send chart
+                logger.info(f"📊 Generating chart for {symbol} {timeframe}...")
                 chart_sent = False
                 if CHART_VISUALIZATION_AVAILABLE:
                     try:
@@ -8286,21 +8311,27 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             logger.info(f"✅ Chart sent for {symbol} {timeframe}")
                     except Exception as chart_error:
                         logger.warning(f"⚠️ Chart generation failed: {chart_error}")
+                else:
+                    logger.info(f"⚠️ Chart visualization not available")
                 
                 # Send 13-point text analysis
+                logger.info(f"📤 Sending 13-point signal message...")
                 await processing_msg.edit_text(
                     signal_msg,
                     parse_mode='HTML',
                     disable_web_page_preview=True
                 )
+                logger.info(f"✅ Signal message sent successfully")
                 
                 # Add signal to real-time monitor
+                logger.info(f"📍 Adding to real-time monitor...")
                 add_signal_to_monitor(ict_signal, symbol, timeframe, update.effective_chat.id)
                 
-                logger.info(f"✅ ICT Signal sent via callback for {symbol} {timeframe}")
+                logger.info(f"✅ ✅ ✅ ICT Signal COMPLETE via CALLBACK for {symbol} {timeframe}")
                 return
             else:
                 # Fallback to legacy if ICT Engine not available (should not happen)
+                logger.error(f"❌ ICT Engine NOT AVAILABLE - This should NOT happen!")
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     text="❌ ICT Engine not available. Please contact administrator.",
@@ -8315,8 +8346,8 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=f"❌ Грешка при обработка на сигнала:\n{str(main_error)}",
                     parse_mode='HTML'
                 )
-            except:
-                pass
+            except Exception as send_error:
+                logger.error(f"❌ Failed to send error message to user: {send_error}")
 
 
 # ================= DEPLOY КОМАНДА =================
