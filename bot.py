@@ -3186,12 +3186,15 @@ def get_daily_signals_report():
 
 def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
     """
-    🔥 NEW: LuxAlgo + ICT Combined Analysis
-    Professional trading signals using:
-    - LuxAlgo Support/Resistance MTF
-    - ICT Concepts (MSS, FVG, Liquidity Grabs, OTE)
-    - Fibonacci Extensions (auto-calculated, penultimate TP)
+    ⚠️ DEPRECATED: Use ICTSignalEngine.generate_signal() instead!
+    
+    This function is kept only for backward compatibility/testing.
+    DO NOT use in production signal flows!
+    
+    Legacy function for combined LuxAlgo + ICT analysis.
+    All new code should use the STRICT ICT Engine with MTF support.
     """
+    logger.warning(f"⚠️ DEPRECATED: analyze_signal() called for {symbol}. Use ICT Engine instead!")
     try:
         # Extract price data
         closes = [float(k[4]) for k in klines_data]
@@ -3644,7 +3647,13 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
 
 
 def calculate_entry_zones(price, signal, closes, highs, lows, analysis):
-    """Изчислява оптимални зони за вход"""
+    """
+    ⚠️ DEPRECATED: Use ICTSignalEngine._calculate_ict_compliant_entry_zone() instead!
+    
+    This function uses old logic that doesn't comply with STRICT ICT rules.
+    Kept only for backward compatibility/testing.
+    """
+    logger.warning("⚠️ DEPRECATED: calculate_entry_zones() called. Use ICT Engine instead!")
     try:
         # Изчисли Support/Resistance нива
         recent_highs = highs[-50:]
