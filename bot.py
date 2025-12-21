@@ -5547,6 +5547,25 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(recommendation, parse_mode='HTML')
 
 
+def add_signal_to_monitor(ict_signal, symbol: str, timeframe: str, chat_id: int):
+    """Helper function to add ICT signal to real-time monitor"""
+    if real_time_monitor_global and ict_signal.signal_type.value in ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']:
+        signal_id = f"{symbol}_{ict_signal.signal_type.value}_{int(datetime.now(timezone.utc).timestamp())}"
+        
+        real_time_monitor_global.add_signal(
+            signal_id=signal_id,
+            symbol=symbol,
+            signal_type=ict_signal.signal_type.value.replace('STRONG_', ''),  # Normalize to BUY/SELL
+            entry_price=ict_signal.entry_price,
+            tp_price=ict_signal.tp_prices[0],  # Use TP1
+            sl_price=ict_signal.sl_price,
+            confidence=ict_signal.confidence,
+            timeframe=timeframe,
+            user_chat_id=chat_id
+        )
+        
+        logger.info(f"✅ Signal {signal_id} added to real-time monitor")
+
 
 
 @rate_limited
@@ -5715,24 +5734,10 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             # Add signal to real-time monitor
+            add_signal_to_monitor(ict_signal, symbol, timeframe, update.effective_chat.id)
+            
+            # Notify user (only in signal_cmd, not in callback)
             if real_time_monitor_global and ict_signal.signal_type.value in ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']:
-                signal_id = f"{symbol}_{ict_signal.signal_type.value}_{int(datetime.now(timezone.utc).timestamp())}"
-                
-                real_time_monitor_global.add_signal(
-                    signal_id=signal_id,
-                    symbol=symbol,
-                    signal_type=ict_signal.signal_type.value.replace('STRONG_', ''),  # Normalize to BUY/SELL
-                    entry_price=ict_signal.entry_price,
-                    tp_price=ict_signal.tp_prices[0],  # Use TP1
-                    sl_price=ict_signal.sl_price,
-                    confidence=ict_signal.confidence,
-                    timeframe=timeframe,
-                    user_chat_id=update.effective_chat.id
-                )
-                
-                logger.info(f"✅ Signal {signal_id} added to real-time monitor")
-                
-                # Notify user
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     text="🎯 <b>Signal added to real-time monitor!</b>\n\n"
@@ -8197,7 +8202,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Изтрий предишното съобщение
             await query.message.delete()
             
-            # === NEW: USE ICT ENGINE (copied from signal_cmd lines 5630-5730) ===
+            # === USE ICT ENGINE (same workflow as signal_cmd) ===
             if ICT_SIGNAL_ENGINE_AVAILABLE:
                 # Send processing message
                 processing_msg = await context.bot.send_message(
@@ -8287,20 +8292,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 # Add signal to real-time monitor
-                if real_time_monitor_global and ict_signal.signal_type.value in ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']:
-                    signal_id = f"{symbol}_{ict_signal.signal_type.value}_{int(datetime.now(timezone.utc).timestamp())}"
-                    
-                    real_time_monitor_global.add_signal(
-                        signal_id=signal_id,
-                        symbol=symbol,
-                        signal_type=ict_signal.signal_type.value.replace('STRONG_', ''),
-                        entry_price=ict_signal.entry_price,
-                        tp_price=ict_signal.tp_prices[0],
-                        sl_price=ict_signal.sl_price,
-                        confidence=ict_signal.confidence,
-                        timeframe=timeframe,
-                        user_chat_id=update.effective_chat.id
-                    )
+                add_signal_to_monitor(ict_signal, symbol, timeframe, update.effective_chat.id)
                 
                 logger.info(f"✅ ICT Signal sent via callback for {symbol} {timeframe}")
                 return

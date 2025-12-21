@@ -38,6 +38,9 @@ Thumbs.db
 *.bak
 *.swp
 *.tmp
+*.backup
+*.backup_*
+bot.py.backup*
 
 # Stats (опционално - може да се вземе backup)
 # bot_stats.json
