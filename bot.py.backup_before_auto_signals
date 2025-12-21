@@ -3184,63 +3184,14 @@ def get_daily_signals_report():
         return None
 
 
-def fetch_mtf_data(symbol: str, timeframe: str, primary_df: pd.DataFrame) -> dict:
-    """
-    Fetch Multi-Timeframe data for ICT analysis
-    
-    Args:
-        symbol: Trading symbol (e.g., 'BTCUSDT')
-        timeframe: Current timeframe (e.g., '4h')
-        primary_df: Primary DataFrame to reuse if timeframe matches
-        
-    Returns:
-        Dictionary with timeframes as keys and DataFrames as values
-    """
-    mtf_data = {}
-    mtf_timeframes = ['1h', '4h', '1d']
-    
-    for mtf_tf in mtf_timeframes:
-        if mtf_tf == timeframe:  # Skip duplicate fetch
-            mtf_data[mtf_tf] = primary_df
-            continue
-        
-        try:
-            mtf_response = requests.get(
-                BINANCE_KLINES_URL,
-                params={'symbol': symbol, 'interval': mtf_tf, 'limit': 100},
-                timeout=10
-            )
-            
-            if mtf_response.status_code == 200:
-                mtf_klines = mtf_response.json()
-                mtf_df = pd.DataFrame(mtf_klines, columns=[
-                    'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                    'close_time', 'quote_volume', 'trades', 'taker_buy_base',
-                    'taker_buy_quote', 'ignore'
-                ])
-                mtf_df['timestamp'] = pd.to_datetime(mtf_df['timestamp'], unit='ms')
-                for col in ['open', 'high', 'low', 'close', 'volume']:
-                    mtf_df[col] = mtf_df[col].astype(float)
-                
-                mtf_data[mtf_tf] = mtf_df
-                logger.debug(f"✅ Fetched MTF data for {mtf_tf}")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to fetch MTF data for {mtf_tf}: {e}")
-    
-    return mtf_data
-
-
 def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
     """
-    ⚠️ DEPRECATED: Use ICTSignalEngine.generate_signal() instead!
-    
-    This function is kept only for backward compatibility/testing.
-    DO NOT use in production signal flows!
-    
-    Legacy function for combined LuxAlgo + ICT analysis.
-    All new code should use the STRICT ICT Engine with MTF support.
+    🔥 NEW: LuxAlgo + ICT Combined Analysis
+    Professional trading signals using:
+    - LuxAlgo Support/Resistance MTF
+    - ICT Concepts (MSS, FVG, Liquidity Grabs, OTE)
+    - Fibonacci Extensions (auto-calculated, penultimate TP)
     """
-    logger.warning(f"⚠️ DEPRECATED: analyze_signal() called for {symbol}. Use ICT Engine instead!")
     try:
         # Extract price data
         closes = [float(k[4]) for k in klines_data]
@@ -3693,13 +3644,7 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
 
 
 def calculate_entry_zones(price, signal, closes, highs, lows, analysis):
-    """
-    ⚠️ DEPRECATED: Use ICTSignalEngine._calculate_ict_compliant_entry_zone() instead!
-    
-    This function uses old logic that doesn't comply with STRICT ICT rules.
-    Kept only for backward compatibility/testing.
-    """
-    logger.warning("⚠️ DEPRECATED: calculate_entry_zones() called. Use ICT Engine instead!")
+    """Изчислява оптимални зони за вход"""
     try:
         # Изчисли Support/Resistance нива
         recent_highs = highs[-50:]
@@ -5549,7 +5494,36 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 df[col] = df[col].astype(float)
             
             # ✅ FETCH MTF DATA for ICT analysis
-            mtf_data = fetch_mtf_data(symbol, timeframe, df)
+            mtf_data = {}
+            mtf_timeframes = ['1h', '4h', '1d']
+            
+            for mtf_tf in mtf_timeframes:
+                if mtf_tf == timeframe:  # Skip duplicate fetch
+                    mtf_data[mtf_tf] = df
+                    continue
+                
+                try:
+                    mtf_response = requests.get(
+                        BINANCE_KLINES_URL,
+                        params={'symbol': symbol, 'interval': mtf_tf, 'limit': 100},
+                        timeout=10
+                    )
+                    
+                    if mtf_response.status_code == 200:
+                        mtf_klines = mtf_response.json()
+                        mtf_df = pd.DataFrame(mtf_klines, columns=[
+                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                            'taker_buy_quote', 'ignore'
+                        ])
+                        mtf_df['timestamp'] = pd.to_datetime(mtf_df['timestamp'], unit='ms')
+                        for col in ['open', 'high', 'low', 'close', 'volume']:
+                            mtf_df[col] = mtf_df[col].astype(float)
+                        
+                        mtf_data[mtf_tf] = mtf_df
+                        logger.info(f"✅ Fetched MTF data for {mtf_tf}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to fetch MTF data for {mtf_tf}: {e}")
             
             # Generate ICT signal WITH MTF DATA
             ict_engine = ICTSignalEngine()
@@ -7613,7 +7587,35 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                 df[col] = df[col].astype(float)
             
             # ✅ FETCH MTF DATA
-            mtf_data = fetch_mtf_data(symbol, timeframe, df)
+            mtf_data = {}
+            mtf_timeframes = ['1h', '4h', '1d']
+            
+            for mtf_tf in mtf_timeframes:
+                if mtf_tf == timeframe:
+                    mtf_data[mtf_tf] = df
+                    continue
+                
+                try:
+                    mtf_response = requests.get(
+                        BINANCE_KLINES_URL,
+                        params={'symbol': symbol, 'interval': mtf_tf, 'limit': 100},
+                        timeout=10
+                    )
+                    
+                    if mtf_response.status_code == 200:
+                        mtf_klines = mtf_response.json()
+                        mtf_df = pd.DataFrame(mtf_klines, columns=[
+                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                            'taker_buy_quote', 'ignore'
+                        ])
+                        mtf_df['timestamp'] = pd.to_datetime(mtf_df['timestamp'], unit='ms')
+                        for col in ['open', 'high', 'low', 'close', 'volume']:
+                            mtf_df[col] = mtf_df[col].astype(float)
+                        
+                        mtf_data[mtf_tf] = mtf_df
+                except Exception as e:
+                    logger.warning(f"⚠️ MTF fetch failed for {mtf_tf}: {e}")
             
             # ✅ USE ICT ENGINE (NOT legacy analyze_signal!)
             ict_engine = ICTSignalEngine()
@@ -7684,96 +7686,435 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     for idx, sig in enumerate(signals_to_send):
         symbol = sig['symbol']
         timeframe = sig['timeframe']
-        ict_signal = sig['ict_signal']
-        df = sig['df']
+        analysis = sig['analysis']
+        klines = sig['klines']
+        price = analysis['price']
+        signal_emoji = "🟢" if analysis['signal'] == 'BUY' else "🔴"
+        best_confidence = sig['confidence']
         
-        # ✅ USE 13-POINT FORMAT (same as manual signals)
-        signal_msg = format_ict_signal_13_point(ict_signal)
+        # Header
         
-        # Add auto-signal header
-        final_msg = f"🤖 <b>АВТОМАТИЧЕН СИГНАЛ</b> 🤖\n━━━━━━━━━━━━━━━━━━━━\n\n{signal_msg}"
+        # === ИЗВИКАЙ ДОПЪЛНИТЕЛЕН АНАЛИЗ (КАТО РЪЧНИТЕ СИГНАЛИ) ===
+        btc_corr = None
+        order_book = None
+        sentiment = None
         
-        # Send message
         try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=final_msg,
-                parse_mode='HTML',
-                disable_web_page_preview=True,
-                disable_notification=False  # Sound alert for auto signals
-            )
-            logger.info(f"✅ Auto signal sent for {symbol} ({timeframe})")
+            btc_corr = await analyze_btc_correlation(symbol, timeframe)
         except Exception as e:
-            logger.error(f"❌ Failed to send auto signal message for {symbol}: {e}")
-            continue
+            logger.error(f"BTC correlation error in auto-signal: {e}")
         
-        # Send chart if available
-        if CHART_VISUALIZATION_AVAILABLE:
-            try:
-                generator = ChartGenerator()
-                chart_bytes = generator.generate(df, ict_signal, symbol, timeframe)
-                
-                if chart_bytes:
-                    await context.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=BytesIO(chart_bytes),
-                        caption=f"📊 {symbol} ({timeframe})",
-                        parse_mode='HTML'
-                    )
-                    logger.info(f"✅ Chart sent for auto signal {symbol}")
-            except Exception as e:
-                logger.warning(f"⚠️ Chart generation failed for auto signal: {e}")
+        try:
+            order_book = await analyze_order_book(symbol, price)
+        except Exception as e: 
+            logger.error(f"Order Book error in auto-signal: {e}")
         
-        # Record signal to stats
+        try:
+            #             sentiment = await get_news_sentiment(symbol)
+            sentiment = None  # Disabled - no news API configured
+        except Exception as e:
+            logger. error(f"Sentiment error in auto-signal: {e}")
+        
+        header = f" #{idx+1}" if len(signals_to_send) > 1 else ""
+        
+        # ✅ Сигналът вече е валидиран по-рано, можем да го изпратим
+        
+        # 📊 ЗАПИШИ СИГНАЛА В СТАТИСТИКАТА
         try:
             signal_id = record_signal(
                 symbol=symbol,
                 timeframe=timeframe,
-                signal_type=ict_signal.signal_type.value,
-                confidence=ict_signal.confidence,
-                entry_price=ict_signal.entry_price,
-                tp_price=ict_signal.tp_prices[0],  # TP1
-                sl_price=ict_signal.sl_price
+                signal_type=analysis['signal'],
+                confidence=best_confidence,
+                entry_price=price,
+                tp_price=analysis['tp'],
+                sl_price=analysis['sl']
             )
             logger.info(f"📊 AUTO-SIGNAL recorded to stats (ID: {signal_id})")
         except Exception as e:
             logger.error(f"❌ Stats recording error in auto-signal: {e}")
         
-        # Log to ML journal for high confidence signals
-        if ict_signal.confidence >= 65:
+        # 📝 АВТОМАТИЧНО ЛОГВАНЕ В JOURNAL - 24/7 събиране на данни
+        if best_confidence >= 65:
             try:
                 analysis_data = {
-                    'market_bias': ict_signal.market_bias.value,
-                    'htf_bias': ict_signal.htf_bias.value if ict_signal.htf_bias else None,
-                    'structure_broken': ict_signal.structure_broken,
-                    'displacement_detected': ict_signal.displacement_detected,
-                    'order_blocks_count': len(ict_signal.order_blocks),
-                    'liquidity_zones_count': len(ict_signal.liquidity_zones),
-                    'fvg_count': len(ict_signal.fair_value_gaps),
-                    'mtf_confluence': ict_signal.mtf_confluence_score,
-                    'whale_blocks': len(ict_signal.whale_blocks) if ict_signal.whale_blocks else 0
+                    'rsi': analysis.get('rsi'),
+                    # MA removed - ICT only
+                    'volume_ratio': analysis.get('volume_ratio'),
+                    'volatility': analysis.get('volatility'),
+                    'trend': analysis.get('trend'),
+                    'btc_correlation': btc_corr,
+                    'sentiment': sentiment
                 }
-                
+            
                 journal_id = log_trade_to_journal(
                     symbol=symbol,
-                    timeframe=timeframe,
-                    signal_type=ict_signal.signal_type.value,
-                    confidence=ict_signal.confidence,
-                    entry_price=ict_signal.entry_price,
-                    tp_price=ict_signal.tp_prices[0],
-                    sl_price=ict_signal.sl_price,
+                    timeframe=timeframe,  # От best_signal
+                    signal_type=analysis['signal'],
+                    confidence=best_confidence,
+                    entry_price=price,
+                    tp_price=analysis['tp'],
+                    sl_price=analysis['sl'],
                     analysis_data=analysis_data
                 )
-                
+            
                 if journal_id:
-                    logger.info(f"📝 AUTO-SIGNAL logged to ML journal (ID: {journal_id})")
+                    logger.info(f"📝 AUTO-SIGNAL logged to ML journal (ID: {journal_id}) - 24/7 data collection")
             except Exception as e:
-                logger.error(f"❌ Journal logging error in auto-signal: {e}")
+                logger.error(f"Journal logging error in auto-signal: {e}")
     
-    # 🧹 MEMORY CLEANUP
+        # === ГЕНЕРИРАЙ ГРАФИКА ===
+        chart_file = None
+        try:
+            luxalgo_ict_data = analysis.get('luxalgo_ict')
+            chart_file = generate_chart(
+                klines,
+                symbol,
+                analysis['signal'],
+                price,
+                analysis['tp'],
+                analysis['sl'],
+                timeframe,  # От best_signal
+                luxalgo_ict_data
+            )
+            if chart_file:
+                logger.info(f"📊 Графика генерирана успешно за {symbol}")
+            else:
+                logger.warning(f"⚠️ Графика не е генерирана за {symbol}")
+        except Exception as e:
+            logger.error(f"❌ Грешка при генериране на графика за {symbol}: {e}")
+            chart_file = None
+    
+        # === ОПРЕДЕЛИ ТИП НА ТРЕЙДА ===
+        # timeframe вече е взет от best_signal
+        if timeframe in ['1m', '5m', '15m', '30m']:
+            trade_type = "⚡ Краткосрочен"
+            trade_duration = "Минути до часове"
+        elif timeframe in ['1h', '2h', '4h']:
+            trade_type = "📊 Средносрочен"
+            trade_duration = "Часове до дни"
+        elif timeframe in ['1d', '1w', '1M']:
+            trade_type = "📈 Дългосрочен"
+            trade_duration = "Дни до седмици"
+        else:
+            trade_type = "📊 Средносрочен"
+            trade_duration = "Часове до дни"
+    
+        # === ПЪЛЕН АНАЛИЗ КАТО РЪЧНИТЕ СИГНАЛИ ===
+    
+        # Изчисли оптимални entry zones
+        entry_zones = calculate_entry_zones(
+            price, analysis['signal'], 
+            analysis['closes'], analysis['highs'], analysis['lows'],
+            analysis
+        )
+    
+        # Quality badge за entry zone
+        quality = entry_zones['quality']
+        if quality >= 75:
+            quality_badge = "💎"
+            quality_text = "Отлично качество"
+        elif quality >= 60:
+            quality_badge = "🟢"
+            quality_text = "Добро качество"
+        elif quality >= 45:
+            quality_badge = "🟡"
+            quality_text = "Средно качество"
+        else:
+            quality_badge = "🟠"
+            quality_text = "Ниско качество"
+    
+        # Създай съобщението
+        message = f"🤖 <b>АВТОМАТИЧЕН СИГНАЛ</b> 🤖\n"
+        message += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        message += f"{signal_emoji} <b>{symbol}: {analysis['signal']}</b>\n"
+        message += f"📊 Увереност: <b>{analysis['confidence']}%</b>\n"
+        message += f"💰 Цена: <b>${price:,.4f}</b>\n"
+        message += f"📈 24ч промяна: <b>{analysis['change_24h']:+.2f}%</b>\n"
+        message += f"⏰ Таймфрейм: <b>{timeframe}</b>\n"
+        message += f"🎯 Тип трейд: <b>{trade_type}</b>\n"
+        message += f"⏱️ Продължителност: <i>{trade_duration}</i>\n\n"
+    
+        # Entry zones
+        message += f"🎯 <b>Нива за търговия:</b>\n\n"
+        message += f"📍 <b>ENTRY ZONE</b> {quality_badge}:\n"
+        message += f"   Качество: <b>{quality_text} ({entry_zones['quality']}/100)</b>\n"
+        message += f"   Оптимален вход: <b>${entry_zones['best_entry']:,.4f}</b>\n"
+        message += f"   Зона: ${entry_zones['entry_zone_low']:,.4f} - ${entry_zones['entry_zone_high']:,.4f}\n"
+    
+        # Support/Resistance levels
+        if entry_zones.get('support_level'):
+            message += f"   Support: ${entry_zones['support_level']:,.4f}\n"
+        if entry_zones.get('resistance_level'):
+            message += f"   Resistance: ${entry_zones['resistance_level']:,.4f}\n"
+    
+        # Entry recommendation
+        if entry_zones.get('recommendation'):
+            message += f"\n   💡 {entry_zones['recommendation']}\n\n"
+        else:
+            message += "\n"
+    
+        # TP/SL
+        tp_pct = ((analysis['tp'] - price) / price) * 100
+        sl_pct = ((analysis['sl'] - price) / price) * 100
+    
+        message += f"🎯 <b>TAKE PROFIT:</b> ${analysis['tp']:,.4f} ({tp_pct:+.2f}%)\n"
+    
+        # MTF Потвърждение
+        mtf_info = sig.get('mtf_confirmation')
+        if mtf_info and mtf_info.get('confirmed'):
+            higher_tf = mtf_info.get('higher_timeframe', 'N/A')
+            message += f"   ✅ <b>MTF:</b> {higher_tf} потвърждава\n"
+        elif mtf_info:
+            message += f"   ⚠️ MTF: Няма потвърждение\n"
+    
+        # TP вероятност и време
+        if 'tp_probability' in analysis:
+            tp_prob = analysis['tp_probability']
+            prob_interpretation = ""
+            if tp_prob >= 70:
+                prob_interpretation = "Много високо"
+            elif tp_prob >= 50:
+                prob_interpretation = "Високо"
+            elif tp_prob >= 30:
+                prob_interpretation = "Средно"
+            else:
+                prob_interpretation = "Ниско"
+            message += f"   🎲 Вероятност: {tp_prob:.0f}% ({prob_interpretation})\n"
+    
+        # Изчисли очаквано време за TP базирано на таймфрейм и волатилност
+        if 'expected_time_hours' in analysis:
+            expected_hours = analysis['expected_time_hours']
+        else:
+            # Изчисли базирано на таймфрейм и целева промяна
+            target_change_pct = abs(tp_pct)
+        
+            # Волатилност на база 24ч промяна
+            volatility_24h = abs(analysis.get('change_24h', 2.0))
+        
+            # Таймфрейм множители
+            tf_multipliers = {
+                '1m': 0.5, '5m': 1, '15m': 2, '30m': 4,
+                '1h': 8, '2h': 12, '4h': 24,
+                '1d': 48, '1w': 168, '1M': 720
+            }
+        
+            base_hours = tf_multipliers.get(timeframe, 12)
+        
+            # Изчисли очаквано време
+            if volatility_24h > 0:
+                # Колко време е нужно да се постигне целта при текуща волатилност
+                expected_hours = (target_change_pct / volatility_24h) * 24
+                # Коригирай според таймфрейма
+                expected_hours = min(expected_hours, base_hours * 3)
+                expected_hours = max(expected_hours, base_hours * 0.5)
+            else:
+                expected_hours = base_hours
+    
+        # Форматирай времето красиво
+        if expected_hours < 1:
+            time_str = f"{int(expected_hours * 60)} минути"
+        elif expected_hours < 24:
+            time_str = f"{expected_hours:.1f} часа"
+        elif expected_hours < 168:
+            days = expected_hours / 24
+            time_str = f"{days:.1f} дни"
+        else:
+            weeks = expected_hours / 168
+            time_str = f"{weeks:.1f} седмици"
+    
+        message += f"   ⏱️ Очаквано време за цел: <b>~{time_str}</b>\n"
+    
+        message += f"\n🛡️ <b>STOP LOSS:</b> ${analysis['sl']:,.4f} ({sl_pct:+.2f}%)\n"
+    
+        # Risk/Reward
+        risk = abs(price - analysis['sl'])
+        reward = abs(analysis['tp'] - price)
+        rr_ratio = reward / risk if risk > 0 else 0
+        message += f"⚖️ Risk/Reward: 1:{rr_ratio:.2f}\n\n"
+
+        # === ДОПЪЛНИТЕЛЕН АНАЛИЗ (КАТО РЪЧНИТЕ СИГНАЛИ) ===
+        message += "\n━━━━━━━━━━━━━━━━━━━━\n"
+        message += "📊 <b>ДОПЪЛНИТЕЛЕН АНАЛИЗ: </b>\n\n"
+        
+        # BTC Correlation
+        if btc_corr: 
+            btc_aligned = (btc_corr['trend'] == 'BULLISH' and analysis['signal'] == 'BUY') or \
+                         (btc_corr['trend'] == 'BEARISH' and analysis['signal'] == 'SELL')
+            btc_emoji = "✅" if btc_aligned else "⚠️"
+            message += f"📊 BTC correlation: {btc_corr['trend']} ({btc_corr['change']:+.1f}%) {btc_emoji}\n"
+        
+        # Order Book
+        if order_book:
+            ob_aligned = order_book['pressure'] == analysis['signal']
+            ob_emoji = "✅" if ob_aligned else "⚠️"
+            message += f"📖 Order Book pressure: {order_book['pressure']} {ob_emoji}\n"
+        
+        # News Sentiment
+        if sentiment and sentiment. get('sentiment') != 'NEUTRAL':
+            sent_aligned = (sentiment['sentiment'] == 'BULLISH' and analysis['signal'] == 'BUY') or \
+                          (sentiment['sentiment'] == 'BEARISH' and analysis['signal'] == 'SELL')
+            sent_emoji = "✅" if sent_aligned else "⚠️"
+            message += f"📰 News sentiment: {sentiment['sentiment']} {sent_emoji}\n"
+        
+        message += "\n"
+    
+        # Причини за сигнала
+        if analysis['reasons']:
+            message += "💡 <b>Причини:</b>\n"
+            for reason in analysis['reasons'][:3]:  # Първите 3 причини
+                message += f"   • {reason}\n"
+        
+        # === ML ПРОГНОЗА (КАТО РЪЧНИТЕ СИГНАЛИ) ===
+        ml_probability = None
+        ml_message = ""
+        
+        if ML_PREDICTOR_AVAILABLE:
+            try:
+                ml_predictor = get_ml_predictor()
+                
+                # Подготви данни за ML прогноза
+                ml_trade_data = {
+                    'signal_type': analysis['signal'],
+                    'confidence': best_confidence,
+                    'entry_price': price,
+                    'analysis_data': {
+                        'rsi': analysis.get('rsi'),
+                        'volume_ratio': analysis.get('volume_ratio'),
+                        'volatility': analysis.get('volatility'),
+                        'trend': analysis.get('trend'),
+                        'btc_correlation': sig.get('btc_correlation'),
+                        'sentiment': sig.get('sentiment')
+                    }
+                }
+                
+                # Получи ML прогноза
+                ml_probability = ml_predictor.predict(ml_trade_data)
+                
+                if ml_probability is not None:
+                    logger.info(f"🤖 ML Prediction: {ml_probability:.1f}% вероятност за успех")
+                    
+                    # Определи ML emoji според вероятността
+                    if ml_probability >= 80:
+                        ml_emoji = "🤖💎"
+                        ml_quality = "Отлична"
+                    elif ml_probability >= 70:
+                        ml_emoji = "🤖✅"
+                        ml_quality = "Много добра"
+                    elif ml_probability >= 60:
+                        ml_emoji = "🤖👍"
+                        ml_quality = "Добра"
+                    elif ml_probability >= 50:
+                        ml_emoji = "🤖⚠️"
+                        ml_quality = "Средна"
+                    else:
+                        ml_emoji = "🤖❌"
+                        ml_quality = "Ниска"
+                    
+                    message += f"\n{ml_emoji} <b>ML ПРОГНОЗА:</b>\n"
+                    message += f"   Вероятност за успех: <b>{ml_probability:.1f}%</b>\n"
+                    message += f"   Качество на прогноза: <i>{ml_quality}</i>\n"
+                    
+            except Exception as e:
+                logger.error(f"ML prediction error in auto-signal: {e}")
+        
+        message += "\n"
+    
+        try:
+            # Изпрати графиката като снимка (ако има)
+            if chart_file:
+                short_caption = f"🔔🔊 {symbol} {analysis['signal']} ({analysis['confidence']:.0f}%)"
+                
+                if isinstance(chart_file, BytesIO):
+                    chart_file.seek(0)
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=chart_file,
+                        caption=short_caption,
+                        parse_mode='HTML',
+                        disable_notification=False
+                    )
+                elif isinstance(chart_file, str) and os.path.exists(chart_file):
+                    with open(chart_file, 'rb') as photo:
+                        await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=photo,
+                            caption=short_caption,
+                            parse_mode='HTML',
+                            disable_notification=False
+                        )
+                    try:
+                        os.remove(chart_file)
+                    except:
+                        pass
+                
+                # Изпрати пълното съобщение
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode='HTML',
+                    disable_notification=True
+                )
+                logger.info(f"🔔 Автоматичен сигнал изпратен с графика: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
+            else:
+                # Няма графика - само текст
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🔔🔊 {message}",
+                    parse_mode='HTML',
+                    disable_notification=False
+                )
+                logger.info(f"🔔 Автоматичен сигнал изпратен без графика: {symbol} {analysis['signal']} ({analysis['confidence']}%)")
+            
+            # === ДОБАВИ СИГНАЛА ЗА TRACKING ===
+            add_signal_to_tracking(
+                symbol=symbol,
+                signal_type=analysis['signal'],
+                entry_price=price,
+                tp_price=analysis['tp'],
+                sl_price=analysis['sl'],
+                confidence=best_confidence,
+                timeframe=timeframe,
+                timestamp=datetime.now()
+            )
+            
+            # === ДОБАВИ В REAL-TIME MONITOR (v2.1.0) ===
+            if real_time_monitor_global and analysis['signal'] in ['BUY', 'SELL']:
+                try:
+                    signal_id = f"{symbol}_{analysis['signal']}_{int(datetime.now(timezone.utc).timestamp())}"
+                    
+                    real_time_monitor_global.add_signal(
+                        signal_id=signal_id,
+                        symbol=symbol,
+                        signal_type=analysis['signal'],
+                        entry_price=price,
+                        tp_price=analysis['tp'],
+                        sl_price=analysis['sl'],
+                        confidence=best_confidence,
+                        timeframe=timeframe,
+                        user_chat_id=chat_id
+                    )
+                    
+                    logger.info(f"✅ Auto-signal {signal_id} added to real-time monitor")
+                    
+                    # Notify user about monitoring
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="🎯 <i>Signal added to real-time monitor for 80% TP alerts and WIN/LOSS tracking</i>",
+                        parse_mode='HTML',
+                        disable_notification=True
+                    )
+                except Exception as monitor_error:
+                    logger.error(f"❌ Failed to add auto-signal to monitor: {monitor_error}")
+        
+        except Exception as e:
+            logger.error(f"Грешка при изпращане на alert: {e}")
+    
+    # 🧹 ФИНАЛЕН MEMORY CLEANUP след всички сигнали
+    logger.info("🧹 Memory cleanup след изпращане на сигнали...")
     plt.close('all')
     gc.collect()
-    logger.info(f"✅ Auto signal cycle complete. Sent {len(signals_to_send)} signals.")
+    logger.info("✅ Memory cleanup завършен")
 
 
 async def send_auto_news(context: ContextTypes.DEFAULT_TYPE):
