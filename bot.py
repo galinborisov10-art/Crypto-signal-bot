@@ -8247,37 +8247,52 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                 for col in ['open', 'high', 'low', 'close', 'volume']:
                     df[col] = df[col].astype(float)
+                logger.info(f"✅ DataFrame prepared: {len(df)} rows")
                 
                 # ✅ FETCH MTF DATA for ICT analysis
+                logger.info(f"📈 Fetching MTF data...")
                 mtf_data = fetch_mtf_data(symbol, timeframe, df)
+                logger.info(f"✅ MTF data: {len(mtf_data) if mtf_data else 0} timeframes")
                 
                 # Generate ICT signal WITH MTF DATA
+                logger.info(f"🔧 Initializing ICTSignalEngine...")
                 ict_engine = ICTSignalEngine()
+                logger.info(f"🚀 Generating ICT signal with MTF data...")
                 ict_signal = ict_engine.generate_signal(
                     df=df,
                     symbol=symbol,
                     timeframe=timeframe,
                     mtf_data=mtf_data
                 )
+                logger.info(f"✅ ICT signal generated: {type(ict_signal)}")
                 
                 # Check for NO_TRADE or None
+                logger.info(f"🔍 Checking signal type...")
                 if not ict_signal or (isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE'):
+                    logger.info(f"⚪ NO_TRADE detected: type={type(ict_signal)}")
                     # Format NO_TRADE message with details
                     if isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE':
+                        logger.info(f"📝 Formatting NO_TRADE message...")
                         no_trade_msg = format_no_trade_message(ict_signal)
                         await processing_msg.edit_text(no_trade_msg, parse_mode='HTML')
+                        logger.info(f"✅ NO_TRADE message sent")
                     else:
+                        logger.warning(f"⚠️ ICT signal is None or invalid")
                         await processing_msg.edit_text(
                             f"⚪ <b>No high-quality ICT signal for {symbol}</b>\n\n"
                             f"Market conditions do not meet minimum criteria.",
                             parse_mode='HTML'
                         )
+                        logger.info(f"✅ Fallback NO_TRADE sent")
                     return
                 
                 # Format with 13-point output
+                logger.info(f"📝 Formatting 13-point ICT signal...")
                 signal_msg = format_ict_signal_13_point(ict_signal)
+                logger.info(f"✅ Signal formatted ({len(signal_msg)} chars)")
                 
                 # Generate and send chart
+                logger.info(f"📊 Generating chart for {symbol} {timeframe}...")
                 chart_sent = False
                 if CHART_VISUALIZATION_AVAILABLE:
                     try:
@@ -8296,15 +8311,20 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             logger.info(f"✅ Chart sent for {symbol} {timeframe}")
                     except Exception as chart_error:
                         logger.warning(f"⚠️ Chart generation failed: {chart_error}")
+                else:
+                    logger.info(f"⚠️ Chart visualization not available")
                 
                 # Send 13-point text analysis
+                logger.info(f"📤 Sending 13-point signal message...")
                 await processing_msg.edit_text(
                     signal_msg,
                     parse_mode='HTML',
                     disable_web_page_preview=True
                 )
+                logger.info(f"✅ Signal message sent successfully")
                 
                 # Add signal to real-time monitor
+                logger.info(f"📍 Adding to real-time monitor...")
                 add_signal_to_monitor(ict_signal, symbol, timeframe, update.effective_chat.id)
                 
                 logger.info(f"✅ ✅ ✅ ICT Signal COMPLETE via CALLBACK for {symbol} {timeframe}")
