@@ -3197,7 +3197,7 @@ def fetch_mtf_data(symbol: str, timeframe: str, primary_df: pd.DataFrame) -> dic
         Dictionary with timeframes as keys and DataFrames as values
     """
     mtf_data = {}
-    mtf_timeframes = ['1h', '4h', '1d']
+    mtf_timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d', '3d', '1w']
     
     for mtf_tf in mtf_timeframes:
         if mtf_tf == timeframe:  # Skip duplicate fetch
@@ -5868,7 +5868,7 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             df=df,
             symbol=symbol,
             timeframe=timeframe,
-            mtf_data=fetch_mtf_data(symbol, timeframe, df)  # ✅ FIXED
+            mtf_data=mtf_data  # ✅ FIXED: Using stored variable to avoid duplicate call
         )
         
         # Check if result is a "NO_TRADE" message (Dict) or a signal (ICTSignal object)
