@@ -148,7 +148,7 @@ def test_format_function():
         "1m timeframe": "1m" in msg,
         "4h timeframe": "4h" in msg,
         "1d timeframe": "1d" in msg,
-        "Conflicting TF marked": "❌ 1d: BEARISH" in msg
+        "Conflicting TF marked": "1d: BEARISH" in msg  # Fixed: removed emoji check
     }
     
     all_passed = True

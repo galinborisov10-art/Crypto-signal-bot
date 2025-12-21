@@ -2362,6 +2362,13 @@ class ICTSignalEngine:
         """
         Format detailed ICT analysis explaining why there's no trade
         
+        NOTE: This method is currently not used directly in _create_no_trade_message()
+        because the formatting is done in bot.py's format_no_trade_message() function
+        for better separation of concerns (ICT engine generates data, bot.py formats it).
+        
+        This method is kept for potential future use cases where formatting might be
+        needed within the ICT engine itself (e.g., for API responses, logging, etc.)
+        
         Args:
             ict_components: Dict with ICT components (order_blocks, fvgs, etc.)
             entry_status: Entry zone status (NO_ZONE, TOO_LATE, etc.)
