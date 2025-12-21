@@ -516,12 +516,15 @@ class ICTSignalEngine:
         if entry_status in ['TOO_LATE', 'NO_ZONE']:
             logger.error(f"❌ Entry zone validation failed: {entry_status}")
             context = self._extract_context_data(df, bias)
+            # Calculate MTF consensus for detailed breakdown
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            
             return self._create_no_trade_message(
                 symbol=symbol,
                 timeframe=timeframe,
                 reason=f"Entry zone validation failed: {entry_status}",
                 details=f"Current price: ${current_price:.2f}. No valid entry zone found in acceptable range (0.5%-3%).",
-                mtf_breakdown={},
+                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
                 current_price=context['current_price'],
                 price_change_24h=context['price_change_24h'],
                 rsi=context['rsi'],
