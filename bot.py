@@ -3184,6 +3184,52 @@ def get_daily_signals_report():
         return None
 
 
+def fetch_mtf_data(symbol: str, timeframe: str, primary_df: pd.DataFrame) -> dict:
+    """
+    Fetch Multi-Timeframe data for ICT analysis
+    
+    Args:
+        symbol: Trading symbol (e.g., 'BTCUSDT')
+        timeframe: Current timeframe (e.g., '4h')
+        primary_df: Primary DataFrame to reuse if timeframe matches
+        
+    Returns:
+        Dictionary with timeframes as keys and DataFrames as values
+    """
+    mtf_data = {}
+    mtf_timeframes = ['1h', '4h', '1d']
+    
+    for mtf_tf in mtf_timeframes:
+        if mtf_tf == timeframe:  # Skip duplicate fetch
+            mtf_data[mtf_tf] = primary_df
+            continue
+        
+        try:
+            mtf_response = requests.get(
+                BINANCE_KLINES_URL,
+                params={'symbol': symbol, 'interval': mtf_tf, 'limit': 100},
+                timeout=10
+            )
+            
+            if mtf_response.status_code == 200:
+                mtf_klines = mtf_response.json()
+                mtf_df = pd.DataFrame(mtf_klines, columns=[
+                    'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                    'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                    'taker_buy_quote', 'ignore'
+                ])
+                mtf_df['timestamp'] = pd.to_datetime(mtf_df['timestamp'], unit='ms')
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    mtf_df[col] = mtf_df[col].astype(float)
+                
+                mtf_data[mtf_tf] = mtf_df
+                logger.debug(f"✅ Fetched MTF data for {mtf_tf}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to fetch MTF data for {mtf_tf}: {e}")
+    
+    return mtf_data
+
+
 def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
     """
     ⚠️ DEPRECATED: Use ICTSignalEngine.generate_signal() instead!
@@ -5503,36 +5549,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 df[col] = df[col].astype(float)
             
             # ✅ FETCH MTF DATA for ICT analysis
-            mtf_data = {}
-            mtf_timeframes = ['1h', '4h', '1d']
-            
-            for mtf_tf in mtf_timeframes:
-                if mtf_tf == timeframe:  # Skip duplicate fetch
-                    mtf_data[mtf_tf] = df
-                    continue
-                
-                try:
-                    mtf_response = requests.get(
-                        BINANCE_KLINES_URL,
-                        params={'symbol': symbol, 'interval': mtf_tf, 'limit': 100},
-                        timeout=10
-                    )
-                    
-                    if mtf_response.status_code == 200:
-                        mtf_klines = mtf_response.json()
-                        mtf_df = pd.DataFrame(mtf_klines, columns=[
-                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
-                            'taker_buy_quote', 'ignore'
-                        ])
-                        mtf_df['timestamp'] = pd.to_datetime(mtf_df['timestamp'], unit='ms')
-                        for col in ['open', 'high', 'low', 'close', 'volume']:
-                            mtf_df[col] = mtf_df[col].astype(float)
-                        
-                        mtf_data[mtf_tf] = mtf_df
-                        logger.info(f"✅ Fetched MTF data for {mtf_tf}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to fetch MTF data for {mtf_tf}: {e}")
+            mtf_data = fetch_mtf_data(symbol, timeframe, df)
             
             # Generate ICT signal WITH MTF DATA
             ict_engine = ICTSignalEngine()
@@ -7596,35 +7613,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                 df[col] = df[col].astype(float)
             
             # ✅ FETCH MTF DATA
-            mtf_data = {}
-            mtf_timeframes = ['1h', '4h', '1d']
-            
-            for mtf_tf in mtf_timeframes:
-                if mtf_tf == timeframe:
-                    mtf_data[mtf_tf] = df
-                    continue
-                
-                try:
-                    mtf_response = requests.get(
-                        BINANCE_KLINES_URL,
-                        params={'symbol': symbol, 'interval': mtf_tf, 'limit': 100},
-                        timeout=10
-                    )
-                    
-                    if mtf_response.status_code == 200:
-                        mtf_klines = mtf_response.json()
-                        mtf_df = pd.DataFrame(mtf_klines, columns=[
-                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
-                            'taker_buy_quote', 'ignore'
-                        ])
-                        mtf_df['timestamp'] = pd.to_datetime(mtf_df['timestamp'], unit='ms')
-                        for col in ['open', 'high', 'low', 'close', 'volume']:
-                            mtf_df[col] = mtf_df[col].astype(float)
-                        
-                        mtf_data[mtf_tf] = mtf_df
-                except Exception as e:
-                    logger.warning(f"⚠️ MTF fetch failed for {mtf_tf}: {e}")
+            mtf_data = fetch_mtf_data(symbol, timeframe, df)
             
             # ✅ USE ICT ENGINE (NOT legacy analyze_signal!)
             ict_engine = ICTSignalEngine()
@@ -7715,7 +7704,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             )
             logger.info(f"✅ Auto signal sent for {symbol} ({timeframe})")
         except Exception as e:
-            logger.error(f"❌ Failed to send auto signal for {symbol}: {e}")
+            logger.error(f"❌ Failed to send auto signal message for {symbol}: {e}")
             continue
         
         # Send chart if available
