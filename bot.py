@@ -8196,14 +8196,20 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Избор на таймфрейм - изпълни анализа
     if query.data.startswith("tf_"):
         try:
-            logger.info(f"Callback data: {query.data}")
+            logger.info(f"📞 SIGNAL_CALLBACK triggered - Callback data: {query.data}")
             parts = query.data.replace("tf_", "").split("_")
             symbol = parts[0]
             timeframe = parts[1]
-            logger.info(f"Processing signal for {symbol} on {timeframe}")
+            logger.info(f"🎯 Processing signal for {symbol} on {timeframe} via CALLBACK")
+            logger.info(f"🔍 ICT_SIGNAL_ENGINE_AVAILABLE = {ICT_SIGNAL_ENGINE_AVAILABLE}")
             
             # Изтрий предишното съобщение
-            await query.message.delete()
+            # Изтрий предишното съобщение (with error handling)
+            try:
+                await query.message.delete()
+                logger.info(f"✅ Previous message deleted successfully")
+            except Exception as delete_error:
+                logger.warning(f"⚠️ Could not delete previous message: {delete_error}")
             
             # === USE ICT ENGINE (same workflow as signal_cmd) ===
             if ICT_SIGNAL_ENGINE_AVAILABLE:
@@ -8215,6 +8221,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 # Fetch klines for ICT analysis
+                logger.info(f"📊 Fetching klines: {symbol}/{timeframe}/limit=200")
                 klines_response = requests.get(
                     BINANCE_KLINES_URL,
                     params={'symbol': symbol, 'interval': timeframe, 'limit': 200},
@@ -8222,10 +8229,13 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 if klines_response.status_code != 200:
-                    await processing_msg.edit_text("❌ Failed to fetch market data")
+                    error_msg = f"❌ Failed to fetch market data (Status: {klines_response.status_code})"
+                    logger.error(error_msg)
+                    await processing_msg.edit_text(error_msg)
                     return
                 
                 klines_data = klines_response.json()
+                logger.info(f"✅ Fetched {len(klines_data)} candles")
                 
                 # Prepare dataframe
                 df = pd.DataFrame(klines_data, columns=[
@@ -8297,10 +8307,11 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Add signal to real-time monitor
                 add_signal_to_monitor(ict_signal, symbol, timeframe, update.effective_chat.id)
                 
-                logger.info(f"✅ ICT Signal sent via callback for {symbol} {timeframe}")
+                logger.info(f"✅ ✅ ✅ ICT Signal COMPLETE via CALLBACK for {symbol} {timeframe}")
                 return
             else:
                 # Fallback to legacy if ICT Engine not available (should not happen)
+                logger.error(f"❌ ICT Engine NOT AVAILABLE - This should NOT happen!")
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     text="❌ ICT Engine not available. Please contact administrator.",
@@ -8315,8 +8326,8 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=f"❌ Грешка при обработка на сигнала:\n{str(main_error)}",
                     parse_mode='HTML'
                 )
-            except:
-                pass
+            except Exception as send_error:
+                logger.error(f"❌ Failed to send error message to user: {send_error}")
 
 
 # ================= DEPLOY КОМАНДА =================
