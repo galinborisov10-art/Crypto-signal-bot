@@ -8197,422 +8197,121 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Изтрий предишното съобщение
             await query.message.delete()
             
-            # Изпрати съобщение че анализира
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"🔍 Анализирам {symbol} на {timeframe}...",
-                parse_mode='HTML'
-            )
-            
-            # Вземи настройките
-            settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
-            
-            # Извлечи 24h данни
-            params_24h = {'symbol': symbol}
-            data_24h = await fetch_json(BINANCE_24H_URL, params_24h)
-            
-            if not data_24h or isinstance(data_24h, list):
-                if isinstance(data_24h, list):
-                    data_24h = next((s for s in data_24h if s['symbol'] == symbol), None)
-            
-            if not data_24h:
-                await context.bot.send_message(
+            # === NEW: USE ICT ENGINE (copied from signal_cmd lines 5630-5730) ===
+            if ICT_SIGNAL_ENGINE_AVAILABLE:
+                # Send processing message
+                processing_msg = await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text="❌ Грешка при извличане на данни",
+                    text=f"🔍 <b>Running ICT analysis for {symbol} ({timeframe})...</b>",
                     parse_mode='HTML'
                 )
-                return
-            
-            # Извлечи исторически данни (klines)
-            klines = await fetch_klines(symbol, timeframe, limit=100)
-            
-            if not klines:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="❌ Грешка при извличане на исторически данни",
-                    parse_mode='HTML'
+                
+                # Fetch klines for ICT analysis
+                klines_response = requests.get(
+                    BINANCE_KLINES_URL,
+                    params={'symbol': symbol, 'interval': timeframe, 'limit': 200},
+                    timeout=10
                 )
-                return
-            
-            # Анализирай
-            analysis = analyze_signal(data_24h, klines, symbol, timeframe)
-            
-            if not analysis:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="❌ Грешка при анализ",
-                    parse_mode='HTML'
+                
+                if klines_response.status_code != 200:
+                    await processing_msg.edit_text("❌ Failed to fetch market data")
+                    return
+                
+                klines_data = klines_response.json()
+                
+                # Prepare dataframe
+                df = pd.DataFrame(klines_data, columns=[
+                    'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                    'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                    'taker_buy_quote', 'ignore'
+                ])
+                
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    df[col] = df[col].astype(float)
+                
+                # ✅ FETCH MTF DATA for ICT analysis
+                mtf_data = fetch_mtf_data(symbol, timeframe, df)
+                
+                # Generate ICT signal WITH MTF DATA
+                ict_engine = ICTSignalEngine()
+                ict_signal = ict_engine.generate_signal(
+                    df=df,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    mtf_data=mtf_data
                 )
-                return
-            
-            # === BTC CORRELATION ANALYSIS ===
-            btc_correlation = await analyze_btc_correlation(symbol, timeframe)
-            
-            # === ORDER BOOK ANALYSIS ===
-            order_book = await analyze_order_book(symbol, analysis['price'])
-            
-            # === MULTI-TIMEFRAME CONFIRMATION ===
-            mtf_confirmation = await get_higher_timeframe_confirmation(symbol, timeframe, analysis['signal'])
-            
-            # === NEWS SENTIMENT ANALYSIS ===
-            sentiment = await analyze_news_sentiment(symbol)
-            
-            # === MULTI-TIMEFRAME ANALYSIS ===
-            logger.info(f"Starting MTF analysis for manual signal {symbol}")
-            mtf_analysis = await get_multi_timeframe_analysis(symbol, timeframe)
-            logger.info(f"MTF analysis result: {mtf_analysis}")
-            
-            # Коригирай confidence според допълнителните анализи
-            final_confidence = analysis['confidence']
-        
-            # Order Book корекция
-            if order_book:
-                if order_book['pressure'] == analysis['signal']:
-                    final_confidence += 10
-                    analysis['reasons'].append(f"Order Book натиск: {order_book['pressure']}")
-                elif order_book['pressure'] != 'NEUTRAL' and order_book['pressure'] != analysis['signal']:
-                    final_confidence -= 8
-                    analysis['reasons'].append(f"Order Book противоречи ({order_book['pressure']})")
                 
-                # Ако има близки стени
-                if order_book['closest_support'] and analysis['signal'] == 'BUY':
-                    support_price = order_book['closest_support'][0]
-                    if abs(analysis['price'] - support_price) / analysis['price'] < 0.02:  # В рамките на 2%
-                        final_confidence += 8
-                        analysis['reasons'].append(f"Силна support стена на ${support_price:,.2f}")
-                
-                if order_book['closest_resistance'] and analysis['signal'] == 'SELL':
-                    resistance_price = order_book['closest_resistance'][0]
-                    if abs(resistance_price - analysis['price']) / analysis['price'] < 0.02:
-                        final_confidence += 8
-                        analysis['reasons'].append(f"Силна resistance стена на ${resistance_price:,.2f}")
-            
-            # Multi-timeframe корекция
-            if mtf_confirmation and mtf_confirmation['confirmed']:
-                final_confidence += 15
-                analysis['reasons'].append(f"Потвърждение от {mtf_confirmation['timeframe']}")
-            elif mtf_confirmation and not mtf_confirmation['confirmed']:
-                final_confidence -= 10
-                analysis['reasons'].append(f"{mtf_confirmation['timeframe']} не потвърждава")
-            
-            # BTC Correlation корекция
-            if btc_correlation:
-                if btc_correlation['trend'] == analysis['signal']:
-                    boost = min(btc_correlation['strength'] / 2, 12)
-                    final_confidence += boost
-                    analysis['reasons'].append(f"BTC {btc_correlation['trend']} ({btc_correlation['change']:+.1f}%)")
-                elif btc_correlation['trend'] != 'NEUTRAL' and btc_correlation['trend'] != analysis['signal']:
-                    penalty = min(btc_correlation['strength'] / 3, 10)
-                    final_confidence -= penalty
-                    analysis['reasons'].append(f"⚠️ BTC противоречи ({btc_correlation['trend']} {btc_correlation['change']:+.1f}%)")
-            
-            # Sentiment корекция
-            if sentiment and sentiment['sentiment'] != 'NEUTRAL':
-                if sentiment['sentiment'] == analysis['signal']:
-                    final_confidence += sentiment['confidence']
-                    analysis['reasons'].append(f"Новини {sentiment['sentiment']}: +{sentiment['confidence']:.0f}%")
-                else:
-                    final_confidence -= sentiment['confidence'] / 2
-                    analysis['reasons'].append(f"Новини противоречат ({sentiment['sentiment']})")
-            
-            # Обнови confidence и has_good_trade
-            final_confidence = max(0, min(final_confidence, 95))
-            analysis['confidence'] = final_confidence
-            analysis['has_good_trade'] = analysis['signal'] in ['BUY', 'SELL'] and final_confidence >= 65
-            
-            # Използвай adaptive TP/SL
-            adaptive_levels = analysis['adaptive_tp_sl']
-            tp_pct = adaptive_levels['tp']
-            sl_pct = adaptive_levels['sl']
-            
-            # Изчисли TP и SL нива
-            price = analysis['price']
-            
-            if analysis['signal'] == 'BUY':
-                tp_price = price * (1 + tp_pct / 100)
-                sl_price = price * (1 - sl_pct / 100)
-                signal_emoji = "🟢"
-            elif analysis['signal'] == 'SELL':
-                tp_price = price * (1 - tp_pct / 100)
-                sl_price = price * (1 + sl_pct / 100)
-                signal_emoji = "🔴"
-            else:
-                tp_price = price * (1 + tp_pct / 100)
-                sl_price = price * (1 - sl_pct / 100)
-                signal_emoji = "⚪"
-            
-            # Запиши ВСЕКИ auto-signal в статистиката
-            signal_id = record_signal(
-                symbol, 
-                timeframe, 
-                analysis['signal'], 
-                final_confidence,
-                entry_price=price,
-                tp_price=tp_price,
-                sl_price=sl_price
-            )
-            
-            # Генерирай графика с luxalgo_ict данни
-            luxalgo_ict_data = analysis.get('luxalgo_ict')
-            chart_buffer = generate_chart(klines, symbol, analysis['signal'], price, tp_price, sl_price, timeframe, luxalgo_ict_data)
-            
-            # Изчисли вероятност за достигане на TP
-            tp_probability = calculate_tp_probability(analysis, tp_price, analysis['signal'])
-            
-            # Изчисли оптимални entry zones
-            entry_zones = calculate_entry_zones(
-                price, 
-                analysis['signal'], 
-                analysis['closes'], 
-                analysis['highs'], 
-                analysis['lows'],
-                analysis
-            )
-            
-            # Форматирай съобщението
-            confidence_emoji = "🔥" if final_confidence >= 80 else "💪" if final_confidence >= 70 else "👍" if final_confidence >= 60 else "🤔"
-            change_emoji = "📈" if analysis['change_24h'] > 0 else "📉" if analysis['change_24h'] < 0 else "➡️"
-            
-            message = f"{signal_emoji} <b>СИГНАЛ: {symbol}</b>\n\n"
-            message += f"📊 <b>Анализ ({timeframe}):</b>\n"
-            message += f"Сигнал: <b>{analysis['signal']}</b> {signal_emoji}\n"
-            message += f"Увереност: {final_confidence:.0f}% {confidence_emoji}\n\n"
-            
-            message += f"💰 <b>Текуща цена:</b> ${price:,.4f}\n"
-            message += f"{change_emoji} 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
-            
-            # Обединена секция за ВСИЧКИ нива (Entry, TP, SL)
-            message += f"🎯 <b>Нива за търговия:</b>\n\n"
-            
-            # Entry zone с quality badge
-            if entry_zones['quality'] >= 75:
-                quality_badge = "💎 Отлична"
-            elif entry_zones['quality'] >= 60:
-                quality_badge = "🟢 Много добра"
-            elif entry_zones['quality'] >= 45:
-                quality_badge = "🟡 Добра"
-            else:
-                quality_badge = "🟠 Приемлива"
-            
-            message += f"📍 <b>ENTRY ZONE</b> ({quality_badge} - {entry_zones['quality']}/100):\n"
-            message += f"   Оптимален вход: <b>${entry_zones['best_entry']:,.4f}</b>\n"
-            message += f"   Зона: ${entry_zones['entry_zone_low']:,.4f} - ${entry_zones['entry_zone_high']:,.4f}\n"
-            
-            # Support/Resistance ако има
-            if analysis['signal'] == 'BUY' and entry_zones['supports']:
-                message += f"   Support: ${entry_zones['supports'][0]:,.4f}\n"
-            elif analysis['signal'] == 'SELL' and entry_zones['resistances']:
-                message += f"   Resistance: ${entry_zones['resistances'][0]:,.4f}\n"
-            
-            # Entry препоръка
-            price_vs_entry = (price - entry_zones['best_entry']) / price * 100
-            if abs(price_vs_entry) < 0.5:
-                entry_recommendation = "✅ Добър момент за вход - цената е близо до оптималния вход"
-            elif (analysis['signal'] == 'BUY' and price > entry_zones['best_entry']) or \
-                 (analysis['signal'] == 'SELL' and price < entry_zones['best_entry']):
-                entry_recommendation = "⏳ По-добре изчакай pullback към зоната"
-            else:
-                entry_recommendation = "⚡ Цената е в entry зоната - разгледай вход"
-            
-            message += f"   💡 <i>{entry_recommendation}</i>\n\n"
-            
-            # Take Profit & Stop Loss
-            message += f"🎯 <b>TAKE PROFIT:</b> ${tp_price:,.4f} (<b>{tp_pct:+.1f}%</b>)\n"
-            
-            # TP вероятност с интерпретация
-            if tp_probability >= 76:
-                tp_interpretation = "💚 Много добър шанс"
-            elif tp_probability >= 66:
-                tp_interpretation = "🟢 Добър шанс"
-            elif tp_probability >= 56:
-                tp_interpretation = "🟡 Среден шанс"
-            elif tp_probability >= 36:
-                tp_interpretation = "🟠 Нисък шанс"
-            else:
-                tp_interpretation = "🔴 Много нисък шанс"
-            
-            message += f"   🎲 Вероятност: {tp_probability}% ({tp_interpretation})\n"
-            
-            # Очаквано време за изпълнение
-            timeframe_hours = {
-                '1m': 0.017, '5m': 0.083, '15m': 0.25, '30m': 0.5,
-                '1h': 1, '2h': 2, '4h': 4, '1d': 24, '1w': 168
-            }
-            estimated_hours = timeframe_hours.get(timeframe, 4) * 3
-            
-            if estimated_hours < 1:
-                time_str = f"{int(estimated_hours * 60)} минути"
-            elif estimated_hours < 24:
-                time_str = f"{estimated_hours:.1f} часа"
-            else:
-                time_str = f"{estimated_hours / 24:.1f} дни"
-            
-            message += f"   ⏱️ Очаквано време: ~{time_str}\n\n"
-            
-            message += f"🛡️ <b>STOP LOSS:</b> ${sl_price:,.4f} (<b>{-sl_pct:.1f}%</b>)\n"
-            message += f"⚖️ <b>Risk/Reward:</b> 1:{settings['rr']}\n\n"
-            
-            # === RISK MANAGEMENT ===
-            risk_val = analysis.get('risk_validation')
-            if risk_val:
-                if risk_val['approved']:
-                    message += f"🛡️ <b>RISK MANAGEMENT:</b> ✅ Одобрен\n"
-                else:
-                    message += f"🛡️ <b>RISK MANAGEMENT:</b> 🛑 НЕ одобрен\n"
-                
-                # Position size
-                message += f"💰 Position size: ${risk_val['position_size_usd']:,.2f}\n"
-                
-                # Risk/Reward actual
-                if risk_val['risk_reward_ratio'] > 0:
-                    rr_emoji = "✅" if risk_val['risk_reward_ratio'] >= 2.0 else "⚠️"
-                    message += f"⚖️ R/R фактически: 1:{risk_val['risk_reward_ratio']:.2f} {rr_emoji}\n"
-                
-                # Daily P/L
-                daily_pnl = risk_val['daily_pnl_pct']
-                if daily_pnl != 0:
-                    pnl_emoji = "🟢" if daily_pnl > 0 else "🔴"
-                    message += f"📊 Дневен P/L: {daily_pnl:+.2f}% {pnl_emoji}\n"
-                
-                # Active trades
-                message += f"📈 Активни trades: {risk_val['active_trades']}/5\n"
-                
-                # Errors (if any)
-                if risk_val['errors']:
-                    message += f"\n⛔ <b>БЛОКИРАЩИ ПРОБЛЕМИ:</b>\n"
-                    for error in risk_val['errors']:
-                        message += f"  {error}\n"
-                
-                message += "\n"
-            
-            # === MULTI-TIMEFRAME КОНСЕНСУС ===
-            # DEBUG: Покажи какво е върнато от MTF анализа
-            logger.info(f"MTF Analysis Debug: {mtf_analysis}")
-            
-            if mtf_analysis and mtf_analysis.get('signals') and len(mtf_analysis['signals']) >= 1:
-                message += f"🔍 <b>Multi-Timeframe Анализ (ВСИЧКИ TIMEFRAMES):</b>\n"
-                message += f"━━━━━━━━━━━━━━━━━━━━\n"
-                
-                # Покажи сигналите от различните таймфреймове в ред
-                timeframe_order = ['1m', '5m', '15m', '1h', '2h', '3h', '4h', '1d', '1w']
-                for tf in timeframe_order:
-                    if tf in mtf_analysis['signals']:
-                        sig = mtf_analysis['signals'][tf]
-                        sig_emoji = "🟢" if sig['signal'] == 'BUY' else "🔴" if sig['signal'] == 'SELL' else "⚪"
-                        current_marker = " ← ИЗБРАН" if tf == timeframe else ""
-                        
-                        # Confidence bar visualization
-                        conf = sig['confidence']
-                        if conf >= 75:
-                            conf_bar = "█████"
-                        elif conf >= 65:
-                            conf_bar = "████░"
-                        elif conf >= 55:
-                            conf_bar = "███░░"
-                        elif conf >= 45:
-                            conf_bar = "██░░░"
-                        else:
-                            conf_bar = "█░░░░"
-                        
-                        message += f"{tf:>4}: {sig['signal']:>4} {sig_emoji} {conf_bar} {conf:.0f}%{current_marker}\n"
+                # Check for NO_TRADE or None
+                if not ict_signal or (isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE'):
+                    # Format NO_TRADE message with details
+                    if isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE':
+                        no_trade_msg = format_no_trade_message(ict_signal)
+                        await processing_msg.edit_text(no_trade_msg, parse_mode='HTML')
                     else:
-                        message += f"{tf:>4}: ---  ⚪ ░░░░░   -  \n"
+                        await processing_msg.edit_text(
+                            f"⚪ <b>No high-quality ICT signal for {symbol}</b>\n\n"
+                            f"Market conditions do not meet minimum criteria.",
+                            parse_mode='HTML'
+                        )
+                    return
                 
-                message += f"━━━━━━━━━━━━━━━━━━━━\n"
+                # Format with 13-point output
+                signal_msg = format_ict_signal_13_point(ict_signal)
                 
-                # Консенсус
-                consensus_emoji = "🟢" if mtf_analysis['consensus'] == 'BUY' else "🔴" if mtf_analysis['consensus'] == 'SELL' else "⚪"
-                message += f"💎 <b>Консенсус:</b> {mtf_analysis['consensus']} {consensus_emoji}\n"
-                message += f"💪 <b>Сила:</b> {mtf_analysis['consensus_strength']} ({mtf_analysis['agreement']:.0f}% съгласие)\n"
+                # Generate and send chart
+                chart_sent = False
+                if CHART_VISUALIZATION_AVAILABLE:
+                    try:
+                        generator = ChartGenerator()
+                        chart_bytes = generator.generate(df, ict_signal, symbol, timeframe)
+                        
+                        if chart_bytes:
+                            # Send chart first
+                            await context.bot.send_photo(
+                                chat_id=update.effective_chat.id,
+                                photo=BytesIO(chart_bytes),
+                                caption=f"📊 <b>{symbol} ({timeframe}) - ICT Chart</b>",
+                                parse_mode='HTML'
+                            )
+                            chart_sent = True
+                            logger.info(f"✅ Chart sent for {symbol} {timeframe}")
+                    except Exception as chart_error:
+                        logger.warning(f"⚠️ Chart generation failed: {chart_error}")
                 
-                # Препоръка според консенсуса
-                if mtf_analysis['consensus'] == analysis['signal'] and mtf_analysis['consensus_strength'] == 'Силен':
-                    message += f"✅ <i>Всички таймфреймове потвърждават сигнала!</i>\n"
-                elif mtf_analysis['consensus'] != analysis['signal']:
-                    message += f"⚠️ <i>Внимание: По-големите таймфреймове показват {mtf_analysis['consensus']}</i>\n"
+                # Send 13-point text analysis
+                await processing_msg.edit_text(
+                    signal_msg,
+                    parse_mode='HTML',
+                    disable_web_page_preview=True
+                )
                 
-                message += "\n"
+                # Add signal to real-time monitor
+                if real_time_monitor_global and ict_signal.signal_type.value in ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']:
+                    signal_id = f"{symbol}_{ict_signal.signal_type.value}_{int(datetime.now(timezone.utc).timestamp())}"
+                    
+                    real_time_monitor_global.add_signal(
+                        signal_id=signal_id,
+                        symbol=symbol,
+                        signal_type=ict_signal.signal_type.value.replace('STRONG_', ''),
+                        entry_price=ict_signal.entry_price,
+                        tp_price=ict_signal.tp_prices[0],
+                        sl_price=ict_signal.sl_price,
+                        confidence=ict_signal.confidence,
+                        timeframe=timeframe,
+                        user_chat_id=update.effective_chat.id
+                    )
+                
+                logger.info(f"✅ ICT Signal sent via callback for {symbol} {timeframe}")
+                return
             else:
-                # DEBUG: Покажи защо не се показва MTF анализа
-                logger.warning(f"MTF analysis не се показва: mtf_analysis={mtf_analysis}")
-            
-            message += f"📊 <b>Индикатори:</b>\n"
-            if analysis['rsi']:
-                message += f"RSI(14): {analysis['rsi']:.1f}\n"
-            # MA removed - pure ICT strategy
-            
-            if analysis['reasons']:
-                message += f"\n💡 <b>Причини:</b>\n"
-                for reason in analysis['reasons']:
-                    message += f"• {reason}\n"
-            
-            message += f"\n⚠️ <i>Това не е финансов съвет!</i>"
-            
-            # Провери дали има подходящ трейд
-            if not analysis.get('has_good_trade', False):
-                # Няма подходящ трейд
-                no_trade_message = f"⚪ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>\n\n"
-                no_trade_message += f"📊 <b>{symbol} ({timeframe})</b>\n\n"
-                no_trade_message += f"💰 Цена: ${price:,.4f}\n"
-                no_trade_message += f"📈 24ч промяна: {analysis['change_24h']:+.2f}%\n\n"
-                no_trade_message += f"📊 <b>Индикатори:</b>\n"
-                if analysis['rsi']:
-                    no_trade_message += f"RSI(14): {analysis['rsi']:.1f}\n"
-                # MA removed - pure ICT strategy
-                no_trade_message += f"\nСигнал: {analysis['signal']}\n"
-                no_trade_message += f"Увереност: {analysis['confidence']}%\n\n"
-                no_trade_message += f"⚠️ <i>Пазарните условия не са подходящи за трейд в момента.</i>"
-                
+                # Fallback to legacy if ICT Engine not available (should not happen)
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text=no_trade_message,
+                    text="❌ ICT Engine not available. Please contact administrator.",
                     parse_mode='HTML'
                 )
                 return
-            
-            # DEBUG: Има подходящ трейд, изпращаме резултата
-            logger.info(f"✅ Good trade found! Sending signal for {symbol} {timeframe}")
-            
-            # Изпрати графиката като снимка (ако има)
-            if chart_buffer:
-                # Кратък caption
-                short_caption = f"{signal_emoji} <b>{analysis['signal']} {symbol}</b> ({timeframe})\n"
-                short_caption += f"💰 ${price:,.4f} | 🎯 {analysis['confidence']:.0f}%"
-                
-                try:
-                    await context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        photo=chart_buffer,
-                        caption=f"🔔🔊 {short_caption}",
-                        parse_mode='HTML',
-                        disable_notification=False
-                    )
-                    
-                    # Изпрати пълното съобщение
-                    await context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text=message,
-                        parse_mode='HTML',
-                        disable_notification=True
-                    )
-                    logger.info("✅ Signal with chart sent successfully!")
-                except Exception as e:
-                    logger.error(f"❌ Error sending signal: {e}")
-                    # Fallback - само текст
-                    await context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text=message,
-                        parse_mode='HTML'
-                    )
-            else:
-                # Няма графика - изпрати само текст
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=message,
-                    parse_mode='HTML',
-                    disable_notification=False
-                )
-        
         except Exception as main_error:
             logger.error(f"❌ CRITICAL ERROR in signal_callback: {main_error}", exc_info=True)
             try:
