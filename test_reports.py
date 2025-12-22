@@ -3,8 +3,17 @@
 """
 
 import json
+import os
 from datetime import datetime, timedelta
 from daily_reports import DailyReportEngine
+
+# Auto-detect base path
+if os.path.exists('/root/Crypto-signal-bot'):
+    BASE_PATH = '/root/Crypto-signal-bot'
+elif os.path.exists('/workspaces/Crypto-signal-bot'):
+    BASE_PATH = '/workspaces/Crypto-signal-bot'
+else:
+    BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 
 # Създай тестови данни
 def create_test_signals():
@@ -19,9 +28,14 @@ def create_test_signals():
     # Създай 20 тестови сигнала за последните 7 дни
     symbols = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'SOLUSDT']
     
+    # Използвай българско време
+    import pytz
+    bg_tz = pytz.timezone('Europe/Sofia')
+    now_bg = datetime.now(bg_tz)
+    
     for i in range(20):
         days_ago = i % 7
-        signal_time = datetime.now() - timedelta(days=days_ago, hours=i)
+        signal_time = now_bg - timedelta(days=days_ago, hours=i)
         
         symbol = symbols[i % len(symbols)]
         signal_type = 'BUY' if i % 2 == 0 else 'SELL'
@@ -83,7 +97,7 @@ def create_test_signals():
         stats['signals'].append(signal)
     
     # Запази
-    with open('/workspaces/Crypto-signal-bot/bot_stats.json', 'w') as f:
+    with open(f'{BASE_PATH}/bot_stats.json', 'w') as f:
         json.dump(stats, f, indent=2)
     
     print("✅ Тестови данни създадени!")
@@ -97,24 +111,29 @@ def test_daily_report():
     print("=" * 50)
     
     engine = DailyReportEngine()
-    report = engine.generate_daily_report()
-    
-    if report:
-        print("✅ Отчет генериран успешно!")
-        print(f"\nОсновни данни:")
-        print(f"  - Общо сигнали: {report['total_signals']}")
-        print(f"  - Завършени: {report['completed_signals']}")
-        print(f"  - Точност: {report['accuracy']:.1f}%")
-        print(f"  - Общ profit: {report['total_profit']:+.2f}%")
+    try:
+        report = engine.generate_daily_report()
         
-        # Форматирано съобщение
-        print("\n" + "=" * 50)
-        print("ФОРМАТИРАНО СЪОБЩЕНИЕ:")
-        print("=" * 50)
-        message = engine.format_report_message(report)
-        print(message)
-    else:
-        print("❌ Грешка при генериране на отчет")
+        if report:
+            print("✅ Отчет генериран успешно!")
+            print(f"\nОсновни данни:")
+            print(f"  - Общо сигнали: {report['total_signals']}")
+            print(f"  - Завършени: {report['completed_signals']}")
+            print(f"  - Точност: {report['accuracy']:.1f}%")
+            print(f"  - Общ profit: {report['total_profit']:+.2f}%")
+            
+            # Форматирано съобщение
+            print("\n" + "=" * 50)
+            print("ФОРМАТИРАНО СЪОБЩЕНИЕ:")
+            print("=" * 50)
+            message = engine.format_report_message(report)
+            print(message)
+        else:
+            print("❌ Грешка при генериране на отчет")
+    except Exception as e:
+        print(f"❌ Грешка при генериране на отчет: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def test_weekly_report():
@@ -146,24 +165,29 @@ def test_monthly_report():
     print("=" * 50)
     
     engine = DailyReportEngine()
-    summary = engine.get_monthly_summary()
-    
-    if summary:
-        print("✅ Месечен отчет генериран успешно!")
-        print(f"\nОсновни данни:")
-        print(f"  - Общо сигнали: {summary['total_signals']}")
-        print(f"  - Завършени: {summary['completed_signals']}")
-        print(f"  - Точност: {summary['accuracy']:.1f}%")
-        print(f"  - Общ profit: {summary['total_profit']:+.2f}%")
-        print(f"  - Profit Factor: {summary.get('profit_factor', 0):.2f}")
+    try:
+        summary = engine.get_monthly_summary()
         
-        if summary.get('symbols_stats'):
-            print(f"\n  Статистика по валути:")
-            for symbol, stats in summary['symbols_stats'].items():
-                if stats['completed'] > 0:
-                    print(f"    {symbol}: {stats['accuracy']:.0f}% acc, {stats['profit']:+.2f}% profit")
-    else:
-        print("❌ Грешка при генериране на месечен отчет")
+        if summary:
+            print("✅ Месечен отчет генериран успешно!")
+            print(f"\nОсновни данни:")
+            print(f"  - Общо сигнали: {summary['total_signals']}")
+            print(f"  - Завършени: {summary['completed_signals']}")
+            print(f"  - Точност: {summary['accuracy']:.1f}%")
+            print(f"  - Общ profit: {summary['total_profit']:+.2f}%")
+            print(f"  - Profit Factor: {summary.get('profit_factor', 0):.2f}")
+            
+            if summary.get('symbols_stats'):
+                print(f"\n  Статистика по валути:")
+                for symbol, stats in summary['symbols_stats'].items():
+                    if stats['completed'] > 0:
+                        print(f"    {symbol}: {stats['accuracy']:.0f}% acc, {stats['profit']:+.2f}% profit")
+        else:
+            print("❌ Грешка при генериране на месечен отчет")
+    except Exception as e:
+        print(f"❌ Грешка при генериране на месечен отчет: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

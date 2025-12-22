@@ -1187,6 +1187,105 @@
       "ml_signals_count": 0,
       "ml_completed": 0,
       "ml_accuracy": 0
+    },
+    {
+      "date": "2025-12-21",
+      "timestamp": "2025-12-22T20:33:28.994429+02:00",
+      "total_signals": 3,
+      "buy_signals": 1,
+      "sell_signals": 2,
+      "active_signals": 0,
+      "completed_signals": 3,
+      "wins": 2,
+      "losses": 1,
+      "breakeven": 0,
+      "accuracy": 66.66666666666666,
+      "win_rate": 66.66666666666666,
+      "total_profit": 3.9,
+      "avg_win": 2.75,
+      "avg_loss": -1.6,
+      "best_trade": {
+        "id": 2,
+        "symbol": "ETHUSDT",
+        "timeframe": "4h",
+        "type": "SELL",
+        "confidence": 66,
+        "timestamp": "2025-12-21T19:33:28.993053+02:00",
+        "entry_price": 50100,
+        "tp_price": 51603.0,
+        "sl_price": 49098.0,
+        "status": "COMPLETED",
+        "result": "WIN",
+        "exit_price": 51603.0,
+        "profit_pct": 3.0,
+        "exit_timestamp": "2025-12-22T07:33:28.993053+02:00"
+      },
+      "worst_trade": {
+        "id": 9,
+        "symbol": "BTCUSDT",
+        "timeframe": "4h",
+        "type": "BUY",
+        "confidence": 73,
+        "timestamp": "2025-12-21T12:33:28.993053+02:00",
+        "entry_price": 50800,
+        "tp_price": 52324.0,
+        "sl_price": 49784.0,
+        "status": "COMPLETED",
+        "result": "LOSS",
+        "exit_price": 49987.2,
+        "profit_pct": -1.6,
+        "exit_timestamp": "2025-12-22T00:33:28.993053+02:00"
+      },
+      "profit_factor": 1.71875,
+      "avg_confidence": 73.0,
+      "confidence_accuracy": {
+        "60-69": {
+          "total": 1,
+          "wins": 1,
+          "accuracy": 100.0
+        },
+        "70-79": {
+          "total": 1,
+          "wins": 0,
+          "accuracy": 0.0
+        },
+        "80-89": {
+          "total": 1,
+          "wins": 1,
+          "accuracy": 100.0
+        }
+      },
+      "symbols_traded": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "BTCUSDT"
+      ],
+      "symbols_stats": {
+        "ETHUSDT": {
+          "total": 1,
+          "completed": 1,
+          "wins": 1,
+          "accuracy": 100.0,
+          "profit": 3.0
+        },
+        "SOLUSDT": {
+          "total": 1,
+          "completed": 1,
+          "wins": 1,
+          "accuracy": 100.0,
+          "profit": 2.5
+        },
+        "BTCUSDT": {
+          "total": 1,
+          "completed": 1,
+          "wins": 0,
+          "accuracy": 0.0,
+          "profit": -1.6
+        }
+      },
+      "ml_signals_count": 0,
+      "ml_completed": 0,
+      "ml_accuracy": 0
     }
   ]
 }

@@ -10,11 +10,14 @@ import pytz
 
 class DailyReportEngine:
     def __init__(self):
-        # Auto-detect base path (works on Codespace AND server)
+        # Auto-detect base path (works on Codespace AND server AND GitHub Actions)
         if os.path.exists('/root/Crypto-signal-bot'):
             base_path = '/root/Crypto-signal-bot'
-        else:
+        elif os.path.exists('/workspaces/Crypto-signal-bot'):
             base_path = '/workspaces/Crypto-signal-bot'
+        else:
+            # Fallback to current directory
+            base_path = os.path.dirname(os.path.abspath(__file__))
         
         self.stats_path = f'{base_path}/bot_stats.json'
         self.reports_path = f'{base_path}/daily_reports.json'
