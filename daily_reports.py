@@ -6,33 +6,110 @@
 from datetime import datetime, timedelta
 import json
 import os
+import pytz
 
 class DailyReportEngine:
     def __init__(self):
-        # Auto-detect base path (works on Codespace AND server)
+        # Auto-detect base path (works on Codespace AND server AND GitHub Actions)
         if os.path.exists('/root/Crypto-signal-bot'):
             base_path = '/root/Crypto-signal-bot'
-        else:
+        elif os.path.exists('/workspaces/Crypto-signal-bot'):
             base_path = '/workspaces/Crypto-signal-bot'
+        else:
+            # Fallback to current directory
+            base_path = os.path.dirname(os.path.abspath(__file__))
         
-        self.stats_path = f'{base_path}/bot_stats.json'
+        # ИЗПОЛЗВАМЕ TRADING JOURNAL като основен източник
+        self.journal_path = f'{base_path}/trading_journal.json'
+        self.stats_path = f'{base_path}/bot_stats.json'  # Backup source
         self.reports_path = f'{base_path}/daily_reports.json'
+        
+        # Bulgarian timezone
+        self.bg_tz = pytz.timezone('Europe/Sofia')
+    
+    def _load_trades_from_journal(self):
+        """Зарежда trades от Trading Journal (ML Journal)"""
+        try:
+            if os.path.exists(self.journal_path):
+                with open(self.journal_path, 'r') as f:
+                    journal = json.load(f)
+                    return journal.get('trades', [])
+            return []
+        except Exception as e:
+            print(f"❌ Error loading journal: {e}")
+            return []
+    
+    def _load_trades_from_stats(self):
+        """Backup: Зарежда trades от bot_stats.json"""
+        try:
+            if os.path.exists(self.stats_path):
+                with open(self.stats_path, 'r') as f:
+                    stats = json.load(f)
+                    return stats.get('signals', [])
+            return []
+        except Exception as e:
+            print(f"❌ Error loading stats: {e}")
+            return []
+    
+    def _convert_journal_to_signal_format(self, trade):
+        """Преобразува trade от journal формат в signal формат"""
+        # Trading Journal използва: status=SUCCESS/FAILED, outcome=SUCCESS/FAILED
+        # Нашият формат използва: status=COMPLETED, result=WIN/LOSS
+        
+        status = 'COMPLETED' if trade.get('status') in ['SUCCESS', 'FAILED'] else 'ACTIVE'
+        result = None
+        
+        if status == 'COMPLETED':
+            outcome = trade.get('outcome', '')
+            if outcome == 'SUCCESS' or (trade.get('profit_loss_pct', 0) > 0):
+                result = 'WIN'
+            elif outcome == 'FAILED' or (trade.get('profit_loss_pct', 0) < 0):
+                result = 'LOSS'
+            else:
+                result = 'BREAKEVEN'
+        
+        return {
+            'id': trade.get('id'),
+            'symbol': trade.get('symbol'),
+            'timeframe': trade.get('timeframe'),
+            'type': trade.get('signal', 'BUY'),  # 'signal' field in journal
+            'confidence': trade.get('confidence', 0),
+            'timestamp': trade.get('timestamp'),
+            'entry_price': trade.get('entry_price'),
+            'tp_price': trade.get('tp_price'),
+            'sl_price': trade.get('sl_price'),
+            'status': status,
+            'result': result,
+            'profit_pct': trade.get('profit_loss_pct', 0),
+            'exit_timestamp': trade.get('closed_at'),
+            'ml_mode': True  # Indicate this came from ML Journal
+        }
     
     def generate_daily_report(self):
         """Генерира дневен отчет с анализ на точност и успеваемост"""
         try:
-            # Зареди статистика
-            if not os.path.exists(self.stats_path):
+            # ИЗПОЛЗВАМЕ TRADING JOURNAL (ML Journal) като основен източник
+            journal_trades = self._load_trades_from_journal()
+            
+            # Ако няма trades в journal, използвай bot_stats.json като backup
+            if not journal_trades:
+                print("ℹ️ No trades in journal, using bot_stats.json as backup")
+                signals = self._load_trades_from_stats()
+            else:
+                # Преобразувай journal trades в signal формат
+                signals = [self._convert_journal_to_signal_format(t) for t in journal_trades]
+            
+            if not signals:
                 return None
             
-            with open(self.stats_path, 'r') as f:
-                stats = json.load(f)
+            # Използвай българско време
+            now_bg = datetime.now(self.bg_tz)
+            today = now_bg.date()
+            yesterday = today - timedelta(days=1)
             
             # Филтрирай ВЧЕРАШНИ сигнали (не днешни!)
-            today = datetime.now().date()
-            yesterday = today - timedelta(days=1)
             yesterday_signals = [
-                s for s in stats['signals']
+                s for s in signals
                 if datetime.fromisoformat(s['timestamp']).date() == yesterday
             ]
             
@@ -137,7 +214,7 @@ class DailyReportEngine:
             
             report = {
                 'date': yesterday.isoformat(),  # Вчерашна дата!
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': now_bg.isoformat(),
                 
                 # Основни данни
                 'total_signals': total,
@@ -201,11 +278,12 @@ class DailyReportEngine:
     def _generate_no_signals_report(self, report_date=None):
         """Генерира отчет без сигнали"""
         if report_date is None:
-            report_date = (datetime.now().date() - timedelta(days=1))
+            now_bg = datetime.now(self.bg_tz)
+            report_date = (now_bg.date() - timedelta(days=1))
         
         report = {
             'date': report_date.isoformat(),
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(self.bg_tz).isoformat(),
             'total_signals': 0,
             'message': f'Няма сигнали за {report_date.strftime("%d.%m.%Y")}'
         }
@@ -363,8 +441,9 @@ class DailyReportEngine:
             message += "\n"
         
         message += f"""━━━━━━━━━━━━━━━━━━━━━━━━
-⏰ Генериран: {datetime.now().strftime('%H:%M:%S')}
-💡 Следващ отчет: Утре в 20:00
+⏰ Генериран: {datetime.now(self.bg_tz).strftime('%H:%M:%S')} (BG време)
+💡 Следващ отчет: Утре в 08:00
+📊 Източник: ML Trading Journal (Реални резултати)
 
 📈 <b>ОБОБЩЕНИЕ:</b>"""
         
@@ -391,19 +470,38 @@ class DailyReportEngine:
         return message
     
     def get_weekly_summary(self):
-        """Седмичен обобщен отчет с точност и успеваемост"""
+        """Седмичен обобщен отчет с точност и успеваемост - ИЗМИНАЛА СЕДМИЦА (Пн-Нд)"""
         try:
-            if not os.path.exists(self.stats_path):
+            # ИЗПОЛЗВАМЕ TRADING JOURNAL (ML Journal) като основен източник
+            journal_trades = self._load_trades_from_journal()
+            
+            if not journal_trades:
+                print("ℹ️ No trades in journal, using bot_stats.json as backup")
+                signals = self._load_trades_from_stats()
+            else:
+                signals = [self._convert_journal_to_signal_format(t) for t in journal_trades]
+            
+            if not signals:
                 return None
             
-            with open(self.stats_path, 'r') as f:
-                stats = json.load(f)
+            # Използвай българско време
+            now_bg = datetime.now(self.bg_tz)
             
-            # Последните 7 дни
-            week_ago = datetime.now().date() - timedelta(days=7)
+            # ИЗМИНАЛА СЕДМИЦА: Понеделник 00:00 - Неделя 23:59
+            # Намери кой ден от седмицата е днес (0=Monday, 6=Sunday)
+            days_since_monday = now_bg.weekday()
+            
+            # Намери началото на ИЗМИНАЛАТА седмица (понеделник преди 7 дни)
+            last_week_monday = now_bg - timedelta(days=days_since_monday + 7)
+            last_week_monday = last_week_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            # Намери края на ИЗМИНАЛАТА седмица (неделя)
+            last_week_sunday = last_week_monday + timedelta(days=6, hours=23, minutes=59, seconds=59)
+            
+            # Филтрирай сигналите за ИЗМИНАЛАТА седмица
             weekly_signals = [
-                s for s in stats['signals']
-                if datetime.fromisoformat(s['timestamp']).date() >= week_ago
+                s for s in signals
+                if last_week_monday.date() <= datetime.fromisoformat(s['timestamp']).date() <= last_week_sunday.date()
             ]
             
             if not weekly_signals:
@@ -448,7 +546,7 @@ class DailyReportEngine:
             # По дни
             daily_breakdown = {}
             for i in range(7):
-                day = datetime.now().date() - timedelta(days=i)
+                day = last_week_monday.date() + timedelta(days=i)
                 day_signals = [s for s in weekly_signals 
                              if datetime.fromisoformat(s['timestamp']).date() == day]
                 day_completed = [s for s in day_signals if s.get('status') == 'COMPLETED']
@@ -469,9 +567,9 @@ class DailyReportEngine:
                 }
             
             return {
-                'period': '7 дни',
-                'start_date': week_ago.isoformat(),
-                'end_date': datetime.now().date().isoformat(),
+                'period': f'Изминала седмица ({last_week_monday.strftime("%d.%m")} - {last_week_sunday.strftime("%d.%m")})',
+                'start_date': last_week_monday.date().isoformat(),
+                'end_date': last_week_sunday.date().isoformat(),
                 'total_signals': total_signals,
                 'buy_signals': buy_signals,
                 'sell_signals': sell_signals,
@@ -496,19 +594,41 @@ class DailyReportEngine:
             return None
     
     def get_monthly_summary(self):
-        """Месечен обобщен отчет с точност и успеваемост"""
+        """Месечен обобщен отчет с точност и успеваемост - ИЗМИНАЛ МЕСЕЦ (1-во - последно число)"""
         try:
-            if not os.path.exists(self.stats_path):
+            # ИЗПОЛЗВАМЕ TRADING JOURNAL (ML Journal) като основен източник
+            journal_trades = self._load_trades_from_journal()
+            
+            if not journal_trades:
+                print("ℹ️ No trades in journal, using bot_stats.json as backup")
+                signals = self._load_trades_from_stats()
+            else:
+                signals = [self._convert_journal_to_signal_format(t) for t in journal_trades]
+            
+            if not signals:
                 return None
             
-            with open(self.stats_path, 'r') as f:
-                stats = json.load(f)
+            # Използвай българско време
+            now_bg = datetime.now(self.bg_tz)
             
-            # Последните 30 дни
-            month_ago = datetime.now().date() - timedelta(days=30)
+            # ИЗМИНАЛ МЕСЕЦ: от 1-во число до последен ден
+            # Ако сме на 1-во число, вземи предходния месец
+            if now_bg.day == 1:
+                # Вземи последния ден на предходния месец
+                last_month_end = now_bg.replace(day=1) - timedelta(days=1)
+            else:
+                # Вземи последния ден на месеца преди този
+                first_day_this_month = now_bg.replace(day=1)
+                last_month_end = first_day_this_month - timedelta(days=1)
+            
+            # Намери първия ден на изминалия месец
+            last_month_start = last_month_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            last_month_end = last_month_end.replace(hour=23, minute=59, second=59, microsecond=999999)
+            
+            # Филтрирай сигналите за ИЗМИНАЛИЯ месец
             monthly_signals = [
-                s for s in stats['signals']
-                if datetime.fromisoformat(s['timestamp']).date() >= month_ago
+                s for s in signals
+                if last_month_start.date() <= datetime.fromisoformat(s['timestamp']).date() <= last_month_end.date()
             ]
             
             if not monthly_signals:
@@ -578,12 +698,14 @@ class DailyReportEngine:
             
             # По седмици
             weekly_breakdown = {}
-            for week in range(4):
-                week_start = datetime.now().date() - timedelta(days=(week + 1) * 7)
-                week_end = datetime.now().date() - timedelta(days=week * 7)
+            current_date = last_month_start.date()
+            week_num = 1
+            
+            while current_date <= last_month_end.date():
+                week_end = min(current_date + timedelta(days=6), last_month_end.date())
                 
                 week_signals = [s for s in monthly_signals 
-                              if week_start <= datetime.fromisoformat(s['timestamp']).date() < week_end]
+                              if current_date <= datetime.fromisoformat(s['timestamp']).date() <= week_end]
                 week_completed = [s for s in week_signals if s.get('status') == 'COMPLETED']
                 
                 if week_completed:
@@ -594,17 +716,22 @@ class DailyReportEngine:
                     week_accuracy = 0
                     week_profit = 0
                 
-                weekly_breakdown[f'Week {4-week}'] = {
+                weekly_breakdown[f'Седмица {week_num}'] = {
                     'total': len(week_signals),
                     'completed': len(week_completed),
                     'accuracy': week_accuracy,
                     'profit': week_profit
                 }
+                
+                current_date = week_end + timedelta(days=1)
+                week_num += 1
+            
+            month_name = last_month_start.strftime('%B %Y')
             
             return {
-                'period': '30 дни',
-                'start_date': month_ago.isoformat(),
-                'end_date': datetime.now().date().isoformat(),
+                'period': f'{month_name} ({last_month_start.strftime("%d.%m")} - {last_month_end.strftime("%d.%m")})',
+                'start_date': last_month_start.date().isoformat(),
+                'end_date': last_month_end.date().isoformat(),
                 'total_signals': total_signals,
                 'buy_signals': buy_signals,
                 'sell_signals': sell_signals,
