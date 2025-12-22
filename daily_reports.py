@@ -6,6 +6,7 @@
 from datetime import datetime, timedelta
 import json
 import os
+import pytz
 
 class DailyReportEngine:
     def __init__(self):
@@ -17,6 +18,9 @@ class DailyReportEngine:
         
         self.stats_path = f'{base_path}/bot_stats.json'
         self.reports_path = f'{base_path}/daily_reports.json'
+        
+        # Bulgarian timezone
+        self.bg_tz = pytz.timezone('Europe/Sofia')
     
     def generate_daily_report(self):
         """Генерира дневен отчет с анализ на точност и успеваемост"""
@@ -28,9 +32,12 @@ class DailyReportEngine:
             with open(self.stats_path, 'r') as f:
                 stats = json.load(f)
             
-            # Филтрирай ВЧЕРАШНИ сигнали (не днешни!)
-            today = datetime.now().date()
+            # Използвай българско време
+            now_bg = datetime.now(self.bg_tz)
+            today = now_bg.date()
             yesterday = today - timedelta(days=1)
+            
+            # Филтрирай ВЧЕРАШНИ сигнали (не днешни!)
             yesterday_signals = [
                 s for s in stats['signals']
                 if datetime.fromisoformat(s['timestamp']).date() == yesterday
@@ -137,7 +144,7 @@ class DailyReportEngine:
             
             report = {
                 'date': yesterday.isoformat(),  # Вчерашна дата!
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': now_bg.isoformat(),
                 
                 # Основни данни
                 'total_signals': total,
@@ -201,11 +208,12 @@ class DailyReportEngine:
     def _generate_no_signals_report(self, report_date=None):
         """Генерира отчет без сигнали"""
         if report_date is None:
-            report_date = (datetime.now().date() - timedelta(days=1))
+            now_bg = datetime.now(self.bg_tz)
+            report_date = (now_bg.date() - timedelta(days=1))
         
         report = {
             'date': report_date.isoformat(),
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(self.bg_tz).isoformat(),
             'total_signals': 0,
             'message': f'Няма сигнали за {report_date.strftime("%d.%m.%Y")}'
         }
@@ -363,8 +371,8 @@ class DailyReportEngine:
             message += "\n"
         
         message += f"""━━━━━━━━━━━━━━━━━━━━━━━━
-⏰ Генериран: {datetime.now().strftime('%H:%M:%S')}
-💡 Следващ отчет: Утре в 20:00
+⏰ Генериран: {datetime.now(self.bg_tz).strftime('%H:%M:%S')} (BG време)
+💡 Следващ отчет: Утре в 08:00
 
 📈 <b>ОБОБЩЕНИЕ:</b>"""
         
@@ -391,7 +399,7 @@ class DailyReportEngine:
         return message
     
     def get_weekly_summary(self):
-        """Седмичен обобщен отчет с точност и успеваемост"""
+        """Седмичен обобщен отчет с точност и успеваемост - ИЗМИНАЛА СЕДМИЦА (Пн-Нд)"""
         try:
             if not os.path.exists(self.stats_path):
                 return None
@@ -399,11 +407,24 @@ class DailyReportEngine:
             with open(self.stats_path, 'r') as f:
                 stats = json.load(f)
             
-            # Последните 7 дни
-            week_ago = datetime.now().date() - timedelta(days=7)
+            # Използвай българско време
+            now_bg = datetime.now(self.bg_tz)
+            
+            # ИЗМИНАЛА СЕДМИЦА: Понеделник 00:00 - Неделя 23:59
+            # Намери кой ден от седмицата е днес (0=Monday, 6=Sunday)
+            days_since_monday = now_bg.weekday()
+            
+            # Намери началото на ИЗМИНАЛАТА седмица (понеделник преди 7 дни)
+            last_week_monday = now_bg - timedelta(days=days_since_monday + 7)
+            last_week_monday = last_week_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            # Намери края на ИЗМИНАЛАТА седмица (неделя)
+            last_week_sunday = last_week_monday + timedelta(days=6, hours=23, minutes=59, seconds=59)
+            
+            # Филтрирай сигналите за ИЗМИНАЛАТА седмица
             weekly_signals = [
                 s for s in stats['signals']
-                if datetime.fromisoformat(s['timestamp']).date() >= week_ago
+                if last_week_monday.date() <= datetime.fromisoformat(s['timestamp']).date() <= last_week_sunday.date()
             ]
             
             if not weekly_signals:
@@ -448,7 +469,7 @@ class DailyReportEngine:
             # По дни
             daily_breakdown = {}
             for i in range(7):
-                day = datetime.now().date() - timedelta(days=i)
+                day = last_week_monday.date() + timedelta(days=i)
                 day_signals = [s for s in weekly_signals 
                              if datetime.fromisoformat(s['timestamp']).date() == day]
                 day_completed = [s for s in day_signals if s.get('status') == 'COMPLETED']
@@ -469,9 +490,9 @@ class DailyReportEngine:
                 }
             
             return {
-                'period': '7 дни',
-                'start_date': week_ago.isoformat(),
-                'end_date': datetime.now().date().isoformat(),
+                'period': f'Изминала седмица ({last_week_monday.strftime("%d.%m")} - {last_week_sunday.strftime("%d.%m")})',
+                'start_date': last_week_monday.date().isoformat(),
+                'end_date': last_week_sunday.date().isoformat(),
                 'total_signals': total_signals,
                 'buy_signals': buy_signals,
                 'sell_signals': sell_signals,
@@ -496,7 +517,7 @@ class DailyReportEngine:
             return None
     
     def get_monthly_summary(self):
-        """Месечен обобщен отчет с точност и успеваемост"""
+        """Месечен обобщен отчет с точност и успеваемост - ИЗМИНАЛ МЕСЕЦ (1-во - последно число)"""
         try:
             if not os.path.exists(self.stats_path):
                 return None
@@ -504,11 +525,27 @@ class DailyReportEngine:
             with open(self.stats_path, 'r') as f:
                 stats = json.load(f)
             
-            # Последните 30 дни
-            month_ago = datetime.now().date() - timedelta(days=30)
+            # Използвай българско време
+            now_bg = datetime.now(self.bg_tz)
+            
+            # ИЗМИНАЛ МЕСЕЦ: от 1-во число до последен ден
+            # Ако сме на 1-во число, вземи предходния месец
+            if now_bg.day == 1:
+                # Вземи последния ден на предходния месец
+                last_month_end = now_bg.replace(day=1) - timedelta(days=1)
+            else:
+                # Вземи последния ден на месеца преди този
+                first_day_this_month = now_bg.replace(day=1)
+                last_month_end = first_day_this_month - timedelta(days=1)
+            
+            # Намери първия ден на изминалия месец
+            last_month_start = last_month_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            last_month_end = last_month_end.replace(hour=23, minute=59, second=59, microsecond=999999)
+            
+            # Филтрирай сигналите за ИЗМИНАЛИЯ месец
             monthly_signals = [
                 s for s in stats['signals']
-                if datetime.fromisoformat(s['timestamp']).date() >= month_ago
+                if last_month_start.date() <= datetime.fromisoformat(s['timestamp']).date() <= last_month_end.date()
             ]
             
             if not monthly_signals:
@@ -578,12 +615,14 @@ class DailyReportEngine:
             
             # По седмици
             weekly_breakdown = {}
-            for week in range(4):
-                week_start = datetime.now().date() - timedelta(days=(week + 1) * 7)
-                week_end = datetime.now().date() - timedelta(days=week * 7)
+            current_date = last_month_start.date()
+            week_num = 1
+            
+            while current_date <= last_month_end.date():
+                week_end = min(current_date + timedelta(days=6), last_month_end.date())
                 
                 week_signals = [s for s in monthly_signals 
-                              if week_start <= datetime.fromisoformat(s['timestamp']).date() < week_end]
+                              if current_date <= datetime.fromisoformat(s['timestamp']).date() <= week_end]
                 week_completed = [s for s in week_signals if s.get('status') == 'COMPLETED']
                 
                 if week_completed:
@@ -594,17 +633,22 @@ class DailyReportEngine:
                     week_accuracy = 0
                     week_profit = 0
                 
-                weekly_breakdown[f'Week {4-week}'] = {
+                weekly_breakdown[f'Седмица {week_num}'] = {
                     'total': len(week_signals),
                     'completed': len(week_completed),
                     'accuracy': week_accuracy,
                     'profit': week_profit
                 }
+                
+                current_date = week_end + timedelta(days=1)
+                week_num += 1
+            
+            month_name = last_month_start.strftime('%B %Y')
             
             return {
-                'period': '30 дни',
-                'start_date': month_ago.isoformat(),
-                'end_date': datetime.now().date().isoformat(),
+                'period': f'{month_name} ({last_month_start.strftime("%d.%m")} - {last_month_end.strftime("%d.%m")})',
+                'start_date': last_month_start.date().isoformat(),
+                'end_date': last_month_end.date().isoformat(),
                 'total_signals': total_signals,
                 'buy_signals': buy_signals,
                 'sell_signals': sell_signals,
