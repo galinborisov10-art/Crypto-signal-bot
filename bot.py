@@ -10241,7 +10241,7 @@ async def weekly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Reports модул не е наличен")
         return
     
-    await update.message.reply_text("📊 Генерирам седмичен отчет (7 дни)...")
+    await update.message.reply_text("📊 Генерирам седмичен отчет (Изминала седмица: Понеделник - Неделя)...")
     
     summary = report_engine.get_weekly_summary()
     
@@ -10250,8 +10250,8 @@ async def weekly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         accuracy_emoji = "🔥" if summary['accuracy'] >= 70 else "💪" if summary['accuracy'] >= 60 else "👍" if summary['accuracy'] >= 50 else "😐"
         profit_emoji = "💰" if summary['total_profit'] > 0 else "📉" if summary['total_profit'] < 0 else "⚪"
         
-        message = f"""📊 <b>СЕДМИЧЕН ОТЧЕТ - 7 ДНИ</b>
-📅 {summary['start_date']} → {summary['end_date']}
+        message = f"""📈 <b>СЕДМИЧЕН ОТЧЕТ</b>
+📅 {summary['period']}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 📈 <b>ГЕНЕРИРАНИ СИГНАЛИ:</b>
@@ -10312,7 +10312,7 @@ async def weekly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"""💪 <b>Средна увереност:</b> {summary['avg_confidence']:.1f}%
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-⏰ Генериран: {datetime.now().strftime('%H:%M:%S')}
+⏰ Генериран: {datetime.now(pytz.timezone('Europe/Sofia')).strftime('%H:%M:%S')} (BG време)
 """
         
         await update.message.reply_text(message, parse_mode='HTML')
@@ -10326,7 +10326,7 @@ async def monthly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Reports модул не е наличен")
         return
     
-    await update.message.reply_text("📊 Генерирам месечен отчет (30 дни)...")
+    await update.message.reply_text("📊 Генерирам месечен отчет (Изминал месец: 1-во - последно число)...")
     
     summary = report_engine.get_monthly_summary()
     
@@ -10335,8 +10335,8 @@ async def monthly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         accuracy_emoji = "🔥" if summary['accuracy'] >= 70 else "💪" if summary['accuracy'] >= 60 else "👍" if summary['accuracy'] >= 50 else "😐"
         profit_emoji = "💰" if summary['total_profit'] > 0 else "📉" if summary['total_profit'] < 0 else "⚪"
         
-        message = f"""📊 <b>МЕСЕЧЕН ОТЧЕТ - 30 ДНИ</b>
-📅 {summary['start_date']} → {summary['end_date']}
+        message = f"""🎯 <b>МЕСЕЧЕН ОТЧЕТ</b>
+📅 {summary['period']}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 📈 <b>ГЕНЕРИРАНИ СИГНАЛИ:</b>
@@ -10411,7 +10411,7 @@ async def monthly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         message += f"""💪 <b>Средна увереност:</b> {summary['avg_confidence']:.1f}%
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-⏰ Генериран: {datetime.now().strftime('%H:%M:%S')}
+⏰ Генериран: {datetime.now(pytz.timezone('Europe/Sofia')).strftime('%H:%M:%S')} (BG време)
 
 📈 <b>ОБОБЩЕНИЕ:</b>"""
         
@@ -10500,18 +10500,29 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     if query.data == "report_daily":
-        # Генерирай дневен отчет
-        await send_daily_signal_report(context.bot)
-        await query.answer("✅ Дневният отчет е изпратен!")
+        # Генерирай дневен отчет от daily_reports.py engine
+        if REPORTS_AVAILABLE:
+            report = report_engine.generate_daily_report()
+            if report:
+                message = report_engine.format_report_message(report)
+                await query.edit_message_text(message, parse_mode="HTML")
+            else:
+                await query.edit_message_text("❌ Няма данни за дневен отчет")
+        else:
+            await query.edit_message_text("❌ Reports модул не е наличен")
     
     elif query.data == "report_weekly":
+        if not REPORTS_AVAILABLE:
+            await query.edit_message_text("❌ Reports модул не е наличен")
+            return
+            
         summary = report_engine.get_weekly_summary()
         if summary:
             accuracy_emoji = "🔥" if summary["accuracy"] >= 70 else "💪" if summary["accuracy"] >= 60 else "👍"
-            profit_emoji = "💰" if summary. get("total_profit", 0) > 0 else "📉"
+            profit_emoji = "💰" if summary.get("total_profit", 0) > 0 else "📉"
             
-            message = f"""📊 <b>СЕДМИЧЕН ОТЧЕТ - 7 ДНИ</b>
-📅 {summary["start_date"]} → {summary["end_date"]}
+            message = f"""📈 <b>СЕДМИЧЕН ОТЧЕТ</b>
+📅 {summary["period"]}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 📈 <b>ГЕНЕРИРАНИ СИГНАЛИ:</b>
@@ -10543,22 +10554,27 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     worst = summary["worst_trade"]
                     message += f"""⚠️ <b>НАЙ-ЛОШ TRADE:</b>
    {worst["symbol"]} {worst["type"]} - {worst["timeframe"]}
-   📉 Loss: <b>{worst. get("profit_pct", 0):.2f}%</b>
+   📉 Loss: <b>{worst.get("profit_pct", 0):.2f}%</b>
 
 """
+            message += f"""💪 Средна увереност: {summary["avg_confidence"]:.1f}%"""
             await query.edit_message_text(message, parse_mode="HTML")
         else:
             await query.edit_message_text("❌ Недостатъчно данни за седмичен отчет")
     
     elif query.data == "report_monthly":
+        if not REPORTS_AVAILABLE:
+            await query.edit_message_text("❌ Reports модул не е наличен")
+            return
+            
         summary = report_engine.get_monthly_summary()
 
         if summary:
             accuracy_emoji = "🔥" if summary["accuracy"] >= 70 else "💪" if summary["accuracy"] >= 60 else "👍"
-            profit_emoji = "💰" if summary. get("total_profit", 0) > 0 else "📉"
+            profit_emoji = "💰" if summary.get("total_profit", 0) > 0 else "📉"
             
-            message = f"""📊 <b>МЕСЕЧЕН ОТЧЕТ - 30 ДНИ</b>
-📅 {summary["start_date"]} → {summary["end_date"]}
+            message = f"""🎯 <b>МЕСЕЧЕН ОТЧЕТ</b>
+📅 {summary["period"]}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 📈 <b>ГЕНЕРИРАНИ СИГНАЛИ:</b>
