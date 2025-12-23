@@ -74,6 +74,29 @@ class JournalBacktestEngine:
         logger.info("🔍 Backtest engine initialized (READ-ONLY mode)")
         logger.info("📁 Journal path: %s", self.journal_path)
 
+    def _parse_timestamp(self, timestamp_str: str) -> datetime:
+        """
+        Parse timestamp string to timezone-aware datetime
+        
+        Args:
+            timestamp_str: ISO format timestamp string
+            
+        Returns:
+            Timezone-aware datetime object (UTC)
+        """
+        try:
+            # Parse ISO format
+            dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            
+            # Ensure timezone-aware
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            
+            return dt
+        except (ValueError, AttributeError):
+            # Return current time if parsing fails
+            return datetime.now(timezone.utc)
+
     def run_backtest(
         self,
         days: int = 30,
@@ -224,9 +247,9 @@ class JournalBacktestEngine:
         # Filter trades
         filtered_trades = []
         for trade in all_trades:
-            # Parse timestamp
+            # Parse timestamp (timezone-aware)
             try:
-                trade_time = datetime.fromisoformat(trade.get('timestamp', '').replace('Z', '+00:00'))
+                trade_time = self._parse_timestamp(trade.get('timestamp', ''))
             except (ValueError, AttributeError):
                 # Skip trades with invalid timestamps
                 continue
@@ -585,9 +608,7 @@ class JournalBacktestEngine:
             
             for trade in trade_list:
                 try:
-                    trade_time = datetime.fromisoformat(
-                        trade.get('timestamp', '').replace('Z', '+00:00')
-                    )
+                    trade_time = self._parse_timestamp(trade.get('timestamp', ''))
                     if trade_time >= cutoff_date:
                         filtered.append(trade)
                 except (ValueError, AttributeError):
