@@ -7,6 +7,7 @@ import asyncio
 import logging
 import hashlib
 import gc
+import uuid
 from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -318,6 +319,10 @@ SENT_SIGNALS_CACHE = {}
 # Global variable for active trades tracking (for 80% alerts and final alerts)
 # Structure: List of dictionaries with trade information
 active_trades = []
+
+# Trade outcome constants
+TRADE_OUTCOME_WIN = ['WIN', 'SUCCESS']
+TRADE_OUTCOME_LOSS = ['LOSS', 'FAILED']
 
 # Константи за 4-степенна проверка на близост на цена
 PRICE_PROXIMITY_TIGHT = 0.2      # Много близка цена (%)
@@ -2968,8 +2973,6 @@ async def add_to_active_trades(signal: Dict, user_chat_id: int):
     """
     global active_trades
     
-    import uuid
-    
     trade = {
         'trade_id': str(uuid.uuid4()),
         'symbol': signal.get('symbol', 'UNKNOWN'),
@@ -3009,10 +3012,8 @@ async def check_80_percent_alerts(bot):
     
     logger.info(f"🔍 Checking 80% alerts for {len(active_trades)} active trades")
     
-    # Import requests here to avoid circular imports
-    import requests
-    
-    for trade in active_trades[:]:  # Use slice to allow removal during iteration
+    # Use slice copy to safely iterate (no removal happens here, but safer for future changes)
+    for trade in active_trades[:]:
         try:
             symbol = trade['symbol']
             
@@ -3187,8 +3188,12 @@ async def send_final_alert(trade: Dict, exit_price: float, hit_target: str, bot)
         # Save to trading journal
         await save_trade_to_journal(trade)
         
-        # Remove from active trades
-        active_trades = [t for t in active_trades if t['trade_id'] != trade['trade_id']]
+        # Remove from active trades using remove() for better performance
+        try:
+            active_trades.remove(trade)
+        except ValueError:
+            # Trade already removed, ignore
+            pass
         
         logger.info(f"✅ Trade {trade['trade_id'][:8]} removed from active trades")
         
@@ -3262,10 +3267,10 @@ async def update_trade_statistics():
         
         trades = journal.get('trades', [])
         
-        # Calculate stats
+        # Calculate stats using outcome constants
         total_trades = len(trades)
-        wins = sum(1 for t in trades if t.get('outcome') in ['WIN', 'SUCCESS'])
-        losses = sum(1 for t in trades if t.get('outcome') in ['LOSS', 'FAILED'])
+        wins = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_WIN)
+        losses = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_LOSS)
         win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
         
         # Update journal metadata
@@ -8324,9 +8329,6 @@ async def active_trades_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         message = f"📊 <b>Active Trades ({len(user_trades)})</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
-        # Import requests for price check
-        import requests
         
         for i, trade in enumerate(user_trades, 1):
             # Get current price
