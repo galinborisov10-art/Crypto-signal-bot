@@ -7512,7 +7512,7 @@ async def monitor_active_trades(context: ContextTypes.DEFAULT_TYPE):
                     message += f"📍 Entry: ${entry_price:,.2f}\n"
                     message += f"🎯 Exit: ${current_price:,.2f}\n"
                     message += f"💵 P/L: {profit_loss_pct:+.2f}%\n\n"
-                    message += f"🤖 Резултатът е записан в ML Journal!"
+                    message += f"🤖 Резултатът е записан в Trading Journal!\n💾 Файл: trading_journal.json"
                     
                     await context.bot.send_message(
                         chat_id=OWNER_CHAT_ID,
