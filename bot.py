@@ -5441,10 +5441,16 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Изпрати първата част
     await update.message.reply_text(message, parse_mode='HTML')
     
-    # === DETAILED COIN ANALYSIS ===
-    await update.message.reply_text("📊 Подготвям детайлен анализ с данни от CoinGecko...")
+    # === DETAILED COIN ANALYSIS WITH ICT ===
+    await update.message.reply_text("📊 Подготвям детайлен анализ с ICT + CoinGecko данни...")
+    
+    # Get user settings for timeframe preference
+    settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
+    timeframe = settings['timeframe']
     
     for item in market_data:
+        symbol = item['symbol']
+        
         # Анализирай с външни данни (CoinGecko)
         analysis = await analyze_coin_performance(item, include_external=True)
         
@@ -5494,21 +5500,100 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         coin_msg += f"   💰 Обем: {quote_vol}\n"
         coin_msg += f"   🔄 Сделки: {analysis['trades']:,}\n\n"
         
+        # === NEW: ADD ICT ANALYSIS ===
+        if ICT_SIGNAL_ENGINE_AVAILABLE:
+            try:
+                # Fetch klines for ICT analysis
+                klines_response = requests.get(
+                    BINANCE_KLINES_URL,
+                    params={'symbol': symbol, 'interval': timeframe, 'limit': 200},
+                    timeout=10
+                )
+                
+                if klines_response.status_code == 200:
+                    klines_data = klines_response.json()
+                    
+                    # Prepare dataframe
+                    df = pd.DataFrame(klines_data, columns=[
+                        'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                        'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                        'taker_buy_quote', 'ignore'
+                    ])
+                    
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                    for col in ['open', 'high', 'low', 'close', 'volume']:
+                        df[col] = df[col].astype(float)
+                    
+                    # Fetch MTF data for ICT analysis
+                    mtf_data = fetch_mtf_data(symbol, timeframe, df)
+                    
+                    # Generate ICT signal
+                    ict_engine = ICTSignalEngine()
+                    ict_signal = ict_engine.generate_signal(
+                        df=df,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        mtf_data=mtf_data
+                    )
+                    
+                    # Add ICT insights to message
+                    coin_msg += f"<b>🎯 ICT Анализ ({timeframe}):</b>\n"
+                    
+                    if ict_signal and isinstance(ict_signal, dict) and ict_signal.get('type') != 'NO_TRADE':
+                        # Valid ICT signal found
+                        signal_type = ict_signal.get('type', 'N/A')
+                        confidence = ict_signal.get('confidence', 0)
+                        bias = ict_signal.get('bias', 'NEUTRAL')
+                        
+                        # Signal type emoji
+                        type_emoji = "🟢" if signal_type == "BUY" else "🔴" if signal_type == "SELL" else "⚪"
+                        
+                        coin_msg += f"   {type_emoji} <b>Сигнал:</b> {signal_type}\n"
+                        coin_msg += f"   💪 <b>Увереност:</b> {confidence:.0f}%\n"
+                        coin_msg += f"   📊 <b>Bias:</b> {bias}\n"
+                        
+                        # Add key ICT levels
+                        entry = ict_signal.get('entry_price')
+                        tp = ict_signal.get('tp_price')
+                        sl = ict_signal.get('sl_price')
+                        
+                        if entry:
+                            coin_msg += f"   🎯 <b>Entry:</b> ${entry:,.2f}\n"
+                        if tp:
+                            coin_msg += f"   ✅ <b>TP:</b> ${tp:,.2f}\n"
+                        if sl:
+                            coin_msg += f"   ❌ <b>SL:</b> ${sl:,.2f}\n"
+                        
+                        # Add risk/reward if available
+                        rr = ict_signal.get('risk_reward_ratio')
+                        if rr:
+                            coin_msg += f"   ⚖️ <b>R:R:</b> 1:{rr:.2f}\n"
+                    else:
+                        # No high-quality signal
+                        coin_msg += f"   ⚪ <b>Статус:</b> Няма ясен ICT сигнал\n"
+                        coin_msg += f"   💡 <i>Пазарът не отговаря на ICT критериите</i>\n"
+                    
+                    coin_msg += "\n"
+                    
+            except Exception as ict_error:
+                logger.error(f"ICT analysis error for {symbol}: {ict_error}")
+                # Don't break the flow, continue without ICT data
+        
         # Препоръка с ниво на увереност
-        coin_msg += f"<b>💡 Препоръка:</b>\n{analysis['action']}\n"
-        coin_msg += f"💪 <b>Увереност:</b> {analysis['confidence']}\n\n"
+        coin_msg += f"<b>💡 Обща Препоръка:</b>\n{analysis['action']}\n"
+        coin_msg += f"💪 <b>Базова Увереност:</b> {analysis['confidence']}\n\n"
         
         # Източник на информацията
-        sources = "Binance"
-        if 'external_data' in analysis:
-            sources += ", CoinGecko"
+        sources = "Binance, CoinGecko"
+        if ICT_SIGNAL_ENGINE_AVAILABLE:
+            sources += ", ICT Engine"
         coin_msg += f"<i>📊 Източници: {sources}</i>"
         
         # Изпрати анализа за тази монета
         await update.message.reply_text(coin_msg, parse_mode='HTML')
         
         # Малка пауза между съобщенията (увеличена заради по-дълги съобщения)
-        await asyncio.sleep(0.7)
+        await asyncio.sleep(0.8)
     
     # === MARKET NEWS SECTION ===
     news = await news_task
