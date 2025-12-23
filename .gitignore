@@ -55,9 +55,14 @@ ml_model.pkl
 bot_stats.json
 bot_stats.json.backup
 backtest_results.json
-daily_reports. json
+daily_reports.json
 trading_journal.json
 active_auto_signals.json
+
+# Backtest результати и архив (динамични данни)
+backtest_results/
+backtest_archive/
+ict_backtest_results.json
 
 # ML model файлове
 ml_model.pkl

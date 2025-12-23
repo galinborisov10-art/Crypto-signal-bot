@@ -9598,8 +9598,15 @@ async def admin_mode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def backtest_results_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Shows ALL backtest results from saved JSON files
-    Usage: /backtest_results
+    🎯 PERFECT BACKTEST REPORT
+    Shows comprehensive backtest results from all saved JSON files
+    - Overall statistics from all symbols/timeframes
+    - 80% TP Alert statistics
+    - Per-symbol breakdown
+    - Best/worst performers
+    - Complete data validation
+    
+    Usage: /backtest_results or 📊 Backtest button
     """
     message = update.message or update.callback_query.message
     
@@ -9612,38 +9619,63 @@ async def backtest_results_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         await message.reply_text(
             "⚠️ <b>No backtest results found</b>\n\n"
             "Run a backtest first:\n"
-            "<code>/backtest BTCUSDT 1h</code>",
+            "<code>/backtest BTCUSDT 1h 30</code>\n"
+            "<code>/backtest XRPUSDT 3h 30</code>",
             parse_mode='HTML'
         )
         return
     
-    # Collect all results
+    # Collect all results with validation
     all_results = []
+    corrupted_files = []
+    
     for result_file in results_dir.glob("*_backtest.json"):
         try:
             with open(result_file, 'r') as f:
                 result = json.load(f)
-                all_results.append(result)
+                
+                # Validate required fields
+                if 'symbol' in result and 'timeframe' in result:
+                    all_results.append(result)
+                else:
+                    corrupted_files.append(result_file.name)
+                    
+        except json.JSONDecodeError as e:
+            logger.error(f"Corrupted JSON file {result_file}: {e}")
+            corrupted_files.append(result_file.name)
         except Exception as e:
             logger.error(f"Error loading {result_file}: {e}")
+            corrupted_files.append(result_file.name)
     
     if not all_results:
         await message.reply_text(
-            "⚠️ <b>No backtest results found</b>\n\n"
-            "The backtest_results directory is empty.\n"
+            "⚠️ <b>No valid backtest results found</b>\n\n"
+            "The backtest_results directory is empty or contains corrupted data.\n"
             "Run a backtest first:\n"
-            "<code>/backtest BTCUSDT 1h</code>",
+            "<code>/backtest BTCUSDT 1h 30</code>",
             parse_mode='HTML'
         )
         return
     
-    # Format results message
-    text = "📊 <b>BACKTEST RESULTS - ALL COINS & TIMEFRAMES</b>\n"
-    text += "=" * 40 + "\n\n"
+    # ==================== DATA AGGREGATION ====================
     
     total_trades = 0
     total_wins = 0
     total_losses = 0
+    total_pnl = 0.0
+    
+    # 80% TP Alert statistics
+    total_alerts_80 = 0
+    alert_recommendations = {'HOLD': 0, 'PARTIAL_CLOSE': 0, 'CLOSE_NOW': 0}
+    
+    # Per-symbol aggregation
+    symbol_stats = {}
+    
+    # Per-timeframe aggregation
+    timeframe_stats = {}
+    
+    # Best/Worst performers
+    performance_list = []
     
     for result in all_results:
         symbol = result.get('symbol', 'UNKNOWN')
@@ -9652,32 +9684,157 @@ async def backtest_results_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         wins = result.get('total_win', 0)
         losses = result.get('total_loss', 0)
         win_rate = result.get('win_rate', 0)
+        pnl = result.get('total_pnl', 0)
         
+        # Aggregate overall
         total_trades += trades
         total_wins += wins
         total_losses += losses
+        total_pnl += pnl
         
-        # Format each result
-        text += f"<b>{symbol} ({timeframe})</b>\n"
-        text += f"├─ Trades: {trades}\n"
-        text += f"├─ Wins: {wins} ✅\n"
-        text += f"├─ Losses: {losses} ❌\n"
-        text += f"└─ Win Rate: {win_rate:.1f}%\n\n"
+        # 80% TP Alerts
+        alerts_80 = result.get('alerts_80', [])
+        total_alerts_80 += len(alerts_80)
+        
+        for alert in alerts_80:
+            rec = alert.get('recommendation', 'HOLD')
+            if rec in alert_recommendations:
+                alert_recommendations[rec] += 1
+        
+        # Per-symbol stats
+        if symbol not in symbol_stats:
+            symbol_stats[symbol] = {
+                'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0, 'timeframes': 0
+            }
+        symbol_stats[symbol]['trades'] += trades
+        symbol_stats[symbol]['wins'] += wins
+        symbol_stats[symbol]['losses'] += losses
+        symbol_stats[symbol]['pnl'] += pnl
+        symbol_stats[symbol]['timeframes'] += 1
+        
+        # Per-timeframe stats
+        if timeframe not in timeframe_stats:
+            timeframe_stats[timeframe] = {
+                'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0, 'symbols': 0
+            }
+        timeframe_stats[timeframe]['trades'] += trades
+        timeframe_stats[timeframe]['wins'] += wins
+        timeframe_stats[timeframe]['losses'] += losses
+        timeframe_stats[timeframe]['pnl'] += pnl
+        timeframe_stats[timeframe]['symbols'] += 1
+        
+        # Track for best/worst
+        if trades > 0:
+            performance_list.append({
+                'pair': f"{symbol} ({timeframe})",
+                'win_rate': win_rate,
+                'pnl': pnl,
+                'trades': trades
+            })
     
-    # Overall stats
+    # ==================== FORMAT PERFECT REPORT ====================
+    
+    # Header
+    text = "📊 <b>BACKTEST RESULTS - COMPREHENSIVE REPORT</b>\n"
+    text += "=" * 40 + "\n\n"
+    
+    # Overall Statistics
     overall_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
-    text += "=" * 40 + "\n"
-    text += f"<b>OVERALL STATISTICS</b>\n"
-    text += f"├─ Total Trades: {total_trades}\n"
+    
+    text += "<b>📈 OVERALL STATISTICS</b>\n"
+    text += f"├─ Total Trades: <b>{total_trades}</b>\n"
     text += f"├─ Total Wins: {total_wins} ✅\n"
     text += f"├─ Total Losses: {total_losses} ❌\n"
-    text += f"└─ Overall Win Rate: {overall_win_rate:.1f}%\n\n"
+    text += f"├─ Win Rate: <b>{overall_win_rate:.1f}%</b>\n"
     
+    pnl_emoji = "💰" if total_pnl > 0 else "📉"
+    text += f"└─ Total PnL: {pnl_emoji} <b>{total_pnl:+.2f}%</b>\n\n"
+    
+    # 80% TP Alert Statistics
+    if total_alerts_80 > 0:
+        text += "<b>🔔 80% TP ALERT STATISTICS</b>\n"
+        text += f"├─ Total Alerts: <b>{total_alerts_80}</b>\n"
+        text += f"├─ HOLD: {alert_recommendations.get('HOLD', 0)} 🟢\n"
+        text += f"├─ PARTIAL CLOSE: {alert_recommendations.get('PARTIAL_CLOSE', 0)} 🟡\n"
+        text += f"└─ CLOSE NOW: {alert_recommendations.get('CLOSE_NOW', 0)} 🔴\n\n"
+    
+    # Per-Symbol Breakdown
+    text += "<b>💎 PER-SYMBOL BREAKDOWN</b>\n"
+    
+    for symbol in sorted(symbol_stats.keys()):
+        stats = symbol_stats[symbol]
+        s_win_rate = (stats['wins'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
+        s_pnl_emoji = "📈" if stats['pnl'] > 0 else "📉"
+        
+        text += f"<b>{symbol}</b>\n"
+        text += f"├─ Trades: {stats['trades']} ({stats['timeframes']} TFs)\n"
+        text += f"├─ Win Rate: {s_win_rate:.1f}%\n"
+        text += f"└─ PnL: {s_pnl_emoji} {stats['pnl']:+.2f}%\n\n"
+    
+    # Per-Timeframe Breakdown
+    text += "<b>⏰ PER-TIMEFRAME BREAKDOWN</b>\n"
+    
+    # Sort timeframes logically
+    tf_order = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+    sorted_tfs = sorted(timeframe_stats.keys(), 
+                        key=lambda x: tf_order.index(x) if x in tf_order else 999)
+    
+    for tf in sorted_tfs:
+        stats = timeframe_stats[tf]
+        tf_win_rate = (stats['wins'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
+        tf_pnl_emoji = "📈" if stats['pnl'] > 0 else "📉"
+        
+        text += f"<b>{tf}</b>\n"
+        text += f"├─ Trades: {stats['trades']} ({stats['symbols']} symbols)\n"
+        text += f"├─ Win Rate: {tf_win_rate:.1f}%\n"
+        text += f"└─ PnL: {tf_pnl_emoji} {stats['pnl']:+.2f}%\n\n"
+    
+    # Best/Worst Performers
+    if len(performance_list) >= 3:
+        # Sort by PnL
+        performance_list.sort(key=lambda x: x['pnl'], reverse=True)
+        
+        text += "<b>🏆 TOP 3 PERFORMERS</b>\n"
+        for i, perf in enumerate(performance_list[:3], 1):
+            text += f"{i}. <b>{perf['pair']}</b>\n"
+            text += f"   Win Rate: {perf['win_rate']:.1f}% | PnL: {perf['pnl']:+.2f}%\n"
+        
+        text += "\n<b>⚠️ BOTTOM 3 PERFORMERS</b>\n"
+        for i, perf in enumerate(performance_list[-3:], 1):
+            text += f"{i}. <b>{perf['pair']}</b>\n"
+            text += f"   Win Rate: {perf['win_rate']:.1f}% | PnL: {perf['pnl']:+.2f}%\n"
+        
+        text += "\n"
+    
+    # Footer
+    text += "=" * 40 + "\n"
     text += "<i>💡 These results use ONLY ICT System 2\n"
     text += "(Order Blocks, FVG, Liquidity)\n"
-    text += "NO EMA/MACD used</i>"
+    text += "NO EMA/MACD used</i>\n\n"
+    
+    # Data info
+    text += f"<i>📁 Loaded: {len(all_results)} result files</i>\n"
+    
+    if corrupted_files:
+        text += f"<i>⚠️ Skipped {len(corrupted_files)} corrupted files</i>\n"
+    
+    # Last update timestamp
+    latest_timestamp = None
+    for result in all_results:
+        ts = result.get('timestamp')
+        if ts:
+            if not latest_timestamp or ts > latest_timestamp:
+                latest_timestamp = ts
+    
+    if latest_timestamp:
+        try:
+            dt = datetime.fromisoformat(latest_timestamp.replace('Z', '+00:00'))
+            text += f"<i>🕐 Last update: {dt.strftime('%Y-%m-%d %H:%M UTC')}</i>"
+        except:
+            pass
     
     await message.reply_text(text, parse_mode='HTML')
+
 
 @rate_limited
 async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -9685,10 +9842,10 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Изпълнява ICT back-test на стратегията
     Usage: /backtest [symbol] [timeframe] [days]
     Examples:
-      /backtest                    # Default: 5 symbols, 3 TF, 30 days
-      /backtest BTCUSDT            # Single symbol, all TF
-      /backtest BTCUSDT 1h         # Single symbol + TF
-      /backtest BTCUSDT 1h 60      # Custom days
+      /backtest                    # Default: 6 symbols, 3 TF, 30 days
+      /backtest XRPUSDT            # Single symbol, all TF
+      /backtest XRPUSDT 3h         # Single symbol + TF
+      /backtest XRPUSDT 3h 30      # Custom days
     """
     # Check for ICT Backtest Engine (preferred)
     if ICT_BACKTEST_AVAILABLE:
@@ -9697,7 +9854,7 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ict_engine = ICTBacktestEngine()
             
             # Parse arguments
-            symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT']
+            symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT']
             timeframes = ['1h', '4h', '1d']
             days = 30
             
@@ -11150,6 +11307,73 @@ def main():
                 )
                 logger.info("✅ Monthly reports scheduled for 1st of month at 08:00 BG time")
             
+            # ==================== DAILY BACKTEST AUTO-UPDATE ====================
+            # Daily comprehensive backtest at 02:00 UTC with archiving
+            if ICT_BACKTEST_AVAILABLE:
+                async def daily_backtest_update():
+                    """
+                    Daily comprehensive backtest auto-update at 02:00 UTC
+                    - Archives old results to backtest_archive/YYYY-MM-DD/
+                    - Cleans up archives older than 30 days
+                    - Runs comprehensive backtest (all symbols + timeframes)
+                    - Sends completion notification to owner
+                    """
+                    try:
+                        logger.info("🔄 Starting daily backtest auto-update...")
+                        
+                        # Import the comprehensive backtest function
+                        from ict_backtest import run_comprehensive_backtest
+                        
+                        # Run comprehensive backtest (includes archiving and cleanup)
+                        await run_comprehensive_backtest()
+                        
+                        # Send completion notification
+                        notification = (
+                            "✅ <b>DAILY BACKTEST UPDATE COMPLETE</b>\n\n"
+                            "🔄 Comprehensive backtest finished\n"
+                            "📦 Old results archived\n"
+                            "🧹 Archive cleanup completed\n\n"
+                            f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+                            "View results: /backtest_results"
+                        )
+                        
+                        await application.bot.send_message(
+                            chat_id=OWNER_CHAT_ID,
+                            text=notification,
+                            parse_mode='HTML',
+                            disable_notification=False  # With sound
+                        )
+                        
+                        logger.info("✅ Daily backtest update completed successfully")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Daily backtest update error: {e}")
+                        
+                        # Send error notification
+                        error_msg = (
+                            "⚠️ <b>DAILY BACKTEST UPDATE FAILED</b>\n\n"
+                            f"Error: {str(e)[:200]}\n\n"
+                            f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+                        )
+                        
+                        try:
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=error_msg,
+                                parse_mode='HTML',
+                                disable_notification=False
+                            )
+                        except:
+                            pass
+                
+                scheduler.add_job(
+                    daily_backtest_update,
+                    'cron',
+                    hour=2,  # 02:00 UTC
+                    minute=0
+                )
+                logger.info("✅ Daily backtest auto-update scheduled at 02:00 UTC")
+            
             # Автоматична диагностика всеки ден в 01:00 UTC (03:00 BG време)
             scheduler.add_job(
                 run_diagnostics,
@@ -11308,7 +11532,7 @@ def main():
                 logger.info("✅ Weekly automated backtest scheduled (Mondays at 11:00 BG time) - ALL COINS & TIMEFRAMES")
             
             scheduler.start()
-            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST")
+            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC)")
             
             # 🎯 INITIALIZE AND START REAL-TIME POSITION MONITOR (v2.1.0)
             global real_time_monitor_global
