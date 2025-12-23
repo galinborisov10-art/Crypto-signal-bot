@@ -12868,7 +12868,6 @@ def main():
                 minutes=15  # Проверява на всеки 15 минути
             )
             
- copilot/implement-alert-systems
             # 📊 80% ALERT MONITORING - проверява активни trades на всяка минута
             async def check_80_alerts_wrapper():
                 """Wrapper for 80% alert monitoring with bot instance"""
@@ -12887,7 +12886,6 @@ def main():
             logger.info("✅ 80% Alert monitoring scheduled (every 1 minute)")
             
 
-        main
             # 📊 DAILY BACKTEST SUMMARY - every day at 20:00 UTC
             async def send_scheduled_backtest_report():
                 """Send daily backtest summary to owner"""
