@@ -1,0 +1,24 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "1h",
+  "total_trades": 20,
+  "total_win": 14,
+  "total_loss": 6,
+  "win_rate": 70.0,
+  "total_pnl": 12.5,
+  "alerts_80": [
+    {
+      "recommendation": "HOLD",
+      "confidence": 85
+    },
+    {
+      "recommendation": "HOLD",
+      "confidence": 82
+    },
+    {
+      "recommendation": "PARTIAL_CLOSE",
+      "confidence": 65
+    }
+  ],
+  "timestamp": "2025-12-23T08:54:34.848405"
+}

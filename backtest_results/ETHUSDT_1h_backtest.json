@@ -1,0 +1,20 @@
+{
+  "symbol": "ETHUSDT",
+  "timeframe": "1h",
+  "total_trades": 15,
+  "total_win": 9,
+  "total_loss": 6,
+  "win_rate": 60.0,
+  "total_pnl": 8.3,
+  "alerts_80": [
+    {
+      "recommendation": "HOLD",
+      "confidence": 78
+    },
+    {
+      "recommendation": "CLOSE_NOW",
+      "confidence": 55
+    }
+  ],
+  "timestamp": "2025-12-23T08:54:34.848730"
+}

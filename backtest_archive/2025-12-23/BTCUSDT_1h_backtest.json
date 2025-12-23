@@ -1,0 +1,12 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "1h",
+  "timestamp": "2025-12-23T08:53:43.515450",
+  "total_trades": 10,
+  "total_win": 6,
+  "total_loss": 4,
+  "win_rate": 60.0,
+  "total_pnl": 5.5,
+  "alerts_80": [],
+  "final_alerts": []
+}
