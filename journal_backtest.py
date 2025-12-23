@@ -25,7 +25,7 @@ ALLOWED OPERATIONS:
 import json
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import logging
 
 # Configure logging
@@ -454,7 +454,7 @@ class JournalBacktestEngine:
     def _identify_performers(
         self,
         symbol_breakdown: Dict[str, Dict[str, Any]]
-    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
         Identify top and worst performing symbols
 

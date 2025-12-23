@@ -237,7 +237,7 @@ def test_backtest_read_only(sample_journal, temp_dir):
 
     # Run backtest
     engine = JournalBacktestEngine(journal_path=sample_journal)
-    _ = engine.run_backtest(days=30)  # noqa: F841
+    backtest_results = engine.run_backtest(days=30)  # noqa: F841 - Run but result not needed for this test
 
     # Verify file was NOT modified
     with open(sample_journal, 'rb') as f:
@@ -274,7 +274,7 @@ def test_no_ml_modifications(sample_journal, temp_dir):
 
     # Run backtest
     engine = JournalBacktestEngine(journal_path=sample_journal)
-    _ = engine.run_backtest(days=30)  # noqa: F841
+    backtest_results = engine.run_backtest(days=30)  # noqa: F841 - Run but result not needed for this test
 
     # Verify NO ML files were created or modified
     for ml_file in ml_files:

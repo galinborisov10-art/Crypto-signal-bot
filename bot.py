@@ -9623,15 +9623,26 @@ async def backtest_results_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         days = 30
         symbol = None
         timeframe = None
-        
+
         if context.args:
             try:
                 # Try to parse as integer (days)
                 days = int(context.args[0])
             except ValueError:
                 # If not a number, treat as symbol
-                symbol = context.args[0].upper()
-            
+                symbol_candidate = context.args[0].upper()
+
+                # Basic validation for symbol format
+                if len(symbol_candidate) < 4 or len(symbol_candidate) > 20:
+                    await message.reply_text(
+                        "⚠️ <b>Invalid symbol format</b>\n\n"
+                        "Symbol should be 4-20 characters (e.g., BTCUSDT, ETHUSDT)",
+                        parse_mode='HTML'
+                    )
+                    return
+
+                symbol = symbol_candidate
+
             # Check for second argument (timeframe if first was symbol)
             if len(context.args) > 1 and symbol:
                 timeframe = context.args[1].lower()
