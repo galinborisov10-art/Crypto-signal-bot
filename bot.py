@@ -10772,23 +10772,233 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     
     elif query.data == "report_backtest":
-        # Back-test резултати
-        if not BACKTEST_AVAILABLE:
-            await query.edit_message_text("❌ Backtesting модул не е наличен")
-            return
+        # Back-test резултати - USE NEW COMPREHENSIVE SYSTEM
+        await query.edit_message_text("📊 Loading backtest results...")
         
-        try:
-            import os
-            import json
-            backtest_file = f'{BASE_PATH}/backtest_results.json'
-            if os.path.exists(backtest_file):
-                with open(backtest_file, 'r') as f:
-                    data = json.load(f)
-                    backtests = data.get('backtests', [])
+        # Check if backtest_results directory exists with new comprehensive data
+        results_dir = Path("backtest_results")
+        
+        if results_dir.exists() and list(results_dir.glob("*_backtest.json")):
+            # NEW COMPREHENSIVE SYSTEM - Use backtest_results/ directory
+            try:
+                # Collect all results with validation
+                all_results = []
+                corrupted_files = []
+                
+                for result_file in results_dir.glob("*_backtest.json"):
+                    try:
+                        with open(result_file, 'r') as f:
+                            result = json.load(f)
+                            
+                            # Validate required fields
+                            if 'symbol' in result and 'timeframe' in result:
+                                all_results.append(result)
+                            else:
+                                corrupted_files.append(result_file.name)
+                                
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Corrupted JSON file {result_file}: {e}")
+                        corrupted_files.append(result_file.name)
+                    except Exception as e:
+                        logger.error(f"Error loading {result_file}: {e}")
+                        corrupted_files.append(result_file.name)
+                
+                if not all_results:
+                    await query.edit_message_text(
+                        "⚠️ <b>No valid backtest results found</b>\n\n"
+                        "The backtest_results directory is empty or contains corrupted data.\n"
+                        "Run a backtest first:\n"
+                        "<code>/backtest BTCUSDT 1h 30</code>",
+                        parse_mode='HTML'
+                    )
+                    return
+                
+                # ==================== DATA AGGREGATION ====================
+                
+                total_trades = 0
+                total_wins = 0
+                total_losses = 0
+                total_pnl = 0.0
+                
+                # 80% TP Alert statistics
+                total_alerts_80 = 0
+                alert_recommendations = {'HOLD': 0, 'PARTIAL_CLOSE': 0, 'CLOSE_NOW': 0}
+                
+                # Per-symbol aggregation
+                symbol_stats = {}
+                
+                # Per-timeframe aggregation
+                timeframe_stats = {}
+                
+                # Best/Worst performers
+                performance_list = []
+                
+                for result in all_results:
+                    symbol = result.get('symbol', 'UNKNOWN')
+                    timeframe = result.get('timeframe', 'UNKNOWN')
+                    trades = result.get('total_trades', 0)
+                    wins = result.get('total_win', 0)
+                    losses = result.get('total_loss', 0)
+                    win_rate = result.get('win_rate', 0)
+                    pnl = result.get('total_pnl', 0)
                     
-                    if backtests:
-                        latest = backtests[-1]
-                        message = f"""📉 <b>ПОСЛЕДЕН BACK-TEST</b>
+                    # Aggregate overall
+                    total_trades += trades
+                    total_wins += wins
+                    total_losses += losses
+                    total_pnl += pnl
+                    
+                    # 80% TP Alerts
+                    alerts_80 = result.get('alerts_80', [])
+                    total_alerts_80 += len(alerts_80)
+                    
+                    for alert in alerts_80:
+                        rec = alert.get('recommendation', 'HOLD')
+                        if rec in alert_recommendations:
+                            alert_recommendations[rec] += 1
+                    
+                    # Per-symbol stats
+                    if symbol not in symbol_stats:
+                        symbol_stats[symbol] = {
+                            'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0, 'timeframes': 0
+                        }
+                    symbol_stats[symbol]['trades'] += trades
+                    symbol_stats[symbol]['wins'] += wins
+                    symbol_stats[symbol]['losses'] += losses
+                    symbol_stats[symbol]['pnl'] += pnl
+                    symbol_stats[symbol]['timeframes'] += 1
+                    
+                    # Per-timeframe stats
+                    if timeframe not in timeframe_stats:
+                        timeframe_stats[timeframe] = {
+                            'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0, 'symbols': 0
+                        }
+                    timeframe_stats[timeframe]['trades'] += trades
+                    timeframe_stats[timeframe]['wins'] += wins
+                    timeframe_stats[timeframe]['losses'] += losses
+                    timeframe_stats[timeframe]['pnl'] += pnl
+                    timeframe_stats[timeframe]['symbols'] += 1
+                    
+                    # Track for best/worst
+                    if trades > 0:
+                        performance_list.append({
+                            'pair': f"{symbol} ({timeframe})",
+                            'win_rate': win_rate,
+                            'pnl': pnl,
+                            'trades': trades
+                        })
+                
+                # ==================== FORMAT PERFECT REPORT ====================
+                
+                # Header
+                text = "📊 <b>BACKTEST RESULTS - COMPREHENSIVE REPORT</b>\n"
+                text += "=" * 40 + "\n\n"
+                
+                # Overall Statistics
+                overall_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+                
+                text += "<b>📈 OVERALL STATISTICS</b>\n"
+                text += f"├─ Total Trades: <b>{total_trades}</b>\n"
+                text += f"├─ Total Wins: {total_wins} ✅\n"
+                text += f"├─ Total Losses: {total_losses} ❌\n"
+                text += f"├─ Win Rate: <b>{overall_win_rate:.1f}%</b>\n"
+                
+                pnl_emoji = "💰" if total_pnl > 0 else "📉"
+                text += f"└─ Total PnL: {pnl_emoji} <b>{total_pnl:+.2f}%</b>\n\n"
+                
+                # 80% TP Alert Statistics
+                if total_alerts_80 > 0:
+                    text += "<b>🔔 80% TP ALERT STATISTICS</b>\n"
+                    text += f"├─ Total Alerts: <b>{total_alerts_80}</b>\n"
+                    text += f"├─ HOLD: {alert_recommendations.get('HOLD', 0)} 🟢\n"
+                    text += f"├─ PARTIAL CLOSE: {alert_recommendations.get('PARTIAL_CLOSE', 0)} 🟡\n"
+                    text += f"└─ CLOSE NOW: {alert_recommendations.get('CLOSE_NOW', 0)} 🔴\n\n"
+                
+                # Per-Symbol Breakdown
+                text += "<b>💎 PER-SYMBOL BREAKDOWN</b>\n"
+                
+                for symbol in sorted(symbol_stats.keys()):
+                    stats = symbol_stats[symbol]
+                    s_win_rate = (stats['wins'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
+                    s_pnl_emoji = "📈" if stats['pnl'] > 0 else "📉"
+                    
+                    text += f"<b>{symbol}</b>\n"
+                    text += f"├─ Trades: {stats['trades']} ({stats['timeframes']} TFs)\n"
+                    text += f"├─ Win Rate: {s_win_rate:.1f}%\n"
+                    text += f"└─ PnL: {s_pnl_emoji} {stats['pnl']:+.2f}%\n\n"
+                
+                # Per-Timeframe Breakdown (truncated for callback message)
+                text += "<b>⏰ PER-TIMEFRAME BREAKDOWN</b>\n"
+                
+                # Sort timeframes logically
+                tf_order = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+                sorted_tfs = sorted(timeframe_stats.keys(), 
+                                    key=lambda x: tf_order.index(x) if x in tf_order else 999)
+                
+                # Show only first few timeframes in callback (message length limit)
+                for tf in sorted_tfs[:5]:
+                    stats = timeframe_stats[tf]
+                    tf_win_rate = (stats['wins'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
+                    tf_pnl_emoji = "📈" if stats['pnl'] > 0 else "📉"
+                    
+                    text += f"<b>{tf}</b>\n"
+                    text += f"├─ Trades: {stats['trades']} ({stats['symbols']} symbols)\n"
+                    text += f"├─ Win Rate: {tf_win_rate:.1f}%\n"
+                    text += f"└─ PnL: {tf_pnl_emoji} {stats['pnl']:+.2f}%\n\n"
+                
+                if len(sorted_tfs) > 5:
+                    text += f"<i>...and {len(sorted_tfs) - 5} more timeframes</i>\n\n"
+                
+                # Footer
+                text += "=" * 40 + "\n"
+                text += "<i>💡 ICT System 2 (Order Blocks, FVG, Liquidity)</i>\n"
+                
+                # Data info
+                text += f"<i>📁 Loaded: {len(all_results)} result files</i>\n"
+                
+                if corrupted_files:
+                    text += f"<i>⚠️ Skipped {len(corrupted_files)} corrupted files</i>\n"
+                
+                # Last update timestamp
+                latest_timestamp = None
+                for result in all_results:
+                    ts = result.get('timestamp')
+                    if ts:
+                        if not latest_timestamp or ts > latest_timestamp:
+                            latest_timestamp = ts
+                
+                if latest_timestamp:
+                    try:
+                        dt = datetime.fromisoformat(latest_timestamp.replace('Z', '+00:00'))
+                        text += f"<i>🕐 Last update: {dt.strftime('%Y-%m-%d %H:%M UTC')}</i>\n\n"
+                    except:
+                        pass
+                
+                text += "<i>💡 Use /backtest_results for full report</i>"
+                
+                await query.edit_message_text(text, parse_mode='HTML')
+                
+            except Exception as e:
+                logger.error(f"Error in report_backtest callback: {e}", exc_info=True)
+                await query.edit_message_text(f"❌ Грешка при зареждане на резултати: {e}", parse_mode='HTML')
+        else:
+            # FALLBACK to LEGACY SYSTEM if new directory is empty
+            if not BACKTEST_AVAILABLE:
+                await query.edit_message_text("❌ Backtesting модул не е наличен")
+                return
+            
+            try:
+                import os
+                import json
+                backtest_file = f'{BASE_PATH}/backtest_results.json'
+                if os.path.exists(backtest_file):
+                    with open(backtest_file, 'r') as f:
+                        data = json.load(f)
+                        backtests = data.get('backtests', [])
+                        
+                        if backtests:
+                            latest = backtests[-1]
+                            message = f"""📉 <b>ПОСЛЕДЕН BACK-TEST</b>
 
 💰 <b>Символ:</b> {latest['symbol']}
 ⏰ <b>Таймфрейм:</b> {latest['timeframe']}
@@ -10805,14 +11015,16 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ⏰ <b>Дата:</b> {latest['timestamp'][:10]}
 
 💡 Общо {len(backtests)} back-test(s) в архива
+
+<i>⚠️ Legacy format - Run /backtest for new comprehensive report</i>
 """
-                        await query.edit_message_text(message, parse_mode='HTML')
-                    else:
-                        await query.edit_message_text("❌ Няма back-test резултати. Използвай /backtest")
-            else:
-                await query.edit_message_text("❌ Няма back-test резултати. Използвай /backtest")
-        except Exception as e:
-            await query.edit_message_text(f"❌ Грешка: {e}")
+                            await query.edit_message_text(message, parse_mode='HTML')
+                        else:
+                            await query.edit_message_text("❌ Няма back-test резултати. Използвай /backtest")
+                else:
+                    await query.edit_message_text("❌ Няма back-test резултати. Използвай /backtest")
+            except Exception as e:
+                await query.edit_message_text(f"❌ Грешка: {e}")
 
 
 async def toggle_ict_command(update, context):
