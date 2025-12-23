@@ -9598,242 +9598,230 @@ async def admin_mode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def backtest_results_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    🎯 PERFECT BACKTEST REPORT
-    Shows comprehensive backtest results from all saved JSON files
-    - Overall statistics from all symbols/timeframes
-    - 80% TP Alert statistics
-    - Per-symbol breakdown
-    - Best/worst performers
-    - Complete data validation
+    Display backtest results from trading journal (READ-ONLY)
     
-    Usage: /backtest_results or 📊 Backtest button
+    Usage:
+        /backtest_results          - Last 30 days
+        /backtest_results 60       - Last 60 days
+        /backtest_results BTCUSDT  - Filter by symbol
+    
+    CRITICAL RULES:
+    1. ONLY call JournalBacktestEngine (READ-ONLY)
+    2. NEVER modify trading_journal.json
+    3. NEVER retrain ML models
+    4. NEVER change ICT parameters
+    5. ONLY display analysis results
     """
     message = update.message or update.callback_query.message
     
-    await message.reply_text("📊 Loading backtest results...")
+    await message.reply_text("⏳ Analyzing trades from Trading Journal...")
     
-    # Check if backtest_results directory exists
-    results_dir = Path("backtest_results")
-    
-    if not results_dir.exists():
+    try:
+        from journal_backtest import JournalBacktestEngine
+        
+        # Parse arguments
+        days = 30
+        symbol = None
+        timeframe = None
+
+        if context.args:
+            try:
+                # Try to parse as integer (days)
+                days = int(context.args[0])
+            except ValueError:
+                # If not a number, treat as symbol
+                symbol_candidate = context.args[0].upper()
+
+                # Basic validation for symbol format
+                if len(symbol_candidate) < 4 or len(symbol_candidate) > 20:
+                    await message.reply_text(
+                        "⚠️ <b>Invalid symbol format</b>\n\n"
+                        "Symbol should be 4-20 characters (e.g., BTCUSDT, ETHUSDT)",
+                        parse_mode='HTML'
+                    )
+                    return
+
+                symbol = symbol_candidate
+
+            # Check for second argument (timeframe if first was symbol)
+            if len(context.args) > 1 and symbol:
+                timeframe = context.args[1].lower()
+        
+        # Run backtest (READ-ONLY)
+        backtest = JournalBacktestEngine()
+        results = backtest.run_backtest(days=days, symbol=symbol, timeframe=timeframe)
+        
+        # Check for errors
+        if 'error' in results:
+            error_msg = results['error']
+            hint = results.get('hint', '')
+            
+            await message.reply_text(
+                f"⚠️ <b>Backtest Analysis</b>\n\n"
+                f"❌ {error_msg}\n\n"
+                f"{hint if hint else 'Trades will be automatically recorded when signals with confidence ≥ 65% are generated.'}",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Format comprehensive report
+        text = _format_backtest_report(results)
+        
+        # Send report
+        await message.reply_text(text, parse_mode='HTML')
+        
+    except ImportError as e:
+        logger.error(f"Failed to import journal_backtest: {e}")
         await message.reply_text(
-            "⚠️ <b>No backtest results found</b>\n\n"
-            "Run a backtest first:\n"
-            "<code>/backtest BTCUSDT 1h 30</code>\n"
-            "<code>/backtest XRPUSDT 3h 30</code>",
+            "❌ <b>Module Error</b>\n\n"
+            "Journal backtest module not available.\n"
+            "Please check installation.",
             parse_mode='HTML'
         )
-        return
-    
-    # Collect all results with validation
-    all_results = []
-    corrupted_files = []
-    
-    for result_file in results_dir.glob("*_backtest.json"):
-        try:
-            with open(result_file, 'r') as f:
-                result = json.load(f)
-                
-                # Validate required fields
-                if 'symbol' in result and 'timeframe' in result:
-                    all_results.append(result)
-                else:
-                    corrupted_files.append(result_file.name)
-                    
-        except json.JSONDecodeError as e:
-            logger.error(f"Corrupted JSON file {result_file}: {e}")
-            corrupted_files.append(result_file.name)
-        except Exception as e:
-            logger.error(f"Error loading {result_file}: {e}")
-            corrupted_files.append(result_file.name)
-    
-    if not all_results:
+    except Exception as e:
+        logger.error(f"Backtest error: {e}", exc_info=True)
         await message.reply_text(
-            "⚠️ <b>No valid backtest results found</b>\n\n"
-            "The backtest_results directory is empty or contains corrupted data.\n"
-            "Run a backtest first:\n"
-            "<code>/backtest BTCUSDT 1h 30</code>",
+            f"❌ <b>Backtest Error</b>\n\n"
+            f"Error: {str(e)}\n\n"
+            f"Type: {type(e).__name__}",
             parse_mode='HTML'
         )
-        return
+
+
+def _format_backtest_report(results: Dict) -> str:
+    """
+    Format backtest results into a Telegram-friendly report
     
-    # ==================== DATA AGGREGATION ====================
+    Args:
+        results: Backtest results dictionary
     
-    total_trades = 0
-    total_wins = 0
-    total_losses = 0
-    total_pnl = 0.0
+    Returns:
+        Formatted HTML text for Telegram
+    """
+    overall = results.get('overall', {})
+    ml_vs_classical = results.get('ml_vs_classical', {})
+    by_symbol = results.get('by_symbol', {})
+    by_timeframe = results.get('by_timeframe', {})
+    top_performers = results.get('top_performers', [])
+    worst_performers = results.get('worst_performers', [])
     
-    # 80% TP Alert statistics
-    total_alerts_80 = 0
-    alert_recommendations = {'HOLD': 0, 'PARTIAL_CLOSE': 0, 'CLOSE_NOW': 0}
-    
-    # Per-symbol aggregation
-    symbol_stats = {}
-    
-    # Per-timeframe aggregation
-    timeframe_stats = {}
-    
-    # Best/Worst performers
-    performance_list = []
-    
-    for result in all_results:
-        symbol = result.get('symbol', 'UNKNOWN')
-        timeframe = result.get('timeframe', 'UNKNOWN')
-        trades = result.get('total_trades', 0)
-        wins = result.get('total_win', 0)
-        losses = result.get('total_loss', 0)
-        win_rate = result.get('win_rate', 0)
-        pnl = result.get('total_pnl', 0)
-        
-        # Aggregate overall
-        total_trades += trades
-        total_wins += wins
-        total_losses += losses
-        total_pnl += pnl
-        
-        # 80% TP Alerts
-        alerts_80 = result.get('alerts_80', [])
-        total_alerts_80 += len(alerts_80)
-        
-        for alert in alerts_80:
-            rec = alert.get('recommendation', 'HOLD')
-            if rec in alert_recommendations:
-                alert_recommendations[rec] += 1
-        
-        # Per-symbol stats
-        if symbol not in symbol_stats:
-            symbol_stats[symbol] = {
-                'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0, 'timeframes': 0
-            }
-        symbol_stats[symbol]['trades'] += trades
-        symbol_stats[symbol]['wins'] += wins
-        symbol_stats[symbol]['losses'] += losses
-        symbol_stats[symbol]['pnl'] += pnl
-        symbol_stats[symbol]['timeframes'] += 1
-        
-        # Per-timeframe stats
-        if timeframe not in timeframe_stats:
-            timeframe_stats[timeframe] = {
-                'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0, 'symbols': 0
-            }
-        timeframe_stats[timeframe]['trades'] += trades
-        timeframe_stats[timeframe]['wins'] += wins
-        timeframe_stats[timeframe]['losses'] += losses
-        timeframe_stats[timeframe]['pnl'] += pnl
-        timeframe_stats[timeframe]['symbols'] += 1
-        
-        # Track for best/worst
-        if trades > 0:
-            performance_list.append({
-                'pair': f"{symbol} ({timeframe})",
-                'win_rate': win_rate,
-                'pnl': pnl,
-                'trades': trades
-            })
-    
-    # ==================== FORMAT PERFECT REPORT ====================
-    
-    # Header
-    text = "📊 <b>BACKTEST RESULTS - COMPREHENSIVE REPORT</b>\n"
+    # Build report
+    text = "📊 <b>TRADING JOURNAL BACKTEST</b>\n"
     text += "=" * 40 + "\n\n"
     
+    # Filter info
+    days = results.get('days', 30)
+    symbol_filter = results.get('symbol_filter')
+    timeframe_filter = results.get('timeframe_filter')
+    
+    text += f"📅 <b>Period:</b> Last {days} days\n"
+    if symbol_filter:
+        text += f"💎 <b>Symbol:</b> {symbol_filter}\n"
+    if timeframe_filter:
+        text += f"⏰ <b>Timeframe:</b> {timeframe_filter}\n"
+    text += "\n"
+    
     # Overall Statistics
-    overall_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
-    
     text += "<b>📈 OVERALL STATISTICS</b>\n"
-    text += f"├─ Total Trades: <b>{total_trades}</b>\n"
-    text += f"├─ Total Wins: {total_wins} ✅\n"
-    text += f"├─ Total Losses: {total_losses} ❌\n"
-    text += f"├─ Win Rate: <b>{overall_win_rate:.1f}%</b>\n"
+    text += f"├─ Total Trades: <b>{overall.get('total_trades', 0)}</b>\n"
+    text += f"├─ Wins: {overall.get('wins', 0)} ✅\n"
+    text += f"├─ Losses: {overall.get('losses', 0)} ❌\n"
+    text += f"├─ Win Rate: <b>{overall.get('win_rate', 0):.1f}%</b>\n"
+    text += f"├─ Total P/L: <b>{overall.get('total_pnl', 0):+.2f}%</b>\n"
+    text += f"├─ Avg Win: +{overall.get('avg_win', 0):.2f}%\n"
+    text += f"├─ Avg Loss: -{overall.get('avg_loss', 0):.2f}%\n"
+    text += f"├─ Profit Factor: <b>{overall.get('profit_factor', 0):.2f}</b>\n"
+    text += f"├─ Largest Win: +{overall.get('largest_win', 0):.2f}%\n"
+    text += f"└─ Largest Loss: -{overall.get('largest_loss', 0):.2f}%\n\n"
     
-    pnl_emoji = "💰" if total_pnl > 0 else "📉"
-    text += f"└─ Total PnL: {pnl_emoji} <b>{total_pnl:+.2f}%</b>\n\n"
+    # ML vs Classical Comparison
+    ml_stats = ml_vs_classical.get('ml', {})
+    classical_stats = ml_vs_classical.get('classical', {})
+    delta = ml_vs_classical.get('delta', {})
+    insight = ml_vs_classical.get('insight', '')
     
-    # 80% TP Alert Statistics
-    if total_alerts_80 > 0:
-        text += "<b>🔔 80% TP ALERT STATISTICS</b>\n"
-        text += f"├─ Total Alerts: <b>{total_alerts_80}</b>\n"
-        text += f"├─ HOLD: {alert_recommendations.get('HOLD', 0)} 🟢\n"
-        text += f"├─ PARTIAL CLOSE: {alert_recommendations.get('PARTIAL_CLOSE', 0)} 🟡\n"
-        text += f"└─ CLOSE NOW: {alert_recommendations.get('CLOSE_NOW', 0)} 🔴\n\n"
-    
-    # Per-Symbol Breakdown
-    text += "<b>💎 PER-SYMBOL BREAKDOWN</b>\n"
-    
-    for symbol in sorted(symbol_stats.keys()):
-        stats = symbol_stats[symbol]
-        s_win_rate = (stats['wins'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
-        s_pnl_emoji = "📈" if stats['pnl'] > 0 else "📉"
+    if ml_stats.get('total_trades', 0) > 0 or classical_stats.get('total_trades', 0) > 0:
+        text += "<b>🤖 ML vs CLASSICAL COMPARISON</b>\n"
         
-        text += f"<b>{symbol}</b>\n"
-        text += f"├─ Trades: {stats['trades']} ({stats['timeframes']} TFs)\n"
-        text += f"├─ Win Rate: {s_win_rate:.1f}%\n"
-        text += f"└─ PnL: {s_pnl_emoji} {stats['pnl']:+.2f}%\n\n"
+        if ml_stats.get('total_trades', 0) > 0:
+            text += f"<b>ML Mode:</b>\n"
+            text += f"├─ Trades: {ml_stats.get('total_trades', 0)}\n"
+            text += f"├─ Win Rate: {ml_stats.get('win_rate', 0):.1f}%\n"
+            text += f"└─ Total P/L: {ml_stats.get('total_pnl', 0):+.2f}%\n\n"
+        
+        if classical_stats.get('total_trades', 0) > 0:
+            text += f"<b>Classical Mode:</b>\n"
+            text += f"├─ Trades: {classical_stats.get('total_trades', 0)}\n"
+            text += f"├─ Win Rate: {classical_stats.get('win_rate', 0):.1f}%\n"
+            text += f"└─ Total P/L: {classical_stats.get('total_pnl', 0):+.2f}%\n\n"
+        
+        if insight:
+            text += f"<b>Insight:</b> {insight}\n\n"
+    
+    # Per-Symbol Breakdown (top 5)
+    if by_symbol:
+        text += "<b>💎 TOP SYMBOLS</b>\n"
+        
+        # Sort by win rate
+        sorted_symbols = sorted(
+            by_symbol.items(),
+            key=lambda x: x[1].get('win_rate', 0),
+            reverse=True
+        )[:5]
+        
+        for symbol, stats in sorted_symbols:
+            text += f"<b>{symbol}</b>\n"
+            text += f"├─ Trades: {stats.get('total_trades', 0)}\n"
+            text += f"├─ Win Rate: {stats.get('win_rate', 0):.1f}%\n"
+            text += f"└─ P/L: {stats.get('total_pnl', 0):+.2f}%\n\n"
     
     # Per-Timeframe Breakdown
-    text += "<b>⏰ PER-TIMEFRAME BREAKDOWN</b>\n"
+    if by_timeframe:
+        text += "<b>⏰ TIMEFRAME BREAKDOWN</b>\n"
+        
+        # Sort timeframes
+        tf_order = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+        sorted_tfs = sorted(
+            by_timeframe.items(),
+            key=lambda x: tf_order.index(x[0]) if x[0] in tf_order else 999
+        )
+        
+        for tf, stats in sorted_tfs:
+            text += f"<b>{tf}</b>\n"
+            text += f"├─ Trades: {stats.get('total_trades', 0)}\n"
+            text += f"├─ Win Rate: {stats.get('win_rate', 0):.1f}%\n"
+            text += f"└─ P/L: {stats.get('total_pnl', 0):+.2f}%\n\n"
     
-    # Sort timeframes logically
-    tf_order = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
-    sorted_tfs = sorted(timeframe_stats.keys(), 
-                        key=lambda x: tf_order.index(x) if x in tf_order else 999)
+    # Top Performers
+    if top_performers:
+        text += "<b>🏆 TOP PERFORMERS</b>\n"
+        for i, perf in enumerate(top_performers, 1):
+            text += f"{i}. <b>{perf['symbol']}</b>\n"
+            text += f"   WR: {perf['win_rate']:.1f}% | P/L: {perf['total_pnl']:+.2f}%\n"
+        text += "\n"
     
-    for tf in sorted_tfs:
-        stats = timeframe_stats[tf]
-        tf_win_rate = (stats['wins'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
-        tf_pnl_emoji = "📈" if stats['pnl'] > 0 else "📉"
-        
-        text += f"<b>{tf}</b>\n"
-        text += f"├─ Trades: {stats['trades']} ({stats['symbols']} symbols)\n"
-        text += f"├─ Win Rate: {tf_win_rate:.1f}%\n"
-        text += f"└─ PnL: {tf_pnl_emoji} {stats['pnl']:+.2f}%\n\n"
-    
-    # Best/Worst Performers
-    if len(performance_list) >= 3:
-        # Sort by PnL
-        performance_list.sort(key=lambda x: x['pnl'], reverse=True)
-        
-        text += "<b>🏆 TOP 3 PERFORMERS</b>\n"
-        for i, perf in enumerate(performance_list[:3], 1):
-            text += f"{i}. <b>{perf['pair']}</b>\n"
-            text += f"   Win Rate: {perf['win_rate']:.1f}% | PnL: {perf['pnl']:+.2f}%\n"
-        
-        text += "\n<b>⚠️ BOTTOM 3 PERFORMERS</b>\n"
-        for i, perf in enumerate(performance_list[-3:], 1):
-            text += f"{i}. <b>{perf['pair']}</b>\n"
-            text += f"   Win Rate: {perf['win_rate']:.1f}% | PnL: {perf['pnl']:+.2f}%\n"
-        
+    # Worst Performers
+    if worst_performers:
+        text += "<b>⚠️ WORST PERFORMERS</b>\n"
+        for i, perf in enumerate(worst_performers, 1):
+            text += f"{i}. <b>{perf['symbol']}</b>\n"
+            text += f"   WR: {perf['win_rate']:.1f}% | P/L: {perf['total_pnl']:+.2f}%\n"
         text += "\n"
     
     # Footer
     text += "=" * 40 + "\n"
-    text += "<i>💡 These results use ONLY ICT System 2\n"
-    text += "(Order Blocks, FVG, Liquidity)\n"
-    text += "NO EMA/MACD used</i>\n\n"
+    text += "<i>📝 Data source: trading_journal.json (READ-ONLY)</i>\n"
     
-    # Data info
-    text += f"<i>📁 Loaded: {len(all_results)} result files</i>\n"
-    
-    if corrupted_files:
-        text += f"<i>⚠️ Skipped {len(corrupted_files)} corrupted files</i>\n"
-    
-    # Last update timestamp
-    latest_timestamp = None
-    for result in all_results:
-        ts = result.get('timestamp')
-        if ts:
-            if not latest_timestamp or ts > latest_timestamp:
-                latest_timestamp = ts
-    
-    if latest_timestamp:
+    # Analysis timestamp
+    timestamp = results.get('analysis_timestamp')
+    if timestamp:
         try:
-            dt = datetime.fromisoformat(latest_timestamp.replace('Z', '+00:00'))
-            text += f"<i>🕐 Last update: {dt.strftime('%Y-%m-%d %H:%M UTC')}</i>"
+            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            text += f"<i>🕐 Analyzed: {dt.strftime('%Y-%m-%d %H:%M UTC')}</i>"
         except:
             pass
     
-    await message.reply_text(text, parse_mode='HTML')
+    return text
 
 
 @rate_limited
