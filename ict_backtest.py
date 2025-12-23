@@ -2,6 +2,14 @@
 🎯 ICT Strategy Backtest Engine
 Tests optimized SL logic with structure awareness
 Now includes 80% TP alerts and final WIN/LOSS tracking
+
+✨ ENHANCED FEATURES:
+- ALL 10 timeframes: 1m, 5m, 15m, 30m, 1h, 2h, 3h, 4h, 1d, 1w
+- ALL 6 symbols: BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, ADAUSDT
+- Rate limiting: 0.5s between API calls
+- Retry logic with exponential backoff
+- Archive system for historical results
+- Auto-cleanup of old archives (30 days)
 """
 
 import asyncio
@@ -12,6 +20,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List
 from pathlib import Path
+import shutil
 from ict_signal_engine import ICTSignalEngine, MarketBias
 from ict_80_alert_handler import ICT80AlertHandler
 
@@ -22,10 +31,11 @@ class ICTBacktestEngine:
         self.active_trades = {}  # Track active trades for 80% alerts
         
     async def fetch_klines(self, symbol: str, timeframe: str, days: int = 30):
-        """Fetch historical klines from Binance"""
+        """Fetch historical klines from Binance with retry logic"""
         interval_minutes = {
-            '1m': 1, '5m': 5, '15m':  15, '30m': 30,
-            '1h':  60, '4h': 240, '1d': 1440
+            '1m': 1, '5m': 5, '15m': 15, '30m': 30,
+            '1h': 60, '2h': 120, '3h': 180, '4h': 240,
+            '1d': 1440, '1w': 10080
         }
         
         minutes = interval_minutes.get(timeframe, 5)
@@ -38,28 +48,47 @@ class ICTBacktestEngine:
             'limit': limit
         }
         
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session. get(url, params=params) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        df = pd.DataFrame(data, columns=[
-                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
-                            'taker_buy_quote', 'ignore'
-                        ])
-                        
-                        for col in ['open', 'high', 'low', 'close', 'volume']:
-                            df[col] = df[col].astype(float)
-                        
-                        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-                        return df
-                    else:
-                        print(f"❌ Binance API error: {resp.status}")
-                        return None
-        except Exception as e:
-            print(f"❌ Fetch error: {e}")
-            return None
+        # Retry logic with exponential backoff
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Rate limiting: 0.5 second between requests
+                if attempt > 0:
+                    await asyncio.sleep(0.5 * (2 ** attempt))
+                else:
+                    await asyncio.sleep(0.5)
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, params=params) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            df = pd.DataFrame(data, columns=[
+                                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                                'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                                'taker_buy_quote', 'ignore'
+                            ])
+                            
+                            for col in ['open', 'high', 'low', 'close', 'volume']:
+                                df[col] = df[col].astype(float)
+                            
+                            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                            return df
+                        elif resp.status == 429:  # Rate limit
+                            print(f"⚠️ Rate limited, retrying... (attempt {attempt + 1}/{max_retries})")
+                            await asyncio.sleep(2)
+                            continue
+                        else:
+                            print(f"❌ Binance API error: {resp.status}")
+                            if attempt < max_retries - 1:
+                                continue
+                            return None
+            except Exception as e:
+                print(f"❌ Fetch error (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    continue
+                return None
+        
+        return None
     
     def add_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add ATR and other indicators"""
@@ -364,36 +393,182 @@ class ICTBacktestEngine:
         
         print(f"\n💾 Results saved: {filename}")
 
+# ==================== ARCHIVE MANAGEMENT ====================
+
+def archive_backtest_results():
+    """
+    Archive current backtest results to backtest_archive/YYYY-MM-DD/
+    Called before each daily auto-update
+    """
+    try:
+        results_dir = Path("backtest_results")
+        if not results_dir.exists() or not any(results_dir.glob("*.json")):
+            print("ℹ️ No backtest results to archive")
+            return False
+        
+        # Create archive directory with current date
+        archive_date = datetime.now().strftime("%Y-%m-%d")
+        archive_dir = Path("backtest_archive") / archive_date
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy all JSON files to archive
+        archived_count = 0
+        for result_file in results_dir.glob("*.json"):
+            dest_file = archive_dir / result_file.name
+            shutil.copy2(result_file, dest_file)
+            archived_count += 1
+        
+        # Save archive metadata
+        metadata = {
+            'archive_date': archive_date,
+            'timestamp': datetime.now().isoformat(),
+            'files_archived': archived_count,
+            'files': [f.name for f in results_dir.glob("*.json")]
+        }
+        
+        metadata_file = archive_dir / "_metadata.json"
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        print(f"✅ Archived {archived_count} backtest results to {archive_dir}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Archive error: {e}")
+        return False
+
+
+def cleanup_old_archives(max_age_days: int = 30):
+    """
+    Delete archive directories older than max_age_days
+    Default: 30 days retention
+    """
+    try:
+        archive_base = Path("backtest_archive")
+        if not archive_base.exists():
+            print("ℹ️ No archive directory found")
+            return 0
+        
+        cutoff_date = datetime.now() - timedelta(days=max_age_days)
+        deleted_count = 0
+        
+        for archive_dir in archive_base.iterdir():
+            if not archive_dir.is_dir():
+                continue
+            
+            try:
+                # Parse directory name as date (YYYY-MM-DD)
+                dir_date = datetime.strptime(archive_dir.name, "%Y-%m-%d")
+                
+                if dir_date < cutoff_date:
+                    shutil.rmtree(archive_dir)
+                    deleted_count += 1
+                    print(f"🗑️ Deleted old archive: {archive_dir.name}")
+                    
+            except ValueError:
+                # Skip directories that don't match date format
+                continue
+        
+        if deleted_count > 0:
+            print(f"✅ Cleaned up {deleted_count} old archives (older than {max_age_days} days)")
+        else:
+            print(f"ℹ️ No archives older than {max_age_days} days found")
+        
+        return deleted_count
+        
+    except Exception as e:
+        print(f"❌ Cleanup error: {e}")
+        return 0
+
+
+async def run_comprehensive_backtest():
+    """
+    Run comprehensive backtest across all symbols and timeframes
+    Used by daily auto-update scheduler
+    """
+    print(f"\n{'='*60}")
+    print(f"🔄 DAILY AUTO-UPDATE - Starting comprehensive backtest")
+    print(f"⏰ Timestamp: {datetime.now().isoformat()}")
+    print(f"{'='*60}\n")
+    
+    # Archive old results first
+    print("📦 Archiving previous results...")
+    archive_backtest_results()
+    
+    # Cleanup old archives
+    print("\n🧹 Cleaning up old archives...")
+    cleanup_old_archives(max_age_days=30)
+    
+    # Run comprehensive backtest
+    print("\n🚀 Running new backtest...\n")
+    await main()
+    
+    print(f"\n{'='*60}")
+    print("✅ DAILY AUTO-UPDATE COMPLETE")
+    print(f"⏰ Completed: {datetime.now().isoformat()}")
+    print(f"{'='*60}\n")
+
+# ==================== MAIN BACKTEST SCRIPT ====================
+
 # Test script
 async def main():
+    """
+    Comprehensive backtest across all major coins and timeframes
+    Symbols: BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, ADAUSDT
+    Timeframes: All 10 supported (1m, 5m, 15m, 30m, 1h, 2h, 3h, 4h, 1d, 1w)
+    """
     engine = ICTBacktestEngine()
     
-    symbols = ['SOLUSDT', 'ETHUSDT', 'BTCUSDT']
-    timeframes = ['5m', '15m']
+    # ALL 6 SYMBOLS including XRPUSDT
+    symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT']
+    
+    # ALL 10 TIMEFRAMES
+    timeframes = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
     
     all_results = {}
+    total_tests = len(symbols) * len(timeframes)
+    current_test = 0
+    
+    print(f"\n{'='*60}")
+    print(f"🎯 ICT BACKTEST - COMPREHENSIVE RUN")
+    print(f"{'='*60}")
+    print(f"📊 Symbols: {len(symbols)} - {', '.join(symbols)}")
+    print(f"⏰ Timeframes: {len(timeframes)} - {', '.join(timeframes)}")
+    print(f"🔢 Total tests: {total_tests}")
+    print(f"{'='*60}\n")
     
     for symbol in symbols:
         for tf in timeframes:
+            current_test += 1
+            print(f"\n[{current_test}/{total_tests}] Testing {symbol} {tf}...")
+            
             result = await engine.run_backtest(symbol, tf, days=30)
             
             key = f"{symbol}_{tf}"
             all_results[key] = result
             
-            print(f"\n✅ {symbol} {tf}:")
-            print(f"   Trades: {result. get('total_trades', 0)}")
+            print(f"✅ {symbol} {tf}:")
+            print(f"   Trades: {result.get('total_trades', 0)}")
             print(f"   Win Rate: {result.get('win_rate', 0):.1f}%")
             print(f"   Total PnL: {result.get('total_pnl', 0):.2f}%")
             print(f"   Avg RR: {result.get('avg_rr', 0):.2f}")
+            print(f"   80% Alerts: {result.get('alerts_80_count', 0)}")
     
-    # Save
+    # Save comprehensive results
     with open('ict_backtest_results.json', 'w') as f:
         json.dump({
             'timestamp': datetime.now().isoformat(),
+            'symbols': symbols,
+            'timeframes': timeframes,
+            'total_tests': total_tests,
             'results': all_results
-        }, f, indent=2)
+        }, f, indent=2, default=str)
     
-    print("\n✅ Results saved to ict_backtest_results.json")
+    print(f"\n{'='*60}")
+    print("✅ COMPREHENSIVE BACKTEST COMPLETE")
+    print(f"💾 Results saved to ict_backtest_results.json")
+    print(f"📁 Individual results in backtest_results/ directory")
+    print(f"{'='*60}\n")
 
 if __name__ == '__main__':
     asyncio. run(main())
