@@ -82,6 +82,21 @@ python bot.py
 - `/timeframe` - Избери таймфрейм (1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d, 1w)
 - `/alerts` - Автоматични сигнали ON/OFF
 
+### 📊 Backtest & Анализ:
+- `/backtest` - Пусни comprehensive backtest (всички 6 символа × 10 таймфрейма)
+- `/backtest BTCUSDT 1h 30` - Custom backtest (символ, таймфрейм, дни)
+- `/backtest_results` - Виж comprehensive backtest резултати
+- `📊 Backtest` бутон - Бърз достъп до comprehensive отчет
+
+**Comprehensive Backtest Features:**
+- 📊 **6 символа:** BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, ADAUSDT
+- ⏰ **10 таймфрейма:** 1m, 5m, 15m, 30m, 1h, 2h, 3h, 4h, 1d, 1w
+- 🔔 **80% TP Alert статистика** (HOLD/PARTIAL_CLOSE/CLOSE_NOW)
+- 📈 **Per-symbol breakdown** с win rate и PnL
+- 🕐 **Per-timeframe breakdown** за всички комбинации
+- 📁 **Автоматичен архив** (30 дни retention)
+- 🔄 **Daily auto-update** в 02:00 UTC
+
 ### 🔐 Админ панел (парола: 8109):
 - `/admin_login 8109` - Вход в админ
 - `/admin_daily` - Генерирай дневен отчет
