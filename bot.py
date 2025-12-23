@@ -7,6 +7,7 @@ import asyncio
 import logging
 import hashlib
 import gc
+import uuid
 from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -313,6 +314,15 @@ SYMBOLS = {
 # Tracking на изпратени автоматични сигнали (за предотвратяване на дублиране)
 # Формат: {"BTCUSDT_BUY_4h": {'timestamp': datetime, 'confidence': 75, 'entry_price': 97100}, ...}
 SENT_SIGNALS_CACHE = {}
+
+# ================= ACTIVE TRADES TRACKING =================
+# Global variable for active trades tracking (for 80% alerts and final alerts)
+# Structure: List of dictionaries with trade information
+active_trades = []
+
+# Trade outcome constants
+TRADE_OUTCOME_WIN = ['WIN', 'SUCCESS']
+TRADE_OUTCOME_LOSS = ['LOSS', 'FAILED']
 
 # Константи за 4-степенна проверка на близост на цена
 PRICE_PROXIMITY_TIGHT = 0.2      # Много близка цена (%)
@@ -2946,6 +2956,343 @@ def get_ml_insights():
     except Exception as e:
         logger.error(f"Грешка при извличане на ML insights: {e}")
         return None
+
+
+# ================= ACTIVE TRADES MONITORING FUNCTIONS =================
+
+async def add_to_active_trades(signal: Dict, user_chat_id: int):
+    """
+    Add signal to active trades for monitoring
+    
+    Args:
+        signal: Signal dictionary with entry, tp, sl
+        user_chat_id: User's Telegram chat ID
+    
+    Returns:
+        str: Trade ID
+    """
+    global active_trades
+    
+    trade = {
+        'trade_id': str(uuid.uuid4()),
+        'symbol': signal.get('symbol', 'UNKNOWN'),
+        'type': signal.get('type', 'LONG'),  # LONG or SHORT
+        'entry': signal.get('entry', 0),
+        'tp': signal.get('tp', 0),
+        'sl': signal.get('sl', 0),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'alerted_80': False,
+        'user_chat_id': user_chat_id,
+        'alerts_80': [],
+        'timeframe': signal.get('timeframe', '4h'),
+        'signal_data': signal  # Keep full signal for reference
+    }
+    
+    active_trades.append(trade)
+    
+    logger.info(f"✅ Added {signal.get('symbol', 'UNKNOWN')} to active trades (ID: {trade['trade_id'][:8]})")
+    
+    return trade['trade_id']
+
+
+async def check_80_percent_alerts(bot):
+    """
+    Monitor active trades and send alerts when price reaches 80% to TP
+    
+    Args:
+        bot: Telegram Bot instance
+    
+    Runs every 1 minute via scheduler
+    Checks all active trades and sends one-time alert at 80% threshold
+    """
+    global active_trades
+    
+    if not active_trades:
+        return  # No active trades to monitor
+    
+    logger.info(f"🔍 Checking 80% alerts for {len(active_trades)} active trades")
+    
+    # Use slice copy to safely iterate (no removal happens here, but safer for future changes)
+    for trade in active_trades[:]:
+        try:
+            symbol = trade['symbol']
+            
+            # Get current price from Binance
+            try:
+                response = requests.get(
+                    BINANCE_PRICE_URL,
+                    params={'symbol': symbol},
+                    timeout=5
+                )
+                ticker = response.json()
+                current_price = float(ticker['price'])
+            except Exception as e:
+                logger.error(f"Error getting price for {symbol}: {e}")
+                continue
+            
+            # Calculate 80% threshold
+            entry = trade['entry']
+            tp = trade['tp']
+            sl = trade['sl']
+            trade_type = trade['type']
+            
+            # Calculate distance to TP
+            if trade_type == 'LONG':
+                distance_to_tp = tp - entry
+                threshold_80 = entry + (distance_to_tp * 0.8)
+                
+                # Check if reached 80%
+                reached_80 = current_price >= threshold_80 and not trade['alerted_80']
+                
+            else:  # SHORT
+                distance_to_tp = entry - tp
+                threshold_80 = entry - (distance_to_tp * 0.8)
+                
+                # Check if reached 80%
+                reached_80 = current_price <= threshold_80 and not trade['alerted_80']
+            
+            # Send alert if 80% reached
+            if reached_80:
+                # Calculate percentage to TP
+                if trade_type == 'LONG':
+                    pct_to_tp = ((current_price - entry) / (tp - entry)) * 100
+                else:
+                    pct_to_tp = ((entry - current_price) / (entry - tp)) * 100
+                
+                # Create alert data
+                alert_data = {
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                    'price': current_price,
+                    'pct_to_tp': round(pct_to_tp, 1),
+                    'recommendation': 'Consider taking partial profit (50%)'
+                }
+                
+                # Add to trade's alerts
+                trade['alerts_80'].append(alert_data)
+                trade['alerted_80'] = True
+                
+                # Send Telegram notification
+                message = (
+                    f"📊 <b>80% ALERT - {symbol}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"🎯 Your {trade_type} trade has reached <b>80% to TP</b>!\n\n"
+                    f"📍 Entry: {entry:,.2f}\n"
+                    f"📈 Current: <b>{current_price:,.2f}</b>\n"
+                    f"🎯 TP: {tp:,.2f}\n"
+                    f"🛑 SL: {sl:,.2f}\n\n"
+                    f"📊 Progress: <b>{pct_to_tp:.1f}%</b> to TP\n\n"
+                    f"💡 <b>Recommendation:</b>\n"
+                    f"Consider taking 50% partial profit to secure gains.\n"
+                    f"Move SL to breakeven for remaining position.\n\n"
+                    f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+                )
+                
+                await bot.send_message(
+                    chat_id=trade['user_chat_id'],
+                    text=message,
+                    parse_mode='HTML'
+                )
+                
+                logger.info(f"✅ 80% Alert sent for {symbol} (Price: {current_price}, {pct_to_tp:.1f}% to TP)")
+            
+        except Exception as e:
+            logger.error(f"Error in 80% alert check for {trade.get('symbol')}: {e}", exc_info=True)
+    
+    logger.info(f"✅ 80% alert check complete")
+
+
+async def send_final_alert(trade: Dict, exit_price: float, hit_target: str, bot):
+    """
+    Send final alert when trade closes and log to journal
+    
+    Args:
+        trade: Active trade dictionary
+        exit_price: Price at which trade closed
+        hit_target: 'TP' or 'SL'
+    """
+    global active_trades
+    
+    try:
+        symbol = trade['symbol']
+        entry = trade['entry']
+        tp = trade['tp']
+        sl = trade['sl']
+        trade_type = trade['type']
+        
+        # Determine outcome
+        outcome = 'WIN' if hit_target == 'TP' else 'LOSS'
+        
+        # Calculate P/L
+        if trade_type == 'LONG':
+            pnl_pct = ((exit_price - entry) / entry) * 100
+        else:  # SHORT
+            pnl_pct = ((entry - exit_price) / entry) * 100
+        
+        # Calculate absolute P/L (assume $1000 position size, adjust as needed)
+        position_size = trade.get('position_size', 1000)
+        pnl_usd = position_size * (pnl_pct / 100)
+        
+        # Calculate duration
+        start_time = datetime.fromisoformat(trade['timestamp'].replace('Z', '+00:00'))
+        end_time = datetime.now(timezone.utc)
+        duration = end_time - start_time
+        duration_hours = duration.total_seconds() / 3600
+        
+        # Create final alert data
+        final_alert_data = {
+            'timestamp': end_time.isoformat(),
+            'outcome': outcome,
+            'exit_price': exit_price,
+            'pnl_pct': round(pnl_pct, 2),
+            'pnl_usd': round(pnl_usd, 2),
+            'duration_hours': round(duration_hours, 2),
+            'hit_target': hit_target
+        }
+        
+        # Add to trade data
+        if 'final_alerts' not in trade:
+            trade['final_alerts'] = []
+        trade['final_alerts'].append(final_alert_data)
+        
+        # Set outcome
+        trade['outcome'] = outcome
+        trade['exit_price'] = exit_price
+        trade['profit_loss_pct'] = pnl_pct
+        
+        # Send Telegram notification
+        emoji = "✅" if outcome == 'WIN' else "❌"
+        message = (
+            f"{emoji} <b>{symbol} CLOSED - {outcome}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"📍 Entry: {entry:,.2f}\n"
+            f"📍 Exit: <b>{exit_price:,.2f}</b> ({hit_target})\n"
+            f"💰 P/L: <b>{pnl_pct:+.2f}%</b> (${pnl_usd:+.2f})\n"
+            f"⏱️ Duration: {duration_hours:.1f} hours\n\n"
+        )
+        
+        # Add 80% alert info if exists
+        if trade.get('alerts_80'):
+            message += f"📊 80% Alert: ✅ Triggered at {trade['alerts_80'][0]['price']:,.2f}\n\n"
+        
+        message += f"⏰ {end_time.strftime('%Y-%m-%d %H:%M UTC')}"
+        
+        # Send using the bot instance passed as parameter
+        await bot.send_message(
+            chat_id=trade['user_chat_id'],
+            text=message,
+            parse_mode='HTML'
+        )
+        
+        logger.info(f"✅ Final alert sent for {symbol}: {outcome} ({pnl_pct:+.2f}%)")
+        
+        # Save to trading journal
+        await save_trade_to_journal(trade)
+        
+        # Remove from active trades using remove() for better performance
+        try:
+            active_trades.remove(trade)
+        except ValueError:
+            # Trade already removed, ignore
+            pass
+        
+        logger.info(f"✅ Trade {trade['trade_id'][:8]} removed from active trades")
+        
+    except Exception as e:
+        logger.error(f"Error sending final alert: {e}", exc_info=True)
+
+
+async def save_trade_to_journal(trade: Dict):
+    """
+    Save completed trade to trading_journal.json
+    
+    Args:
+        trade: Completed trade dictionary with outcome
+    """
+    try:
+        journal_path = os.path.join(BASE_PATH, 'trading_journal.json')
+        
+        # Load existing journal
+        if os.path.exists(journal_path):
+            with open(journal_path, 'r', encoding='utf-8') as f:
+                journal = json.load(f)
+        else:
+            journal = {'trades': []}
+        
+        # Prepare trade data for journal
+        journal_entry = {
+            'timestamp': trade['timestamp'],
+            'symbol': trade['symbol'],
+            'timeframe': trade.get('timeframe', '4h'),
+            'signal_type': trade['type'],
+            'entry': trade['entry'],
+            'tp': trade['tp'],
+            'sl': trade['sl'],
+            'outcome': trade['outcome'],
+            'exit_price': trade.get('exit_price'),
+            'profit_loss_pct': trade.get('profit_loss_pct', 0),
+            'duration_hours': trade['final_alerts'][0]['duration_hours'] if trade.get('final_alerts') else 0,
+            'ml_mode': trade.get('signal_data', {}).get('ml_mode', False),
+            'ml_confidence': trade.get('signal_data', {}).get('ml_confidence', 0),
+            'alerts_80': trade.get('alerts_80', []),
+            'final_alerts': trade.get('final_alerts', []),
+            'conditions': trade.get('signal_data', {}).get('conditions', {})
+        }
+        
+        # Add to journal
+        journal['trades'].append(journal_entry)
+        
+        # Save journal
+        with open(journal_path, 'w', encoding='utf-8') as f:
+            json.dump(journal, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"✅ Trade saved to journal: {trade['symbol']} ({trade['outcome']})")
+        
+        # Update statistics
+        await update_trade_statistics()
+        
+    except Exception as e:
+        logger.error(f"Error saving trade to journal: {e}", exc_info=True)
+
+
+async def update_trade_statistics():
+    """Update overall trading statistics"""
+    try:
+        journal_path = os.path.join(BASE_PATH, 'trading_journal.json')
+        
+        if not os.path.exists(journal_path):
+            return
+        
+        with open(journal_path, 'r', encoding='utf-8') as f:
+            journal = json.load(f)
+        
+        trades = journal.get('trades', [])
+        
+        # Calculate stats using outcome constants
+        total_trades = len(trades)
+        wins = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_WIN)
+        losses = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_LOSS)
+        win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+        
+        # Update journal metadata
+        if 'statistics' not in journal:
+            journal['statistics'] = {}
+        
+        journal['statistics'].update({
+            'total_trades': total_trades,
+            'wins': wins,
+            'losses': losses,
+            'win_rate': round(win_rate, 2),
+            'last_updated': datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Save
+        with open(journal_path, 'w', encoding='utf-8') as f:
+            json.dump(journal, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"✅ Statistics updated: {total_trades} trades, {win_rate:.1f}% win rate")
+        
+    except Exception as e:
+        logger.error(f"Error updating statistics: {e}", exc_info=True)
 
 
 def record_signal(symbol, timeframe, signal_type, confidence, entry_price=None, tp_price=None, sl_price=None):
@@ -8021,6 +8368,127 @@ async def send_auto_news(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Грешка при автоматични новини: {e}")
 
 
+# ================= ACTIVE TRADES MANAGEMENT COMMANDS =================
+
+async def close_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Manually close an active trade
+    
+    Usage: 
+    /close_trade BTCUSDT TP
+    /close_trade ETHUSDT SL
+    """
+    global active_trades
+    
+    try:
+        args = context.args
+        
+        if len(args) < 2:
+            await update.message.reply_text(
+                "❌ <b>Usage:</b>\n"
+                "/close_trade SYMBOL TARGET\n\n"
+                "Example:\n"
+                "/close_trade BTCUSDT TP\n"
+                "/close_trade ETHUSDT SL",
+                parse_mode='HTML'
+            )
+            return
+        
+        symbol = args[0].upper()
+        target = args[1].upper()
+        
+        if target not in ['TP', 'SL']:
+            await update.message.reply_text("❌ Target must be TP or SL")
+            return
+        
+        # Find active trade
+        trade = None
+        for t in active_trades:
+            if t['symbol'] == symbol and t['user_chat_id'] == update.effective_user.id:
+                trade = t
+                break
+        
+        if not trade:
+            await update.message.reply_text(f"❌ No active trade found for {symbol}")
+            return
+        
+        # Get exit price
+        exit_price = trade['tp'] if target == 'TP' else trade['sl']
+        
+        # Send final alert
+        await send_final_alert(trade, exit_price, target, context.bot)
+        
+        await update.message.reply_text(
+            f"✅ Trade closed manually: {symbol} at {target}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Close trade error: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
+async def active_trades_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Show all active trades being monitored
+    
+    Usage: /active_trades
+    """
+    global active_trades
+    
+    try:
+        user_trades = [t for t in active_trades if t['user_chat_id'] == update.effective_user.id]
+        
+        if not user_trades:
+            await update.message.reply_text(
+                "📊 <b>Active Trades</b>\n\n"
+                "No active trades currently being monitored.\n\n"
+                "Trades are automatically added when you confirm signals.",
+                parse_mode='HTML'
+            )
+            return
+        
+        message = f"📊 <b>Active Trades ({len(user_trades)})</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        for i, trade in enumerate(user_trades, 1):
+            # Get current price
+            try:
+                response = requests.get(
+                    BINANCE_PRICE_URL,
+                    params={'symbol': trade['symbol']},
+                    timeout=5
+                )
+                ticker = response.json()
+                current_price = float(ticker['price'])
+            except:
+                current_price = trade['entry']
+            
+            # Calculate progress
+            if trade['type'] == 'LONG':
+                progress = ((current_price - trade['entry']) / (trade['tp'] - trade['entry'])) * 100
+            else:
+                progress = ((trade['entry'] - current_price) / (trade['entry'] - trade['tp'])) * 100
+            
+            progress = max(0, min(100, progress))
+            
+            alerted = "✅ Alerted" if trade['alerted_80'] else "⏳ Monitoring"
+            
+            message += (
+                f"{i}. <b>{trade['symbol']}</b> {trade['type']}\n"
+                f"   Entry: {trade['entry']:,.2f}\n"
+                f"   Current: {current_price:,.2f}\n"
+                f"   Progress: {progress:.1f}% to TP\n"
+                f"   80% Alert: {alerted}\n\n"
+            )
+        
+        message += f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+        
+        await update.message.reply_text(message, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Active trades error: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка на текстови бутони от клавиатурата"""
     text = update.message.text
@@ -11990,6 +12458,10 @@ def main():
     app.add_handler(CommandHandler("status", status_cmd))  # 📊 Show configuration and cache stats
     app.add_handler(CommandHandler("cache_stats", cache_stats_cmd))  # 📊 Detailed cache statistics
     
+    # Active Trades Management Commands
+    app.add_handler(CommandHandler("close_trade", close_trade_cmd))  # 🔒 Manually close a trade
+    app.add_handler(CommandHandler("active_trades", active_trades_cmd))  # 📊 View active trades
+    
     # Админ команди
     app.add_handler(CommandHandler("admin_login", admin_login_cmd))
     app.add_handler(CommandHandler("admin_setpass", admin_setpass_cmd))
@@ -12396,6 +12868,26 @@ def main():
                 minutes=15  # Проверява на всеки 15 минути
             )
             
+ copilot/implement-alert-systems
+            # 📊 80% ALERT MONITORING - проверява активни trades на всяка минута
+            async def check_80_alerts_wrapper():
+                """Wrapper for 80% alert monitoring with bot instance"""
+                try:
+                    await check_80_percent_alerts(application.bot)
+                except Exception as e:
+                    logger.error(f"80% alert monitoring error: {e}")
+            
+            scheduler.add_job(
+                check_80_alerts_wrapper,
+                'interval',
+                minutes=1,  # Check every minute
+                id='check_80_percent_alerts',
+                replace_existing=True
+            )
+            logger.info("✅ 80% Alert monitoring scheduled (every 1 minute)")
+            
+
+        main
             # 📊 DAILY BACKTEST SUMMARY - every day at 20:00 UTC
             async def send_scheduled_backtest_report():
                 """Send daily backtest summary to owner"""
