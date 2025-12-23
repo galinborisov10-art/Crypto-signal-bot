@@ -10982,49 +10982,20 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error in report_backtest callback: {e}", exc_info=True)
                 await query.edit_message_text(f"❌ Грешка при зареждане на резултати: {e}", parse_mode='HTML')
         else:
-            # FALLBACK to LEGACY SYSTEM if new directory is empty
-            if not BACKTEST_AVAILABLE:
-                await query.edit_message_text("❌ Backtesting модул не е наличен")
-                return
-            
-            try:
-                import os
-                import json
-                backtest_file = f'{BASE_PATH}/backtest_results.json'
-                if os.path.exists(backtest_file):
-                    with open(backtest_file, 'r') as f:
-                        data = json.load(f)
-                        backtests = data.get('backtests', [])
-                        
-                        if backtests:
-                            latest = backtests[-1]
-                            message = f"""📉 <b>ПОСЛЕДЕН BACK-TEST</b>
-
-💰 <b>Символ:</b> {latest['symbol']}
-⏰ <b>Таймфрейм:</b> {latest['timeframe']}
-📅 <b>Период:</b> {latest['period_days']} дни
-
-<b>Резултати:</b>
-   Общо trades: {latest['total_trades']}
-   🟢 Печеливши: {latest['wins']}
-   🔴 Загубени: {latest['losses']}
-   🎯 Win Rate: {latest['win_rate']:.1f}%
-   💰 Обща печалба: {latest['total_profit_pct']:+.2f}%
-   📊 Средно на trade: {latest['avg_profit_per_trade']:+.2f}%
-
-⏰ <b>Дата:</b> {latest['timestamp'][:10]}
-
-💡 Общо {len(backtests)} back-test(s) в архива
-
-<i>⚠️ Legacy format - Run /backtest for new comprehensive report</i>
-"""
-                            await query.edit_message_text(message, parse_mode='HTML')
-                        else:
-                            await query.edit_message_text("❌ Няма back-test резултати. Използвай /backtest")
-                else:
-                    await query.edit_message_text("❌ Няма back-test резултати. Използвай /backtest")
-            except Exception as e:
-                await query.edit_message_text(f"❌ Грешка: {e}")
+            # NO LEGACY FALLBACK - Always use new comprehensive system
+            await query.edit_message_text(
+                "⚠️ <b>No backtest results found</b>\n\n"
+                "📊 The comprehensive backtest system requires data in <code>backtest_results/</code> directory.\n\n"
+                "Run a comprehensive backtest first:\n"
+                "• <code>/backtest</code> - All 6 symbols × 10 timeframes\n"
+                "• <code>/backtest BTCUSDT 1h 30</code> - Custom backtest\n\n"
+                "💡 The new system includes:\n"
+                "   • All 6 symbols (including XRPUSDT)\n"
+                "   • All 10 timeframes (1m to 1w)\n"
+                "   • 80% TP alert statistics\n"
+                "   • Per-symbol & per-timeframe breakdown",
+                parse_mode='HTML'
+            )
 
 
 async def toggle_ict_command(update, context):
