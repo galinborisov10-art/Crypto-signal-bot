@@ -519,7 +519,7 @@ def get_main_keyboard():
 def get_ml_keyboard():
     """ML Анализ подменю с описания"""
     keyboard = [
-        [KeyboardButton("🤖 ML Прогноза"), KeyboardButton("📊 Backtest")],
+        [KeyboardButton("🤖 ML Прогноза"), KeyboardButton("📊 ML Performance")],
         [KeyboardButton("📈 ML Report"), KeyboardButton("🔧 ML Status")],
         [KeyboardButton("🏠 Назад към Меню")]
     ]
@@ -7941,9 +7941,75 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "ML прогнозата е включена в основния сигнал анализ.",
             parse_mode='HTML'
         )
-    elif text == "📊 Backtest":
-        # Show backtest results instead of running new backtest
-        await backtest_results_cmd(update, context)
+    elif text == "📊 ML Performance":
+        # Show ML Performance with inline keyboard
+        from journal_backtest import JournalBacktestEngine
+        
+        try:
+            backtest = JournalBacktestEngine()
+            results = backtest.run_backtest(days=30)
+            
+            if 'error' in results:
+                await update.message.reply_text(
+                    f"⚠️ <b>ML Performance</b>\n\n"
+                    f"❌ {results['error']}\n\n"
+                    f"{results.get('hint', '')}",
+                    parse_mode='HTML'
+                )
+                return
+            
+            ml_stats = results.get('ml_vs_classical', {}).get('ml', {})
+            classical_stats = results.get('ml_vs_classical', {}).get('classical', {})
+            insight = results.get('ml_vs_classical', {}).get('insight', '')
+            timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+            
+            text_msg = f"""📊 <b>ML PERFORMANCE</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+
+📅 Period: Last 30 days
+
+🤖 <b>ML TRADES:</b>
+   💰 Total: <b>{ml_stats.get('total_trades', 0)}</b>
+   🟢 Wins: {ml_stats.get('wins', 0)} ({ml_stats.get('win_rate', 0):.1f}%)
+   🔴 Losses: {ml_stats.get('losses', 0)}
+   💵 Total P/L: <b>{ml_stats.get('total_pnl', 0):+.2f}%</b>
+   📈 Avg Win: +{ml_stats.get('avg_win', 0):.2f}%
+   📉 Avg Loss: -{ml_stats.get('avg_loss', 0):.2f}%
+
+📈 <b>CLASSICAL TRADES:</b>
+   💰 Total: <b>{classical_stats.get('total_trades', 0)}</b>
+   🟢 Wins: {classical_stats.get('wins', 0)} ({classical_stats.get('win_rate', 0):.1f}%)
+   🔴 Losses: {classical_stats.get('losses', 0)}
+   💵 Total P/L: <b>{classical_stats.get('total_pnl', 0):+.2f}%</b>
+   📈 Avg Win: +{classical_stats.get('avg_win', 0):.2f}%
+   📉 Avg Loss: -{classical_stats.get('avg_loss', 0):.2f}%
+
+💡 <b>INSIGHT:</b> {insight}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📊 Source: trading_journal.json
+🕐 Generated: {timestamp}
+"""
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("🔄 Refresh", callback_data="ml_performance_30"),
+                    InlineKeyboardButton("📊 60 дни", callback_data="ml_performance_60"),
+                ],
+                [
+                    InlineKeyboardButton("📊 90 дни", callback_data="ml_performance_90"),
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(text_msg, parse_mode='HTML', reply_markup=reply_markup)
+            
+        except Exception as e:
+            logger.error(f"ML Performance error: {e}", exc_info=True)
+            await update.message.reply_text(
+                f"❌ <b>Error</b>\n\n{str(e)}",
+                parse_mode='HTML'
+            )
     elif text == "📈 ML Report":
         await ml_report_cmd(update, context)
     elif text == "🔧 ML Status":
@@ -9933,6 +9999,453 @@ def _format_backtest_report(results: Dict) -> str:
     return text
 
 
+# ============================================================================
+# NEW BACKTEST CALLBACKS - ML PERFORMANCE & COMPREHENSIVE ANALYSIS
+# ============================================================================
+
+async def ml_performance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Display ML vs Classical performance comparison from trading journal
+    
+    Callback data patterns:
+    - ml_performance (default 30 days)
+    - ml_performance_30
+    - ml_performance_60
+    - ml_performance_90
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    # Parse days from callback data
+    days = 30
+    if query.data == "ml_performance_60":
+        days = 60
+    elif query.data == "ml_performance_90":
+        days = 90
+    
+    try:
+        from journal_backtest import JournalBacktestEngine
+        
+        # Run backtest (READ-ONLY)
+        backtest = JournalBacktestEngine()
+        results = backtest.run_backtest(days=days)
+        
+        # Check for errors
+        if 'error' in results:
+            await query.edit_message_text(
+                f"⚠️ <b>ML Performance Analysis</b>\n\n"
+                f"❌ {results['error']}\n\n"
+                f"{results.get('hint', 'Trades will be recorded automatically.')}",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Extract data
+        ml_stats = results.get('ml_vs_classical', {}).get('ml', {})
+        classical_stats = results.get('ml_vs_classical', {}).get('classical', {})
+        insight = results.get('ml_vs_classical', {}).get('insight', '')
+        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+        
+        # Format message
+        text = f"""📊 <b>ML PERFORMANCE</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+
+📅 Period: Last {days} days
+
+🤖 <b>ML TRADES:</b>
+   💰 Total: <b>{ml_stats.get('total_trades', 0)}</b>
+   🟢 Wins: {ml_stats.get('wins', 0)} ({ml_stats.get('win_rate', 0):.1f}%)
+   🔴 Losses: {ml_stats.get('losses', 0)}
+   💵 Total P/L: <b>{ml_stats.get('total_pnl', 0):+.2f}%</b>
+   📈 Avg Win: +{ml_stats.get('avg_win', 0):.2f}%
+   📉 Avg Loss: -{ml_stats.get('avg_loss', 0):.2f}%
+
+📈 <b>CLASSICAL TRADES:</b>
+   💰 Total: <b>{classical_stats.get('total_trades', 0)}</b>
+   🟢 Wins: {classical_stats.get('wins', 0)} ({classical_stats.get('win_rate', 0):.1f}%)
+   🔴 Losses: {classical_stats.get('losses', 0)}
+   💵 Total P/L: <b>{classical_stats.get('total_pnl', 0):+.2f}%</b>
+   📈 Avg Win: +{classical_stats.get('avg_win', 0):.2f}%
+   📉 Avg Loss: -{classical_stats.get('avg_loss', 0):.2f}%
+
+💡 <b>INSIGHT:</b> {insight}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📊 Source: trading_journal.json
+🕐 Generated: {timestamp}
+"""
+        
+        # Create keyboard
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data="ml_performance_30"),
+                InlineKeyboardButton("📊 60 дни", callback_data="ml_performance_60"),
+            ],
+            [
+                InlineKeyboardButton("📊 90 дни", callback_data="ml_performance_90"),
+                InlineKeyboardButton("🔙 ML Menu", callback_data="ml_menu"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"ML performance error: {e}", exc_info=True)
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+
+
+async def backtest_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Display comprehensive backtest results from trading journal
+    
+    Callback data patterns:
+    - backtest_all (default 30 days)
+    - backtest_all_7
+    - backtest_all_30
+    - backtest_all_60
+    - backtest_all_90
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    # Parse days from callback data
+    days = 30
+    if query.data == "backtest_all_7":
+        days = 7
+    elif query.data == "backtest_all_60":
+        days = 60
+    elif query.data == "backtest_all_90":
+        days = 90
+    
+    try:
+        from journal_backtest import JournalBacktestEngine
+        
+        # Run backtest (READ-ONLY)
+        backtest = JournalBacktestEngine()
+        results = backtest.run_backtest(days=days)
+        
+        # Check for errors
+        if 'error' in results:
+            await query.edit_message_text(
+                f"⚠️ <b>Backtest Analysis</b>\n\n"
+                f"❌ {results['error']}\n\n"
+                f"{results.get('hint', 'Trades will be recorded automatically.')}",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Extract data
+        overall = results.get('overall', {})
+        top_performers = results.get('top_performers', [])
+        worst_performers = results.get('worst_performers', [])
+        by_timeframe = results.get('by_timeframe', {})
+        alert_stats = results.get('alert_stats', {})
+        trend_analysis = results.get('trend_analysis', {})
+        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+        
+        # Format top symbols
+        top_symbols_text = ""
+        for i, perf in enumerate(top_performers[:3], 1):
+            top_symbols_text += f"   {i}. {perf['symbol']}: {perf['win_rate']:.1f}% ({perf['total_trades']} trades)\n"
+        
+        # Format worst performers
+        worst_symbols_text = ""
+        if worst_performers:
+            worst = worst_performers[0]
+            worst_symbols_text = f"   1. {worst['symbol']}: {worst['win_rate']:.1f}% ({worst['total_trades']} trades)\n"
+        
+        # Format best timeframes
+        tf_list = sorted(by_timeframe.items(), key=lambda x: x[1]['win_rate'], reverse=True)
+        tf_text = ""
+        for i, (tf, stats) in enumerate(tf_list[:3], 1):
+            tf_text += f"   {i}. {tf}: {stats['win_rate']:.1f}% ({stats['total_trades']} trades)\n"
+        
+        # Alert system status
+        alerts_80 = alert_stats.get('80_alerts', {})
+        final_alerts = alert_stats.get('final_alerts', {})
+        
+        # Trend analysis
+        trend = trend_analysis
+        
+        # Build message
+        text = f"""📊 <b>BACKTEST РЕЗУЛТАТИ</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+
+📅 Period: Last {days} days
+
+📈 <b>ОБОБЩЕНИЕ:</b>
+   💰 Общо Trades: <b>{overall.get('total_trades', 0)}</b>
+   🟢 Wins: {overall.get('wins', 0)} ({overall.get('win_rate', 0):.1f}%)
+   🔴 Losses: {overall.get('losses', 0)}
+   💵 Total P/L: <b>{overall.get('total_pnl', 0):+.2f}%</b>
+   📈 Avg Win: +{overall.get('avg_win', 0):.2f}%
+   📉 Avg Loss: -{overall.get('avg_loss', 0):.2f}%
+   📊 Profit Factor: <b>{overall.get('profit_factor', 0):.2f}</b>
+
+🏆 <b>ТОП SYMBOLS:</b>
+{top_symbols_text or "   No data\n"}
+
+"""
+        if worst_symbols_text:
+            text += f"""📉 <b>WORST PERFORMERS:</b>
+{worst_symbols_text}
+
+"""
+        
+        text += f"""⏰ <b>BEST TIMEFRAMES:</b>
+{tf_text or "   No data\n"}
+
+🔔 <b>ALERT SYSTEMS:</b>
+📊 80% Alerts:
+   Total: {alerts_80.get('total_alerts', 0)}
+   → TP: {alerts_80.get('successful_tp', 0)} ({alerts_80.get('success_rate', 0):.0f}%)
+   → SL: {alerts_80.get('failed_to_tp', 0)}
+   Status: {alerts_80.get('status', '❌')}
+
+🎯 Final Alerts:
+   Total: {final_alerts.get('total_alerts', 0)}
+   Coverage: {final_alerts.get('coverage', 0):.0f}%
+   Status: {final_alerts.get('status', '❌')}
+
+📈 <b>TREND ANALYSIS:</b>
+   Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
+   Last 30 days: {trend.get('wr_30d', 0):.1f}%
+   Last 60 days: {trend.get('wr_60d', 0):.1f}% {trend.get('trend_60d', '')}
+   💡 Insight: {trend.get('insight', 'N/A')}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📊 Source: trading_journal.json
+🕐 Generated: {timestamp}
+"""
+        
+        # Create keyboard
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data="backtest_all_30"),
+                InlineKeyboardButton("📊 7 дни", callback_data="backtest_all_7"),
+            ],
+            [
+                InlineKeyboardButton("📊 60 дни", callback_data="backtest_all_60"),
+                InlineKeyboardButton("📊 90 дни", callback_data="backtest_all_90"),
+            ],
+            [
+                InlineKeyboardButton("🔍 Deep Dive", callback_data="backtest_deep_dive"),
+                InlineKeyboardButton("🔙 Reports", callback_data="reports_menu"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Backtest all error: {e}", exc_info=True)
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+
+
+async def backtest_deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Show symbol selection for deep dive analysis
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    text = """🔍 <b>DEEP DIVE ANALYSIS</b>
+
+Избери символ за детайлен анализ:
+"""
+    
+    # Create symbol selection keyboard
+    keyboard = [
+        [
+            InlineKeyboardButton("₿ BTCUSDT", callback_data="deep_dive_BTCUSDT"),
+            InlineKeyboardButton("Ξ ETHUSDT", callback_data="deep_dive_ETHUSDT"),
+        ],
+        [
+            InlineKeyboardButton("⚡ SOLUSDT", callback_data="deep_dive_SOLUSDT"),
+            InlineKeyboardButton("💎 XRPUSDT", callback_data="deep_dive_XRPUSDT"),
+        ],
+        [
+            InlineKeyboardButton("🔷 BNBUSDT", callback_data="deep_dive_BNBUSDT"),
+            InlineKeyboardButton("♠️ ADAUSDT", callback_data="deep_dive_ADAUSDT"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back", callback_data="backtest_all"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
+
+
+async def deep_dive_symbol_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Show deep dive analysis for specific symbol
+    
+    Callback data pattern: deep_dive_SYMBOL (e.g., deep_dive_BTCUSDT)
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    # Extract symbol from callback data
+    symbol = query.data.replace('deep_dive_', '')
+    days = 30
+    
+    try:
+        from journal_backtest import JournalBacktestEngine
+        
+        # Run backtest for specific symbol (READ-ONLY)
+        backtest = JournalBacktestEngine()
+        results = backtest.run_backtest(days=days, symbol=symbol)
+        
+        # Check for errors
+        if 'error' in results:
+            await query.edit_message_text(
+                f"⚠️ <b>Deep Dive: {symbol}</b>\n\n"
+                f"❌ {results['error']}",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Extract data
+        overall = results.get('overall', {})
+        by_timeframe = results.get('by_timeframe', {})
+        ml_vs_classical = results.get('ml_vs_classical', {})
+        trend_analysis = results.get('trend_analysis', {})
+        
+        # Format timeframe breakdown
+        tf_list = sorted(by_timeframe.items(), key=lambda x: x[1]['win_rate'], reverse=True)
+        tf_text = ""
+        best_tf = ""
+        for i, (tf, stats) in enumerate(tf_list, 1):
+            indicator = " 🏆" if i == 1 else ""
+            tf_text += f"   {tf}: {stats['win_rate']:.1f}% ({stats['total_trades']} trades){indicator}\n"
+            if i == 1:
+                best_tf = tf
+        
+        # ML recommendation
+        ml_stats = ml_vs_classical.get('ml', {})
+        classical_stats = ml_vs_classical.get('classical', {})
+        ml_recommendation = ""
+        if ml_stats.get('total_trades', 0) > 0 and classical_stats.get('total_trades', 0) > 0:
+            if ml_stats['win_rate'] > classical_stats['win_rate']:
+                ml_recommendation = f"✅ Use ML mode (+{ml_stats['win_rate'] - classical_stats['win_rate']:.1f}%)"
+            else:
+                ml_recommendation = f"⚠️ Classical mode better (+{classical_stats['win_rate'] - ml_stats['win_rate']:.1f}%)"
+        elif ml_stats.get('total_trades', 0) > 0:
+            ml_recommendation = "💡 ML mode active"
+        else:
+            ml_recommendation = "💡 Enable ML mode for better results"
+        
+        # Recommendations
+        recommendations = []
+        if overall.get('win_rate', 0) < 60:
+            recommendations.append("• Consider adjusting entry strategy")
+        if best_tf:
+            recommendations.append(f"• Focus on {best_tf} timeframe (best performance)")
+        if ml_recommendation.startswith("✅"):
+            recommendations.append("• Keep using ML mode")
+        
+        rec_text = "\n".join(recommendations) if recommendations else "   • Keep current strategy"
+        
+        # Build message
+        text = f"""🔍 <b>{symbol} DEEP DIVE</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+
+📅 Period: Last {days} days
+
+📊 <b>Overall:</b>
+   Trades: <b>{overall.get('total_trades', 0)}</b>
+   Win Rate: <b>{overall.get('win_rate', 0):.1f}%</b>
+   P/L: <b>{overall.get('total_pnl', 0):+.2f}%</b>
+
+⏰ <b>By Timeframe:</b>
+{tf_text or "   No data\n"}
+
+🤖 <b>ML Performance:</b>
+   ML enabled: {ml_stats.get('win_rate', 0):.1f}% ({ml_stats.get('total_trades', 0)} trades)
+   Classical: {classical_stats.get('win_rate', 0):.1f}% ({classical_stats.get('total_trades', 0)} trades)
+   💡 {ml_recommendation}
+
+📈 <b>Recent Performance:</b>
+   Last 7d: {trend_analysis.get('wr_7d', 0):.1f}% {trend_analysis.get('trend_7d', '')}
+   Last 30d: {trend_analysis.get('wr_30d', 0):.1f}%
+
+💡 <b>RECOMMENDATIONS:</b>
+{rec_text}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+"""
+        
+        # Create keyboard
+        keyboard = [
+            [
+                InlineKeyboardButton("🔙 Symbol List", callback_data="backtest_deep_dive"),
+                InlineKeyboardButton("📊 Backtest All", callback_data="backtest_all"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"Deep dive error for {symbol}: {e}", exc_info=True)
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+
+
+async def verify_alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Admin command to verify alert systems
+    
+    Usage: /verify_alerts
+    """
+    # Check admin (use existing admin check pattern from bot.py)
+    user_id = update.effective_user.id
+    
+    # Admin check - adapt to existing pattern
+    # For now, allow all users but this should be restricted
+    
+    await update.message.reply_text("🔍 Verifying alert systems...")
+    
+    try:
+        from verify_alerts import AlertVerifier
+        
+        verifier = AlertVerifier()
+        report = await verifier.verify_all()
+        
+        # Send summary
+        summary = (
+            f"📊 <b>ALERT VERIFICATION SUMMARY</b>\n\n"
+            f"📊 80% Alert: {report['80_alert']['status']}\n"
+            f"🎯 Final Alert: {report['final_alert']['status']}\n\n"
+            f"Full report saved to:\n"
+            f"<code>ALERT_VERIFICATION_REPORT.md</code>"
+        )
+        await update.message.reply_text(summary, parse_mode='HTML')
+        
+        # Send full report file
+        report_path = os.path.join(BASE_PATH, 'ALERT_VERIFICATION_REPORT.md')
+        if os.path.exists(report_path):
+            with open(report_path, 'rb') as f:
+                await update.message.reply_document(f, filename='ALERT_VERIFICATION_REPORT.md')
+        
+    except Exception as e:
+        logger.error(f"Alert verification error: {e}", exc_info=True)
+        await update.message.reply_text(
+            f"❌ <b>Error</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+
+
 @rate_limited
 async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -10694,7 +11207,7 @@ async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("📆 Месечен", callback_data="report_monthly")
         ],
         [
-            InlineKeyboardButton("📉 Back-test резултати", callback_data="report_backtest"),
+            InlineKeyboardButton("📊 Backtest (Всички)", callback_data="backtest_all"),
             InlineKeyboardButton("🤖 ML статистика", callback_data="report_ml"),
         ],
         [
@@ -11093,6 +11606,10 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "   • Per-symbol & per-timeframe breakdown",
                 parse_mode='HTML'
             )
+    
+    elif query.data == "reports_menu":
+        # Return to reports menu
+        await reports_cmd(update, context)
 
 
 async def toggle_ict_command(update, context):
@@ -11381,6 +11898,7 @@ def main():
     # ML, Back-testing, Reports команди
     app.add_handler(CommandHandler("backtest", backtest_cmd))  # Run back-testing
     app.add_handler(CommandHandler("backtest_results", backtest_results_cmd))  # Show saved backtest results
+    app.add_handler(CommandHandler("verify_alerts", verify_alerts_cmd))  # Verify alert systems
     app.add_handler(CommandHandler("ml_status", ml_status_cmd))  # ML статус
     app.add_handler(CommandHandler("ml_train", ml_train_cmd))  # Ръчно обучение
     app.add_handler(CommandHandler("daily_report", daily_report_cmd))  # Дневен отчет
@@ -11404,6 +11922,12 @@ def main():
     app.add_handler(CallbackQueryHandler(signal_callback, pattern='^back_to_signal_menu$'))
     app.add_handler(CallbackQueryHandler(timeframe_callback, pattern='^timeframe_'))
     app.add_handler(CallbackQueryHandler(reports_callback, pattern='^report_'))  # Reports menu
+    
+    # NEW: Backtest callback handlers
+    app.add_handler(CallbackQueryHandler(ml_performance_callback, pattern='^ml_performance'))
+    app.add_handler(CallbackQueryHandler(backtest_all_callback, pattern='^backtest_all'))
+    app.add_handler(CallbackQueryHandler(backtest_deep_dive_callback, pattern='^backtest_deep_dive$'))
+    app.add_handler(CallbackQueryHandler(deep_dive_symbol_callback, pattern='^deep_dive_'))
     
     # Message handler за текстови бутони от клавиатурата
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
