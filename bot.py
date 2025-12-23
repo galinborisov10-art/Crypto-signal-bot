@@ -36,11 +36,21 @@ logger = logging.getLogger(__name__)
 # Track bot process start time (for version info)
 BOT_START_TIME = datetime.now(timezone.utc)
 
-# AUTO-DETECT BASE PATH (Codespace vs Server) - EARLY INIT
-if os.path.exists('/root/Crypto-signal-bot'):
+# AUTO-DETECT BASE PATH (Codespace vs Server vs CI) - EARLY INIT
+# Priority: explicit env var > /root > /workspaces > current directory
+if os.getenv('BOT_BASE_PATH'):
+    BASE_PATH = os.getenv('BOT_BASE_PATH')
+    logger.info(f"📂 BASE_PATH from environment: {BASE_PATH}")
+elif os.path.exists('/root/Crypto-signal-bot'):
     BASE_PATH = '/root/Crypto-signal-bot'
-else:
+    logger.info(f"📂 BASE_PATH detected (server): {BASE_PATH}")
+elif os.path.exists('/workspaces/Crypto-signal-bot'):
     BASE_PATH = '/workspaces/Crypto-signal-bot'
+    logger.info(f"📂 BASE_PATH detected (codespace): {BASE_PATH}")
+else:
+    # Fallback to current directory
+    BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+    logger.info(f"📂 BASE_PATH fallback (current dir): {BASE_PATH}")
 
 # Админ модул
 import sys
@@ -2750,8 +2760,18 @@ def update_trade_outcome(trade_id, outcome, profit_loss_pct, notes=None):
             logger.warning(f"Trade #{trade_id} not found")
             return False
         
-        trade['status'] = outcome
-        trade['outcome'] = outcome
+        # Map outcome to standardized status and outcome fields
+        # This ensures compatibility with daily_reports.py expectations
+        if outcome == 'WIN':
+            trade['status'] = 'COMPLETED'  # Standardized status for closed trades
+            trade['outcome'] = 'SUCCESS'   # Standardized outcome for profitable trades
+        elif outcome == 'LOSS':
+            trade['status'] = 'COMPLETED'
+            trade['outcome'] = 'FAILED'    # Standardized outcome for losing trades
+        else:
+            trade['status'] = 'COMPLETED'
+            trade['outcome'] = 'BREAKEVEN'
+        
         trade['profit_loss_pct'] = profit_loss_pct
         trade['closed_at'] = datetime.now().isoformat()
         
@@ -2784,7 +2804,8 @@ def analyze_trade_patterns(journal, trade):
         conditions = trade['conditions']
         
         # Pattern 1: Успешни vs Неуспешни условия
-        if outcome == 'WIN':
+        # Handle both old (WIN/LOSS) and new (SUCCESS/FAILED) formats
+        if outcome in ['WIN', 'SUCCESS']:
             pattern_key = 'successful_conditions'
         else:
             pattern_key = 'failed_conditions'
@@ -2809,7 +2830,8 @@ def analyze_trade_patterns(journal, trade):
         
         tf_stats = journal['patterns']['best_timeframes'][timeframe]
         tf_stats['total'] += 1
-        if outcome == 'WIN':
+        # Handle both old (WIN/LOSS) and new (SUCCESS/FAILED) formats
+        if outcome in ['WIN', 'SUCCESS']:
             tf_stats['wins'] += 1
         else:
             tf_stats['losses'] += 1
@@ -2821,7 +2843,8 @@ def analyze_trade_patterns(journal, trade):
         sym_stats = journal['patterns']['best_symbols'][symbol]
         sym_stats['total'] += 1
         sym_stats['total_profit'] += trade.get('profit_loss_pct', 0)
-        if outcome == 'WIN':
+        # Handle both old (WIN/LOSS) and new (SUCCESS/FAILED) formats
+        if outcome in ['WIN', 'SUCCESS']:
             sym_stats['wins'] += 1
         else:
             sym_stats['losses'] += 1
@@ -2833,7 +2856,8 @@ def analyze_trade_patterns(journal, trade):
         
         conf_stats = journal['ml_insights']['accuracy_by_confidence'][conf_range]
         conf_stats['total'] += 1
-        if outcome == 'WIN':
+        # Handle both old (WIN/LOSS) and new (SUCCESS/FAILED) formats
+        if outcome in ['WIN', 'SUCCESS']:
             conf_stats['wins'] += 1
         
         logger.info(f"📊 ML Pattern analysis completed for trade #{trade['id']}")
@@ -11301,6 +11325,19 @@ def main():
     
     logger.info("🚀 Crypto Signal Bot стартира...")
     
+    # 📝 ENSURE TRADING JOURNAL EXISTS
+    try:
+        logger.info("📝 Checking trading journal...")
+        journal = load_journal()
+        if journal:
+            save_journal(journal)
+            logger.info(f"✅ Trading journal initialized: {JOURNAL_FILE}")
+            logger.info(f"📊 Journal contains {len(journal.get('trades', []))} trades")
+        else:
+            logger.error(f"❌ Failed to initialize trading journal: {JOURNAL_FILE}")
+    except Exception as journal_error:
+        logger.error(f"❌ Trading journal initialization error: {journal_error}")
+    
     # 🤖 Initial ML training при старт (ако има достатъчно данни)
     if ML_AVAILABLE:
         try:
@@ -11346,8 +11383,34 @@ def main():
                                 disable_notification=False  # Със звук
                             )
                             logger.info("✅ Daily report sent successfully")
+                        else:
+                            # Send notification about missing data
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=(
+                                    "⚠️ <b>DAILY REPORT - NO DATA</b>\n\n"
+                                    "Няма данни за вчерашния ден.\n\n"
+                                    "<b>Възможни причини:</b>\n"
+                                    "• Няма генерирани сигнали вчера\n"
+                                    "• Trading journal е празен\n"
+                                    "• Сигналите не са записани правилно\n\n"
+                                    "💡 Провери: <code>/ml_status</code>"
+                                ),
+                                parse_mode='HTML',
+                                disable_notification=False
+                            )
+                            logger.warning("⚠️ Daily report has no data to send")
                     except Exception as e:
                         logger.error(f"❌ Daily report error: {e}")
+                        # Send error notification
+                        try:
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=f"❌ <b>DAILY REPORT ERROR</b>\n\n<code>{str(e)}</code>",
+                                parse_mode='HTML'
+                            )
+                        except Exception as notify_error:
+                            logger.error(f"Failed to send error notification: {notify_error}")
                 
                 scheduler.add_job(
                     send_daily_auto_report,

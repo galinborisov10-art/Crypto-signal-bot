@@ -53,17 +53,26 @@ class DailyReportEngine:
     
     def _convert_journal_to_signal_format(self, trade):
         """Преобразува trade от journal формат в signal формат"""
-        # Trading Journal използва: status=SUCCESS/FAILED, outcome=SUCCESS/FAILED
-        # Нашият формат използва: status=COMPLETED, result=WIN/LOSS
+        # Trading Journal може да използва:
+        # - OLD: status=WIN/LOSS, outcome=WIN/LOSS
+        # - NEW: status=COMPLETED, outcome=SUCCESS/FAILED
+        # Този метод обработва и двата формата за обратна съвместимост
         
-        status = 'COMPLETED' if trade.get('status') in ['SUCCESS', 'FAILED'] else 'ACTIVE'
+        # Standardize status
+        current_status = trade.get('status', 'PENDING')
+        completed_statuses = ['SUCCESS', 'FAILED', 'WIN', 'LOSS', 'COMPLETED', 'BREAKEVEN']
+        status = 'COMPLETED' if current_status in completed_statuses else 'ACTIVE'
+        
         result = None
         
         if status == 'COMPLETED':
             outcome = trade.get('outcome', '')
-            if outcome == 'SUCCESS' or (trade.get('profit_loss_pct', 0) > 0):
+            profit = trade.get('profit_loss_pct', 0)
+            
+            # Normalize outcome - handle both old and new formats
+            if outcome in ['SUCCESS', 'WIN'] or profit > 0:
                 result = 'WIN'
-            elif outcome == 'FAILED' or (trade.get('profit_loss_pct', 0) < 0):
+            elif outcome in ['FAILED', 'LOSS'] or profit < 0:
                 result = 'LOSS'
             else:
                 result = 'BREAKEVEN'
