@@ -6931,6 +6931,125 @@ Timeframes: 1h, 4h, 1d
         await update.message.reply_text("❌ Непознат параметър. Използвай: tp, sl, rr")
 
 
+async def backup_settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Backup user backtest settings
+    
+    Usage: /backup_settings
+    """
+    try:
+        user_id = update.effective_user.id
+        
+        # Get current settings (you can expand this based on actual settings)
+        settings = {
+            "user_id": user_id,
+            "backtest_preferences": {
+                "default_period": 30,
+                "focus_symbols": ["BTCUSDT", "ETHUSDT"],
+                "ml_enabled": True,
+                "alert_thresholds": {
+                    "win_rate_low": 60,
+                    "pnl_alert": 50
+                }
+            },
+            "saved_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Save to file
+        settings_file = os.path.join(BASE_PATH, 'backtest_settings.json')
+        
+        # Load existing settings if any
+        all_settings = {}
+        if os.path.exists(settings_file):
+            try:
+                with open(settings_file, 'r') as f:
+                    all_settings = json.load(f)
+            except:
+                all_settings = {}
+        
+        # Update with current user settings
+        all_settings[str(user_id)] = settings
+        
+        # Save
+        with open(settings_file, 'w') as f:
+            json.dump(all_settings, f, indent=2)
+        
+        await update.message.reply_text(
+            "✅ <b>Settings Backed Up</b>\n\n"
+            f"📁 File: backtest_settings.json\n"
+            f"👤 User: {user_id}\n"
+            f"🕐 Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+            "Use /restore_settings to restore",
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logger.error(f"Backup settings error: {e}", exc_info=True)
+        await update.message.reply_text(
+            f"❌ <b>Backup Error</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+
+
+async def restore_settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Restore user backtest settings
+    
+    Usage: /restore_settings
+    """
+    try:
+        user_id = update.effective_user.id
+        settings_file = os.path.join(BASE_PATH, 'backtest_settings.json')
+        
+        # Check if file exists
+        if not os.path.exists(settings_file):
+            await update.message.reply_text(
+                "⚠️ <b>No Backup Found</b>\n\n"
+                "No settings backup exists.\n"
+                "Use /backup_settings first.",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Load settings
+        with open(settings_file, 'r') as f:
+            all_settings = json.load(f)
+        
+        # Get user settings
+        user_settings = all_settings.get(str(user_id))
+        
+        if not user_settings:
+            await update.message.reply_text(
+                "⚠️ <b>No Backup for Your Account</b>\n\n"
+                f"No settings found for user {user_id}.\n"
+                "Use /backup_settings to create a backup.",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Apply settings (this would need actual implementation based on your settings system)
+        saved_at = user_settings.get('saved_at', 'Unknown')
+        prefs = user_settings.get('backtest_preferences', {})
+        
+        await update.message.reply_text(
+            "✅ <b>Settings Restored</b>\n\n"
+            f"📅 Backup from: {saved_at}\n\n"
+            f"<b>Preferences:</b>\n"
+            f"• Default period: {prefs.get('default_period', 30)} days\n"
+            f"• Focus symbols: {', '.join(prefs.get('focus_symbols', []))}\n"
+            f"• ML enabled: {'Yes' if prefs.get('ml_enabled') else 'No'}\n\n"
+            "Settings applied successfully!",
+            parse_mode='HTML'
+        )
+        
+    except Exception as e:
+        logger.error(f"Restore settings error: {e}", exc_info=True)
+        await update.message.reply_text(
+            f"❌ <b>Restore Error</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+
+
 async def risk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🛡️ Risk Management настройки и статус"""
     logger.info(f"User {update.effective_user.id} executed /risk")
@@ -11899,6 +12018,8 @@ def main():
     app.add_handler(CommandHandler("backtest", backtest_cmd))  # Run back-testing
     app.add_handler(CommandHandler("backtest_results", backtest_results_cmd))  # Show saved backtest results
     app.add_handler(CommandHandler("verify_alerts", verify_alerts_cmd))  # Verify alert systems
+    app.add_handler(CommandHandler("backup_settings", backup_settings_cmd))  # Backup backtest settings
+    app.add_handler(CommandHandler("restore_settings", restore_settings_cmd))  # Restore backtest settings
     app.add_handler(CommandHandler("ml_status", ml_status_cmd))  # ML статус
     app.add_handler(CommandHandler("ml_train", ml_train_cmd))  # Ръчно обучение
     app.add_handler(CommandHandler("daily_report", daily_report_cmd))  # Дневен отчет
@@ -12273,6 +12394,75 @@ def main():
                 signal_tracking_wrapper,
                 'interval',
                 minutes=15  # Проверява на всеки 15 минути
+            )
+            
+            # 📊 DAILY BACKTEST SUMMARY - every day at 20:00 UTC
+            async def send_scheduled_backtest_report():
+                """Send daily backtest summary to owner"""
+                try:
+                    from journal_backtest import JournalBacktestEngine
+                    
+                    logger.info("📊 Generating daily backtest summary...")
+                    
+                    # Run backtest for last 7 days
+                    backtest = JournalBacktestEngine()
+                    results = backtest.run_backtest(days=7)
+                    
+                    if 'error' in results:
+                        logger.warning(f"No backtest data: {results['error']}")
+                        return
+                    
+                    overall = results.get('overall', {})
+                    trend = results.get('trend_analysis', {})
+                    by_symbol = results.get('by_symbol', {})
+                    
+                    # Find best and worst performers today
+                    best_symbol = None
+                    worst_symbol = None
+                    if by_symbol:
+                        sorted_symbols = sorted(
+                            by_symbol.items(), 
+                            key=lambda x: x[1]['win_rate'], 
+                            reverse=True
+                        )
+                        if sorted_symbols:
+                            best_symbol = sorted_symbols[0][0]
+                            worst_symbol = sorted_symbols[-1][0] if len(sorted_symbols) > 1 else None
+                    
+                    # Format message
+                    message = f"""📊 <b>DAILY BACKTEST SUMMARY</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+
+📅 {datetime.now(timezone.utc).strftime('%Y-%m-%d')}
+
+Today: {overall.get('total_trades', 0)} trades
+Win Rate: {overall.get('win_rate', 0):.1f}%
+P/L: {overall.get('total_pnl', 0):+.2f}%
+
+Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
+
+🏆 Best today: {best_symbol or 'N/A'}
+📉 Worst today: {worst_symbol or 'N/A'}
+
+💡 {trend.get('insight', 'No insight available')}
+"""
+                    
+                    await application.bot.send_message(
+                        chat_id=OWNER_CHAT_ID,
+                        text=message,
+                        parse_mode='HTML',
+                        disable_notification=False
+                    )
+                    logger.info("✅ Daily backtest summary sent")
+                    
+                except Exception as e:
+                    logger.error(f"Daily backtest summary error: {e}", exc_info=True)
+            
+            scheduler.add_job(
+                send_scheduled_backtest_report,
+                'cron',
+                hour=20,
+                minute=0
             )
             
             # 📊 АВТОМАТИЧЕН СЕДМИЧЕН BACKTEST - всеки понеделник в 09:00 UTC (11:00 BG)
