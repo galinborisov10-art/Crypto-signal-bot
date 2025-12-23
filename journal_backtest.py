@@ -134,6 +134,12 @@ class JournalBacktestEngine:
             # Identify top and worst performers
             top_performers, worst_performers = self._identify_performers(symbol_breakdown)
 
+            # Calculate alert statistics
+            alert_stats = self._calculate_alert_stats(trades)
+
+            # Calculate trend analysis
+            trend_analysis = self._calculate_trend_analysis(trades)
+
             # Build comprehensive results
             results = {
                 'success': True,
@@ -147,6 +153,8 @@ class JournalBacktestEngine:
                 'by_timeframe': timeframe_breakdown,
                 'top_performers': top_performers,
                 'worst_performers': worst_performers,
+                'alert_stats': alert_stats,
+                'trend_analysis': trend_analysis,
                 'analysis_timestamp': datetime.now(timezone.utc).isoformat()
             }
 
@@ -484,6 +492,150 @@ class JournalBacktestEngine:
         worst_performers.reverse()  # Show worst first
 
         return top_performers, worst_performers
+
+    def _calculate_alert_stats(self, trades: List[Dict]) -> Dict:
+        """
+        Calculate 80% alert and final alert statistics
+        
+        Args:
+            trades: List of trade dictionaries
+        
+        Returns:
+            Dict with alert statistics
+        """
+        stats = {
+            '80_alerts': {
+                'total_alerts': 0,
+                'successful_tp': 0,  # Hit 80% then TP
+                'failed_to_tp': 0,   # Hit 80% then SL
+                'success_rate': 0.0,
+                'status': '❌ Not tracked'
+            },
+            'final_alerts': {
+                'total_alerts': 0,
+                'wins': 0,
+                'losses': 0,
+                'coverage': 0.0,  # % of closed trades
+                'status': '❌ Not tracked'
+            }
+        }
+        
+        closed_trades = 0
+        
+        for trade in trades:
+            outcome = trade.get('outcome', '').upper()
+            
+            if outcome in ['WIN', 'LOSS', 'SUCCESS', 'FAILED']:
+                closed_trades += 1
+            
+            # 80% alerts
+            alerts_80 = trade.get('alerts_80', [])
+            if alerts_80:
+                stats['80_alerts']['total_alerts'] += 1
+                if outcome in ['WIN', 'SUCCESS']:
+                    stats['80_alerts']['successful_tp'] += 1
+                elif outcome in ['LOSS', 'FAILED']:
+                    stats['80_alerts']['failed_to_tp'] += 1
+            
+            # Final alerts
+            final_alerts = trade.get('final_alerts', [])
+            if final_alerts:
+                stats['final_alerts']['total_alerts'] += 1
+                if outcome in ['WIN', 'SUCCESS']:
+                    stats['final_alerts']['wins'] += 1
+                elif outcome in ['LOSS', 'FAILED']:
+                    stats['final_alerts']['losses'] += 1
+        
+        # Calculate percentages
+        if stats['80_alerts']['total_alerts'] > 0:
+            stats['80_alerts']['success_rate'] = (
+                stats['80_alerts']['successful_tp'] / 
+                stats['80_alerts']['total_alerts'] * 100
+            )
+            stats['80_alerts']['status'] = '✅ Working'
+        elif len(trades) > 0:
+            stats['80_alerts']['status'] = '⚠️ No data'
+        
+        if closed_trades > 0:
+            stats['final_alerts']['coverage'] = (
+                stats['final_alerts']['total_alerts'] / 
+                closed_trades * 100
+            )
+            if stats['final_alerts']['coverage'] >= 80:
+                stats['final_alerts']['status'] = '✅ Working'
+            elif stats['final_alerts']['coverage'] > 0:
+                stats['final_alerts']['status'] = f"⚠️ Low coverage ({stats['final_alerts']['coverage']:.0f}%)"
+        
+        return stats
+
+    def _calculate_trend_analysis(self, trades: List[Dict]) -> Dict:
+        """
+        Calculate performance trends over different time periods
+        
+        Args:
+            trades: List of trade dictionaries
+        
+        Returns:
+            Dict with trend analysis
+        """
+        def calculate_win_rate(trade_list: List[Dict], days: int) -> float:
+            """Calculate win rate for specific period"""
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            filtered = []
+            
+            for trade in trade_list:
+                try:
+                    trade_time = datetime.fromisoformat(
+                        trade.get('timestamp', '').replace('Z', '+00:00')
+                    )
+                    if trade_time >= cutoff_date:
+                        filtered.append(trade)
+                except (ValueError, AttributeError):
+                    continue
+            
+            if not filtered:
+                return 0.0
+            
+            wins = sum(
+                1 for t in filtered 
+                if t.get('outcome', '').upper() in ['WIN', 'SUCCESS']
+            )
+            total = len(filtered)
+            
+            return (wins / total * 100) if total > 0 else 0.0
+        
+        # Get win rates for different periods
+        wr_7d = calculate_win_rate(trades, 7)
+        wr_30d = calculate_win_rate(trades, 30)
+        wr_60d = calculate_win_rate(trades, 60)
+        
+        # Detect trend (7d vs 30d)
+        if wr_7d > wr_30d + 5:
+            trend_7d = f"↑ (+{wr_7d - wr_30d:.1f}%)"
+            insight = "✅ Recent improvement"
+        elif wr_7d < wr_30d - 5:
+            trend_7d = f"↓ (-{wr_30d - wr_7d:.1f}%)"
+            insight = "⚠️ Recent decline - review trades"
+        else:
+            trend_7d = "→"
+            insight = "📊 Stable performance"
+        
+        # Detect longer trend (30d vs 60d)
+        if wr_30d > wr_60d + 5:
+            trend_60d = f"↑ (+{wr_30d - wr_60d:.1f}%)"
+        elif wr_30d < wr_60d - 5:
+            trend_60d = f"↓ (-{wr_60d - wr_30d:.1f}%)"
+        else:
+            trend_60d = "→"
+        
+        return {
+            'wr_7d': round(wr_7d, 1),
+            'wr_30d': round(wr_30d, 1),
+            'wr_60d': round(wr_60d, 1),
+            'trend_7d': trend_7d,
+            'trend_60d': trend_60d,
+            'insight': insight
+        }
 
 
 # Singleton pattern for easy access
