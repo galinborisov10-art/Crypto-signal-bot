@@ -1241,45 +1241,45 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         if luxalgo_ict_data:
             # === SUPPORT & RESISTANCE LINES (ПЛЪТНИ ЛИНИИ) ===
             if luxalgo_ict_data.get('luxalgo_sr'):
-                sr_data = luxalgo_ict_data['luxalgo_sr']
-                
-                # Support - ПЛЪТНА зелена линия
-                for support_level in sr_data.get('support_levels', []):
-                    ax1.axhline(y=support_level, color='#4caf50', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
-                    ax1.text(2, support_level, '  Support', fontsize=7, color='#2e7d32', weight='bold', va='bottom')
-                
-                # Resistance - ПЛЪТНА червена линия
-                for resistance_level in sr_data.get('resistance_levels', []):
-                    ax1.axhline(y=resistance_level, color='#f44336', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
-                    ax1.text(2, resistance_level, '  Resistance', fontsize=7, color='#c62828', weight='bold', va='top')
-                
-                # === BUY SIDE & SELL SIDE LIQUIDITY ===
-                liquidity_zones = sr_data. get('liquidity_zones', [])
-                
-                # Филтрирай само активни (non-swept) зони
-                active_zones = [liq for liq in liquidity_zones if not getattr(liq, 'swept', True)]
-                
-                for liq_obj in active_zones[: 10]:  # Топ 10 активни зони
-                    # Извлечи данни от LiquidityLevel обект
-                    liq_price = float(liq_obj.price)
-                    is_buy_side = liq_obj. is_buy_side
+                sr_data = luxalgo_ict_data.get('luxalgo_sr', {})
+                if sr_data:
+                    # Support - ПЛЪТНА зелена линия
+                    for support_level in sr_data.get('support_levels', []):
+                        ax1.axhline(y=support_level, color='#4caf50', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
+                        ax1.text(2, support_level, '  Support', fontsize=7, color='#2e7d32', weight='bold', va='bottom')
                     
-                    zone_width = liq_price * 0.004
-                    zone_low = liq_price - zone_width
-                    zone_high = liq_price + zone_width
+                    # Resistance - ПЛЪТНА червена линия
+                    for resistance_level in sr_data.get('resistance_levels', []):
+                        ax1.axhline(y=resistance_level, color='#f44336', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
+                        ax1.text(2, resistance_level, '  Resistance', fontsize=7, color='#c62828', weight='bold', va='top')
                     
-                    if is_buy_side:
-                        # BUY SIDE liquidity - мека червена зона
-                        ax1.axhspan(zone_low, zone_high, color='#ef5350', alpha=0.12, zorder=1)
-                        ax1.axhline(y=liq_price, color='#c62828', linestyle=':', linewidth=1.2, alpha=0.6, zorder=2)
-                        ax1.text(1, liq_price, '💧BSL', fontsize=6, color='#c62828', weight='bold', ha='left', va='center',
-                                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='#c62828', linewidth=0.8))
-                    else:
-                        # SELL SIDE liquidity - мека синя зона
-                        ax1.axhspan(zone_low, zone_high, color='#42a5f5', alpha=0.12, zorder=1)
-                        ax1.axhline(y=liq_price, color='#1976d2', linestyle=':', linewidth=1.2, alpha=0.6, zorder=2)
-                        ax1.text(1, liq_price, '💧SSL', fontsize=6, color='#1976d2', weight='bold', ha='left', va='center',
-                                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='#1976d2', linewidth=0.8))
+                    # === BUY SIDE & SELL SIDE LIQUIDITY ===
+                    liquidity_zones = sr_data.get('liquidity_zones', [])
+                    
+                    # Філтрирай само активни (non-swept) зони
+                    active_zones = [liq for liq in liquidity_zones if not getattr(liq, 'swept', True)]
+                    
+                    for liq_obj in active_zones[:10]:  # Топ 10 активни зони
+                        # Извлечи данни от LiquidityLevel обект
+                        liq_price = float(liq_obj.price)
+                        is_buy_side = liq_obj.is_buy_side
+                        
+                        zone_width = liq_price * 0.004
+                        zone_low = liq_price - zone_width
+                        zone_high = liq_price + zone_width
+                        
+                        if is_buy_side:
+                            # BUY SIDE liquidity - мека червена зона
+                            ax1.axhspan(zone_low, zone_high, color='#ef5350', alpha=0.12, zorder=1)
+                            ax1.axhline(y=liq_price, color='#c62828', linestyle=':', linewidth=1.2, alpha=0.6, zorder=2)
+                            ax1.text(1, liq_price, '💧BSL', fontsize=6, color='#c62828', weight='bold', ha='left', va='center',
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='#c62828', linewidth=0.8))
+                        else:
+                            # SELL SIDE liquidity - мека синя зона
+                            ax1.axhspan(zone_low, zone_high, color='#42a5f5', alpha=0.12, zorder=1)
+                            ax1.axhline(y=liq_price, color='#1976d2', linestyle=':', linewidth=1.2, alpha=0.6, zorder=2)
+                            ax1.text(1, liq_price, '💧SSL', fontsize=6, color='#1976d2', weight='bold', ha='left', va='center',
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='#1976d2', linewidth=0.8))
             
             # === FAIR VALUE GAPS (FVG) - ТОЧНО НА МЯСТОТО КАТО TradingView ===
             fvg_data = luxalgo_ict_data.get('ict_fvg', [])
@@ -3897,7 +3897,16 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         # ========== LUXALGO + ICT ANALYSIS ==========
         luxalgo_ict = {}
         if LUXALGO_ICT_AVAILABLE:
-            luxalgo_ict = combined_luxalgo_ict_analysis(opens, highs, lows, closes, volumes)
+            try:
+                luxalgo_ict_result = combined_luxalgo_ict_analysis(opens, highs, lows, closes, volumes)
+                if luxalgo_ict_result is not None:
+                    luxalgo_ict = luxalgo_ict_result
+                else:
+                    logger.warning(f"LuxAlgo analysis returned None for {symbol} {timeframe}")
+                    luxalgo_ict = {}
+            except Exception as e:
+                logger.error(f"LuxAlgo analysis failed for {symbol} {timeframe}: {e}")
+                luxalgo_ict = {}
         
         # ========== TRADITIONAL INDICATORS (само RSI и Bollinger Bands) ==========
         rsi = calculate_rsi(closes)
@@ -3928,36 +3937,37 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         sr_direction = None
         
         if luxalgo_ict and luxalgo_ict.get('luxalgo_sr'):
-            sr_data = luxalgo_ict['luxalgo_sr']
-            breakout = sr_data.get('breakout_status', 'NONE')
-            
-            # Bullish: Retest support or breakout above resistance
-            if breakout in ['RETEST_SUPPORT', 'BREAKOUT_RESISTANCE']:
-                sr_aligned = True
-                sr_direction = 'BUY'
-                reasons.append(f"LuxAlgo: {breakout}")
-                confidence += 15
-            
-            # Bearish: Retest resistance or breakout below support
-            elif breakout in ['RETEST_RESISTANCE', 'BREAKOUT_SUPPORT']:
-                sr_aligned = True
-                sr_direction = 'SELL'
-                reasons.append(f"LuxAlgo: {breakout}")
-                confidence += 15
+            sr_data = luxalgo_ict.get('luxalgo_sr', {})
+            if sr_data:
+                breakout = sr_data.get('breakout_status', 'NONE')
+                
+                # Bullish: Retest support or breakout above resistance
+                if breakout in ['RETEST_SUPPORT', 'BREAKOUT_RESISTANCE']:
+                    sr_aligned = True
+                    sr_direction = 'BUY'
+                    reasons.append(f"LuxAlgo: {breakout}")
+                    confidence += 15
+                
+                # Bearish: Retest resistance or breakout below support
+                elif breakout in ['RETEST_RESISTANCE', 'BREAKOUT_SUPPORT']:
+                    sr_aligned = True
+                    sr_direction = 'SELL'
+                    reasons.append(f"LuxAlgo: {breakout}")
+                    confidence += 15
         
         # === 2. ICT Market Structure Shift ===
         ict_aligned = False
         ict_direction = None
         
         if luxalgo_ict and luxalgo_ict.get('ict_mss'):
-            mss = luxalgo_ict['ict_mss']
+            mss = luxalgo_ict.get('ict_mss', {})
             if mss and mss.get('confirmed'):
-                if 'BULLISH' in mss['type']:
+                if 'BULLISH' in mss.get('type', ''):
                     ict_aligned = True
                     ict_direction = 'BUY'
                     reasons.append(f"ICT MSS: Bullish structure shift")
                     confidence += 30  # Increased from 20
-                elif 'BEARISH' in mss['type']:
+                elif 'BEARISH' in mss.get('type', ''):
                     ict_aligned = True
                     ict_direction = 'SELL'
                     reasons.append(f"ICT MSS: Bearish structure shift")
@@ -3965,15 +3975,15 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         
         # === 3. Liquidity Grab (reversal signal) ===
         if luxalgo_ict and luxalgo_ict.get('ict_liquidity_grab'):
-            liq_grab = luxalgo_ict['ict_liquidity_grab']
+            liq_grab = luxalgo_ict.get('ict_liquidity_grab', {})
             if liq_grab and liq_grab.get('reversal_confirmed'):
-                if 'BULLISH' in liq_grab['type']:
+                if 'BULLISH' in liq_grab.get('type', ''):
                     reasons.append("ICT: Bullish liquidity grab")
                     confidence += 25  # Increased from 18
                     if not ict_aligned:
                         ict_aligned = True
                         ict_direction = 'BUY'
-                elif 'BEARISH' in liq_grab['type']:
+                elif 'BEARISH' in liq_grab.get('type', ''):
                     reasons.append("ICT: Bearish liquidity grab")
                     confidence += 25  # Increased from 18
                     if not ict_aligned:
@@ -3983,34 +3993,35 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         # === 4. Fair Value Gaps ===
         fvg_signal = None
         if luxalgo_ict and luxalgo_ict.get('ict_fvgs'):
-            fvgs = luxalgo_ict['ict_fvgs']
-            unfilled_fvgs = [f for f in fvgs if not f.get('filled')]
-            if unfilled_fvgs:
-                latest_fvg = unfilled_fvgs[-1]
-                if latest_fvg['type'] == 'BULLISH_FVG':
-                    fvg_signal = 'BUY'
-                    reasons.append(f"ICT: Bullish FVG at {latest_fvg['bottom']:.2f}")
-                    confidence += 18  # Increased from 12
-                elif latest_fvg['type'] == 'BEARISH_FVG':
-                    fvg_signal = 'SELL'
-                    reasons.append(f"ICT: Bearish FVG at {latest_fvg['top']:.2f}")
-                    confidence += 18  # Increased from 12
+            fvgs = luxalgo_ict.get('ict_fvgs', [])
+            if fvgs:
+                unfilled_fvgs = [f for f in fvgs if not f.get('filled')]
+                if unfilled_fvgs:
+                    latest_fvg = unfilled_fvgs[-1]
+                    if latest_fvg.get('type') == 'BULLISH_FVG':
+                        fvg_signal = 'BUY'
+                        reasons.append(f"ICT: Bullish FVG at {latest_fvg.get('bottom', 0):.2f}")
+                        confidence += 18  # Increased from 12
+                    elif latest_fvg.get('type') == 'BEARISH_FVG':
+                        fvg_signal = 'SELL'
+                        reasons.append(f"ICT: Bearish FVG at {latest_fvg.get('top', 0):.2f}")
+                        confidence += 18  # Increased from 12
         
         # === 5. Displacement ===
         if luxalgo_ict and luxalgo_ict.get('ict_displacement'):
-            disp = luxalgo_ict['ict_displacement']
+            disp = luxalgo_ict.get('ict_displacement', {})
             if disp and disp.get('confirmed'):
-                if 'BULLISH' in disp['type']:
-                    reasons.append(f"ICT: Bullish displacement (strength: {disp['strength']:.1f}x)")
+                if 'BULLISH' in disp.get('type', ''):
+                    reasons.append(f"ICT: Bullish displacement (strength: {disp.get('strength', 0):.1f}x)")
                     confidence += 15
-                elif 'BEARISH' in disp['type']:
-                    reasons.append(f"ICT: Bearish displacement (strength: {disp['strength']:.1f}x)")
+                elif 'BEARISH' in disp.get('type', ''):
+                    reasons.append(f"ICT: Bearish displacement (strength: {disp.get('strength', 0):.1f}x)")
                     confidence += 15
         
         # === 6. Optimal Trade Entry (OTE) ===
         ote_confirmed = False
         if luxalgo_ict and luxalgo_ict.get('ict_ote'):
-            ote = luxalgo_ict['ict_ote']
+            ote = luxalgo_ict.get('ict_ote', {})
             if ote and ote.get('optimal_entry'):
                 ote_confirmed = True
                 reasons.append("ICT: In OTE zone with FVG confluence")
@@ -4618,39 +4629,86 @@ def _format_entry_guidance(entry_zone: dict, entry_status: str, current_price: f
 
 # ================= SECURITY DECORATORS =================
 
-def rate_limited(func):
+def rate_limited(calls=20, period=60):
     """
-    Decorator to enforce rate limiting
+    Decorator to enforce rate limiting with custom limits
     
     Usage:
-        @rate_limited
+        @rate_limited(calls=3, period=60)
         async def my_command(update, context):
             ...
+    
+    Args:
+        calls: Maximum number of calls allowed
+        period: Time period in seconds
     """
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not SECURITY_MODULES_AVAILABLE:
+    def decorator(func):
+        # Store rate limit tracking per user per command
+        if not hasattr(rate_limited, 'user_command_calls'):
+            rate_limited.user_command_calls = {}
+        
+        async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            if not SECURITY_MODULES_AVAILABLE:
+                return await func(update, context)
+            
+            user_id = update.effective_user.id
+            command_name = func.__name__
+            
+            # Check global rate limit first
+            if not check_rate_limit(user_id):
+                ban_time = rate_limiter.get_ban_time_remaining(user_id)
+                if ban_time > 0:
+                    minutes = ban_time // 60
+                    await update.message.reply_text(
+                        f"🚫 You are temporarily banned for {minutes} minutes.\n"
+                        f"Reason: Rate limit violations"
+                    )
+                else:
+                    await update.message.reply_text(
+                        "⚠️ Rate limit exceeded. Please try again later."
+                    )
+                log_security_event("RATE_LIMIT_EXCEEDED", user_id, command_name)
+                return
+            
+            # Check command-specific rate limit
+            current_time = time.time()
+            key = f"{user_id}:{command_name}"
+            
+            if key not in rate_limited.user_command_calls:
+                rate_limited.user_command_calls[key] = []
+            
+            # Clean old timestamps
+            rate_limited.user_command_calls[key] = [
+                ts for ts in rate_limited.user_command_calls[key] 
+                if current_time - ts < period
+            ]
+            
+            # Check if limit exceeded
+            if len(rate_limited.user_command_calls[key]) >= calls:
+                remaining = int(period - (current_time - rate_limited.user_command_calls[key][0]))
+                await update.message.reply_text(
+                    f"⚠️ Command rate limit exceeded.\n"
+                    f"Limit: {calls} calls per {period} seconds\n"
+                    f"Try again in {remaining} seconds."
+                )
+                log_security_event("COMMAND_RATE_LIMIT", user_id, f"{command_name} ({calls}/{period}s)")
+                return
+            
+            # Record this call
+            rate_limited.user_command_calls[key].append(current_time)
+            
             return await func(update, context)
         
-        user_id = update.effective_user.id
-        
-        if not check_rate_limit(user_id):
-            ban_time = rate_limiter.get_ban_time_remaining(user_id)
-            if ban_time > 0:
-                minutes = ban_time // 60
-                await update.message.reply_text(
-                    f"🚫 You are temporarily banned for {minutes} minutes.\n"
-                    f"Reason: Rate limit violations"
-                )
-            else:
-                await update.message.reply_text(
-                    "⚠️ Rate limit exceeded. Please try again later."
-                )
-            log_security_event("RATE_LIMIT_EXCEEDED", user_id, func.__name__)
-            return
-        
-        return await func(update, context)
+        return wrapper
     
-    return wrapper
+    # Support both @rate_limited and @rate_limited() syntax
+    if callable(calls):
+        func = calls
+        calls = 20
+        period = 60
+        return decorator(func)
+    
+    return decorator
 
 
 # ================= КОМАНДИ =================
@@ -4920,6 +4978,7 @@ ORDER_BLOCKS_GUIDE.md
     await update.message.reply_text(help_text, parse_mode='HTML')
 
 
+@rate_limited(calls=20, period=60)
 async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показва текущата версия на бота с пълна информация"""
     try:
@@ -4995,12 +5054,14 @@ async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error getting version: {str(e)}")
 
 
+@rate_limited(calls=20, period=60)
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показва статистика на бота"""
     stats_message = get_performance_stats()
     await update.message.reply_text(stats_message, parse_mode='HTML')
 
 
+@rate_limited(calls=20, period=60)
 async def journal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📝 Trading Journal - ML самообучение и insights"""
     logger.info(f"User {update.effective_user.id} executed /journal")
@@ -5845,7 +5906,7 @@ async def analyze_market_sentiment(market_data):
         return {'sentiment': 'NEUTRAL', 'emoji': '➡️', 'score': 50, 'description': 'Неизвестно'}
 
 
-@rate_limited
+@rate_limited(calls=10, period=60)
 async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Дневен анализ за всички интегрирани валути с новини и sentiment"""
     logger.info(f"User {update.effective_user.id} executed /market")
@@ -6187,7 +6248,7 @@ def add_signal_to_monitor(ict_signal, symbol: str, timeframe: str, chat_id: int)
 
 
 
-@rate_limited
+@rate_limited(calls=3, period=60)
 async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Анализ и сигнал в реално време"""
     logger.info(f"User {update.effective_user.id} executed /signal with args: {context.args}")
@@ -6387,7 +6448,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-@rate_limited
+@rate_limited(calls=3, period=60)
 async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     🎯 ICT Complete Analysis Command
@@ -6871,7 +6932,7 @@ def format_ict_signal_13_point(signal: ICTSignal) -> str:
     return format_standardized_signal(signal, "MANUAL")
 
 
-@rate_limited
+@rate_limited(calls=10, period=60)
 async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Последни новини от крипто света - Топ надеждни източници"""
     logger.info(f"User {update.effective_user.id} executed /news")
@@ -6951,6 +7012,7 @@ async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка при изпращане: {send_err}")
 
 
+@rate_limited(calls=5, period=60)
 async def breaking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Провери за КРИТИЧНИ новини в момента"""
     await update.message.reply_text("🚨 Проверявам за критични новини...")
@@ -7066,6 +7128,7 @@ async def breaking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@rate_limited(calls=20, period=60)
 async def workspace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Информация за достъп до Workspace"""
     workspace_info = f"""💻 <b>GITHUB WORKSPACE</b>
@@ -7099,6 +7162,7 @@ https://github.com/galinborisov10-art/Crypto-signal-bot
     )
 
 
+@rate_limited(calls=20, period=60)
 async def task_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Създай задание за Copilot разработка"""
     if not context.args:
@@ -7238,6 +7302,7 @@ When completed, user will receive Telegram notification.
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def dailyreport_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерира ръчен дневен отчет за сигнали"""
     logger.info(f"User {update.effective_user.id} executed /dailyreport")
@@ -7294,6 +7359,7 @@ async def send_bot_status_notification(bot, status, reason=""):
         logger.error(f"Грешка при изпращане на статус нотификация: {e}")
 
 
+@rate_limited(calls=5, period=60)
 async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Рестартира бота автоматично"""
     # Провери дали е owner
@@ -7353,6 +7419,7 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
+@rate_limited(calls=20, period=60)
 async def workspace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Информация за достъп до Workspace"""
     workspace_info = f"""💻 <b>GITHUB WORKSPACE</b>
@@ -7386,6 +7453,7 @@ https://github.com/galinborisov10-art/Crypto-signal-bot
     )
 
 
+@rate_limited(calls=20, period=60)
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройки на TP/SL и RR"""
     settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
@@ -7441,6 +7509,7 @@ Timeframes: 1h, 4h, 1d
         await update.message.reply_text("❌ Непознат параметър. Използвай: tp, sl, rr")
 
 
+@rate_limited(calls=10, period=60)
 async def backup_settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Backup user backtest settings
@@ -7501,6 +7570,7 @@ async def backup_settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
 
 
+@rate_limited(calls=10, period=60)
 async def restore_settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Restore user backtest settings
@@ -7560,6 +7630,7 @@ async def restore_settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
 
+@rate_limited(calls=20, period=60)
 async def risk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🛡️ Risk Management настройки и статус"""
     logger.info(f"User {update.effective_user.id} executed /risk")
@@ -7652,6 +7723,7 @@ async def risk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Грешка при зареждане на Risk Management")
 
 
+@rate_limited(calls=10, period=60)
 async def explain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📖 Речник с ICT/LuxAlgo термини"""
     logger.info(f"User {update.effective_user.id} executed /explain")
@@ -7967,6 +8039,7 @@ async def explain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='HTML')
 
 
+@rate_limited(calls=20, period=60)
 async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Избор на таймфрейм"""
     settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
@@ -8033,6 +8106,7 @@ async def timeframe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text(f"✅ Таймфрейм променен на {tf}")
 
 
+@rate_limited(calls=20, period=60)
 async def alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Включване/изключване на автоматичните сигнали"""
     settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
@@ -8103,6 +8177,7 @@ async def alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Невалидна стойност за минути")
 
 
+@rate_limited(calls=10, period=60)
 async def autonews_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Включване/изключване на автоматични новини"""
     settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
@@ -8533,6 +8608,7 @@ async def send_auto_news(context: ContextTypes.DEFAULT_TYPE):
 
 # ================= ACTIVE TRADES MANAGEMENT COMMANDS =================
 
+@rate_limited(calls=10, period=60)
 async def close_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Manually close an active trade
@@ -8590,6 +8666,7 @@ async def close_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
+@rate_limited(calls=20, period=60)
 async def active_trades_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Show all active trades being monitored
@@ -9277,6 +9354,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= DEPLOY КОМАНДА =================
 
+@rate_limited(calls=3, period=60)
 async def deploy_digitalocean_old_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🚀 OLD Deploy function (deprecated - uses git push via SSH)"""
     user_id = update.effective_chat.id
@@ -9415,6 +9493,7 @@ sudo systemctl status crypto-bot --no-pager
 
 # ================= АДМИН КОМАНДИ =================
 
+@rate_limited(calls=20, period=60)
 async def admin_login_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в админ панела"""
     if not context.args:
@@ -9439,6 +9518,7 @@ async def admin_login_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Грешна парола!")
 
 
+@rate_limited(calls=10, period=60)
 async def admin_setpass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Задай админ парола (само за owner)"""
     if update.effective_chat.id != OWNER_CHAT_ID:
@@ -9457,6 +9537,7 @@ async def admin_setpass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@rate_limited(calls=10, period=60)
 async def admin_daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерирай дневен отчет"""
     if not is_admin(update.effective_chat.id):
@@ -9481,6 +9562,7 @@ async def admin_daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def admin_weekly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерирай седмичен отчет"""
     if not is_admin(update.effective_chat.id):
@@ -9504,6 +9586,7 @@ async def admin_weekly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def admin_monthly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерирай месечен отчет"""
     if not is_admin(update.effective_chat.id):
@@ -9527,6 +9610,7 @@ async def admin_monthly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@rate_limited(calls=20, period=60)
 async def admin_docs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Изпрати админ документация"""
     if not is_admin(update.effective_chat.id):
@@ -9549,6 +9633,7 @@ async def admin_docs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= NEW SECURITY ADMIN COMMANDS (v2.0.0) =================
 
+@rate_limited(calls=10, period=60)
 async def admin_blacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Blacklist a user (Admin only)"""
     if not SECURITY_MODULES_AVAILABLE:
@@ -9588,6 +9673,7 @@ async def admin_blacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def admin_unblacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Remove user from blacklist (Admin only)"""
     if not SECURITY_MODULES_AVAILABLE:
@@ -9623,6 +9709,7 @@ async def admin_unblacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@rate_limited(calls=20, period=60)
 async def admin_security_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show security statistics (Admin only)"""
     if not SECURITY_MODULES_AVAILABLE:
@@ -9653,6 +9740,7 @@ async def admin_security_stats_cmd(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def admin_unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Unban a rate-limited user (Admin only)"""
     if not SECURITY_MODULES_AVAILABLE:
@@ -9852,6 +9940,7 @@ async def ask_for_confirmation(message_text, context, user_id=None):
         logger.error(f"❌ Грешка при изпращане на заявка за потвърждение: {e}")
 
 
+@rate_limited(calls=5, period=60)
 async def update_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Опростена команда за обновяване чрез текстово съобщение от чата"""
     user_id = update.effective_user.id
@@ -9871,6 +9960,7 @@ async def update_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['awaiting_update_password'] = True
 
 
+@rate_limited(calls=5, period=60)
 async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Автоматично обновяване на бота от GitHub с рестарт - САМО ЗА OWNER"""
     user_id = update.effective_user.id
@@ -9997,6 +10087,7 @@ async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@rate_limited(calls=10, period=60)
 async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Тествай системата и автоматично отстрани всички грешки"""
     user_id = update.effective_user.id
@@ -10202,6 +10293,7 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= USER ACCESS MANAGEMENT =================
 
+@rate_limited(calls=10, period=60)
 async def approve_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Одобрява нов потребител (само owner)"""
     user_id = update.effective_user.id
@@ -10261,6 +10353,7 @@ async def approve_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Грешка при одобрение на потребител: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def block_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Блокира потребител (само owner)"""
     user_id = update.effective_user.id
@@ -10322,6 +10415,7 @@ async def block_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"ℹ️ Потребител {blocked_user_id} не е в списъка с разрешени.")
 
 
+@rate_limited(calls=20, period=60)
 async def list_users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показва списък с разрешени потребители (само owner)"""
     user_id = update.effective_user.id
@@ -10521,6 +10615,7 @@ async def admin_mode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # ================= ML, BACKTEST, REPORTS КОМАНДИ =================
 
+@rate_limited(calls=10, period=60)
 async def backtest_results_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Display backtest results from trading journal (READ-ONLY)
@@ -11364,6 +11459,7 @@ async def deep_dive_symbol_callback(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text(error_message, parse_mode='HTML')
 
 
+@rate_limited(calls=10, period=60)
 async def verify_alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Admin command to verify alert systems
@@ -11408,7 +11504,7 @@ async def verify_alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-@rate_limited
+@rate_limited(calls=3, period=60)
 async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Изпълнява ICT back-test на стратегията
@@ -11845,6 +11941,7 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@rate_limited(calls=10, period=60)
 async def ml_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📈 Детайлен ML отчет с точност и performance"""
     if not ML_AVAILABLE:
@@ -11894,6 +11991,7 @@ async def ml_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='HTML', reply_markup=get_ml_keyboard())
 
 
+@rate_limited(calls=20, period=60)
 async def ml_status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показва статус на ML системата"""
     if not ML_AVAILABLE:
@@ -11925,6 +12023,7 @@ async def ml_status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='HTML')
 
 
+@rate_limited(calls=3, period=60)
 async def ml_train_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ръчно обучава ML модела"""
     if not ML_AVAILABLE:
@@ -11947,6 +12046,7 @@ async def ml_train_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Недостатъчно данни за обучение (мин. 50 samples)")
 
 
+@rate_limited(calls=10, period=60)
 async def daily_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерира дневен отчет"""
     if not REPORTS_AVAILABLE:
@@ -11964,6 +12064,7 @@ async def daily_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Грешка при генериране на отчет")
 
 
+@rate_limited(calls=10, period=60)
 async def weekly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерира седмичен отчет с точност и успеваемост"""
     if not REPORTS_AVAILABLE:
@@ -12049,6 +12150,7 @@ async def weekly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Недостатъчно данни за седмичен отчет")
 
 
+@rate_limited(calls=10, period=60)
 async def monthly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерира месечен отчет с точност и успеваемост"""
     if not REPORTS_AVAILABLE:
@@ -12160,6 +12262,7 @@ async def monthly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Недостатъчно данни за месечен отчет")
 
 
+@rate_limited(calls=20, period=60)
 async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Централизирано меню за всички отчети"""
     keyboard = [
@@ -12595,6 +12698,7 @@ async def toggle_ict_command(update, context):
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def toggle_ict_only_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle pure ICT mode (use_ict_only flag)"""
     try:
@@ -12639,6 +12743,7 @@ async def toggle_ict_only_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@rate_limited(calls=20, period=60)
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show current configuration and cache statistics"""
     try:
@@ -12711,6 +12816,7 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@rate_limited(calls=20, period=60)
 async def cache_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show detailed cache statistics"""
     try:
@@ -12783,6 +12889,7 @@ async def cache_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@rate_limited(calls=20, period=60)
 async def performance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Show performance metrics (admin only)
@@ -12818,6 +12925,7 @@ async def performance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='HTML')
 
 
+@rate_limited(calls=10, period=60)
 async def clear_cache_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Clear all cached data (admin only)
@@ -12845,6 +12953,7 @@ async def clear_cache_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@rate_limited(calls=10, period=60)
 async def debug_mode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Toggle debug logging (admin only)
