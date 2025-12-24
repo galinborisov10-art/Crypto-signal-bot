@@ -340,6 +340,164 @@ TIME_WINDOW_MEDIUM = 90          # 1.5 часа (минути)
 # Константи за backtest
 BACKTEST_ALL_KEYWORD = 'all'     # Ключова дума за всички timeframes
 
+# ================= UX IMPROVEMENTS: CACHING & PERFORMANCE =================
+import time
+import statistics
+from functools import wraps
+from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
+
+# Global cache storage
+CACHE = {
+    'backtest': {},      # {'30d': {'data': {...}, 'timestamp': datetime}}
+    'market': {},        # {'BTCUSDT_4h': {'data': {...}, 'timestamp': datetime}}
+    'ml_performance': {} # {'30d': {'data': {...}, 'timestamp': datetime}}
+}
+
+CACHE_TTL = {
+    'backtest': 300,      # 5 minutes
+    'market': 180,        # 3 minutes
+    'ml_performance': 300 # 5 minutes
+}
+
+# Performance metrics storage
+PERFORMANCE_METRICS = defaultdict(list)
+
+# Thread executor for async operations
+executor = ThreadPoolExecutor(max_workers=3)
+
+# Debug mode flag
+DEBUG_MODE = False
+
+
+def get_cached(cache_type: str, key: str):
+    """Get cached result if valid"""
+    if key not in CACHE[cache_type]:
+        return None
+    
+    cached = CACHE[cache_type][key]
+    age = (datetime.now(timezone.utc) - cached['timestamp']).total_seconds()
+    
+    if age > CACHE_TTL[cache_type]:
+        # Cache expired
+        del CACHE[cache_type][key]
+        return None
+    
+    logger.info(f"✅ Cache HIT: {cache_type}/{key} (age: {age:.1f}s)")
+    return cached['data']
+
+
+def set_cache(cache_type: str, key: str, data):
+    """Store result in cache"""
+    CACHE[cache_type][key] = {
+        'data': data,
+        'timestamp': datetime.now(timezone.utc)
+    }
+    logger.info(f"💾 Cache SET: {cache_type}/{key}")
+
+
+def track_metric(operation: str, duration: float):
+    """Track operation performance"""
+    PERFORMANCE_METRICS[operation].append(duration)
+    
+    # Keep only last 100 measurements
+    if len(PERFORMANCE_METRICS[operation]) > 100:
+        PERFORMANCE_METRICS[operation] = PERFORMANCE_METRICS[operation][-100:]
+
+
+def get_metrics_summary():
+    """Get performance summary"""
+    summary = {}
+    for operation, durations in PERFORMANCE_METRICS.items():
+        if durations:
+            summary[operation] = {
+                'count': len(durations),
+                'avg': statistics.mean(durations),
+                'min': min(durations),
+                'max': max(durations),
+                'median': statistics.median(durations)
+            }
+    return summary
+
+
+def with_timeout(seconds=30):
+    """Decorator to add timeout protection to async functions"""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            try:
+                return await asyncio.wait_for(func(*args, **kwargs), timeout=seconds)
+            except asyncio.TimeoutError:
+                logger.error(f"⏱️ {func.__name__} timed out after {seconds}s")
+                raise TimeoutError(f"Operation timed out after {seconds} seconds")
+        return wrapper
+    return decorator
+
+
+def log_timing(operation_name: str = None):
+    """Decorator to log execution time and track metrics"""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            name = operation_name or func.__name__
+            start_time = time.time()
+            
+            if DEBUG_MODE:
+                logger.debug(f"▶️ START: {name}")
+            else:
+                logger.info(f"▶️ START: {name}")
+            
+            try:
+                result = await func(*args, **kwargs)
+                elapsed = time.time() - start_time
+                
+                # Track metric
+                track_metric(name, elapsed)
+                
+                logger.info(f"✅ END: {name} ({elapsed:.2f}s)")
+                return result
+            except Exception as e:
+                elapsed = time.time() - start_time
+                track_metric(f"{name}_FAILED", elapsed)
+                logger.error(f"❌ FAILED: {name} ({elapsed:.2f}s) - {str(e)}")
+                raise
+        return wrapper
+    return decorator
+
+
+def format_user_error(error: Exception, operation: str) -> str:
+    """Convert technical error to user-friendly message"""
+    
+    error_messages = {
+        TimeoutError: "⏱️ Операцията отне твърде дълго време. Опитай пак след малко.",
+        FileNotFoundError: "📂 Няма данни за анализ. Генерирай няколко сигнала първо.",
+        KeyError: "⚠️ Грешка в данните. Моля съобщи на администратора.",
+        ValueError: "❌ Невалидни данни. Провери входните параметри.",
+        ConnectionError: "🌐 Проблем с интернет връзката. Опитай пак.",
+    }
+    
+    error_type = type(error)
+    user_message = error_messages.get(error_type, "❌ Възникна грешка.")
+    
+    return (
+        f"<b>{user_message}</b>\n\n"
+        f"🔧 Операция: {operation}\n"
+        f"📝 Детайли: {str(error)[:100]}\n\n"
+        f"💡 Ако проблемът продължава, използвай /help"
+    )
+
+
+async def show_progress(query, step: int, total: int, message: str):
+    """Update progress during long operations"""
+    progress_bar = "▓" * step + "░" * (total - step)
+    await query.edit_message_text(
+        f"⏳ <b>ОБРАБОТКА...</b>\n\n"
+        f"[{progress_bar}] {step}/{total}\n\n"
+        f"{message}",
+        parse_mode='HTML'
+    )
+
+
 # ================= 3H TIMEFRAME CONVERSION =================
 def convert_1h_to_3h(klines_1h):
     """
@@ -10590,6 +10748,27 @@ def _format_backtest_report(results: Dict) -> str:
 # NEW BACKTEST CALLBACKS - ML PERFORMANCE & COMPREHENSIVE ANALYSIS
 # ============================================================================
 
+# ================= ASYNC BACKTEST HELPERS =================
+
+@with_timeout(seconds=30)
+async def run_backtest_async(days: int, symbol: str = None, timeframe: str = None):
+    """Run backtest in background thread to avoid blocking event loop"""
+    from journal_backtest import JournalBacktestEngine
+    
+    loop = asyncio.get_event_loop()
+    backtest = JournalBacktestEngine()
+    
+    # Run in executor to avoid blocking
+    result = await loop.run_in_executor(
+        executor,
+        lambda: backtest.run_backtest(days=days, symbol=symbol, timeframe=timeframe)
+    )
+    return result
+
+
+# ================= CALLBACK HANDLERS WITH UX IMPROVEMENTS =================
+
+@log_timing("ML Performance Callback")
 async def ml_performance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Display ML vs Classical performance comparison from trading journal
@@ -10610,12 +10789,73 @@ async def ml_performance_callback(update: Update, context: ContextTypes.DEFAULT_
     elif query.data == "ml_performance_90":
         days = 90
     
-    try:
-        from journal_backtest import JournalBacktestEngine
+    # Check cache first
+    cache_key = f"{days}d"
+    cached_result = get_cached('ml_performance', cache_key)
+    
+    if cached_result:
+        # Use cached data
+        ml_stats = cached_result.get('ml_vs_classical', {}).get('ml', {})
+        classical_stats = cached_result.get('ml_vs_classical', {}).get('classical', {})
+        insight = cached_result.get('ml_vs_classical', {}).get('insight', '')
+        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
         
-        # Run backtest (READ-ONLY)
-        backtest = JournalBacktestEngine()
-        results = backtest.run_backtest(days=days)
+        # Format message with cache indicator
+        text = f"""📊 <b>ML PERFORMANCE</b> 💾
+━━━━━━━━━━━━━━━━━━━━━━━
+
+📅 Period: Last {days} days
+
+🤖 <b>ML TRADES:</b>
+   💰 Total: <b>{ml_stats.get('total_trades', 0)}</b>
+   🟢 Wins: {ml_stats.get('wins', 0)} ({ml_stats.get('win_rate', 0):.1f}%)
+   🔴 Losses: {ml_stats.get('losses', 0)}
+   💵 Total P/L: <b>{ml_stats.get('total_pnl', 0):+.2f}%</b>
+   📈 Avg Win: +{ml_stats.get('avg_win', 0):.2f}%
+   📉 Avg Loss: -{ml_stats.get('avg_loss', 0):.2f}%
+
+📈 <b>CLASSICAL TRADES:</b>
+   💰 Total: <b>{classical_stats.get('total_trades', 0)}</b>
+   🟢 Wins: {classical_stats.get('wins', 0)} ({classical_stats.get('win_rate', 0):.1f}%)
+   🔴 Losses: {classical_stats.get('losses', 0)}
+   💵 Total P/L: <b>{classical_stats.get('total_pnl', 0):+.2f}%</b>
+   📈 Avg Win: +{classical_stats.get('avg_win', 0):.2f}%
+   📉 Avg Loss: -{classical_stats.get('avg_loss', 0):.2f}%
+
+💡 <b>INSIGHT:</b> {insight}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📊 Source: trading_journal.json (cached)
+🕐 Generated: {timestamp}
+"""
+        
+        # Create keyboard
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data="ml_performance_30"),
+                InlineKeyboardButton("📊 60 дни", callback_data="ml_performance_60"),
+            ],
+            [
+                InlineKeyboardButton("📊 90 дни", callback_data="ml_performance_90"),
+                InlineKeyboardButton("🔙 ML Menu", callback_data="ml_menu"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
+        return
+    
+    # INSTANT FEEDBACK - Show loading message
+    await query.edit_message_text(
+        "⏳ <b>ЗАРЕЖДАНЕ...</b>\n\n"
+        "📊 Анализирам ML performance данните...\n"
+        "⏱️ Това може да отнеме 5-15 секунди.",
+        parse_mode='HTML'
+    )
+    
+    try:
+        # Calculate fresh data with timeout protection
+        results = await run_backtest_async(days=days)
         
         # Check for errors
         if 'error' in results:
@@ -10626,6 +10866,9 @@ async def ml_performance_callback(update: Update, context: ContextTypes.DEFAULT_
                 parse_mode='HTML'
             )
             return
+        
+        # Store in cache
+        set_cache('ml_performance', cache_key, results)
         
         # Extract data
         ml_stats = results.get('ml_vs_classical', {}).get('ml', {})
@@ -10679,12 +10922,11 @@ async def ml_performance_callback(update: Update, context: ContextTypes.DEFAULT_
         
     except Exception as e:
         logger.error(f"ML performance error: {e}", exc_info=True)
-        await query.edit_message_text(
-            f"❌ <b>Error</b>\n\n{str(e)}",
-            parse_mode='HTML'
-        )
+        error_message = format_user_error(e, "ML Performance Analysis")
+        await query.edit_message_text(error_message, parse_mode='HTML')
 
 
+@log_timing("Backtest All Callback")
 async def backtest_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Display comprehensive backtest results from trading journal
@@ -10708,12 +10950,139 @@ async def backtest_all_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "backtest_all_90":
         days = 90
     
-    try:
-        from journal_backtest import JournalBacktestEngine
+    # Check cache first
+    cache_key = f"{days}d"
+    cached_result = get_cached('backtest', cache_key)
+    
+    if cached_result:
+        # Use cached data - format and display immediately
+        overall = cached_result.get('overall', {})
+        top_performers = cached_result.get('top_performers', [])
+        worst_performers = cached_result.get('worst_performers', [])
+        by_timeframe = cached_result.get('by_timeframe', {})
+        alert_stats = cached_result.get('alert_stats', {})
+        trend_analysis = cached_result.get('trend_analysis', {})
+        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
         
-        # Run backtest (READ-ONLY)
-        backtest = JournalBacktestEngine()
-        results = backtest.run_backtest(days=days)
+        # Format top symbols
+        top_symbols_text = ""
+        for i, perf in enumerate(top_performers[:3], 1):
+            top_symbols_text += f"   {i}. {perf['symbol']}: {perf['win_rate']:.1f}% ({perf['total_trades']} trades)\n"
+        
+        # Format worst performers
+        worst_symbols_text = ""
+        if worst_performers:
+            worst = worst_performers[0]
+            worst_symbols_text = f"   1. {worst['symbol']}: {worst['win_rate']:.1f}% ({worst['total_trades']} trades)\n"
+        
+        # Format best timeframes
+        tf_list = sorted(by_timeframe.items(), key=lambda x: x[1]['win_rate'], reverse=True)
+        tf_text = ""
+        for i, (tf, stats) in enumerate(tf_list[:3], 1):
+            tf_text += f"   {i}. {tf}: {stats['win_rate']:.1f}% ({stats['total_trades']} trades)\n"
+        
+        # Alert system status
+        alerts_80 = alert_stats.get('80_alerts', {})
+        final_alerts = alert_stats.get('final_alerts', {})
+        
+        # Trend analysis
+        trend = trend_analysis
+        
+        # Build message with cache indicator
+        text = f"""📊 <b>BACKTEST РЕЗУЛТАТИ</b> 💾
+━━━━━━━━━━━━━━━━━━━━━━━
+
+📅 Period: Last {days} days
+
+📈 <b>ОБОБЩЕНИЕ:</b>
+   💰 Общо Trades: <b>{overall.get('total_trades', 0)}</b>
+   🟢 Wins: {overall.get('wins', 0)} ({overall.get('win_rate', 0):.1f}%)
+   🔴 Losses: {overall.get('losses', 0)}
+   💵 Total P/L: <b>{overall.get('total_pnl', 0):+.2f}%</b>
+   📈 Avg Win: +{overall.get('avg_win', 0):.2f}%
+   📉 Avg Loss: -{overall.get('avg_loss', 0):.2f}%
+   📊 Profit Factor: <b>{overall.get('profit_factor', 0):.2f}</b>
+
+🏆 <b>ТОП SYMBOLS:</b>
+{top_symbols_text or "   No data\n"}
+
+"""
+        if worst_symbols_text:
+            text += f"""📉 <b>WORST PERFORMERS:</b>
+{worst_symbols_text}
+
+"""
+        
+        text += f"""⏰ <b>BEST TIMEFRAMES:</b>
+{tf_text or "   No data\n"}
+
+🔔 <b>ALERT SYSTEMS:</b>
+📊 80% Alerts:
+   Total: {alerts_80.get('total_alerts', 0)}
+   → TP: {alerts_80.get('successful_tp', 0)} ({alerts_80.get('success_rate', 0):.0f}%)
+   → SL: {alerts_80.get('failed_to_tp', 0)}
+   Status: {alerts_80.get('status', '❌')}
+
+🎯 Final Alerts:
+   Total: {final_alerts.get('total_alerts', 0)}
+   Coverage: {final_alerts.get('coverage', 0):.0f}%
+   Status: {final_alerts.get('status', '❌')}
+
+📈 <b>TREND ANALYSIS:</b>
+   Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
+   Last 30 days: {trend.get('wr_30d', 0):.1f}%
+   Last 60 days: {trend.get('wr_60d', 0):.1f}% {trend.get('trend_60d', '')}
+   💡 Insight: {trend.get('insight', 'N/A')}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📊 Source: trading_journal.json (cached)
+🕐 Generated: {timestamp}
+"""
+        
+        # Create keyboard
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data="backtest_all_30"),
+                InlineKeyboardButton("📊 7 дни", callback_data="backtest_all_7"),
+            ],
+            [
+                InlineKeyboardButton("📊 60 дни", callback_data="backtest_all_60"),
+                InlineKeyboardButton("📊 90 дни", callback_data="backtest_all_90"),
+            ],
+            [
+                InlineKeyboardButton("🔍 Deep Dive", callback_data="backtest_deep_dive"),
+                InlineKeyboardButton("🔙 Reports", callback_data="reports_menu"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
+        return
+    
+    # INSTANT FEEDBACK - Show loading message
+    await query.edit_message_text(
+        "⏳ <b>ЗАРЕЖДАНЕ...</b>\n\n"
+        "📊 Анализирам trading journal данните...\n"
+        "⏱️ Това може да отнеме 5-15 секунди.",
+        parse_mode='HTML'
+    )
+    
+    try:
+        # Calculate fresh data with timeout protection
+        results = await run_backtest_async(days=days)
+        
+        # Check for errors
+        if 'error' in results:
+            await query.edit_message_text(
+                f"⚠️ <b>Backtest Analysis</b>\n\n"
+                f"❌ {results['error']}\n\n"
+                f"{results.get('hint', 'Trades will be recorded automatically.')}",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Store in cache
+        set_cache('backtest', cache_key, results)
         
         # Check for errors
         if 'error' in results:
@@ -10830,10 +11199,8 @@ async def backtest_all_callback(update: Update, context: ContextTypes.DEFAULT_TY
         
     except Exception as e:
         logger.error(f"Backtest all error: {e}", exc_info=True)
-        await query.edit_message_text(
-            f"❌ <b>Error</b>\n\n{str(e)}",
-            parse_mode='HTML'
-        )
+        error_message = format_user_error(e, "Backtest Analysis")
+        await query.edit_message_text(error_message, parse_mode='HTML')
 
 
 async def backtest_deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -10871,6 +11238,7 @@ async def backtest_deep_dive_callback(update: Update, context: ContextTypes.DEFA
     await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
 
 
+@log_timing("Deep Dive Symbol Callback")
 async def deep_dive_symbol_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Show deep dive analysis for specific symbol
@@ -10884,12 +11252,20 @@ async def deep_dive_symbol_callback(update: Update, context: ContextTypes.DEFAUL
     symbol = query.data.replace('deep_dive_', '')
     days = 30
     
+    # INSTANT FEEDBACK - Show loading with progress
+    await query.edit_message_text(
+        f"⏳ <b>ЗАРЕЖДАНЕ...</b>\n\n"
+        f"🔍 Анализирам {symbol} данните...\n"
+        f"⏱️ Това може да отнеме 5-10 секунди.",
+        parse_mode='HTML'
+    )
+    
     try:
-        from journal_backtest import JournalBacktestEngine
+        # Step 1: Load trades
+        await show_progress(query, 1, 3, f"📊 Зареждане на {symbol} trades...")
         
-        # Run backtest for specific symbol (READ-ONLY)
-        backtest = JournalBacktestEngine()
-        results = backtest.run_backtest(days=days, symbol=symbol)
+        # Calculate fresh data with timeout protection
+        results = await run_backtest_async(days=days, symbol=symbol)
         
         # Check for errors
         if 'error' in results:
@@ -10900,11 +11276,17 @@ async def deep_dive_symbol_callback(update: Update, context: ContextTypes.DEFAUL
             )
             return
         
+        # Step 2: Analyze data
+        await show_progress(query, 2, 3, "📈 Калкулиране на статистики...")
+        
         # Extract data
         overall = results.get('overall', {})
         by_timeframe = results.get('by_timeframe', {})
         ml_vs_classical = results.get('ml_vs_classical', {})
         trend_analysis = results.get('trend_analysis', {})
+        
+        # Step 3: Final formatting
+        await show_progress(query, 3, 3, "✅ Завършване...")
         
         # Format timeframe breakdown
         tf_list = sorted(by_timeframe.items(), key=lambda x: x[1]['win_rate'], reverse=True)
@@ -10983,10 +11365,8 @@ async def deep_dive_symbol_callback(update: Update, context: ContextTypes.DEFAUL
         
     except Exception as e:
         logger.error(f"Deep dive error for {symbol}: {e}", exc_info=True)
-        await query.edit_message_text(
-            f"❌ <b>Error</b>\n\n{str(e)}",
-            parse_mode='HTML'
-        )
+        error_message = format_user_error(e, f"Deep Dive Analysis: {symbol}")
+        await query.edit_message_text(error_message, parse_mode='HTML')
 
 
 async def verify_alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -12408,6 +12788,93 @@ async def cache_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+async def performance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Show performance metrics (admin only)
+    
+    Usage: /performance
+    """
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("⛔ Admin only")
+        return
+    
+    metrics = get_metrics_summary()
+    
+    if not metrics:
+        await update.message.reply_text("📊 No performance data yet")
+        return
+    
+    message = "📊 <b>PERFORMANCE METRICS</b>\n\n"
+    
+    for operation, stats in sorted(metrics.items()):
+        message += f"<b>{operation}</b>\n"
+        message += f"  Calls: {stats['count']}\n"
+        message += f"  Avg: {stats['avg']:.2f}s\n"
+        message += f"  Min/Max: {stats['min']:.2f}s / {stats['max']:.2f}s\n"
+        message += f"  Median: {stats['median']:.2f}s\n\n"
+    
+    # Cache stats
+    message += "<b>CACHE STATS</b>\n"
+    for cache_type, cache_data in CACHE.items():
+        message += f"  {cache_type}: {len(cache_data)} entries\n"
+    
+    await update.message.reply_text(message, parse_mode='HTML')
+
+
+async def clear_cache_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Clear all cached data (admin only)
+    
+    Usage: /clear_cache
+    """
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("⛔ Admin only")
+        return
+    
+    # Count entries before clear
+    total_entries = sum(len(cache) for cache in CACHE.values())
+    
+    # Clear all caches
+    for cache_type in CACHE:
+        CACHE[cache_type].clear()
+    
+    await update.message.reply_text(
+        f"✅ <b>CACHE CLEARED</b>\n\n"
+        f"Изчистени {total_entries} записа\n\n"
+        f"Следващите заявки ще използват свежи данни.",
+        parse_mode='HTML'
+    )
+
+
+async def debug_mode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Toggle debug logging (admin only)
+    
+    Usage: /debug
+    """
+    global DEBUG_MODE
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_CHAT_ID:
+        return
+    
+    DEBUG_MODE = not DEBUG_MODE
+    
+    # Update logging level
+    if DEBUG_MODE:
+        logging.getLogger().setLevel(logging.DEBUG)
+        message = "🔍 <b>DEBUG MODE: ON</b>\n\nПодробни логове активирани"
+    else:
+        logging.getLogger().setLevel(logging.INFO)
+        message = "ℹ️ <b>DEBUG MODE: OFF</b>\n\nНормални логове"
+    
+    await update.message.reply_text(message, parse_mode='HTML')
+
+
 def main():
     # HTTPx клиент с persistent connection и retry логика
     from httpx import Limits
@@ -12457,6 +12924,9 @@ def main():
     app.add_handler(CommandHandler("toggle_ict_only", toggle_ict_only_cmd))  # 🎯 Toggle pure ICT mode
     app.add_handler(CommandHandler("status", status_cmd))  # 📊 Show configuration and cache stats
     app.add_handler(CommandHandler("cache_stats", cache_stats_cmd))  # 📊 Detailed cache statistics
+    app.add_handler(CommandHandler("performance", performance_cmd))  # 📊 Performance metrics (admin)
+    app.add_handler(CommandHandler("clear_cache", clear_cache_cmd))  # 🗑️ Clear cache (admin)
+    app.add_handler(CommandHandler("debug", debug_mode_cmd))  # 🔍 Toggle debug mode (admin)
     
     # Active Trades Management Commands
     app.add_handler(CommandHandler("close_trade", close_trade_cmd))  # 🔒 Manually close a trade
