@@ -11084,16 +11084,6 @@ async def backtest_all_callback(update: Update, context: ContextTypes.DEFAULT_TY
         # Store in cache
         set_cache('backtest', cache_key, results)
         
-        # Check for errors
-        if 'error' in results:
-            await query.edit_message_text(
-                f"⚠️ <b>Backtest Analysis</b>\n\n"
-                f"❌ {results['error']}\n\n"
-                f"{results.get('hint', 'Trades will be recorded automatically.')}",
-                parse_mode='HTML'
-            )
-            return
-        
         # Extract data
         overall = results.get('overall', {})
         top_performers = results.get('top_performers', [])
