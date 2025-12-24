@@ -121,7 +121,9 @@ async def test_performance_tracking():
     stats = summary["test_operation"]
     assert stats["min"] == 1.5
     assert stats["max"] == 2.0
-    assert abs(stats["avg"] - 1.7666) < 0.01  # Average of 1.5, 2.0, 1.8
+    # Calculate expected average dynamically
+    expected_avg = sum([1.5, 2.0, 1.8]) / 3
+    assert abs(stats["avg"] - expected_avg) < 0.01
     print("✅ Test 2: Statistics calculated correctly")
     
     print("✅ All performance tracking tests passed!\n")

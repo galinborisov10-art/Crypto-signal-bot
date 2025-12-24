@@ -363,8 +363,13 @@ CACHE_TTL = {
 # Performance metrics storage
 PERFORMANCE_METRICS = defaultdict(list)
 
+# Performance configuration constants
+MAX_ASYNC_WORKERS = 3  # Number of background threads for async operations
+MAX_METRICS_HISTORY = 100  # Maximum number of metrics to keep per operation
+MAX_ERROR_DETAIL_LENGTH = 100  # Maximum error detail string length in user messages
+
 # Thread executor for async operations
-executor = ThreadPoolExecutor(max_workers=3)
+executor = ThreadPoolExecutor(max_workers=MAX_ASYNC_WORKERS)
 
 # Debug mode flag
 DEBUG_MODE = False
@@ -400,9 +405,9 @@ def track_metric(operation: str, duration: float):
     """Track operation performance"""
     PERFORMANCE_METRICS[operation].append(duration)
     
-    # Keep only last 100 measurements
-    if len(PERFORMANCE_METRICS[operation]) > 100:
-        PERFORMANCE_METRICS[operation] = PERFORMANCE_METRICS[operation][-100:]
+    # Keep only last N measurements to prevent memory bloat
+    if len(PERFORMANCE_METRICS[operation]) > MAX_METRICS_HISTORY:
+        PERFORMANCE_METRICS[operation] = PERFORMANCE_METRICS[operation][-MAX_METRICS_HISTORY:]
 
 
 def get_metrics_summary():
@@ -482,7 +487,7 @@ def format_user_error(error: Exception, operation: str) -> str:
     return (
         f"<b>{user_message}</b>\n\n"
         f"🔧 Операция: {operation}\n"
-        f"📝 Детайли: {str(error)[:100]}\n\n"
+        f"📝 Детайли: {str(error)[:MAX_ERROR_DETAIL_LENGTH]}\n\n"
         f"💡 Ако проблемът продължава, използвай /help"
     )
 
