@@ -1241,45 +1241,45 @@ def generate_chart(klines_data, symbol, signal, current_price, tp_price, sl_pric
         if luxalgo_ict_data:
             # === SUPPORT & RESISTANCE LINES (ПЛЪТНИ ЛИНИИ) ===
             if luxalgo_ict_data.get('luxalgo_sr'):
-                sr_data = luxalgo_ict_data['luxalgo_sr']
-                
-                # Support - ПЛЪТНА зелена линия
-                for support_level in sr_data.get('support_levels', []):
-                    ax1.axhline(y=support_level, color='#4caf50', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
-                    ax1.text(2, support_level, '  Support', fontsize=7, color='#2e7d32', weight='bold', va='bottom')
-                
-                # Resistance - ПЛЪТНА червена линия
-                for resistance_level in sr_data.get('resistance_levels', []):
-                    ax1.axhline(y=resistance_level, color='#f44336', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
-                    ax1.text(2, resistance_level, '  Resistance', fontsize=7, color='#c62828', weight='bold', va='top')
-                
-                # === BUY SIDE & SELL SIDE LIQUIDITY ===
-                liquidity_zones = sr_data. get('liquidity_zones', [])
-                
-                # Филтрирай само активни (non-swept) зони
-                active_zones = [liq for liq in liquidity_zones if not getattr(liq, 'swept', True)]
-                
-                for liq_obj in active_zones[: 10]:  # Топ 10 активни зони
-                    # Извлечи данни от LiquidityLevel обект
-                    liq_price = float(liq_obj.price)
-                    is_buy_side = liq_obj. is_buy_side
+                sr_data = luxalgo_ict_data.get('luxalgo_sr', {})
+                if sr_data:
+                    # Support - ПЛЪТНА зелена линия
+                    for support_level in sr_data.get('support_levels', []):
+                        ax1.axhline(y=support_level, color='#4caf50', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
+                        ax1.text(2, support_level, '  Support', fontsize=7, color='#2e7d32', weight='bold', va='bottom')
                     
-                    zone_width = liq_price * 0.004
-                    zone_low = liq_price - zone_width
-                    zone_high = liq_price + zone_width
+                    # Resistance - ПЛЪТНА червена линия
+                    for resistance_level in sr_data.get('resistance_levels', []):
+                        ax1.axhline(y=resistance_level, color='#f44336', linestyle='-', linewidth=2, alpha=0.8, zorder=3)
+                        ax1.text(2, resistance_level, '  Resistance', fontsize=7, color='#c62828', weight='bold', va='top')
                     
-                    if is_buy_side:
-                        # BUY SIDE liquidity - мека червена зона
-                        ax1.axhspan(zone_low, zone_high, color='#ef5350', alpha=0.12, zorder=1)
-                        ax1.axhline(y=liq_price, color='#c62828', linestyle=':', linewidth=1.2, alpha=0.6, zorder=2)
-                        ax1.text(1, liq_price, '💧BSL', fontsize=6, color='#c62828', weight='bold', ha='left', va='center',
-                                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='#c62828', linewidth=0.8))
-                    else:
-                        # SELL SIDE liquidity - мека синя зона
-                        ax1.axhspan(zone_low, zone_high, color='#42a5f5', alpha=0.12, zorder=1)
-                        ax1.axhline(y=liq_price, color='#1976d2', linestyle=':', linewidth=1.2, alpha=0.6, zorder=2)
-                        ax1.text(1, liq_price, '💧SSL', fontsize=6, color='#1976d2', weight='bold', ha='left', va='center',
-                                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='#1976d2', linewidth=0.8))
+                    # === BUY SIDE & SELL SIDE LIQUIDITY ===
+                    liquidity_zones = sr_data.get('liquidity_zones', [])
+                    
+                    # Філтрирай само активни (non-swept) зони
+                    active_zones = [liq for liq in liquidity_zones if not getattr(liq, 'swept', True)]
+                    
+                    for liq_obj in active_zones[:10]:  # Топ 10 активни зони
+                        # Извлечи данни от LiquidityLevel обект
+                        liq_price = float(liq_obj.price)
+                        is_buy_side = liq_obj.is_buy_side
+                        
+                        zone_width = liq_price * 0.004
+                        zone_low = liq_price - zone_width
+                        zone_high = liq_price + zone_width
+                        
+                        if is_buy_side:
+                            # BUY SIDE liquidity - мека червена зона
+                            ax1.axhspan(zone_low, zone_high, color='#ef5350', alpha=0.12, zorder=1)
+                            ax1.axhline(y=liq_price, color='#c62828', linestyle=':', linewidth=1.2, alpha=0.6, zorder=2)
+                            ax1.text(1, liq_price, '💧BSL', fontsize=6, color='#c62828', weight='bold', ha='left', va='center',
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='#c62828', linewidth=0.8))
+                        else:
+                            # SELL SIDE liquidity - мека синя зона
+                            ax1.axhspan(zone_low, zone_high, color='#42a5f5', alpha=0.12, zorder=1)
+                            ax1.axhline(y=liq_price, color='#1976d2', linestyle=':', linewidth=1.2, alpha=0.6, zorder=2)
+                            ax1.text(1, liq_price, '💧SSL', fontsize=6, color='#1976d2', weight='bold', ha='left', va='center',
+                                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='#1976d2', linewidth=0.8))
             
             # === FAIR VALUE GAPS (FVG) - ТОЧНО НА МЯСТОТО КАТО TradingView ===
             fvg_data = luxalgo_ict_data.get('ict_fvg', [])
@@ -3897,7 +3897,16 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         # ========== LUXALGO + ICT ANALYSIS ==========
         luxalgo_ict = {}
         if LUXALGO_ICT_AVAILABLE:
-            luxalgo_ict = combined_luxalgo_ict_analysis(opens, highs, lows, closes, volumes)
+            try:
+                luxalgo_ict_result = combined_luxalgo_ict_analysis(opens, highs, lows, closes, volumes)
+                if luxalgo_ict_result is not None:
+                    luxalgo_ict = luxalgo_ict_result
+                else:
+                    logger.warning(f"LuxAlgo analysis returned None for {symbol} {timeframe}")
+                    luxalgo_ict = {}
+            except Exception as e:
+                logger.error(f"LuxAlgo analysis failed for {symbol} {timeframe}: {e}")
+                luxalgo_ict = {}
         
         # ========== TRADITIONAL INDICATORS (само RSI и Bollinger Bands) ==========
         rsi = calculate_rsi(closes)
@@ -3928,36 +3937,37 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         sr_direction = None
         
         if luxalgo_ict and luxalgo_ict.get('luxalgo_sr'):
-            sr_data = luxalgo_ict['luxalgo_sr']
-            breakout = sr_data.get('breakout_status', 'NONE')
-            
-            # Bullish: Retest support or breakout above resistance
-            if breakout in ['RETEST_SUPPORT', 'BREAKOUT_RESISTANCE']:
-                sr_aligned = True
-                sr_direction = 'BUY'
-                reasons.append(f"LuxAlgo: {breakout}")
-                confidence += 15
-            
-            # Bearish: Retest resistance or breakout below support
-            elif breakout in ['RETEST_RESISTANCE', 'BREAKOUT_SUPPORT']:
-                sr_aligned = True
-                sr_direction = 'SELL'
-                reasons.append(f"LuxAlgo: {breakout}")
-                confidence += 15
+            sr_data = luxalgo_ict.get('luxalgo_sr', {})
+            if sr_data:
+                breakout = sr_data.get('breakout_status', 'NONE')
+                
+                # Bullish: Retest support or breakout above resistance
+                if breakout in ['RETEST_SUPPORT', 'BREAKOUT_RESISTANCE']:
+                    sr_aligned = True
+                    sr_direction = 'BUY'
+                    reasons.append(f"LuxAlgo: {breakout}")
+                    confidence += 15
+                
+                # Bearish: Retest resistance or breakout below support
+                elif breakout in ['RETEST_RESISTANCE', 'BREAKOUT_SUPPORT']:
+                    sr_aligned = True
+                    sr_direction = 'SELL'
+                    reasons.append(f"LuxAlgo: {breakout}")
+                    confidence += 15
         
         # === 2. ICT Market Structure Shift ===
         ict_aligned = False
         ict_direction = None
         
         if luxalgo_ict and luxalgo_ict.get('ict_mss'):
-            mss = luxalgo_ict['ict_mss']
+            mss = luxalgo_ict.get('ict_mss', {})
             if mss and mss.get('confirmed'):
-                if 'BULLISH' in mss['type']:
+                if 'BULLISH' in mss.get('type', ''):
                     ict_aligned = True
                     ict_direction = 'BUY'
                     reasons.append(f"ICT MSS: Bullish structure shift")
                     confidence += 30  # Increased from 20
-                elif 'BEARISH' in mss['type']:
+                elif 'BEARISH' in mss.get('type', ''):
                     ict_aligned = True
                     ict_direction = 'SELL'
                     reasons.append(f"ICT MSS: Bearish structure shift")
@@ -3965,15 +3975,15 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         
         # === 3. Liquidity Grab (reversal signal) ===
         if luxalgo_ict and luxalgo_ict.get('ict_liquidity_grab'):
-            liq_grab = luxalgo_ict['ict_liquidity_grab']
+            liq_grab = luxalgo_ict.get('ict_liquidity_grab', {})
             if liq_grab and liq_grab.get('reversal_confirmed'):
-                if 'BULLISH' in liq_grab['type']:
+                if 'BULLISH' in liq_grab.get('type', ''):
                     reasons.append("ICT: Bullish liquidity grab")
                     confidence += 25  # Increased from 18
                     if not ict_aligned:
                         ict_aligned = True
                         ict_direction = 'BUY'
-                elif 'BEARISH' in liq_grab['type']:
+                elif 'BEARISH' in liq_grab.get('type', ''):
                     reasons.append("ICT: Bearish liquidity grab")
                     confidence += 25  # Increased from 18
                     if not ict_aligned:
@@ -3983,34 +3993,35 @@ def analyze_signal(symbol_data, klines_data, symbol='BTCUSDT', timeframe='4h'):
         # === 4. Fair Value Gaps ===
         fvg_signal = None
         if luxalgo_ict and luxalgo_ict.get('ict_fvgs'):
-            fvgs = luxalgo_ict['ict_fvgs']
-            unfilled_fvgs = [f for f in fvgs if not f.get('filled')]
-            if unfilled_fvgs:
-                latest_fvg = unfilled_fvgs[-1]
-                if latest_fvg['type'] == 'BULLISH_FVG':
-                    fvg_signal = 'BUY'
-                    reasons.append(f"ICT: Bullish FVG at {latest_fvg['bottom']:.2f}")
-                    confidence += 18  # Increased from 12
-                elif latest_fvg['type'] == 'BEARISH_FVG':
-                    fvg_signal = 'SELL'
-                    reasons.append(f"ICT: Bearish FVG at {latest_fvg['top']:.2f}")
-                    confidence += 18  # Increased from 12
+            fvgs = luxalgo_ict.get('ict_fvgs', [])
+            if fvgs:
+                unfilled_fvgs = [f for f in fvgs if not f.get('filled')]
+                if unfilled_fvgs:
+                    latest_fvg = unfilled_fvgs[-1]
+                    if latest_fvg.get('type') == 'BULLISH_FVG':
+                        fvg_signal = 'BUY'
+                        reasons.append(f"ICT: Bullish FVG at {latest_fvg.get('bottom', 0):.2f}")
+                        confidence += 18  # Increased from 12
+                    elif latest_fvg.get('type') == 'BEARISH_FVG':
+                        fvg_signal = 'SELL'
+                        reasons.append(f"ICT: Bearish FVG at {latest_fvg.get('top', 0):.2f}")
+                        confidence += 18  # Increased from 12
         
         # === 5. Displacement ===
         if luxalgo_ict and luxalgo_ict.get('ict_displacement'):
-            disp = luxalgo_ict['ict_displacement']
+            disp = luxalgo_ict.get('ict_displacement', {})
             if disp and disp.get('confirmed'):
-                if 'BULLISH' in disp['type']:
-                    reasons.append(f"ICT: Bullish displacement (strength: {disp['strength']:.1f}x)")
+                if 'BULLISH' in disp.get('type', ''):
+                    reasons.append(f"ICT: Bullish displacement (strength: {disp.get('strength', 0):.1f}x)")
                     confidence += 15
-                elif 'BEARISH' in disp['type']:
-                    reasons.append(f"ICT: Bearish displacement (strength: {disp['strength']:.1f}x)")
+                elif 'BEARISH' in disp.get('type', ''):
+                    reasons.append(f"ICT: Bearish displacement (strength: {disp.get('strength', 0):.1f}x)")
                     confidence += 15
         
         # === 6. Optimal Trade Entry (OTE) ===
         ote_confirmed = False
         if luxalgo_ict and luxalgo_ict.get('ict_ote'):
-            ote = luxalgo_ict['ict_ote']
+            ote = luxalgo_ict.get('ict_ote', {})
             if ote and ote.get('optimal_entry'):
                 ote_confirmed = True
                 reasons.append("ICT: In OTE zone with FVG confluence")

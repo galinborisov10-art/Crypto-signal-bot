@@ -1119,13 +1119,13 @@ class ICTSignalEngine:
         total_count += 1
         
         # Проверка на други timeframes (ако има данни)
-        if mtf_data:
+        if mtf_data is not None and isinstance(mtf_data, dict):
             for tf in all_timeframes:
                 if tf == primary_timeframe:
                     continue  # Вече е добавен
                 
                 tf_df = mtf_data.get(tf)
-                if tf_df is not None and len(tf_df) >= 20:
+                if tf_df is not None and not tf_df.empty and len(tf_df) >= 20:
                     # Опростен bias анализ за този TF
                     try:
                         # Използвай последната цена спрямо MA
