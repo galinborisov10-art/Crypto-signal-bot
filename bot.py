@@ -9354,6 +9354,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= DEPLOY КОМАНДА =================
 
+@rate_limited(calls=3, period=60)
 async def deploy_digitalocean_old_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🚀 OLD Deploy function (deprecated - uses git push via SSH)"""
     user_id = update.effective_chat.id
@@ -9492,6 +9493,7 @@ sudo systemctl status crypto-bot --no-pager
 
 # ================= АДМИН КОМАНДИ =================
 
+@rate_limited(calls=20, period=60)
 async def admin_login_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в админ панела"""
     if not context.args:
@@ -9516,6 +9518,7 @@ async def admin_login_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Грешна парола!")
 
 
+@rate_limited(calls=10, period=60)
 async def admin_setpass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Задай админ парола (само за owner)"""
     if update.effective_chat.id != OWNER_CHAT_ID:
@@ -9534,6 +9537,7 @@ async def admin_setpass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@rate_limited(calls=10, period=60)
 async def admin_daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерирай дневен отчет"""
     if not is_admin(update.effective_chat.id):
@@ -9558,6 +9562,7 @@ async def admin_daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def admin_weekly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерирай седмичен отчет"""
     if not is_admin(update.effective_chat.id):
@@ -9581,6 +9586,7 @@ async def admin_weekly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def admin_monthly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерирай месечен отчет"""
     if not is_admin(update.effective_chat.id):
@@ -9604,6 +9610,7 @@ async def admin_monthly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@rate_limited(calls=20, period=60)
 async def admin_docs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Изпрати админ документация"""
     if not is_admin(update.effective_chat.id):
@@ -9626,6 +9633,7 @@ async def admin_docs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= NEW SECURITY ADMIN COMMANDS (v2.0.0) =================
 
+@rate_limited(calls=10, period=60)
 async def admin_blacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Blacklist a user (Admin only)"""
     if not SECURITY_MODULES_AVAILABLE:
@@ -9665,6 +9673,7 @@ async def admin_blacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def admin_unblacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Remove user from blacklist (Admin only)"""
     if not SECURITY_MODULES_AVAILABLE:
@@ -9700,6 +9709,7 @@ async def admin_unblacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@rate_limited(calls=20, period=60)
 async def admin_security_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show security statistics (Admin only)"""
     if not SECURITY_MODULES_AVAILABLE:
@@ -9730,6 +9740,7 @@ async def admin_security_stats_cmd(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def admin_unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Unban a rate-limited user (Admin only)"""
     if not SECURITY_MODULES_AVAILABLE:
@@ -9929,6 +9940,7 @@ async def ask_for_confirmation(message_text, context, user_id=None):
         logger.error(f"❌ Грешка при изпращане на заявка за потвърждение: {e}")
 
 
+@rate_limited(calls=5, period=60)
 async def update_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Опростена команда за обновяване чрез текстово съобщение от чата"""
     user_id = update.effective_user.id
@@ -9948,6 +9960,7 @@ async def update_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['awaiting_update_password'] = True
 
 
+@rate_limited(calls=5, period=60)
 async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Автоматично обновяване на бота от GitHub с рестарт - САМО ЗА OWNER"""
     user_id = update.effective_user.id
@@ -10074,6 +10087,7 @@ async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@rate_limited(calls=10, period=60)
 async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Тествай системата и автоматично отстрани всички грешки"""
     user_id = update.effective_user.id
@@ -10279,6 +10293,7 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= USER ACCESS MANAGEMENT =================
 
+@rate_limited(calls=10, period=60)
 async def approve_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Одобрява нов потребител (само owner)"""
     user_id = update.effective_user.id
@@ -10338,6 +10353,7 @@ async def approve_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Грешка при одобрение на потребител: {e}")
 
 
+@rate_limited(calls=10, period=60)
 async def block_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Блокира потребител (само owner)"""
     user_id = update.effective_user.id
@@ -10399,6 +10415,7 @@ async def block_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"ℹ️ Потребител {blocked_user_id} не е в списъка с разрешени.")
 
 
+@rate_limited(calls=20, period=60)
 async def list_users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показва списък с разрешени потребители (само owner)"""
     user_id = update.effective_user.id
