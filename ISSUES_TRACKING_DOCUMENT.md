@@ -13,8 +13,8 @@
 | Метрика | Стойност |
 |---------|----------|
 | **Общ брой проблеми** | 15 |
-| **Критични (HIGH)** | 3 |
-| **Средни (MEDIUM)** | 8 |
+| **Критични (HIGH)** | 1 |
+| **Средни (MEDIUM)** | 10 |
 | **Ниски (LOW)** | 4 |
 | **Open** | 15 |
 | **In Progress** | 0 |
@@ -24,301 +24,7 @@
 
 ## 🚨 CRITICAL ISSUES (HIGH Priority)
 
-### P1: Auto-Signal Function Missing
-
-**ID:** P1  
-**Status:** Open  
-**Критичност:** HIGH  
-**Дата на откриване:** 24 Dec 2025
-
-**Локация:**
-- File: `bot.py`
-- Line: ~13556 (scheduler job setup)
-
-**Описание:**
-Функцията `send_alert_signal()` е scheduled в APScheduler но не съществува в кода.
-
-```python
-# Line 13556-13562
-app.job_queue.run_repeating(
-    send_alert_signal,  # ← FUNCTION NOT FOUND!
-    interval=settings['alert_interval'],
-    first=10,
-    data={'chat_id': OWNER_CHAT_ID},
-    name=f"alerts_{OWNER_CHAT_ID}"
-)
-```
-
-**Търсене в кода:**
-```bash
-grep -rn "def send_alert_signal" bot.py
-# Result: NO MATCHES
-```
-
-**Причина:**
-- Функцията не е имплементирана
-- Scheduler job reference липсващата функция
-- Auto-alerts са "enabled" във feature flags но не работят
-
-**Влияние върху системата:**
-1. **Функционалност:**
-   - Auto-alerts НЕ се изпращат въпреки че са enabled
-   - Users очакват автоматични сигнали но ги няма
-   - Scheduler job ще фейлва при изпълнение
-
-2. **User Experience:**
-   - Заблуда че auto-alerts работят
-   - Липса на очаквани сигнали
-
-3. **System Stability:**
-   - Scheduler може да логва errors
-   - Job може да се retry безкрайно
-
-**Препоръчано решение:**
-
-```python
-async def send_alert_signal(context):
-    """
-    Генерира и изпраща автоматични сигнали към enabled users.
-    Изпълнява се periodично от scheduler.
-    """
-    try:
-        chat_id = context.job.data['chat_id']
-        
-        # 1. Get user settings
-        settings = get_user_settings(context.application.bot_data, chat_id)
-        
-        if not settings.get('alerts_enabled', False):
-            return
-        
-        # 2. Analyze all symbols
-        symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'ADAUSDT']
-        timeframe = settings.get('timeframe', '1h')
-        
-        signals = []
-        
-        for symbol in symbols:
-            # 3. Run same ICT analysis as manual /signal
-            klines = await fetch_klines(symbol, timeframe, 200)
-            df = prepare_dataframe(klines)
-            mtf_data = fetch_mtf_data(symbol, timeframe, df)
-            
-            # 4. Generate ICT signal
-            ict_signal = ict_engine_global.generate_signal(
-                df=df,
-                symbol=symbol,
-                timeframe=timeframe,
-                mtf_data=mtf_data
-            )
-            
-            # 5. Filter by confidence and entry zone
-            if ict_signal and ict_signal.confidence >= 70:
-                entry_zone, entry_status = get_entry_zone(ict_signal)
-                
-                # Only include VALID signals
-                if entry_status in ['VALID_WAIT', 'VALID_NEAR']:
-                    signals.append(ict_signal)
-        
-        # 6. Get top N signals
-        top_n = settings.get('alert_top_n', 3)
-        signals = sorted(signals, key=lambda s: s.confidence, reverse=True)[:top_n]
-        
-        # 7. Send signals
-        for signal in signals:
-            # Check cooldown
-            if not is_signal_already_sent(signal.symbol, signal.signal_type.value, 
-                                          timeframe, signal.confidence, signal.entry_price, 60):
-                # Format & send
-                msg = format_ict_signal_13_point(signal)
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=msg,
-                    parse_mode='HTML'
-                )
-                
-                # Track signal
-                mark_signal_sent(signal.symbol, signal.signal_type.value, 
-                                timeframe, signal.confidence, signal.entry_price)
-                
-                # Add to monitor
-                add_signal_to_monitor(signal, signal.symbol, timeframe, chat_id)
-        
-    except Exception as e:
-        logger.error(f"Auto-signal error: {e}")
-```
-
-**Steps to Implement:**
-1. Create `send_alert_signal()` function in bot.py
-2. Use same ICT analysis as manual `/signal`
-3. Filter by confidence ≥ 70%
-4. Apply entry zone validation (TOO_LATE, NO_ZONE check)
-5. Implement cooldown to avoid duplicates
-6. Send top N signals to enabled users
-7. Track in active_trades for monitoring
-
-**Testing:**
-1. Enable auto-alerts: `/alerts on`
-2. Wait for scheduled execution (15 min interval)
-3. Verify signals are sent
-4. Check cooldown works (no duplicates)
-5. Verify signals added to real-time monitor
-
-**Бележки:**
-- Функцията трябва да следва СЪЩАТА последователност като manual signals
-- Всички настройки и филтри трябва да се прилагат
-- Cooldown е критичен за избягване на spam
-
----
-
-### P6: Daily Loss Limit Not Enforced
-
-**ID:** P6  
-**Status:** Open  
-**Критичност:** HIGH  
-**Дата на откриване:** 24 Dec 2025
-
-**Локация:**
-- File: `risk_config.json`
-- File: `bot.py` (signal generation logic)
-
-**Описание:**
-Risk config има `max_daily_loss_pct: 6.0` и `stop_trading_on_daily_limit: true` но
-проверката ЛИПСВА в signal generation процеса.
-
-**Конфигурация:**
-```json
-{
-  "max_daily_loss_pct": 6.0,
-  "stop_trading_on_daily_limit": true
-}
-```
-
-**Търсене в кода:**
-```bash
-grep -rn "max_daily_loss" bot.py
-grep -rn "stop_trading_on_daily_limit" bot.py
-# Result: Config е зареден но НЕ се използва!
-```
-
-**Причина:**
-- Risk manager е available
-- Config е зареден
-- Но няма check при signal_cmd() или ict_cmd()
-
-**Влияние върху системата:**
-1. **Risk Management:**
-   - Daily loss limit може да бъде надхвърлен
-   - Няма автоматично спиране на trading
-   - Risk config е неефективен
-
-2. **Financial Impact:**
-   - Възможност за excessive losses в лош ден
-   - Липса на защита
-
-3. **Compliance:**
-   - Риск настройките не се спазват
-
-**Препоръчано решение:**
-
-```python
-def check_daily_loss_limit(chat_id: int) -> tuple[bool, str]:
-    """
-    Проверява дали daily loss limit е достигнат.
-    
-    Returns:
-        (can_trade: bool, message: str)
-    """
-    try:
-        # Load risk config
-        with open('risk_config.json', 'r') as f:
-            risk_config = json.load(f)
-        
-        max_daily_loss_pct = risk_config['max_daily_loss_pct']
-        stop_trading = risk_config['stop_trading_on_daily_limit']
-        
-        if not stop_trading:
-            return True, ""  # Feature disabled
-        
-        # Load today's trades from journal
-        today = datetime.now(timezone.utc).date()
-        
-        # Get all trades for today
-        journal_file = f"{BASE_PATH}/trading_journal.json"
-        if not os.path.exists(journal_file):
-            return True, ""  # No trades yet
-        
-        with open(journal_file, 'r') as f:
-            journal = json.load(f)
-        
-        today_trades = [
-            t for t in journal 
-            if datetime.fromisoformat(t['timestamp']).date() == today
-            and t.get('outcome') in ['WIN', 'LOSS']
-        ]
-        
-        if not today_trades:
-            return True, ""  # No completed trades
-        
-        # Calculate daily PnL
-        total_pnl_pct = sum(t.get('pnl_pct', 0) for t in today_trades)
-        
-        # Check limit
-        if total_pnl_pct <= -max_daily_loss_pct:
-            msg = (
-                f"🚫 <b>DAILY LOSS LIMIT REACHED!</b>\n\n"
-                f"📉 Today's Loss: <b>{abs(total_pnl_pct):.2f}%</b>\n"
-                f"⚠️ Limit: <b>{max_daily_loss_pct}%</b>\n\n"
-                f"Trading is automatically stopped for today.\n"
-                f"System will resume tomorrow."
-            )
-            return False, msg
-        
-        return True, ""
-        
-    except Exception as e:
-        logger.error(f"Daily loss check error: {e}")
-        return True, ""  # Allow trading on error (fail-open)
-```
-
-**Integration in signal_cmd():**
-
-```python
-async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... existing code ...
-    
-    # ✅ CHECK DAILY LOSS LIMIT BEFORE ANALYSIS
-    can_trade, limit_msg = check_daily_loss_limit(update.effective_chat.id)
-    
-    if not can_trade:
-        await update.message.reply_text(limit_msg, parse_mode='HTML')
-        return
-    
-    # Continue with signal generation...
-```
-
-**Steps to Implement:**
-1. Create `check_daily_loss_limit()` function
-2. Add check in `signal_cmd()` BEFORE analysis
-3. Add check in `ict_cmd()` BEFORE analysis
-4. Add check in `send_alert_signal()` (when implemented)
-5. Load daily trades from trading journal
-6. Calculate daily PnL %
-7. Block signal generation if limit reached
-8. Send notification to user
-
-**Testing:**
-1. Set `max_daily_loss_pct: 2.0` (low for testing)
-2. Generate losing trades until limit
-3. Try `/signal` → should be blocked
-4. Verify notification is sent
-5. Check next day → should allow trading
-
-**Бележки:**
-- Check трябва да е ПРЕДИ signal analysis (спестяване на compute)
-- Използвай trading journal за PnL tracking
-- Fail-open на error (allow trading ако check фейлне)
-
----
+### P15: Not All Commands Secured
 
 ### P15: Not All Commands Secured
 
@@ -335,24 +41,33 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Security modules (v2.0.0) са available но не всички commands използват
 security decorators (`@rate_limited`, `@require_auth`).
 
+**Command Audit Results:**
+- **Total bot commands:** ~40
+- **Commands with @rate_limited decorator:** Only 6
+- **Unprotected high-cost commands:**
+  - `/signal` - has @rate_limited but missing enhanced limits
+  - `/backtest` - missing rate limit (heavy computation)
+  - `/market` - missing rate limit (API calls)
+  - `/breaking` - missing rate limit (news API)
+  - And ~30 more commands without any protection
+
+**Evidence:**
+```bash
+grep -n "@rate_limited\|@require_auth" bot.py
+# Lines found: 4626, 5848, 6190, 6390, 6874, 11411
+# Result: Only 6 commands have rate limiting
+```
+
 **Налични decorators:**
 ```python
 from security.rate_limiter import check_rate_limit, rate_limiter
 from security.auth import require_auth, require_admin
 ```
 
-**Проблем:**
-```bash
-# Search for @rate_limited usage
-grep -n "@rate_limited" bot.py
-
-# Result: Само някои commands имат decorator!
-```
-
 **Причина:**
 - Security system е добавен в v2.0.0
 - Не всички commands са обновени
-- Inconsistent protection
+- Inconsistent protection across handlers
 
 **Влияние върху системата:**
 1. **Security:**
@@ -373,8 +88,8 @@ grep -n "@rate_limited" bot.py
 |---------|---------------|----------------|------|
 | `/start` | ❌ NO | ❌ NO | LOW |
 | `/help` | ❌ NO | ❌ NO | LOW |
-| `/signal` | ⚠️ PARTIAL | ❌ NO | HIGH |
-| `/ict` | ✅ YES | ❌ NO | MEDIUM |
+| `/signal` | ✅ YES | ❌ NO | HIGH |
+| `/ict` | ✅ YES | ❌ NO | HIGH |
 | `/market` | ❌ NO | ❌ NO | MEDIUM |
 | `/news` | ❌ NO | ❌ NO | MEDIUM |
 | `/breaking` | ❌ NO | ❌ NO | HIGH |
@@ -458,6 +173,232 @@ async def help_cmd(update, context):
 - Different limits за different command types
 - Start/Help винаги достъпни (no rate limit)
 - Admin commands винаги с @require_admin
+
+---
+
+### P16: DataFrame Ambiguous Truth Value Error
+
+**ID:** P16  
+**Status:** Open  
+**Критичност:** MEDIUM  
+**Дата на откриване:** 24 Dec 2025
+
+**Локация:**
+- File: `bot.py` - multiple locations using DataFrame conditionals
+- File: `ict_signal_engine.py` - DataFrame validation logic
+
+**Описание:**
+Potential `ValueError: The truth value of a DataFrame is ambiguous` errors when checking DataFrames in conditional statements without proper validation.
+
+**Risk:**
+- Code may fail with certain data conditions
+- Pandas DataFrames cannot be used directly in `if` statements
+- Unpredictable behavior when DataFrame evaluation is ambiguous
+
+**Example vulnerable code pattern:**
+```python
+# ❌ INCORRECT - Will raise ValueError
+if df:
+    # process data
+    pass
+
+# ❌ INCORRECT - Ambiguous truth value
+if mtf_data:
+    # analyze
+    pass
+```
+
+**Locations in code:**
+```bash
+# Search for potential issues
+grep -n "if df:" bot.py
+grep -n "if mtf_data:" bot.py
+grep -n "if.*DataFrame" bot.py
+```
+
+**Причина:**
+- Pandas DataFrame boolean evaluation is ambiguous
+- Must use explicit checks like `.empty`, `.shape`, or `len()`
+- Common mistake when transitioning from simple data structures
+
+**Влияние върху системата:**
+1. **Runtime Errors:**
+   - Potential crashes during signal generation
+   - Unpredictable failures with certain market data
+
+2. **Data Validation:**
+   - Incorrect validation may pass/fail unexpectedly
+   - Silent failures possible
+
+**Препоръчано решение:**
+
+```python
+# ✅ CORRECT PATTERNS:
+
+# Check if DataFrame is empty
+if not df.empty:
+    # process data
+    pass
+
+# Check if DataFrame has data
+if len(df) > 0:
+    # process data
+    pass
+
+# Check DataFrame shape
+if df.shape[0] > 0:
+    # process data
+    pass
+
+# Check for None AND emptiness
+if df is not None and not df.empty:
+    # process data
+    pass
+
+# For dictionaries containing DataFrames
+if mtf_data and 'htf' in mtf_data:
+    if not mtf_data['htf'].empty:
+        # analyze
+        pass
+```
+
+**Steps to Fix:**
+1. Search for all DataFrame conditional checks
+2. Replace `if df:` with `if not df.empty:`
+3. Replace `if mtf_data:` with proper None and empty checks
+4. Add defensive programming for DataFrame validation
+5. Test with various data scenarios (empty, None, valid)
+
+**Testing:**
+1. Test with empty DataFrames
+2. Test with None values
+3. Test with valid data
+4. Verify no ValueError exceptions
+5. Check edge cases (single row, missing columns)
+
+**Бележки:**
+- Always use `.empty` property for DataFrame checks
+- Combine with `is not None` for comprehensive validation
+- Document DataFrame validation requirements
+
+---
+
+### P17: LuxAlgo NoneType Error Risk
+
+**ID:** P17  
+**Status:** Open  
+**Критичност:** MEDIUM  
+**Дата на откриване:** 24 Dec 2025
+
+**Локация:**
+- File: `luxalgo_ict_analysis.py` - LuxAlgo analysis functions
+- File: `luxalgo_ict_concepts.py` - LuxAlgo concept detection
+- File: `luxalgo_sr_mtf.py` - Support/Resistance analysis
+- File: `bot.py` - Integration points with LuxAlgo modules
+
+**Описание:**
+LuxAlgo analysis functions may return `None` instead of expected data structure, causing `NoneType` errors in downstream code that assumes valid data.
+
+**Risk:**
+- Attempting to access dict keys on None value
+- Index errors when None is returned instead of list
+- Attribute errors when accessing None object properties
+
+**Example vulnerable pattern:**
+```python
+# ❌ INCORRECT - No None check
+luxalgo_result = analyze_luxalgo(df, symbol)
+levels = luxalgo_result['support_resistance']  # If None → KeyError/TypeError
+signals = luxalgo_result.get_signals()  # If None → AttributeError
+
+# ❌ INCORRECT - Assumes list return
+sr_levels = get_sr_levels(df)
+if len(sr_levels) > 0:  # If None → TypeError
+    process_levels(sr_levels)
+```
+
+**Locations to check:**
+```bash
+# Find LuxAlgo integration points
+grep -n "luxalgo" bot.py
+grep -n "from luxalgo" bot.py
+grep -rn "analyze_luxalgo\|get_sr_levels" *.py
+```
+
+**Причина:**
+- LuxAlgo functions may fail silently and return None
+- External module reliability depends on data quality
+- Not all code paths handle None returns defensively
+
+**Влияние върху системата:**
+1. **Runtime Errors:**
+   - `TypeError: 'NoneType' object is not subscriptable`
+   - `AttributeError: 'NoneType' object has no attribute`
+   - Potential signal generation failures
+
+2. **Data Integrity:**
+   - Missing support/resistance levels
+   - Incomplete analysis if LuxAlgo fails
+   - Silent failures without proper error handling
+
+**Препоръчано решение:**
+
+```python
+# ✅ CORRECT PATTERNS:
+
+# Pattern 1: Defensive check with default
+luxalgo_result = analyze_luxalgo(df, symbol)
+if luxalgo_result is not None:
+    levels = luxalgo_result.get('support_resistance', [])
+    process_levels(levels)
+else:
+    logger.warning("LuxAlgo analysis returned None")
+    levels = []  # Use empty default
+
+# Pattern 2: Try-except with fallback
+try:
+    luxalgo_result = analyze_luxalgo(df, symbol)
+    if luxalgo_result:
+        signals = luxalgo_result.get('signals', [])
+    else:
+        signals = []
+except Exception as e:
+    logger.error(f"LuxAlgo analysis failed: {e}")
+    signals = []
+
+# Pattern 3: Validate before accessing
+sr_levels = get_sr_levels(df)
+if sr_levels is not None and len(sr_levels) > 0:
+    process_levels(sr_levels)
+else:
+    logger.warning("No SR levels detected")
+
+# Pattern 4: Use get() with defaults
+luxalgo_data = analyze_luxalgo(df, symbol) or {}
+support = luxalgo_data.get('support', None)
+resistance = luxalgo_data.get('resistance', None)
+```
+
+**Steps to Fix:**
+1. Audit all LuxAlgo function calls
+2. Add None checks before accessing returned data
+3. Use `.get()` method for dict access with defaults
+4. Add try-except blocks around LuxAlgo integration
+5. Log warnings when LuxAlgo returns None
+6. Provide sensible defaults for missing data
+
+**Testing:**
+1. Test with invalid/incomplete market data
+2. Simulate LuxAlgo function failures (return None)
+3. Verify graceful degradation
+4. Check that signals can still generate without LuxAlgo data
+5. Verify error logging works correctly
+
+**Бележки:**
+- LuxAlgo is an optional enhancement - system should work without it
+- Always provide fallback values
+- Log all LuxAlgo failures for debugging
+- Consider caching successful LuxAlgo results
 
 ---
 
@@ -1411,18 +1352,18 @@ scheduler.add_job(
 
 ## 📊 SUMMARY BY PRIORITY
 
-### HIGH Priority (3 issues):
-- P1: Auto-Signal Function Missing
-- P6: Daily Loss Limit Not Enforced
+### HIGH Priority (1 issue):
 - P15: Not All Commands Secured
 
-### MEDIUM Priority (8 issues):
+### MEDIUM Priority (10 issues):
 - P2: Monolithic bot.py Structure
 - P3: Admin Module Hardcoded Paths
 - P5: ML Model Not Auto-Training
 - P8: Cooldown System Incomplete
 - P10: Scheduler Jobs Without Error Handling
 - P13: Global Cache Without Cleanup
+- P16: DataFrame Ambiguous Truth Value Error
+- P17: LuxAlgo NoneType Error Risk
 
 ### LOW Priority (4 issues):
 - P4: Unused Feature Flags
@@ -1437,9 +1378,9 @@ scheduler.add_job(
 ## 🎯 RECOMMENDED ACTION PLAN
 
 ### Phase 1: Critical Fixes (Week 1)
-1. P1: Implement `send_alert_signal()` function
-2. P6: Add daily loss limit check
-3. P15: Apply security decorators to all commands
+1. P15: Apply security decorators to all commands
+2. P16: Fix DataFrame boolean evaluation issues
+3. P17: Add defensive checks for LuxAlgo integration
 
 ### Phase 2: Stability Improvements (Week 2-3)
 4. P10: Add error handling to scheduler jobs
