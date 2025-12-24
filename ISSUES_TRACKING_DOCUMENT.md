@@ -14,8 +14,8 @@
 |---------|----------|
 | **Общ брой проблеми** | 15 |
 | **Критични (HIGH)** | 1 |
-| **Средни (MEDIUM)** | 10 |
-| **Ниски (LOW)** | 4 |
+| **Средни (MEDIUM)** | 8 |
+| **Ниски (LOW)** | 6 |
 | **Open** | 15 |
 | **In Progress** | 0 |
 | **Resolved** | 0 |
@@ -23,8 +23,6 @@
 ---
 
 ## 🚨 CRITICAL ISSUES (HIGH Priority)
-
-### P15: Not All Commands Secured
 
 ### P15: Not All Commands Secured
 
@@ -175,6 +173,8 @@ async def help_cmd(update, context):
 - Admin commands винаги с @require_admin
 
 ---
+
+## ⚠️ MEDIUM PRIORITY ISSUES
 
 ### P16: DataFrame Ambiguous Truth Value Error
 
@@ -401,8 +401,6 @@ resistance = luxalgo_data.get('resistance', None)
 - Consider caching successful LuxAlgo results
 
 ---
-
-## ⚠️ MEDIUM PRIORITY ISSUES
 
 ### P2: Monolithic bot.py Structure
 
@@ -1355,7 +1353,7 @@ scheduler.add_job(
 ### HIGH Priority (1 issue):
 - P15: Not All Commands Secured
 
-### MEDIUM Priority (10 issues):
+### MEDIUM Priority (8 issues):
 - P2: Monolithic bot.py Structure
 - P3: Admin Module Hardcoded Paths
 - P5: ML Model Not Auto-Training
@@ -1365,7 +1363,7 @@ scheduler.add_job(
 - P16: DataFrame Ambiguous Truth Value Error
 - P17: LuxAlgo NoneType Error Risk
 
-### LOW Priority (4 issues):
+### LOW Priority (6 issues):
 - P4: Unused Feature Flags
 - P7: Chart Generation Failure Handling
 - P9: Entry Zone Validation Duplication
