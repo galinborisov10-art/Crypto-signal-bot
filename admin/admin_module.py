@@ -8,19 +8,70 @@ import os
 from datetime import datetime, timezone, timedelta
 import hashlib
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-ADMIN_DIR = "/workspaces/Crypto-signal-bot/admin"
+# ==================== DYNAMIC PATH DETECTION ====================
+# Use SAME logic as bot.py for consistency
+
+if os.getenv('BOT_BASE_PATH'):
+    # Environment variable takes precedence
+    BASE_PATH = os.getenv('BOT_BASE_PATH')
+    logger.info(f"✅ BASE_PATH from environment: {BASE_PATH}")
+elif os.path.exists('/root/Crypto-signal-bot'):
+    # Production server
+    BASE_PATH = '/root/Crypto-signal-bot'
+    logger.info(f"✅ BASE_PATH detected (production): {BASE_PATH}")
+elif os.path.exists('/workspaces/Crypto-signal-bot'):
+    # GitHub Codespaces
+    BASE_PATH = '/workspaces/Crypto-signal-bot'
+    logger.info(f"✅ BASE_PATH detected (codespace): {BASE_PATH}")
+else:
+    # Fallback to module directory
+    BASE_PATH = str(Path(__file__).parent.parent)
+    logger.info(f"✅ BASE_PATH detected (fallback): {BASE_PATH}")
+
+# ==================== ADMIN PATHS ====================
+ADMIN_DIR = f"{BASE_PATH}/admin"
 ADMIN_PASSWORD_FILE = f"{ADMIN_DIR}/admin_password.json"
 REPORTS_DIR = f"{ADMIN_DIR}/reports"
 DAILY_REPORTS_DIR = f"{REPORTS_DIR}/daily"
 WEEKLY_REPORTS_DIR = f"{REPORTS_DIR}/weekly"
 MONTHLY_REPORTS_DIR = f"{REPORTS_DIR}/monthly"
 
-# Създай необходимите директории
-for dir_path in [ADMIN_DIR, REPORTS_DIR, DAILY_REPORTS_DIR, WEEKLY_REPORTS_DIR, MONTHLY_REPORTS_DIR]:
-    os.makedirs(dir_path, exist_ok=True)
+# ==================== ENSURE DIRECTORIES EXIST ====================
+def ensure_admin_directories():
+    """
+    Create all required admin directories with validation.
+    Fails fast if directories cannot be created.
+    """
+    required_dirs = [
+        ADMIN_DIR,
+        REPORTS_DIR,
+        DAILY_REPORTS_DIR,
+        WEEKLY_REPORTS_DIR,
+        MONTHLY_REPORTS_DIR
+    ]
+    
+    for dir_path in required_dirs:
+        try:
+            os.makedirs(dir_path, exist_ok=True)
+            logger.info(f"✅ Directory ready: {dir_path}")
+        except Exception as e:
+            logger.error(f"❌ Failed to create {dir_path}: {e}")
+            raise RuntimeError(f"Admin module initialization failed: {e}")
+    
+    logger.info("✅ All admin directories initialized")
+
+# Call on module import
+ensure_admin_directories()
+
+# Log path detection for debugging
+logger.info(f"Admin module initialized:")
+logger.info(f"  BASE_PATH: {BASE_PATH}")
+logger.info(f"  ADMIN_DIR: {ADMIN_DIR}")
+logger.info(f"  REPORTS_DIR: {REPORTS_DIR}")
 
 
 def hash_password(password):
@@ -66,7 +117,7 @@ def is_admin(chat_id):
 
 def load_trade_history():
     """Зареди история на трейдовете"""
-    stats_file = "/workspaces/Crypto-signal-bot/bot_stats.json"
+    stats_file = f"{BASE_PATH}/bot_stats.json"
     if os.path.exists(stats_file):
         with open(stats_file, 'r') as f:
             return json.load(f)
