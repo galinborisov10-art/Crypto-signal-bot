@@ -47,8 +47,19 @@ class MLPredictor:
         self.min_training_data = min_training_data
         self.model = None
         self.feature_names = [
-            'rsi', 'ma_20', 'ma_50', 'volume_ratio', 'volatility',
-            'confidence', 'btc_correlation', 'sentiment_score'
+            'rsi',                      # Keep - RSI indicator
+            'market_structure_score',   # NEW - Pure ICT: Market structure (HH/HL vs LH/LL)
+            'order_block_strength',     # NEW - Pure ICT: Order block count and quality
+            'displacement_score',       # NEW - Pure ICT: Price displacement strength
+            'fvg_quality',             # NEW - Pure ICT: Fair Value Gap quality
+            'liquidity_grab_score',    # NEW - Pure ICT: Liquidity sweep strength
+            'volume_ratio',            # Keep - Volume analysis
+            'volatility',              # Keep - Price volatility
+            'confidence',              # Keep - ICT confidence score
+            'btc_correlation',         # Keep - BTC correlation
+            'sentiment_score',         # Keep - Market sentiment
+            'mtf_alignment',           # NEW - Pure ICT: Multi-timeframe confluence
+            'risk_reward_ratio'        # NEW - Pure ICT: Risk/reward from signal
         ]
         self.is_trained = False
         
@@ -63,77 +74,164 @@ class MLPredictor:
     
     def extract_features(self, trade_data: Dict) -> Optional[List[float]]:
         """
-        Извлича features от trade данни за ML модела
+        ✅ UPDATED: Extract Pure ICT features (NO MA/EMA!)
         
         Args:
-            trade_data: Речник с analysis_data от трейд
+            trade_data: Dictionary with ICT signal data
             
         Returns:
-            Списък с features или None ако данните са непълни
+            List of 13 features or None if data is incomplete
+            
+        Features:
+        1. RSI (0-100)
+        2. Market Structure Score (0-100) - Pure ICT
+        3. Order Block Strength (0-100) - Pure ICT
+        4. Displacement Score (0-100) - Pure ICT
+        5. FVG Quality (0-100) - Pure ICT
+        6. Liquidity Grab Score (0-100) - Pure ICT
+        7. Volume Ratio (0-5+)
+        8. Volatility (0-10+)
+        9. Confidence (0-100)
+        10. BTC Correlation (-1 to 1, normalized to 0-100)
+        11. Sentiment Score (0-100)
+        12. MTF Alignment (0-100)
+        13. Risk/Reward Ratio (0-10+)
         """
         try:
+            # Try to get ICT components (new format)
+            ict_components = trade_data.get('ict_components', {})
             analysis = trade_data.get('analysis_data', {})
             
-            # RSI
-            rsi = analysis.get('rsi', 50.0)
-            if rsi is None:
+            # === FEATURE 1: RSI (KEEP AS IS) ===
+            rsi = analysis.get('rsi') or trade_data.get('rsi', 50.0)
+            if rsi is None or rsi < 0 or rsi > 100:
                 rsi = 50.0
             
-            # Moving Averages
-            ma_20 = analysis.get('ma_20', 0.0)
-            ma_50 = analysis.get('ma_50', 0.0)
+            # === FEATURE 2: MARKET STRUCTURE SCORE (NEW - Pure ICT) ===
+            market_structure = ict_components.get('market_structure', {})
+            if isinstance(market_structure, dict):
+                # Try to calculate from structure data
+                structure_breaks = market_structure.get('structure_breaks', [])
+                bos_count = market_structure.get('bos_count', 0)
+                choch_count = market_structure.get('choch_count', 0)
+                
+                # Score based on structure strength
+                structure_score = min(100, (bos_count * 20) + (choch_count * 15) + (len(structure_breaks) * 10))
+            else:
+                structure_score = 50.0  # Neutral default
             
-            # Normalize MAs (relative to current price)
-            current_price = trade_data.get('entry_price', 1.0)
-            ma_20_norm = (ma_20 / current_price - 1) * 100 if ma_20 > 0 else 0.0
-            ma_50_norm = (ma_50 / current_price - 1) * 100 if ma_50 > 0 else 0.0
+            # === FEATURE 3: ORDER BLOCK STRENGTH (NEW - Pure ICT) ===
+            order_blocks = ict_components.get('order_blocks', [])
+            if order_blocks and isinstance(order_blocks, list):
+                # Calculate strength from order block count and properties
+                ob_count = len(order_blocks)
+                ob_strength = min(100, ob_count * 20)  # Max 5 OBs = 100%
+                
+                # Boost if OBs have high strength property
+                try:
+                    avg_ob_quality = sum(ob.get('strength', 50) for ob in order_blocks if isinstance(ob, dict)) / max(1, ob_count)
+                    ob_strength = (ob_strength + avg_ob_quality) / 2
+                except:
+                    pass
+            else:
+                ob_strength = 50.0  # Neutral default
             
-            # Volume ratio
-            volume_ratio = analysis.get('volume_ratio', 1.0)
-            if volume_ratio is None:
+            # === FEATURE 4: DISPLACEMENT SCORE (NEW - Pure ICT) ===
+            displacement = ict_components.get('displacement', {})
+            if isinstance(displacement, dict):
+                disp_detected = displacement.get('detected', False)
+                disp_strength = displacement.get('strength', 50.0)
+                disp_score = disp_strength if disp_detected else 50.0
+            else:
+                disp_score = 50.0  # Neutral default
+            
+            # === FEATURE 5: FVG QUALITY (NEW - Pure ICT) ===
+            fvgs = ict_components.get('fvgs', []) or ict_components.get('fair_value_gaps', [])
+            if fvgs and isinstance(fvgs, list):
+                fvg_count = len(fvgs)
+                fvg_quality = min(100, fvg_count * 25)  # Max 4 FVGs = 100%
+                
+                # Boost if FVGs have size property
+                try:
+                    avg_fvg_size = sum(fvg.get('size_percent', 1.0) for fvg in fvgs if isinstance(fvg, dict)) / max(1, fvg_count)
+                    fvg_quality = min(100, fvg_quality + (avg_fvg_size * 10))
+                except:
+                    pass
+            else:
+                fvg_quality = 50.0  # Neutral default
+            
+            # === FEATURE 6: LIQUIDITY GRAB SCORE (NEW - Pure ICT) ===
+            liquidity_zones = ict_components.get('liquidity_zones', [])
+            if liquidity_zones and isinstance(liquidity_zones, list):
+                liq_count = len(liquidity_zones)
+                liq_score = min(100, liq_count * 15)  # Max 6-7 zones = 100%
+            else:
+                liq_score = 50.0  # Neutral default
+            
+            # === FEATURE 7: VOLUME RATIO (KEEP AS IS) ===
+            volume_ratio = analysis.get('volume_ratio') or trade_data.get('volume_ratio', 1.0)
+            if volume_ratio is None or volume_ratio < 0:
                 volume_ratio = 1.0
             
-            # Volatility (normalized)
-            volatility = analysis.get('volatility', 0.0)
-            if isinstance(volatility, str):
-                volatility_map = {'Ниска': 0.5, 'Средна': 1.0, 'Висока': 2.0, 'Много висока': 3.0}
-                volatility = volatility_map.get(volatility, 1.0)
+            # === FEATURE 8: VOLATILITY (KEEP AS IS) ===
+            volatility = analysis.get('volatility') or trade_data.get('volatility', 1.0)
+            if volatility is None or volatility < 0:
+                volatility = 1.0
             
-            # Confidence
+            # === FEATURE 9: CONFIDENCE (KEEP AS IS) ===
             confidence = trade_data.get('confidence', 50.0)
+            if confidence is None or confidence < 0 or confidence > 100:
+                confidence = 50.0
             
-            # BTC correlation
-            btc_corr = analysis.get('btc_correlation', {})
-            if isinstance(btc_corr, dict):
-                btc_corr_strength = btc_corr.get('strength', 0.0)
-            else:
-                btc_corr_strength = 0.0
+            # === FEATURE 10: BTC CORRELATION (KEEP AS IS) ===
+            btc_correlation = analysis.get('btc_correlation') or trade_data.get('btc_correlation', 0.0)
+            if btc_correlation is None:
+                btc_correlation = 0.0
+            # Normalize to 0-100 scale: -1 to 1 → 0 to 100
+            btc_correlation_normalized = (btc_correlation + 1) * 50
             
-            # Sentiment
-            sentiment = analysis.get('sentiment', {})
-            if isinstance(sentiment, dict):
-                sentiment_confidence = sentiment.get('confidence', 0.0)
-                # Ако sentiment противоречи на signal, направи го отрицателно
-                if sentiment.get('sentiment') != trade_data.get('signal_type'):
-                    sentiment_confidence = -sentiment_confidence
-            else:
-                sentiment_confidence = 0.0
+            # === FEATURE 11: SENTIMENT SCORE (KEEP AS IS) ===
+            sentiment_score = analysis.get('sentiment_score') or trade_data.get('sentiment_score', 50.0)
+            if sentiment_score is None or sentiment_score < 0 or sentiment_score > 100:
+                sentiment_score = 50.0
             
+            # === FEATURE 12: MTF ALIGNMENT (NEW - Pure ICT) ===
+            mtf_confluence = trade_data.get('mtf_confluence', 0.5)
+            if mtf_confluence is None:
+                mtf_confluence = 0.5
+            mtf_alignment = mtf_confluence * 100  # Convert 0-1 to 0-100
+            
+            # === FEATURE 13: RISK/REWARD RATIO (NEW - Pure ICT) ===
+            risk_reward_ratio = trade_data.get('risk_reward_ratio', 2.0)
+            if risk_reward_ratio is None or risk_reward_ratio < 0:
+                risk_reward_ratio = 2.0
+            
+            # ✅ RETURN FEATURE VECTOR (13 features)
             features = [
-                rsi,
-                ma_20_norm,
-                ma_50_norm,
-                volume_ratio,
-                volatility,
-                confidence,
-                btc_corr_strength,
-                sentiment_confidence
+                float(rsi),
+                float(structure_score),
+                float(ob_strength),
+                float(disp_score),
+                float(fvg_quality),
+                float(liq_score),
+                float(volume_ratio),
+                float(volatility),
+                float(confidence),
+                float(btc_correlation_normalized),
+                float(sentiment_score),
+                float(mtf_alignment),
+                float(risk_reward_ratio)
             ]
+            
+            # Validate all features are valid numbers
+            if any(not isinstance(f, (int, float)) or np.isnan(f) or np.isinf(f) for f in features):
+                logger.warning("Invalid feature values detected, using defaults")
+                return None
             
             return features
             
         except Exception as e:
-            logger.error(f"Грешка при извличане на features: {e}")
+            logger.error(f"❌ Feature extraction error: {e}")
             return None
     
     def load_training_data(self, journal_path='trading_journal.json') -> Tuple[np.ndarray, np.ndarray]:
@@ -194,6 +292,13 @@ class MLPredictor:
         
         # Зареди данни
         X, y = self.load_training_data()
+        
+        # Validate feature consistency
+        logger.info(f"📊 Extracted features from {len(X)} trades")
+        logger.info(f"📊 Feature dimensions: {len(self.feature_names)} features per trade")
+        if len(X) > 0:
+            logger.info(f"📊 First trade features: {self.feature_names}")
+            logger.info(f"📊 Sample values: {X[0]}")
         
         if len(X) < self.min_training_data:
             logger.warning(f"⚠️ Недостатъчно данни за обучение. Нужни {self.min_training_data}, налични {len(X)}")

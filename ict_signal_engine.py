@@ -607,6 +607,27 @@ class ICTSignalEngine:
             displacement_detected, risk_reward_ratio
         )
         
+        # ✅ APPLY CONTEXT-AWARE FILTERS (NEW - Enhances confidence accuracy)
+        logger.info("📊 Step 11a: Context-Aware Filtering")
+        context_warnings = []
+        try:
+            # Extract enhanced context (pass symbol for BTC correlation)
+            context_data = self._extract_context_data(df, bias, symbol)
+            
+            # Apply context filters to adjust confidence
+            confidence_after_context, context_warnings = self._apply_context_filters(
+                base_confidence,
+                context_data,
+                ict_components
+            )
+            
+            logger.info(f"Context-aware confidence: {base_confidence:.1f}% → {confidence_after_context:.1f}%")
+            
+        except Exception as e:
+            logger.warning(f"Context filtering failed, using base confidence: {e}")
+            confidence_after_context = base_confidence
+            context_warnings = []
+        
         # СТЪПКА 11: ML OPTIMIZATION (ЗАПАЗВАМЕ existing logic)
         logger.info("📊 Step 11: ML Optimization")
 
@@ -674,20 +695,29 @@ class ICTSignalEngine:
             # Try ML Predictor (win probability) if ML Engine not available
             elif self.ml_predictor and self.ml_predictor.is_trained:
                 try:
-                    # Prepare trade data
+                    # Prepare trade data with Pure ICT features
                     trade_data = {
                         'entry_price': entry_price,
-                        'analysis_data': ml_features
+                        'analysis_data': ml_features,
+                        'ict_components': ict_components,  # ✅ NEW: Pass ICT components
+                        'volume_ratio': context_data.get('volume_ratio', 1.0),  # ✅ NEW
+                        'volatility': context_data.get('volatility_pct', 1.0),  # ✅ NEW
+                        'btc_correlation': context_data.get('btc_correlation', 0.0),  # ✅ NEW
+                        'mtf_confluence': mtf_analysis.get('confluence_count', 0) / 5 if mtf_analysis else 0.5,  # ✅ NEW
+                        'risk_reward_ratio': risk_reward_ratio,  # ✅ NEW
+                        'rsi': context_data.get('rsi', 50.0),  # ✅ NEW
+                        'sentiment_score': 50.0,  # ✅ NEW: Placeholder (TODO: Add real sentiment)
+                        'confidence': confidence_after_context  # ✅ UPDATED: Use context-adjusted confidence
                     }
                     
                     # Get win probability
                     win_probability = self.ml_predictor.predict(trade_data)
                     
                     if win_probability is not None:
-                        # Get confidence adjustment
+                        # Get confidence adjustment (use context-adjusted confidence as base)
                         ml_confidence_adjustment = self.ml_predictor.get_confidence_adjustment(
                             ml_probability=win_probability,
-                            current_confidence=base_confidence
+                            current_confidence=confidence_after_context
                         )
                         
                         logger.info(f"ML win probability: {win_probability:.1f}%")
@@ -710,7 +740,8 @@ class ICTSignalEngine:
             # - Ако confidence стане < 60%, сигналът не се изпраща
             # - Ако MTF consensus < 50%, ML не може да промени това
 
-        confidence = base_confidence + ml_confidence_adjustment
+        # ✅ UPDATED: Use context-adjusted confidence as base for ML adjustment
+        confidence = confidence_after_context + ml_confidence_adjustment
         confidence = max(0.0, min(100.0, confidence))
         
         # ✅ ML RESTRICTION: Гарантирай че confidence не пада под минимум
@@ -763,6 +794,11 @@ class ICTSignalEngine:
         signal_type = self._determine_signal_type(bias, signal_strength, confidence)
         reasoning = self._generate_reasoning(ict_components, bias, entry_setup, mtf_analysis)
         warnings = self._generate_warnings(ict_components, risk_reward_ratio, df)
+        
+        # ✅ ADD CONTEXT WARNINGS (if any)
+        if context_warnings:
+            warnings.extend(context_warnings)
+            logger.info(f"Added {len(context_warnings)} context-based warnings")
         
         zone_explanations = {}
         if self.zone_explainer:
@@ -838,6 +874,17 @@ class ICTSignalEngine:
                 self.cache_manager.cache_signal(symbol, timeframe, signal)
             except Exception as e:
                 logger.warning(f"Cache error: {e}")
+        
+        # ✅ LOG FINAL SIGNAL METRICS (for validation)
+        logger.info("=" * 60)
+        logger.info("📊 FINAL SIGNAL METRICS:")
+        logger.info(f"   Base Confidence: {base_confidence:.1f}%")
+        logger.info(f"   Context-Adjusted: {confidence:.1f}%")
+        logger.info(f"   Signal Type: {signal_type.value if hasattr(signal_type, 'value') else signal_type}")
+        logger.info(f"   Warnings: {len(warnings)}")
+        if context_warnings:
+            logger.info(f"   Context Warnings: {context_warnings}")
+        logger.info("=" * 60)
         
         return signal
     
@@ -2439,7 +2486,12 @@ class ICTSignalEngine:
         }
         return order.get(tf, 999)
     
-    def _extract_context_data(self, df: pd.DataFrame, bias: 'MarketBias') -> Dict:
+    def _extract_context_data(
+        self, 
+        df: pd.DataFrame, 
+        bias: 'MarketBias',
+        symbol: Optional[str] = None  # NEW: Optional parameter (backward compatible)
+    ) -> Dict:
         """
         Extract context data for no-trade messages
         
@@ -2487,11 +2539,69 @@ class ICTSignalEngine:
             else:
                 signal_direction = 'NEUTRAL'
             
+            # === NEW: ENHANCED CONTEXT (Add below existing code) ===
+            
+            # Volume Context
+            volume_ratio = 1.0
+            volume_spike = False
+            try:
+                if 'volume' in df.columns and len(df) >= 20:
+                    avg_volume = df['volume'].rolling(20).mean().iloc[-1]
+                    current_volume = df['volume'].iloc[-1]
+                    if avg_volume > 0:
+                        volume_ratio = current_volume / avg_volume
+                        volume_spike = volume_ratio > 2.0
+            except Exception as e:
+                logger.debug(f"Volume context calculation error: {e}")
+            
+            # Volatility Context
+            volatility_pct = 0.0
+            high_volatility = False
+            try:
+                if 'atr' in df.columns:
+                    atr = df['atr'].iloc[-1]
+                    volatility_pct = (atr / current_price) * 100 if current_price > 0 else 0
+                    high_volatility = volatility_pct > 3.0
+            except Exception as e:
+                logger.debug(f"Volatility context calculation error: {e}")
+            
+            # Trading Session Context
+            session = 'UNKNOWN'
+            try:
+                hour_utc = datetime.utcnow().hour
+                if 0 <= hour_utc < 8:
+                    session = 'ASIAN'
+                elif 8 <= hour_utc < 16:
+                    session = 'LONDON'
+                else:
+                    session = 'NEW_YORK'
+            except Exception as e:
+                logger.debug(f"Session detection error: {e}")
+            
+            # BTC Correlation Context (placeholder - only if symbol provided and not BTC)
+            btc_correlation = None
+            btc_aligned = None
+            if symbol and symbol not in ['BTCUSDT', 'BTC', 'BTCUSD']:
+                # TODO: Implement actual BTC correlation calculation
+                # For now, leave as None (won't affect existing signals)
+                btc_correlation = None
+                btc_aligned = None
+            
             return {
+                # ✅ EXISTING FIELDS (unchanged)
                 'current_price': current_price,
                 'price_change_24h': price_change_24h,
                 'rsi': rsi,
-                'signal_direction': signal_direction
+                'signal_direction': signal_direction,
+                
+                # ✅ NEW FIELDS (added for enhanced context)
+                'volume_ratio': round(volume_ratio, 2),
+                'volume_spike': volume_spike,
+                'volatility_pct': round(volatility_pct, 2),
+                'high_volatility': high_volatility,
+                'btc_correlation': btc_correlation,
+                'btc_aligned': btc_aligned,
+                'trading_session': session
             }
         except Exception as e:
             logger.warning(f"Error extracting context data for bias {bias}: {e}", exc_info=True)
@@ -2501,6 +2611,116 @@ class ICTSignalEngine:
                 'rsi': None,
                 'signal_direction': None
             }
+    
+    def _apply_context_filters(
+        self,
+        base_confidence: float,
+        context: Dict,
+        ict_components: Dict
+    ) -> Tuple[float, List[str]]:
+        """
+        ✅ NEW: Apply context-based confidence adjustments and generate warnings
+        
+        This method enhances signal quality by considering market context:
+        - Volume conditions
+        - Volatility levels
+        - Trading session
+        - BTC correlation (for altcoins)
+        
+        Args:
+            base_confidence: Base confidence score from ICT analysis
+            context: Context data from _extract_context_data()
+            ict_components: ICT components dictionary
+            
+        Returns:
+            Tuple of (adjusted_confidence, warnings_list)
+            
+        ⚠️ IMPORTANT: This method only ADJUSTS confidence, never blocks signals!
+        Signal blocking is still controlled by existing min_confidence threshold.
+        """
+        warnings = []
+        adjustment = 0.0
+        
+        try:
+            # === FILTER 1: VOLUME ANALYSIS ===
+            volume_ratio = context.get('volume_ratio', 1.0)
+            volume_spike = context.get('volume_spike', False)
+            
+            if volume_ratio < 0.5:
+                # Very low volume - reduce confidence
+                warnings.append("⚠️ LOW VOLUME - Reduced liquidity may affect execution")
+                adjustment -= 10
+                logger.info("Context filter: Low volume detected (-10%)")
+            elif volume_spike:
+                # High volume spike - increase confidence
+                warnings.append("✅ HIGH VOLUME - Strong market participation")
+                adjustment += 5
+                logger.info("Context filter: Volume spike detected (+5%)")
+            
+            # === FILTER 2: VOLATILITY ANALYSIS ===
+            volatility_pct = context.get('volatility_pct', 0.0)
+            high_volatility = context.get('high_volatility', False)
+            
+            if high_volatility:
+                # High volatility - slight confidence reduction (riskier)
+                warnings.append("⚠️ HIGH VOLATILITY - Consider wider stop loss")
+                adjustment -= 5
+                logger.info(f"Context filter: High volatility ({volatility_pct:.1f}%) detected (-5%)")
+            
+            # === FILTER 3: TRADING SESSION ===
+            session = context.get('trading_session', 'UNKNOWN')
+            
+            if session == 'ASIAN':
+                # Asian session - typically lower liquidity for crypto
+                warnings.append("ℹ️ ASIAN SESSION - Lower liquidity period")
+                adjustment -= 5
+                logger.info("Context filter: Asian session (-5%)")
+            elif session == 'LONDON':
+                # London session - high liquidity
+                warnings.append("✅ LONDON SESSION - Peak liquidity period")
+                adjustment += 5
+                logger.info("Context filter: London session (+5%)")
+            elif session == 'NEW_YORK':
+                # NY session - high liquidity (especially overlap with London)
+                warnings.append("✅ NEW YORK SESSION - High liquidity period")
+                adjustment += 3
+                logger.info("Context filter: New York session (+3%)")
+            
+            # === FILTER 4: BTC CORRELATION (for altcoins only) ===
+            btc_correlation = context.get('btc_correlation')
+            btc_aligned = context.get('btc_aligned')
+            
+            if btc_correlation is not None:
+                if btc_aligned == False:
+                    # Low correlation - independent move (can be risky)
+                    warnings.append("⚠️ LOW BTC CORRELATION - Independent price action")
+                    adjustment -= 10
+                    logger.info(f"Context filter: Low BTC correlation ({btc_correlation:.2f}) (-10%)")
+                elif btc_aligned == True:
+                    # High correlation - trend confirmation
+                    warnings.append("✅ BTC ALIGNED - Trend confirmation")
+                    adjustment += 10
+                    logger.info(f"Context filter: High BTC correlation ({btc_correlation:.2f}) (+10%)")
+            
+            # === CALCULATE ADJUSTED CONFIDENCE ===
+            adjusted_confidence = base_confidence + adjustment
+            
+            # Ensure confidence stays within 0-100 bounds
+            adjusted_confidence = max(0.0, min(100.0, adjusted_confidence))
+            
+            # Log summary
+            if adjustment != 0:
+                logger.info(f"✅ Context filters applied: {adjustment:+.1f}% adjustment")
+                logger.info(f"   Base confidence: {base_confidence:.1f}% → Adjusted: {adjusted_confidence:.1f}%")
+            else:
+                logger.info("✅ Context filters: No adjustments needed")
+            
+            return adjusted_confidence, warnings
+            
+        except Exception as e:
+            logger.error(f"❌ Context filter error: {e}")
+            # On error, return original confidence with no warnings
+            return base_confidence, []
     
     def _extract_ml_features(
         self,
