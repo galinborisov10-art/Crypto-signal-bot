@@ -1126,24 +1126,9 @@ class ICTSignalEngine:
                 
                 tf_df = mtf_data.get(tf)
                 if tf_df is not None and not tf_df.empty and len(tf_df) >= 20:
-                    # Опростен bias анализ за този TF
+                    # ✅ PURE ICT BIAS CALCULATION (no MA/EMA)
                     try:
-                        # Използвай последната цена спрямо MA
-                        close_prices = tf_df['close'].values
-                        ma_20 = np.mean(close_prices[-20:])
-                        current_price = close_prices[-1]
-                        
-                        # Определи bias
-                        if current_price > ma_20 * 1.005:  # 0.5% над MA
-                            tf_bias = MarketBias.BULLISH
-                        elif current_price < ma_20 * 0.995:  # 0.5% под MA
-                            tf_bias = MarketBias.BEARISH
-                        else:
-                            tf_bias = MarketBias.NEUTRAL
-                        
-                        # Изчисли confidence (колко далеч е от MA)
-                        distance_pct = abs(current_price - ma_20) / ma_20 * 100
-                        confidence = min(100, distance_pct * 20)  # Scale to 0-100
+                        tf_bias, confidence = self._calculate_pure_ict_bias_for_tf(tf_df)
                         
                         # Провери alignment
                         is_aligned = (tf_bias == target_bias) or (tf_bias == MarketBias.NEUTRAL)
@@ -1160,11 +1145,10 @@ class ICTSignalEngine:
                         
                     except Exception as e:
                         logger.warning(f"MTF consensus analysis failed for {tf}: {e}")
-                        # Добави като neutral ако анализът се провали
                         breakdown[tf] = {
                             'bias': 'NEUTRAL',
                             'confidence': 0,
-                            'aligned': True  # Neutral counts as aligned
+                            'aligned': True
                         }
                         aligned_count += 1
                         total_count += 1
@@ -1206,6 +1190,136 @@ class ICTSignalEngine:
             'aligned_count': aligned_count,
             'total_count': total_count
         }
+    
+    def _calculate_pure_ict_bias_for_tf(
+        self, 
+        df: pd.DataFrame
+    ) -> Tuple[MarketBias, float]:
+        """
+        ✅ PURE ICT Bias Calculation for MTF Timeframes - NO MA/EMA!
+        
+        Uses:
+        1. Market Structure (HH+HL vs LH+LL) - 50 points
+        2. Order Block direction - 30 points
+        3. Price Displacement - 20 points
+        
+        Args:
+            df: DataFrame with OHLCV data
+            
+        Returns:
+            Tuple of (MarketBias, confidence_score)
+        """
+        if len(df) < 20:
+            return MarketBias.NEUTRAL, 0.0
+        
+        bullish_score = 0
+        bearish_score = 0
+        max_score = 100
+        
+        # ═══════════════════════════════════════════════════════════
+        # 1. MARKET STRUCTURE (50 points)
+        # ═══════════════════════════════════════════════════════════
+        try:
+            highs = df['high'].values
+            lows = df['low'].values
+            
+            # Find swing points (simple method - last 10 candles)
+            swing_highs = []
+            swing_lows = []
+            
+            for i in range(5, len(df) - 5):
+                # Swing high: higher than 5 candles before and after
+                if all(highs[i] >= highs[i-j] for j in range(1, 6)) and \
+                   all(highs[i] >= highs[i+j] for j in range(1, 6)):
+                    swing_highs.append(highs[i])
+                
+                # Swing low: lower than 5 candles before and after
+                if all(lows[i] <= lows[i-j] for j in range(1, 6)) and \
+                   all(lows[i] <= lows[i+j] for j in range(1, 6)):
+                    swing_lows.append(lows[i])
+            
+            # Analyze structure
+            if len(swing_highs) >= 2 and len(swing_lows) >= 2:
+                # Higher Highs + Higher Lows = BULLISH
+                if swing_highs[-1] > swing_highs[-2] and swing_lows[-1] > swing_lows[-2]:
+                    bullish_score += 50
+                # Lower Highs + Lower Lows = BEARISH
+                elif swing_highs[-1] < swing_highs[-2] and swing_lows[-1] < swing_lows[-2]:
+                    bearish_score += 50
+                # Mixed structure = ranging (no points)
+        except Exception as e:
+            logger.debug(f"Market structure analysis error: {e}")
+        
+        # ═══════════════════════════════════════════════════════════
+        # 2. ORDER BLOCKS (30 points)
+        # ═══════════════════════════════════════════════════════════
+        try:
+            bullish_obs = 0
+            bearish_obs = 0
+            
+            # Check last 15 candles for order block patterns
+            for i in range(len(df) - 15, len(df) - 1):
+                if i < 1:
+                    continue
+                
+                candle = df.iloc[i]
+                next_candle = df.iloc[i + 1]
+                
+                # Bullish OB: Down candle followed by break of high
+                if candle['close'] < candle['open']:
+                    if next_candle['close'] > candle['high']:
+                        bullish_obs += 1
+                
+                # Bearish OB: Up candle followed by break of low
+                if candle['close'] > candle['open']:
+                    if next_candle['close'] < candle['low']:
+                        bearish_obs += 1
+            
+            if bullish_obs > bearish_obs:
+                bullish_score += 30
+            elif bearish_obs > bullish_obs:
+                bearish_score += 30
+        except Exception as e:
+            logger.debug(f"Order block analysis error: {e}")
+        
+        # ═══════════════════════════════════════════════════════════
+        # 3. DISPLACEMENT (20 points)
+        # ═══════════════════════════════════════════════════════════
+        try:
+            # Check last 5 candles for strong directional move
+            last_5 = df.tail(5)
+            
+            total_bullish_body = 0
+            total_bearish_body = 0
+            
+            for idx, candle in last_5.iterrows():
+                body = abs(candle['close'] - candle['open'])
+                
+                if candle['close'] > candle['open']:  # Bullish
+                    total_bullish_body += body
+                else:  # Bearish
+                    total_bearish_body += body
+            
+            # Require 60% dominance for displacement
+            if total_bullish_body > total_bearish_body * 1.6:
+                bullish_score += 20
+            elif total_bearish_body > total_bullish_body * 1.6:
+                bearish_score += 20
+        except Exception as e:
+            logger.debug(f"Displacement analysis error: {e}")
+        
+        # ═══════════════════════════════════════════════════════════
+        # DETERMINE BIAS
+        # ═══════════════════════════════════════════════════════════
+        
+        if bullish_score >= 60 and bullish_score > bearish_score:
+            return MarketBias.BULLISH, bullish_score
+        elif bearish_score >= 60 and bearish_score > bullish_score:
+            return MarketBias.BEARISH, bearish_score
+        elif abs(bullish_score - bearish_score) <= 20:
+            return MarketBias.RANGING, max(bullish_score, bearish_score)
+        else:
+            return MarketBias.NEUTRAL, 50.0
     
     def _determine_bias_from_components(self, components: Dict) -> str:
         """
