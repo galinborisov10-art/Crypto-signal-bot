@@ -1229,13 +1229,13 @@ class ICTSignalEngine:
             
             for i in range(5, len(df) - 5):
                 # Swing high: higher than 5 candles before and after
-                if all(highs[i] >= highs[i-j] for j in range(1, 6)) and \
-                   all(highs[i] >= highs[i+j] for j in range(1, 6)):
+                if all(highs[i] > highs[i-j] for j in range(1, 6)) and \
+                   all(highs[i] > highs[i+j] for j in range(1, 6)):
                     swing_highs.append(highs[i])
                 
                 # Swing low: lower than 5 candles before and after
-                if all(lows[i] <= lows[i-j] for j in range(1, 6)) and \
-                   all(lows[i] <= lows[i+j] for j in range(1, 6)):
+                if all(lows[i] < lows[i-j] for j in range(1, 6)) and \
+                   all(lows[i] < lows[i+j] for j in range(1, 6)):
                     swing_lows.append(lows[i])
             
             # Analyze structure
@@ -1884,7 +1884,7 @@ class ICTSignalEngine:
     def _calculate_tp_prices(self, entry_price: float, sl_price: float, bias, ict_components: dict) -> list:
         """Calculate TP levels with 1:2, 1:3, 1:5 RR"""
         risk = abs(entry_price - sl_price)
-        if str(bias) == 'MarketBias. BULLISH':
+        if str(bias) == 'MarketBias.BULLISH':
             return [entry_price + risk*3, entry_price + risk*2, entry_price + risk*5]
         else:
             return [entry_price - risk*3, entry_price - risk*2, entry_price - risk*5]
@@ -1975,7 +1975,7 @@ class ICTSignalEngine:
         """Calculate stop loss using ICT invalidation levels"""
         atr = df['atr'].iloc[-1]
         
-        if bias == MarketBias. BULLISH:
+        if bias == MarketBias.BULLISH:
             # SL below last swing low OR below OB/FVG zone
             lookback = 20
             recent_low = df['low'].iloc[-lookback: ].min()
