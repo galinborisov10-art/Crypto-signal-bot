@@ -66,11 +66,38 @@ class MLPredictor:
         # Зареди модел ако съществува
         if os.path.exists(model_path):
             try:
-                self.model = joblib.load(model_path)
-                self.is_trained = True
-                logger.info(f"✅ ML модел зареден от {model_path}")
+                loaded_model = joblib.load(model_path)
+                
+                # Validate model compatibility (feature count)
+                if hasattr(loaded_model, 'n_features_in_'):
+                    expected_features = loaded_model.n_features_in_
+                    current_features = len(self.feature_names)
+                    
+                    if expected_features != current_features:
+                        logger.warning("=" * 60)
+                        logger.warning(f"⚠️ ML MODEL INCOMPATIBILITY DETECTED")
+                        logger.warning(f"⚠️ Model expects: {expected_features} features")
+                        logger.warning(f"⚠️ Current code has: {current_features} features")
+                        logger.warning(f"⚠️ ML Predictor will be DISABLED")
+                        logger.warning(f"⚠️ Action: Delete {model_path} and retrain after 50+ trades")
+                        logger.warning("=" * 60)
+                        self.model = None
+                        self.is_trained = False
+                    else:
+                        self.model = loaded_model
+                        self.is_trained = True
+                        logger.info(f"✅ ML модел зареден от {model_path} ({expected_features} features)")
+                else:
+                    # Old sklearn version or unsupported model type
+                    logger.warning(f"⚠️ Cannot verify feature count for model {model_path}")
+                    logger.warning(f"⚠️ Loading anyway, but may cause errors if incompatible")
+                    self.model = loaded_model
+                    self.is_trained = True
+                    
             except Exception as e:
                 logger.error(f"❌ Грешка при зареждане на ML модел: {e}")
+                self.model = None
+                self.is_trained = False
     
     def extract_features(self, trade_data: Dict) -> Optional[List[float]]:
         """
