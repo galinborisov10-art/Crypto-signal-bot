@@ -10138,6 +10138,146 @@ async def send_auto_report(report_type, bot):
         logger.error(f"❌ Грешка при автоматичен отчет: {e}")
 
 
+# ================= P5: ML AUTO-TRAINING JOB =================
+@safe_job("ml_auto_training", max_retries=3, retry_delay=120)
+async def ml_auto_training_job(context):
+    """
+    Автоматично обучава ML models от trading journal results.
+    Изпълнява се weekly (Sunday 03:00 UTC).
+    
+    ВАЖНО: Запазва всички съществуващи ML настройки!
+    """
+    try:
+        logger.info("🤖 Starting ML auto-training from journal data...")
+        
+        # ==================== STEP 1: LOAD JOURNAL ====================
+        journal_file = f"{BASE_PATH}/trading_journal.json"
+        
+        if not os.path.exists(journal_file):
+            logger.warning("⚠️ No trading journal found - skipping ML training")
+            return
+        
+        with open(journal_file, 'r') as f:
+            journal = json.load(f)
+        
+        # Get trades from journal (handle different structures)
+        trades = journal.get('trades', []) if isinstance(journal, dict) else []
+        
+        # ==================== STEP 2: FILTER COMPLETED TRADES ====================
+        # Only use trades with definitive outcomes (WIN/LOSS)
+        completed_trades = [
+            trade for trade in trades
+            if trade.get('outcome') in ['WIN', 'LOSS']
+        ]
+        
+        if len(completed_trades) < 50:
+            logger.warning(
+                f"⚠️ Insufficient trades for ML training: {len(completed_trades)}/50 minimum"
+            )
+            return
+        
+        logger.info(f"📊 Found {len(completed_trades)} completed trades for training")
+        
+        # ==================== STEP 3: PREPARE TRAINING DATA ====================
+        import numpy as np
+        
+        # Track statistics
+        win_count = sum(1 for t in completed_trades if t['outcome'] == 'WIN')
+        loss_count = len(completed_trades) - win_count
+        win_rate = (win_count / len(completed_trades)) * 100
+        logger.info(f"📈 Training data win rate: {win_rate:.1f}%")
+        
+        # ==================== STEP 4: TRAIN ML ENGINE ====================
+        ml_engine_trained = False
+        
+        if ML_AVAILABLE and hasattr(ml_engine, 'train_model'):
+            try:
+                logger.info("🔄 Training ML Engine...")
+                
+                # Use existing train_model method (DO NOT modify parameters)
+                success = ml_engine.train_model()
+                
+                if success:
+                    logger.info("✅ ML Engine retrained and saved")
+                    ml_engine_trained = True
+                else:
+                    logger.warning("⚠️ ML Engine training returned False")
+                    
+            except Exception as e:
+                logger.error(f"❌ ML Engine training failed: {e}")
+        else:
+            logger.info("ℹ️ ML Engine not available or has no train_model method")
+        
+        # ==================== STEP 5: TRAIN ML PREDICTOR ====================
+        ml_predictor_trained = False
+        
+        if ML_PREDICTOR_AVAILABLE:
+            try:
+                logger.info("🔄 Training ML Predictor...")
+                
+                # Get ML predictor instance
+                ml_predictor = get_ml_predictor()
+                
+                # Use existing train method (preserve existing logic)
+                if hasattr(ml_predictor, 'train'):
+                    success = ml_predictor.train(retrain=True)
+                    
+                    if success:
+                        logger.info("✅ ML Predictor retrained and saved")
+                        ml_predictor_trained = True
+                    else:
+                        logger.warning("⚠️ ML Predictor training returned False")
+                else:
+                    logger.warning("⚠️ ML Predictor has no train method")
+                    
+            except Exception as e:
+                logger.error(f"❌ ML Predictor training failed: {e}")
+        else:
+            logger.info("ℹ️ ML Predictor not available")
+        
+        # ==================== STEP 6: SEND SUMMARY TO OWNER ====================
+        if ml_engine_trained or ml_predictor_trained:
+            models_updated = []
+            if ml_engine_trained:
+                models_updated.append("ML Engine")
+            if ml_predictor_trained:
+                models_updated.append("ML Predictor")
+            
+            summary_msg = (
+                f"🤖 <b>ML AUTO-TRAINING COMPLETE</b>\n\n"
+                f"📊 <b>Training Data:</b>\n"
+                f"  • Total Trades: {len(completed_trades)}\n"
+                f"  • Wins: {win_count}\n"
+                f"  • Losses: {loss_count}\n"
+                f"  • Win Rate: {win_rate:.1f}%\n\n"
+                f"✅ <b>Models Updated:</b>\n"
+            )
+            
+            for model in models_updated:
+                summary_msg += f"  • {model}: Retrained\n"
+            
+            summary_msg += (
+                f"\n💡 <b>Impact:</b>\n"
+                f"ML predictions will now be more accurate based on\n"
+                f"actual trading results from your journal.\n\n"
+                f"Next training: Next Sunday 03:00 UTC"
+            )
+            
+            await context.bot.send_message(
+                chat_id=OWNER_CHAT_ID,
+                text=summary_msg,
+                parse_mode='HTML'
+            )
+            
+            logger.info(f"✅ ML auto-training completed successfully")
+        else:
+            logger.warning("⚠️ No ML models were trained")
+        
+    except Exception as e:
+        logger.error(f"❌ ML auto-training error: {e}")
+        logger.exception(e)
+
+
 # ================= P13: CACHE CLEANUP JOB =================
 @safe_job("cache_cleanup", max_retries=2, retry_delay=30)
 async def cache_cleanup_job(context):
@@ -13941,6 +14081,20 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                 )
                 logger.info("✅ Weekly automated backtest scheduled (Mondays at 11:00 BG time) - ALL COINS & TIMEFRAMES")
             
+            # ================= P5: ML AUTO-TRAINING SCHEDULER =================
+            # Schedule ML auto-training every Sunday at 03:00 UTC
+            scheduler.add_job(
+                ml_auto_training_job,
+                'cron',
+                day_of_week='sun',  # Sunday
+                hour=3,             # 03:00 UTC (05:00 BG time)
+                minute=0,
+                id='ml_auto_training',
+                name='ML Auto-Training',
+                replace_existing=True
+            )
+            logger.info("✅ ML auto-training scheduled (Sundays 03:00 UTC)")
+            
             # ================= P13: CACHE CLEANUP JOB =================
             # Add cache cleanup job (every 10 minutes)
             scheduler.add_job(
@@ -13954,7 +14108,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             logger.info("✅ Cache cleanup scheduled (every 10 minutes)")
             
             scheduler.start()
-            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC) + 🧹 CACHE CLEANUP (10 min)")
+            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC) + 🧹 CACHE CLEANUP (10 min) + 🤖 ML AUTO-TRAINING (weekly)")
             
             # 🎯 INITIALIZE AND START REAL-TIME POSITION MONITOR (v2.1.0)
             global real_time_monitor_global
