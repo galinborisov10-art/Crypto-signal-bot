@@ -345,13 +345,161 @@ import time
 import statistics
 from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
+from threading import Lock
 
-# Global cache storage
+# ================= P13: LRU CACHE WITH TTL =================
+class LRUCacheDict:
+    """
+    LRU Cache with TTL that maintains backward compatibility with dict interface.
+    Existing code can continue using it like a regular dict.
+    """
+    
+    def __init__(self, max_size=100, ttl_seconds=300):
+        """
+        Args:
+            max_size: Maximum number of items (default 100)
+            ttl_seconds: Time to live in seconds (default 300)
+        """
+        self.max_size = max_size
+        self.ttl_seconds = ttl_seconds
+        self._cache = OrderedDict()
+        self._lock = Lock()
+        self._hits = 0
+        self._misses = 0
+        self._evictions = 0
+    
+    def __getitem__(self, key):
+        """Dict-like access: cache['key']"""
+        with self._lock:
+            if key not in self._cache:
+                self._misses += 1
+                raise KeyError(key)
+            
+            # Check TTL
+            item = self._cache[key]
+            age = time.time() - item['timestamp']
+            
+            if age > self.ttl_seconds:
+                # Expired - remove and raise KeyError
+                del self._cache[key]
+                self._misses += 1
+                raise KeyError(key)
+            
+            # Move to end (most recently used)
+            self._cache.move_to_end(key)
+            self._hits += 1
+            return item['data']
+    
+    def __setitem__(self, key, value):
+        """Dict-like assignment: cache['key'] = value"""
+        with self._lock:
+            # Remove if exists (to update position)
+            if key in self._cache:
+                del self._cache[key]
+            
+            # Add new item with timestamp
+            self._cache[key] = {
+                'data': value,
+                'timestamp': time.time()
+            }
+            
+            # Enforce size limit (evict oldest)
+            while len(self._cache) > self.max_size:
+                oldest_key = next(iter(self._cache))
+                del self._cache[oldest_key]
+                self._evictions += 1
+                logger.debug(f"Cache evicted oldest item: {oldest_key}")
+    
+    def __contains__(self, key):
+        """Dict-like 'in' operator: 'key' in cache"""
+        with self._lock:
+            if key not in self._cache:
+                return False
+            
+            # Check TTL
+            item = self._cache[key]
+            age = time.time() - item['timestamp']
+            
+            if age > self.ttl_seconds:
+                del self._cache[key]
+                return False
+            
+            return True
+    
+    def __delitem__(self, key):
+        """Dict-like deletion: del cache['key']"""
+        with self._lock:
+            del self._cache[key]
+    
+    def get(self, key, default=None):
+        """Dict-like get: cache.get('key', default)"""
+        try:
+            return self.__getitem__(key)
+        except KeyError:
+            return default
+    
+    def keys(self):
+        """Dict-like keys()"""
+        with self._lock:
+            # Clean expired items first
+            self._cleanup_expired()
+            return list(self._cache.keys())
+    
+    def values(self):
+        """Dict-like values()"""
+        with self._lock:
+            self._cleanup_expired()
+            return [item['data'] for item in self._cache.values()]
+    
+    def items(self):
+        """Dict-like items()"""
+        with self._lock:
+            self._cleanup_expired()
+            return [(k, item['data']) for k, item in self._cache.items()]
+    
+    def clear(self):
+        """Clear all cache"""
+        with self._lock:
+            self._cache.clear()
+            logger.info("Cache cleared")
+    
+    def _cleanup_expired(self):
+        """Remove expired items (internal use)"""
+        current_time = time.time()
+        expired_keys = [
+            key for key, item in self._cache.items()
+            if current_time - item['timestamp'] > self.ttl_seconds
+        ]
+        
+        for key in expired_keys:
+            del self._cache[key]
+        
+        if expired_keys:
+            logger.debug(f"Cache cleanup: removed {len(expired_keys)} expired items")
+    
+    def cleanup_expired(self):
+        """Public method to trigger cleanup"""
+        with self._lock:
+            self._cleanup_expired()
+    
+    def get_stats(self):
+        """Get cache statistics"""
+        with self._lock:
+            return {
+                'size': len(self._cache),
+                'max_size': self.max_size,
+                'hits': self._hits,
+                'misses': self._misses,
+                'evictions': self._evictions,
+                'hit_rate': self._hits / (self._hits + self._misses) if (self._hits + self._misses) > 0 else 0
+            }
+
+# Global cache storage with LRU eviction
 CACHE = {
-    'backtest': {},      # {'30d': {'data': {...}, 'timestamp': datetime}}
-    'market': {},        # {'BTCUSDT_4h': {'data': {...}, 'timestamp': datetime}}
-    'ml_performance': {} # {'30d': {'data': {...}, 'timestamp': datetime}}
+    'backtest': LRUCacheDict(max_size=50, ttl_seconds=300),      # 50 backtest results, 5 min TTL
+    'market': LRUCacheDict(max_size=100, ttl_seconds=180),       # 100 market data, 3 min TTL
+    'ml_performance': LRUCacheDict(max_size=50, ttl_seconds=300) # 50 ML results, 5 min TTL
 }
 
 CACHE_TTL = {
@@ -399,6 +547,74 @@ def set_cache(cache_type: str, key: str, data):
         'timestamp': datetime.now(timezone.utc)
     }
     logger.info(f"💾 Cache SET: {cache_type}/{key}")
+
+
+# ================= P10: SCHEDULER ERROR HANDLING =================
+def safe_job(job_name: str, max_retries: int = 3, retry_delay: int = 60):
+    """
+    Decorator for scheduler jobs - adds error handling and retry logic.
+    
+    Usage:
+        @safe_job("daily_report", max_retries=3, retry_delay=60)
+        async def send_daily_report(context):
+            ...
+    
+    Args:
+        job_name: Human-readable job name for logging
+        max_retries: Maximum retry attempts on failure
+        retry_delay: Seconds to wait between retries
+    """
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Get context from args or kwargs
+            context = None
+            if args and hasattr(args[0], 'bot'):
+                context = args[0]
+            elif 'context' in kwargs:
+                context = kwargs['context']
+            
+            for attempt in range(1, max_retries + 1):
+                try:
+                    logger.info(f"🔄 Starting job: {job_name} (attempt {attempt}/{max_retries})")
+                    
+                    # Execute the job
+                    result = await func(*args, **kwargs)
+                    
+                    logger.info(f"✅ Job completed: {job_name}")
+                    return result
+                    
+                except Exception as e:
+                    logger.error(f"❌ Job failed: {job_name} (attempt {attempt}/{max_retries})")
+                    logger.error(f"Error: {str(e)}")
+                    logger.exception(e)  # Full stack trace
+                    
+                    if attempt < max_retries:
+                        logger.info(f"⏳ Retrying in {retry_delay}s...")
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        # Final failure - notify owner if context available
+                        if context:
+                            try:
+                                await context.bot.send_message(
+                                    chat_id=OWNER_CHAT_ID,
+                                    text=(
+                                        f"❌ <b>SCHEDULER JOB FAILED</b>\n\n"
+                                        f"Job: <code>{job_name}</code>\n"
+                                        f"Attempts: {max_retries}\n"
+                                        f"Error: <code>{str(e)[:200]}</code>\n\n"
+                                        f"Check logs for details."
+                                    ),
+                                    parse_mode='HTML'
+                                )
+                            except:
+                                pass  # Even notification failed
+                        
+                        logger.error(f"💥 Job permanently failed: {job_name}")
+                        # Do NOT raise - let scheduler continue running
+        
+        return wrapper
+    return decorator
 
 
 def track_metric(operation: str, duration: float):
@@ -801,6 +1017,51 @@ def cleanup_old_signals():
     
     if keys_to_remove:
         logger.info(f"🧹 Cleaned {len(keys_to_remove)} old signals from cache")
+
+
+# ================= P8: UNIFIED COOLDOWN CHECKER =================
+def check_signal_cooldown(
+    symbol: str, 
+    signal_type: str, 
+    timeframe: str, 
+    confidence: float, 
+    entry_price: float,
+    cooldown_minutes: int = 60
+) -> tuple:
+    """
+    Unified cooldown check for ALL signal commands.
+    
+    Args:
+        symbol: Trading symbol (e.g., 'BTCUSDT')
+        signal_type: Signal type (e.g., 'BUY', 'SELL')
+        timeframe: Timeframe (e.g., '1h', '4h')
+        confidence: Signal confidence (0-100)
+        entry_price: Entry price
+        cooldown_minutes: Cooldown period in minutes
+    
+    Returns:
+        (is_duplicate: bool, message: str)
+            - is_duplicate: True if signal was sent recently
+            - message: User-friendly message to display
+    """
+    # Use existing is_signal_already_sent function
+    if is_signal_already_sent(
+        symbol=symbol,
+        signal_type=signal_type,
+        timeframe=timeframe,
+        confidence=confidence,
+        entry_price=entry_price,
+        cooldown_minutes=cooldown_minutes
+    ):
+        msg = (
+            f"⏳ <b>Signal Already Sent Recently</b>\n\n"
+            f"📊 {symbol} {timeframe} {signal_type}\n"
+            f"🕐 Cooldown: {cooldown_minutes} minutes\n\n"
+            f"Please wait before requesting again."
+        )
+        return True, msg
+    
+    return False, ""
 
 
 def get_admin_keyboard():
@@ -5210,6 +5471,7 @@ async def analyze_news_impact(title, description=""):
     }
 
 
+@safe_job("breaking_news_monitor", max_retries=2, retry_delay=30)
 async def monitor_breaking_news():
     """Мониторинг на критични новини в реално време"""
     try:
@@ -6382,6 +6644,21 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode='HTML'
                     )
                 return
+            
+            # ✅ P8: CHECK COOLDOWN
+            if ict_signal and hasattr(ict_signal, 'signal_type'):
+                is_duplicate, cooldown_msg = check_signal_cooldown(
+                    symbol=symbol,
+                    signal_type=ict_signal.signal_type.value,
+                    timeframe=timeframe,
+                    confidence=ict_signal.confidence,
+                    entry_price=ict_signal.entry_price,
+                    cooldown_minutes=60
+                )
+                
+                if is_duplicate:
+                    await processing_msg.edit_text(cooldown_msg, parse_mode='HTML')
+                    return
             
             # Format with 13-point output
             signal_msg = format_ict_signal_13_point(ict_signal)
@@ -8344,6 +8621,7 @@ async def monitor_active_trades(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Грешка в monitor_active_trades: {e}")
 
 
+@safe_job("auto_signal", max_retries=3, retry_delay=60)
 async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     """Изпраща автоматичен сигнал с пълен анализ - ASYNC OPTIMIZED с memory cleanup"""
     chat_id = context.job.data['chat_id']
@@ -9778,6 +10056,7 @@ async def admin_unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= АВТОМАТИЧНО ИЗПРАЩАНЕ НА ОТЧЕТИ =================
 
+@safe_job("auto_news", max_retries=3, retry_delay=60)
 async def send_auto_news(bot):
     """Автоматично изпраща топ новини на owner-а от най-надеждните източници"""
     try:
@@ -9857,6 +10136,31 @@ async def send_auto_report(report_type, bot):
         logger.info(f"✅ Автоматичен {report_type} отчет изпратен")
     except Exception as e:
         logger.error(f"❌ Грешка при автоматичен отчет: {e}")
+
+
+# ================= P13: CACHE CLEANUP JOB =================
+@safe_job("cache_cleanup", max_retries=2, retry_delay=30)
+async def cache_cleanup_job(context):
+    """
+    Periodic cache cleanup - removes expired items.
+    Runs every 10 minutes.
+    """
+    try:
+        logger.debug("Starting periodic cache cleanup...")
+        
+        for cache_type, cache in CACHE.items():
+            if hasattr(cache, 'cleanup_expired'):
+                cache.cleanup_expired()
+                stats = cache.get_stats()
+                logger.debug(
+                    f"Cache '{cache_type}': {stats['size']}/{stats['max_size']} items, "
+                    f"hit rate: {stats['hit_rate']:.1%}, evictions: {stats['evictions']}"
+                )
+        
+        logger.debug("✅ Cache cleanup completed")
+        
+    except Exception as e:
+        logger.error(f"Cache cleanup error: {e}")
 
 
 def run_diagnostics():
@@ -13146,6 +13450,7 @@ def main():
             
             # ЕДИНСТВЕН ДНЕВЕН ОТЧЕТ - Всеки ден в 08:00 българско време
             if REPORTS_AVAILABLE:
+                @safe_job("daily_report", max_retries=3, retry_delay=60)
                 async def send_daily_auto_report():
                     """Изпраща автоматичен дневен отчет към owner за ВЧЕРА"""
                     try:
@@ -13198,6 +13503,7 @@ def main():
             
             # СЕДМИЧЕН ОТЧЕТ - Всеки понеделник в 08:00 българско време
             if REPORTS_AVAILABLE:
+                @safe_job("weekly_report", max_retries=3, retry_delay=60)
                 async def send_weekly_auto_report():
                     """Изпраща автоматичен седмичен отчет към owner за ИЗМИНАЛАТА СЕДМИЦА"""
                     try:
@@ -13254,6 +13560,7 @@ def main():
             
             # МЕСЕЧЕН ОТЧЕТ - На 1-во число в 08:00 българско време
             if REPORTS_AVAILABLE:
+                @safe_job("monthly_report", max_retries=3, retry_delay=60)
                 async def send_monthly_auto_report():
                     """Изпраща автоматичен месечен отчет към owner за ИЗМИНАЛИЯ МЕСЕЦ"""
                     try:
@@ -13320,6 +13627,7 @@ def main():
             # ==================== DAILY BACKTEST AUTO-UPDATE ====================
             # Daily comprehensive backtest at 02:00 UTC with archiving
             if ICT_BACKTEST_AVAILABLE:
+                @safe_job("daily_backtest", max_retries=3, retry_delay=120)
                 async def daily_backtest_update():
                     """
                     Daily comprehensive backtest auto-update at 02:00 UTC
@@ -13408,6 +13716,7 @@ def main():
             )
             
             # 📝 24/7 TRADING JOURNAL МОНИТОРИНГ - всеки 2 минути!
+            @safe_job("journal_monitoring", max_retries=2, retry_delay=30)
             async def journal_monitoring_wrapper():
                 """Wrapper за journal мониторинг с context"""
                 try:
@@ -13429,6 +13738,7 @@ def main():
             )
             
             # 🎯 AUTO-SIGNAL TRACKING - проверява сигналите на всеки 15 минути
+            @safe_job("signal_tracking", max_retries=2, retry_delay=30)
             async def signal_tracking_wrapper():
                 """Wrapper за signal tracking"""
                 try:
@@ -13443,6 +13753,7 @@ def main():
             )
             
             # 📊 80% ALERT MONITORING - проверява активни trades на всяка минута
+            @safe_job("80_percent_alerts", max_retries=2, retry_delay=10)
             async def check_80_alerts_wrapper():
                 """Wrapper for 80% alert monitoring with bot instance"""
                 try:
@@ -13461,6 +13772,7 @@ def main():
             
 
             # 📊 DAILY BACKTEST SUMMARY - every day at 20:00 UTC
+            @safe_job("scheduled_backtest_report", max_retries=3, retry_delay=60)
             async def send_scheduled_backtest_report():
                 """Send daily backtest summary to owner"""
                 try:
@@ -13531,6 +13843,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             
             # 📊 АВТОМАТИЧЕН СЕДМИЧЕН BACKTEST - всеки понеделник в 09:00 UTC (11:00 BG)
             if BACKTEST_AVAILABLE:
+                @safe_job("weekly_backtest", max_retries=3, retry_delay=120)
                 async def weekly_backtest_wrapper():
                     """Wrapper за автоматичен седмичен backtest - ВСИЧКИ монети и таймфрейми"""
                     try:
@@ -13628,8 +13941,20 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                 )
                 logger.info("✅ Weekly automated backtest scheduled (Mondays at 11:00 BG time) - ALL COINS & TIMEFRAMES")
             
+            # ================= P13: CACHE CLEANUP JOB =================
+            # Add cache cleanup job (every 10 minutes)
+            scheduler.add_job(
+                cache_cleanup_job,
+                'interval',
+                minutes=10,
+                id='cache_cleanup',
+                name='Cache Cleanup',
+                replace_existing=True
+            )
+            logger.info("✅ Cache cleanup scheduled (every 10 minutes)")
+            
             scheduler.start()
-            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC)")
+            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC) + 🧹 CACHE CLEANUP (10 min)")
             
             # 🎯 INITIALIZE AND START REAL-TIME POSITION MONITOR (v2.1.0)
             global real_time_monitor_global
