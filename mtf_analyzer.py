@@ -280,57 +280,90 @@ class MultiTimeframeAnalyzer:
     
     def _detect_htf_bias(self, df: pd.DataFrame, timeframe: str) -> Bias:
         """
-        Detect higher timeframe bias using multiple criteria
-        - Market structure (HH/HL vs LH/LL)
-        - EMAs alignment
-        - Price action relative to key levels
+        ✅ PURE ICT HTF Bias Detection - NO EMA/MA!
+        
+        Uses:
+        - Market structure (HH/HL vs LH/LL) - 60% weight
+        - Order Blocks - 30% weight
+        - Displacement - 10% weight
+        
+        Args:
+            df: DataFrame with OHLCV data
+            timeframe: Timeframe string
+            
+        Returns:
+            Bias enum (BULLISH/BEARISH/RANGING/NEUTRAL)
         """
         if len(df) < 50:
             return Bias.NEUTRAL
         
-        # Calculate EMAs
-        df['ema_21'] = df['close'].ewm(span=21, adjust=False).mean()
-        df['ema_50'] = df['close'].ewm(span=50, adjust=False).mean()
-        df['ema_200'] = df['close'].ewm(span=200, adjust=False).mean()
+        bullish_score = 0
+        bearish_score = 0
+        max_score = 100
         
-        current_price = df['close'].iloc[-1]
-        
-        # EMA alignment score
-        ema_bullish = (df['ema_21'].iloc[-1] > df['ema_50'].iloc[-1] > df['ema_200'].iloc[-1])
-        ema_bearish = (df['ema_21'].iloc[-1] < df['ema_50'].iloc[-1] < df['ema_200'].iloc[-1])
-        
-        # Market structure
+        # ═══════════════════════════════════════════════════════════
+        # 1. MARKET STRUCTURE (60 points)
+        # ═══════════════════════════════════════════════════════════
         swings = self._find_swing_points(df, self.config['swing_lookback'])
         structure_bias = self._analyze_structure_bias(swings)
         
-        # Recent momentum
+        if structure_bias == Bias.BULLISH:
+            bullish_score += 60
+        elif structure_bias == Bias.BEARISH:
+            bearish_score += 60
+        
+        # ═══════════════════════════════════════════════════════════
+        # 2. ORDER BLOCKS (30 points)
+        # ═══════════════════════════════════════════════════════════
+        try:
+            bullish_obs = 0
+            bearish_obs = 0
+            
+            # Analyze last 20 candles for order block patterns
+            for i in range(len(df) - 20, len(df) - 1):
+                if i < 1:
+                    continue
+                
+                candle = df.iloc[i]
+                next_candle = df.iloc[i + 1]
+                
+                # Bullish OB: Down candle + break of high
+                if candle['close'] < candle['open']:
+                    if next_candle['close'] > candle['high']:
+                        bullish_obs += 1
+                
+                # Bearish OB: Up candle + break of low
+                if candle['close'] > candle['open']:
+                    if next_candle['close'] < candle['low']:
+                        bearish_obs += 1
+            
+            if bullish_obs > bearish_obs:
+                bullish_score += 30
+            elif bearish_obs > bullish_obs:
+                bearish_score += 30
+                
+        except Exception as e:
+            logger.debug(f"Order block analysis error: {e}")
+        
+        # ═══════════════════════════════════════════════════════════
+        # 3. DISPLACEMENT (10 points)
+        # ═══════════════════════════════════════════════════════════
         recent_change = (df['close'].iloc[-1] / df['close'].iloc[-20] - 1) * 100
         
-        # Combine signals
-        bullish_score = 0
-        bearish_score = 0
+        if recent_change > 5:  # 5% up move
+            bullish_score += 10
+        elif recent_change < -5:  # 5% down move
+            bearish_score += 10
         
-        if ema_bullish:
-            bullish_score += 3
-        elif ema_bearish:
-            bearish_score += 3
-            
-        if structure_bias == Bias.BULLISH:
-            bullish_score += 2
-        elif structure_bias == Bias.BEARISH:
-            bearish_score += 2
-            
-        if recent_change > 2:
-            bullish_score += 1
-        elif recent_change < -2:
-            bearish_score += 1
+        # ═══════════════════════════════════════════════════════════
+        # DETERMINE BIAS
+        # ═══════════════════════════════════════════════════════════
         
-        # Determine bias
-        if bullish_score >= 4 and bullish_score > bearish_score:
+        if bullish_score >= 70 and bullish_score > bearish_score:
             return Bias.BULLISH
-        elif bearish_score >= 4 and bearish_score > bullish_score:
+        elif bearish_score >= 70 and bearish_score > bullish_score:
             return Bias.BEARISH
-        elif abs(bullish_score - bearish_score) <= 1:
+        elif abs(bullish_score - bearish_score) <= 20:
             return Bias.RANGING
         else:
             return Bias.NEUTRAL
