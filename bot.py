@@ -10195,6 +10195,8 @@ async def ml_auto_training_job(context):
                 logger.info("🔄 Training ML Engine...")
                 
                 # Use existing train_model method (DO NOT modify parameters)
+                # NOTE: ml_engine.train_model() reads trading_journal.json internally
+                # and uses the existing feature extraction and training logic
                 success = ml_engine.train_model()
                 
                 if success:
@@ -10258,8 +10260,8 @@ async def ml_auto_training_job(context):
             
             summary_msg += (
                 f"\n💡 <b>Impact:</b>\n"
-                f"ML predictions will now be more accurate based on\n"
-                f"actual trading results from your journal.\n\n"
+                f"ML models have been updated with recent trading data\n"
+                f"from your journal and may improve prediction accuracy.\n\n"
                 f"Next training: Next Sunday 03:00 UTC"
             )
             
