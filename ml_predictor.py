@@ -79,7 +79,7 @@ class MLPredictor:
                         logger.warning(f"⚠️ Model expects: {expected_features} features")
                         logger.warning(f"⚠️ Current code has: {current_features} features")
                         logger.warning(f"⚠️ ML Predictor will be DISABLED")
-                        logger.warning(f"⚠️ Action: Delete {model_path} and retrain after 50+ trades")
+                        logger.warning(f"⚠️ Action: Delete {model_path} and retrain after {min_training_data}+ trades")
                         logger.warning("=" * 60)
                         self.model = None
                         self.is_trained = False

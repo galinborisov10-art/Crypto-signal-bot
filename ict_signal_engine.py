@@ -3368,6 +3368,8 @@ class ICTSignalEngine:
             DataFrame with BTC OHLCV data or None if fetch fails
         """
         try:
+            # Import requests here to handle missing dependency gracefully
+            # This allows the engine to work without requests if BTC correlation is not needed
             import requests
             
             # Convert datetime to milliseconds
@@ -3514,8 +3516,15 @@ class ICTSignalEngine:
                 return None, None
             
             # Calculate percentage returns
-            asset_returns = merged['close_asset'].pct_change().dropna()
-            btc_returns = merged['close_btc'].pct_change().dropna()
+            returns_df = merged.pct_change().dropna()
+            
+            # Ensure we still have enough data after dropna
+            if len(returns_df) < 29:  # Need at least 29 returns for 30 candles
+                logger.debug(f"After pct_change, only {len(returns_df)} returns - insufficient")
+                return None, None
+            
+            asset_returns = returns_df['close_asset']
+            btc_returns = returns_df['close_btc']
             
             # Calculate Pearson correlation
             correlation = asset_returns.corr(btc_returns)
