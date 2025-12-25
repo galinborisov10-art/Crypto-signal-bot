@@ -2578,14 +2578,12 @@ class ICTSignalEngine:
             except Exception as e:
                 logger.debug(f"Session detection error: {e}")
             
-            # BTC Correlation Context (placeholder - only if symbol provided and not BTC)
+            # BTC Correlation Context
             btc_correlation = None
             btc_aligned = None
             if symbol and symbol not in ['BTCUSDT', 'BTC', 'BTCUSD']:
-                # TODO: Implement actual BTC correlation calculation
-                # For now, leave as None (won't affect existing signals)
-                btc_correlation = None
-                btc_aligned = None
+                # Calculate real BTC correlation
+                btc_correlation, btc_aligned = self._calculate_btc_correlation(symbol, df)
             
             return {
                 # ✅ EXISTING FIELDS (unchanged)
@@ -3351,6 +3349,206 @@ class ICTSignalEngine:
         except Exception as e:
             logger.error(f"Liquidity zones error: {e}")
             return []
+    
+    def _fetch_btc_data(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        timeframe: str = '1h'
+    ) -> Optional[pd.DataFrame]:
+        """
+        Fetch BTC price data for correlation calculation
+        
+        Args:
+            start_time: Start datetime
+            end_time: End datetime
+            timeframe: Candle timeframe (default: 1h)
+            
+        Returns:
+            DataFrame with BTC OHLCV data or None if fetch fails
+        """
+        try:
+            # Import requests here to handle missing dependency gracefully
+            # This allows the engine to work without requests if BTC correlation is not needed
+            import requests
+            
+            # Convert datetime to milliseconds
+            start_ms = int(start_time.timestamp() * 1000)
+            end_ms = int(end_time.timestamp() * 1000)
+            
+            # Binance timeframe mapping
+            tf_map = {
+                '1m': '1m',
+                '3m': '3m',
+                '5m': '5m',
+                '15m': '15m',
+                '30m': '30m',
+                '1h': '1h',
+                '2h': '2h',
+                '4h': '4h',
+                '6h': '6h',
+                '12h': '12h',
+                '1d': '1d',
+                '3d': '3d',
+                '1w': '1w',
+            }
+            
+            interval = tf_map.get(timeframe.lower(), '1h')
+            
+            # Binance API endpoint
+            url = "https://api.binance.com/api/v3/klines"
+            params = {
+                'symbol': 'BTCUSDT',
+                'interval': interval,
+                'startTime': start_ms,
+                'endTime': end_ms,
+                'limit': 500
+            }
+            
+            # Fetch BTC klines
+            response = requests.get(url, params=params, timeout=10)
+            
+            if response.status_code != 200:
+                logger.warning(f"Binance API returned {response.status_code}")
+                return None
+            
+            klines = response.json()
+            
+            if not klines:
+                logger.warning("No BTC data returned from Binance")
+                return None
+            
+            # Convert to DataFrame
+            df = pd.DataFrame(klines, columns=[
+                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                'taker_buy_quote', 'ignore'
+            ])
+            
+            # Convert types
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df['close'] = df['close'].astype(float)
+            
+            # Set index
+            df = df.set_index('timestamp')
+            
+            logger.debug(f"✅ Fetched {len(df)} BTC candles for correlation")
+            return df[['close']]  # Return only close prices
+            
+        except ImportError as e:
+            logger.warning(f"Required library not available - BTC correlation disabled: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"BTC data fetch failed: {e}")
+            return None
+    
+    def _calculate_btc_correlation(
+        self,
+        symbol: str,
+        df: pd.DataFrame
+    ) -> Tuple[Optional[float], Optional[bool]]:
+        """
+        Calculate correlation with BTC price movement
+        
+        Args:
+            symbol: Trading pair symbol
+            df: Price DataFrame with datetime index
+            
+        Returns:
+            Tuple of (correlation, is_aligned)
+            - correlation: Pearson correlation coefficient (-1 to 1) or None
+            - is_aligned: True if |correlation| > 0.7, False if < 0.3, None otherwise
+        """
+        try:
+            # Skip BTC itself
+            if symbol.upper() in ['BTCUSDT', 'BTC', 'BTCUSD', 'BTCBUSD']:
+                return None, None
+            
+            # Need at least 30 candles for meaningful correlation
+            if len(df) < 30:
+                logger.debug("Insufficient data for BTC correlation (need 30+ candles)")
+                return None, None
+            
+            # Get time range from df
+            start_time = df.index[0]
+            end_time = df.index[-1]
+            
+            # Determine timeframe from df index frequency
+            if len(df) >= 2:
+                time_diff = (df.index[1] - df.index[0]).total_seconds() / 60
+                if time_diff <= 1:
+                    tf = '1m'
+                elif time_diff <= 3:
+                    tf = '3m'
+                elif time_diff <= 5:
+                    tf = '5m'
+                elif time_diff <= 15:
+                    tf = '15m'
+                elif time_diff <= 30:
+                    tf = '30m'
+                elif time_diff <= 60:
+                    tf = '1h'
+                elif time_diff <= 240:
+                    tf = '4h'
+                else:
+                    tf = '1d'
+            else:
+                tf = '1h'  # Default fallback
+            
+            # Fetch BTC data
+            btc_df = self._fetch_btc_data(start_time, end_time, tf)
+            
+            if btc_df is None or len(btc_df) < 30:
+                logger.debug("BTC data fetch failed or insufficient")
+                return None, None
+            
+            # Align timestamps (merge on index)
+            merged = df[['close']].merge(
+                btc_df[['close']],
+                left_index=True,
+                right_index=True,
+                how='inner',
+                suffixes=('_asset', '_btc')
+            )
+            
+            if len(merged) < 30:
+                logger.debug(f"After merge, only {len(merged)} matching candles - insufficient")
+                return None, None
+            
+            # Calculate percentage returns
+            returns_df = merged.pct_change().dropna()
+            
+            # Ensure we still have enough data after dropna
+            if len(returns_df) < 29:  # Need at least 29 returns for 30 candles
+                logger.debug(f"After pct_change, only {len(returns_df)} returns - insufficient")
+                return None, None
+            
+            asset_returns = returns_df['close_asset']
+            btc_returns = returns_df['close_btc']
+            
+            # Calculate Pearson correlation
+            correlation = asset_returns.corr(btc_returns)
+            
+            # Check if correlation is valid
+            if pd.isna(correlation) or np.isinf(correlation):
+                logger.debug("Correlation calculation returned NaN or Inf")
+                return None, None
+            
+            # Determine alignment
+            abs_corr = abs(correlation)
+            if abs_corr > 0.7:
+                is_aligned = True  # Strong correlation (following BTC)
+            elif abs_corr < 0.3:
+                is_aligned = False  # Weak correlation (independent move)
+            else:
+                is_aligned = None  # Moderate correlation (neutral)
+            
+            logger.info(f"✅ BTC correlation for {symbol}: {correlation:.3f} (aligned: {is_aligned})")
+            return correlation, is_aligned
+            
+        except Exception as e:
+            logger.warning(f"BTC correlation calculation error: {e}")
+            return None, None
     
     def record_signal_outcome(
         self,
