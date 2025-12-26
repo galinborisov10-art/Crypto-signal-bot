@@ -69,7 +69,7 @@ echo ""
 # 4. TELEGRAM CONNECTION
 echo "4️⃣ TELEGRAM API"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-TELEGRAM_CHECK=$(curl -s "https://api.telegram.org/bot8349449826:AAFNmP0i-DlERin8Z7HVir4awGTpa5n8vUM/getMe" | grep -o '"ok":true')
+TELEGRAM_CHECK=$(curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" | grep -o '"ok":true')
 if [ -n "$TELEGRAM_CHECK" ]; then
     echo "✅ Връзка: АКТИВНА"
 else

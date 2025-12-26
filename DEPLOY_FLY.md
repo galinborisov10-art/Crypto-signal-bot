@@ -74,7 +74,7 @@ flyctl launch
 ### 4️⃣ **Добави Environment Variables (Secrets)**
 
 ```bash
-flyctl secrets set TELEGRAM_BOT_TOKEN="8349449826:AAFNmP0i-DlERin8Z7HVir4awGTpa5n8vUM"
+flyctl secrets set TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN_HERE"
 flyctl secrets set OWNER_CHAT_ID="7003238836"
 ```
 

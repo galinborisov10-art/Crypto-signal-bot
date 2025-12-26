@@ -26,7 +26,7 @@ except ImportError:
 # =====================================
 BOT_DIR = Path(__file__).parent
 LOG_FILE = BOT_DIR / "auto_updater.log"
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8349449826:AAFNmP0i-DlERin8Z7HVir4awGTpa5n8vUM")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OWNER_CHAT_ID = 7003238836
 
 # Logging setup
@@ -40,6 +40,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Провери дали TELEGRAM_TOKEN е зареден
+if not TELEGRAM_TOKEN:
+    logger.warning("⚠️ TELEGRAM_BOT_TOKEN не е намерен в environment variables!")
+    logger.warning("💡 Telegram notifications ще бъдат изключени")
+    logger.warning("💡 Задай токена с: export TELEGRAM_BOT_TOKEN='your-token-here'")
+
 # =====================================
 # TELEGRAM NOTIFICATION
 # =====================================
@@ -47,6 +53,10 @@ async def send_telegram_notification(message: str, silent: bool = False):
     """Изпраща Telegram нотификация към owner"""
     if not TELEGRAM_AVAILABLE:
         logger.warning("Telegram not available - skipping notification")
+        return
+    
+    if not TELEGRAM_TOKEN:
+        logger.warning("Telegram token not set - skipping notification")
         return
     
     try:

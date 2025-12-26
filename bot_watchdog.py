@@ -19,7 +19,7 @@ WATCHDOG_LOG = f"{WORKSPACE}/watchdog.log"
 BOT_LOG = f"{WORKSPACE}/bot.log"
 BOT_MANAGER = f"{WORKSPACE}/bot-manager.sh"
 CHECK_INTERVAL = 120  # 2 минути
-TELEGRAM_BOT_TOKEN = "8349449826:AAFNmP0i-DlERin8Z7HVir4awGTpa5n8vUM"
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 OWNER_CHAT_ID = 7003238836
 
 # Логване
@@ -32,6 +32,12 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Провери дали TELEGRAM_BOT_TOKEN е зареден
+if not TELEGRAM_BOT_TOKEN:
+    logger.error("❌ TELEGRAM_BOT_TOKEN не е намерен в environment variables!")
+    logger.error("💡 Задай го с: export TELEGRAM_BOT_TOKEN='your-token-here'")
+    sys.exit(1)
 
 
 def get_bot_pid():
