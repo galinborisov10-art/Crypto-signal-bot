@@ -6274,6 +6274,47 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Изпрати първата част
     await update.message.reply_text(message, parse_mode='HTML')
     
+    # === NEW: MARKET FUNDAMENTAL ANALYSIS (PHASE 2 PART 2) ===
+    try:
+        from utils.market_helper import MarketHelper, format_market_fundamental_section
+        
+        market_helper = MarketHelper()
+        
+        if market_helper.is_enabled():
+            logger.info("🔬 Running market fundamental analysis")
+            
+            # Get market fundamentals (use BTCUSDT as main symbol for market overview)
+            market_fundamentals = market_helper.get_market_fundamentals('BTCUSDT')
+            
+            if market_fundamentals:
+                # Calculate average price change for context
+                avg_price_change = sentiment_analysis['avg_change']
+                
+                # Calculate total volume
+                total_volume = sum(float(item['volume']) for item in market_data)
+                
+                # Generate market context
+                market_context_text = market_helper.generate_market_context(
+                    fundamentals=market_fundamentals,
+                    price_change_24h=avg_price_change,
+                    volume_24h=total_volume
+                )
+                
+                # Format and send fundamental section
+                fundamental_section = format_market_fundamental_section(
+                    market_fundamentals,
+                    market_context_text
+                )
+                
+                if fundamental_section:
+                    await update.message.reply_text(fundamental_section, parse_mode='HTML')
+                    logger.info("✅ Market fundamental analysis sent")
+        else:
+            logger.debug("Market fundamental analysis disabled (feature flags)")
+    except Exception as e:
+        logger.warning(f"⚠️ Market fundamental analysis unavailable: {e}")
+        # Continue with normal market analysis
+    
     # === DETAILED COIN ANALYSIS WITH ICT ===
     await update.message.reply_text("📊 Подготвям детайлен анализ с ICT + CoinGecko данни...")
     
