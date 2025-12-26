@@ -69,3 +69,7 @@ ml_model.pkl
 ml_scaler.pkl
 *.pkl
 
+# Cache files (NEW - Phase 2)
+cache/
+cache/*.json
+!cache/.gitkeep

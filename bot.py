@@ -6663,6 +6663,89 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Format with 13-point output
             signal_msg = format_ict_signal_13_point(ict_signal)
             
+            # ============================================
+            # NEW: FUNDAMENTAL ANALYSIS INTEGRATION
+            # ============================================
+            fundamental_data = None
+            combined_analysis = None
+            recommendation = ""
+            
+            try:
+                from utils.fundamental_helper import FundamentalHelper, format_fundamental_section
+                
+                helper = FundamentalHelper()
+                
+                if helper.is_enabled():
+                    logger.info(f"🔬 Running fundamental analysis for {symbol}")
+                    
+                    # Get BTC data for correlation
+                    btc_klines_response = requests.get(
+                        BINANCE_KLINES_URL,
+                        params={'symbol': 'BTCUSDT', 'interval': timeframe, 'limit': 100},
+                        timeout=10
+                    )
+                    
+                    if btc_klines_response.status_code == 200:
+                        btc_klines_data = btc_klines_response.json()
+                        
+                        # Prepare BTC dataframe
+                        btc_df = pd.DataFrame(btc_klines_data, columns=[
+                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                            'taker_buy_quote', 'ignore'
+                        ])
+                        
+                        btc_df['timestamp'] = pd.to_datetime(btc_df['timestamp'], unit='ms')
+                        for col in ['open', 'high', 'low', 'close', 'volume']:
+                            btc_df[col] = btc_df[col].astype(float)
+                        
+                        # Get fundamental data (uses news cache)
+                        fundamental_data = helper.get_fundamental_data(
+                            symbol=symbol,
+                            symbol_df=df,
+                            btc_df=btc_df,
+                            news_articles=None  # Will use cache
+                        )
+                        
+                        if fundamental_data:
+                            # Calculate combined score
+                            combined_analysis = helper.calculate_combined_score(
+                                technical_confidence=ict_signal.confidence,
+                                fundamental_data=fundamental_data
+                            )
+                            
+                            # Generate recommendation
+                            recommendation = helper.generate_recommendation(
+                                signal_direction=ict_signal.signal_type.value,
+                                technical_confidence=ict_signal.confidence,
+                                fundamental_data=fundamental_data,
+                                combined_score=combined_analysis.get('combined_score', 0)
+                            )
+                            
+                            logger.info(f"✅ Fundamental analysis complete: combined_score={combined_analysis.get('combined_score')}")
+                        else:
+                            logger.info("⚪ No fundamental data available (cache miss or insufficient data)")
+                    else:
+                        logger.warning(f"⚠️ Failed to fetch BTC data for correlation: {btc_klines_response.status_code}")
+                else:
+                    logger.debug("Fundamental analysis disabled (feature flags)")
+            except Exception as e:
+                logger.warning(f"⚠️ Fundamental analysis unavailable: {e}")
+                # Continue with technical-only signal
+            
+            # Append fundamental section if available
+            if fundamental_data and combined_analysis:
+                from utils.fundamental_helper import format_fundamental_section
+                fundamental_section = format_fundamental_section(
+                    fundamental_data,
+                    combined_analysis,
+                    recommendation
+                )
+                signal_msg += fundamental_section
+            # ============================================
+            # END: FUNDAMENTAL ANALYSIS INTEGRATION
+            # ============================================
+            
             # Generate and send chart
             chart_sent = False
             if CHART_VISUALIZATION_AVAILABLE:
