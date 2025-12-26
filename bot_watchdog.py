@@ -33,6 +33,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Провери дали TELEGRAM_BOT_TOKEN е зареден
+if not TELEGRAM_BOT_TOKEN:
+    logger.error("❌ TELEGRAM_BOT_TOKEN не е намерен в environment variables!")
+    logger.error("💡 Задай го с: export TELEGRAM_BOT_TOKEN='your-token-here'")
+    sys.exit(1)
+
 
 def get_bot_pid():
     """Вземи PID от файл"""
