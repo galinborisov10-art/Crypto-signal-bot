@@ -41,7 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Провери дали TELEGRAM_TOKEN е зареден
-if not TELEGRAM_TOKEN and TELEGRAM_AVAILABLE:
+if not TELEGRAM_TOKEN:
     logger.warning("⚠️ TELEGRAM_BOT_TOKEN не е намерен в environment variables!")
     logger.warning("💡 Telegram notifications ще бъдат изключени")
     logger.warning("💡 Задай токена с: export TELEGRAM_BOT_TOKEN='your-token-here'")
