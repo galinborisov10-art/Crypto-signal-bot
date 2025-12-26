@@ -52,27 +52,40 @@ class TestMarketDataFetcher:
     @patch('utils.market_data_fetcher.requests.get')
     def test_fear_greed_caching(self, mock_get):
         """Test that Fear & Greed Index is cached"""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'data': [{
-                'value': '70',
-                'value_classification': 'Greed',
-                'timestamp': '1234567890'
-            }]
-        }
-        mock_get.return_value = mock_response
+        import tempfile
+        import shutil
         
-        fetcher = MarketDataFetcher(cache_ttl=60)
+        # Create temporary cache directory
+        temp_cache = tempfile.mkdtemp()
         
-        # First call - should fetch from API
-        result1 = fetcher.get_fear_greed_index()
-        assert mock_get.call_count == 1
-        
-        # Second call - should use cache
-        result2 = fetcher.get_fear_greed_index()
-        assert mock_get.call_count == 1  # No additional call
-        assert result1 == result2
+        try:
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                'data': [{
+                    'value': '70',
+                    'value_classification': 'Greed',
+                    'timestamp': '1234567890'
+                }]
+            }
+            mock_get.return_value = mock_response
+            
+            # Use isolated cache
+            from utils.news_cache import NewsCache
+            fetcher = MarketDataFetcher(cache_ttl=60)
+            fetcher.cache = NewsCache(cache_dir=temp_cache, ttl_minutes=60)
+            
+            # First call - should fetch from API
+            result1 = fetcher.get_fear_greed_index()
+            assert mock_get.call_count == 1
+            
+            # Second call - should use cache
+            result2 = fetcher.get_fear_greed_index()
+            assert mock_get.call_count == 1  # No additional call
+            assert result1 == result2
+        finally:
+            # Cleanup
+            shutil.rmtree(temp_cache, ignore_errors=True)
     
     @patch('utils.market_data_fetcher.requests.get')
     def test_get_market_overview_success(self, mock_get):
@@ -101,43 +114,68 @@ class TestMarketDataFetcher:
     @patch('utils.market_data_fetcher.requests.get')
     def test_api_error_handling(self, mock_get):
         """Test graceful handling of API errors"""
-        # Simulate timeout
-        mock_get.side_effect = Exception("Connection timeout")
+        import tempfile
+        import shutil
         
-        fetcher = MarketDataFetcher(cache_ttl=1)
-        result = fetcher.get_fear_greed_index()
+        # Create temporary cache directory
+        temp_cache = tempfile.mkdtemp()
         
-        # Should return None, not raise exception
-        assert result is None
+        try:
+            # Simulate timeout
+            mock_get.side_effect = Exception("Connection timeout")
+            
+            from utils.news_cache import NewsCache
+            fetcher = MarketDataFetcher(cache_ttl=1)
+            fetcher.cache = NewsCache(cache_dir=temp_cache, ttl_minutes=1)
+            
+            result = fetcher.get_fear_greed_index()
+            
+            # Should return None, not raise exception
+            assert result is None
+        finally:
+            # Cleanup
+            shutil.rmtree(temp_cache, ignore_errors=True)
     
     @patch('utils.market_data_fetcher.requests.get')
     def test_cache_expiration(self, mock_get):
         """Test that cache expires after TTL"""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'data': [{
-                'value': '50',
-                'value_classification': 'Neutral',
-                'timestamp': '1234567890'
-            }]
-        }
-        mock_get.return_value = mock_response
-        
-        # Use very short TTL for testing
-        fetcher = MarketDataFetcher(cache_ttl=0.01)  # 0.01 minutes = 0.6 seconds
-        
-        # First call
-        result1 = fetcher.get_fear_greed_index()
-        assert mock_get.call_count == 1
-        
-        # Wait for cache to expire
+        import tempfile
+        import shutil
         import time
-        time.sleep(1)
         
-        # Second call should fetch again
-        result2 = fetcher.get_fear_greed_index()
-        assert mock_get.call_count == 2  # Additional call made
+        # Create temporary cache directory
+        temp_cache = tempfile.mkdtemp()
+        
+        try:
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                'data': [{
+                    'value': '50',
+                    'value_classification': 'Neutral',
+                    'timestamp': '1234567890'
+                }]
+            }
+            mock_get.return_value = mock_response
+            
+            # Use very short TTL for testing
+            from utils.news_cache import NewsCache
+            fetcher = MarketDataFetcher(cache_ttl=0.01)  # 0.01 minutes = 0.6 seconds
+            fetcher.cache = NewsCache(cache_dir=temp_cache, ttl_minutes=0.01)
+            
+            # First call
+            result1 = fetcher.get_fear_greed_index()
+            assert mock_get.call_count == 1
+            
+            # Wait for cache to expire
+            time.sleep(1)
+            
+            # Second call should fetch again
+            result2 = fetcher.get_fear_greed_index()
+            assert mock_get.call_count == 2  # Additional call made
+        finally:
+            # Cleanup
+            shutil.rmtree(temp_cache, ignore_errors=True)
 
 
 class TestMarketHelper:
@@ -149,7 +187,7 @@ class TestMarketHelper:
         assert helper.data_fetcher is not None
         assert helper.news_cache is not None
     
-    @patch('utils.market_helper.load_feature_flags')
+    @patch('config.config_loader.load_feature_flags')
     def test_is_enabled_when_flags_true(self, mock_load_flags):
         """Test is_enabled returns True when flags are enabled"""
         mock_load_flags.return_value = {
@@ -162,7 +200,7 @@ class TestMarketHelper:
         helper = MarketHelper()
         assert helper.is_enabled() == True
     
-    @patch('utils.market_helper.load_feature_flags')
+    @patch('config.config_loader.load_feature_flags')
     def test_is_disabled_when_flags_false(self, mock_load_flags):
         """Test is_enabled returns False when flags are disabled"""
         mock_load_flags.return_value = {
@@ -175,7 +213,7 @@ class TestMarketHelper:
         helper = MarketHelper()
         assert helper.is_enabled() == False
     
-    @patch('utils.market_helper.load_feature_flags')
+    @patch('config.config_loader.load_feature_flags')
     @patch.object(MarketDataFetcher, 'get_fear_greed_index')
     @patch.object(MarketDataFetcher, 'get_market_overview')
     def test_get_market_fundamentals(self, mock_overview, mock_fear_greed, mock_load_flags):

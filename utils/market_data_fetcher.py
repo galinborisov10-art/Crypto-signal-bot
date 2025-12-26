@@ -3,6 +3,7 @@ Market Data Fetcher Module
 Fetches market data from external APIs (Fear & Greed Index, BTC dominance, market cap)
 """
 
+import json
 import logging
 import requests
 from typing import Dict, Optional
