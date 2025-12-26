@@ -4,7 +4,9 @@
     "sentiment_analysis": false,
     "btc_correlation": false,
     "multi_stage_alerts": false,
-    "critical_news_alerts": false
+    "critical_news_alerts": false,
+    "signal_integration": false,
+    "market_integration": false
   },
   "existing_features": {
     "ict_analysis": true,
