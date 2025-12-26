@@ -83,7 +83,7 @@ class TestBTCCorrelator:
         correlator = BTCCorrelator(window=30)
         
         # Generate correlated data
-        dates = pd.date_range(end=datetime.now(), periods=50, freq='1H')
+        dates = pd.date_range(end=datetime.now(), periods=50, freq='1h')
         base_prices = np.linspace(100, 110, 50)  # Uptrend
         noise = np.random.normal(0, 0.5, 50)
         
