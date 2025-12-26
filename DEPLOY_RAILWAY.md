@@ -66,7 +66,7 @@ railway up
 1. В Railway Dashboard → **Variables**
 2. Добави:
    ```
-   TELEGRAM_BOT_TOKEN=8349449826:AAFNmP0i-DlERin8Z7HVir4awGTpa5n8vUM
+   TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN_HERE
    OWNER_CHAT_ID=7003238836
    ```
 

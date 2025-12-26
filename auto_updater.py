@@ -26,7 +26,7 @@ except ImportError:
 # =====================================
 BOT_DIR = Path(__file__).parent
 LOG_FILE = BOT_DIR / "auto_updater.log"
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8349449826:AAFNmP0i-DlERin8Z7HVir4awGTpa5n8vUM")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OWNER_CHAT_ID = 7003238836
 
 # Logging setup

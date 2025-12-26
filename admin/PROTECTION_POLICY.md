@@ -252,7 +252,7 @@ rm admin/emergency_override.json
 
 **Админ парола:** `8109`
 **Owner Chat ID:** `8349449826`
-**Telegram Bot Token:** `8349449826:AAFNmP0i-DlERin8Z7HVir4awGTpa5n8vUM`
+**Telegram Bot Token:** `1234567890:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` (set as environment variable)
 
 **Защитени файлове:**
 - `bot.py`

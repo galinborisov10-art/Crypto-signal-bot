@@ -11,7 +11,7 @@
 ### 🔑 Текущи учетни данни:
 
 1. **Telegram Bot**
-   - Token: `8349449826:AAFNmP0i-DlERin8Z7HVir4awGTpa5n8vUM`
+   - Token: `YOUR_TELEGRAM_BOT_TOKEN` (set as environment variable)
    - Owner Chat ID: `8349449826`
 
 2. **Админ панел**
