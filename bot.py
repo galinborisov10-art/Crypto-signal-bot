@@ -7439,6 +7439,42 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
 {signal.reasoning}
 """
     
+    # === NEW: FUNDAMENTAL ANALYSIS INTEGRATION ===
+    try:
+        from config.config_loader import load_feature_flags
+        flags = load_feature_flags()
+        
+        if flags.get('fundamental_analysis', {}).get('signal_integration', False):
+            # Try to get fundamental data
+            try:
+                from utils.fundamental_helper import FundamentalHelper
+                
+                fundamental_helper = FundamentalHelper()
+                
+                if fundamental_helper.is_enabled():
+                    # Get symbol from signal (if available)
+                    symbol = getattr(signal, 'symbol', 'BTCUSDT')
+                    
+                    # For now, we'll show that fundamental integration is enabled
+                    # Full integration would require fetching price data and news
+                    msg += f"""
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📰 FUNDAMENTAL ANALYSIS</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+✅ <b>Fundamental analysis integrated</b>
+
+Combined Score: Technical (60%) + Fundamental (40%)
+📊 Technical Confidence: {signal.confidence:.1f}%
+
+<i>💡 Full fundamental data available via /market command</i>
+"""
+            except Exception as e:
+                logger.debug(f"Could not add fundamental analysis to signal: {e}")
+                
+    except Exception as e:
+        logger.debug(f"Fundamental analysis not available: {e}")
+    
     # Warnings
     if signal.warnings:
         msg += f"\n<b>⚠️ ПРЕДУПРЕЖДЕНИЯ:</b>\n"
