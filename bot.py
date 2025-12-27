@@ -9073,23 +9073,37 @@ async def active_trades_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Show all active trades being monitored
     
-    Usage: /active_trades
+    Usage: /active_trades or /active
     """
-    global active_trades
+    global real_time_monitor_global
     
     try:
-        user_trades = [t for t in active_trades if t['user_chat_id'] == update.effective_user.id]
-        
-        if not user_trades:
+        # Check if real-time monitor is available
+        if not real_time_monitor_global:
             await update.message.reply_text(
-                "📊 <b>Active Trades</b>\n\n"
-                "No active trades currently being monitored.\n\n"
-                "Trades are automatically added when you confirm signals.",
+                "📊 <b>Активни Трейдове</b>\n\n"
+                "Системата за мониторинг не е активна в момента.\n\n"
+                "Моля, стартирайте бота отново.",
                 parse_mode='HTML'
             )
             return
         
-        message = f"📊 <b>Active Trades ({len(user_trades)})</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        # Get active trades for this user
+        user_trades = real_time_monitor_global.get_user_trades(update.effective_user.id)
+        
+        if not user_trades:
+            await update.message.reply_text(
+                "📊 <b>Активни Трейдове</b>\n\n"
+                "Няма активни трейдове в момента.\n\n"
+                "Трейдовете се добавят автоматично при потвърждаване на сигнали.",
+                parse_mode='HTML'
+            )
+            return
+        
+        message = f"""<b>📊 АКТИВНИ ТРЕЙДОВЕ ({len(user_trades)})</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"""
         
         for i, trade in enumerate(user_trades, 1):
             # Get current price
@@ -9102,33 +9116,62 @@ async def active_trades_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ticker = response.json()
                 current_price = float(ticker['price'])
             except:
-                current_price = trade['entry']
+                current_price = trade['entry_price']
             
-            # Calculate progress
-            if trade['type'] == 'LONG':
-                progress = ((current_price - trade['entry']) / (trade['tp'] - trade['entry'])) * 100
-            else:
-                progress = ((trade['entry'] - current_price) / (trade['entry'] - trade['tp'])) * 100
+            # Calculate progress percentage
+            if trade['signal_type'] in ['BUY', 'LONG']:
+                if trade['tp_price'] > trade['entry_price']:
+                    progress = ((current_price - trade['entry_price']) / (trade['tp_price'] - trade['entry_price'])) * 100
+                else:
+                    progress = 0
+            else:  # SELL, SHORT
+                if trade['entry_price'] > trade['tp_price']:
+                    progress = ((trade['entry_price'] - current_price) / (trade['entry_price'] - trade['tp_price'])) * 100
+                else:
+                    progress = 0
             
             progress = max(0, min(100, progress))
             
-            alerted = "✅ Alerted" if trade['alerted_80'] else "⏳ Monitoring"
+            # Calculate P/L percentage
+            if trade['signal_type'] in ['BUY', 'LONG']:
+                pl_pct = ((current_price - trade['entry_price']) / trade['entry_price']) * 100
+            else:
+                pl_pct = ((trade['entry_price'] - current_price) / trade['entry_price']) * 100
             
-            message += (
-                f"{i}. <b>{trade['symbol']}</b> {trade['type']}\n"
-                f"   Entry: {trade['entry']:,.2f}\n"
-                f"   Current: {current_price:,.2f}\n"
-                f"   Progress: {progress:.1f}% to TP\n"
-                f"   80% Alert: {alerted}\n\n"
-            )
+            # Calculate duration
+            opened_at = trade.get('opened_at', trade.get('timestamp'))
+            duration = datetime.now(timezone.utc) - opened_at
+            hours = int(duration.total_seconds() // 3600)
+            minutes = int((duration.total_seconds() % 3600) // 60)
+            duration_str = f"{hours}ч {minutes}мин" if hours > 0 else f"{minutes}мин"
+            
+            # Direction emoji
+            dir_emoji = '🟢' if trade['signal_type'] in ['BUY', 'LONG'] else '🔴'
+            
+            # P/L emoji
+            pl_emoji = '📈' if pl_pct > 0 else ('📉' if pl_pct < 0 else '➡️')
+            
+            message += f"""<b>#{i}. {trade.get('trade_id', 'N/A')}</b>
+   {dir_emoji} {trade['symbol']} - {trade['signal_type']} | ⏰ {trade['timeframe']}
+   💰 P/L: {pl_pct:+.2f}% {pl_emoji}
+   📊 Прогрес: {progress:.1f}%
+   ⏱️ Активен: {duration_str}
+
+"""
         
-        message += f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+        message += f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 Използвай <code>/details [Trade ID]</code> за детайли
+Пример: <code>/details {user_trades[0].get('trade_id', '#BTC-20251227-143022')}</code>
+
+⏰ {datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M UTC')}
+"""
         
         await update.message.reply_text(message, parse_mode='HTML')
         
     except Exception as e:
         logger.error(f"Active trades error: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Error: {str(e)}")
+        await update.message.reply_text(f"❌ Грешка: {str(e)}")
+
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

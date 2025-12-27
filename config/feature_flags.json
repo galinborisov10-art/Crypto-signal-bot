@@ -17,7 +17,12 @@
   "monitoring": {
     "price_check_interval": 30,
     "news_check_interval": 300,
-    "log_level": "INFO"
+    "log_level": "INFO",
+    "stage_alert_intervals": {
+      "halfway": 120,
+      "approaching": 120,
+      "final": 30
+    }
   },
   "use_ict_enhancer": false,
   "ict_enhancer_min_confidence": 70,
