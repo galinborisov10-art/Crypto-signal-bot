@@ -267,7 +267,7 @@ class TestMarketHelper:
             volume_24h=1000000
         )
         
-        assert "Strong buying pressure" in context
+        assert "Силен купувачески натиск" in context
         assert "Greed" in context
         assert "48.5%" in context
     
@@ -289,7 +289,7 @@ class TestMarketHelper:
             volume_24h=1000000
         )
         
-        assert "Strong selling pressure" in context
+        assert "Силен продавачески натиск" in context
         assert "Extreme Fear" in context
         assert "55.0%" in context
 
@@ -318,7 +318,7 @@ class TestFormatting:
             'market_cap': 1850000000000
         }
         
-        market_context = "Strong buying pressure in market.\nFear & Greed in \"Greed\" zone - bullish conditions."
+        market_context = "Силен купувачески натиск в пазара.\nFear & Greed в зона \"Greed\" - бичи условия."
         
         result = format_market_fundamental_section(fundamentals, market_context)
         
@@ -330,7 +330,7 @@ class TestFormatting:
         assert "48.5%" in result
         assert "1.85T" in result  # Market cap in trillions
         assert "MARKET CONTEXT" in result
-        assert "Strong buying pressure" in result
+        assert "Силен купувачески натиск" in result
     
     def test_format_returns_empty_when_no_data(self):
         """Test that formatting returns empty string when no data"""

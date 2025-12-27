@@ -22,12 +22,12 @@ class MarketDataFetcher:
     Fetches market data from external APIs with caching
     """
     
-    def __init__(self, cache_ttl: int = 60):
+    def __init__(self, cache_ttl: int = 15):
         """
         Initialize market data fetcher
         
         Args:
-            cache_ttl: Cache time-to-live in minutes (default: 60)
+            cache_ttl: Cache time-to-live in minutes (default: 15)
         """
         self.cache = NewsCache(cache_dir='cache/market', ttl_minutes=cache_ttl)
         self.cache_ttl = cache_ttl

@@ -45,10 +45,10 @@ class TestMarketContextGeneration:
             volume_24h=1000000
         )
         
-        # Check for bullish indicators
+        # Check for bullish indicators (Bulgarian text)
         assert context is not None
         assert len(context) > 0
-        assert 'buying pressure' in context.lower() or 'bullish' in context.lower()
+        assert 'купувачески натиск' in context.lower() or 'бичи' in context.lower()
     
     def test_market_context_bearish(self):
         """Test market context with bearish data"""
@@ -72,10 +72,10 @@ class TestMarketContextGeneration:
             volume_24h=800000
         )
         
-        # Check for bearish indicators
+        # Check for bearish indicators (Bulgarian text)
         assert context is not None
         assert len(context) > 0
-        assert 'selling pressure' in context.lower() or 'bearish' in context.lower() or 'fear' in context.lower()
+        assert 'продавачески натиск' in context.lower() or 'мечи' in context.lower() or 'fear' in context.lower()
     
     def test_market_context_neutral(self):
         """Test market context with neutral data"""
