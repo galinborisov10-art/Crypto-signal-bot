@@ -6866,9 +6866,8 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             combined_analysis = None
             recommendation = ""
             
-            # Get user settings to check if fundamental analysis is enabled
-            user_settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
-            user_wants_fundamental = user_settings.get('use_fundamental', False)
+            # Get user's fundamental analysis preference (reuse settings from line 6779)
+            user_wants_fundamental = settings.get('use_fundamental', False)
             
             # Prepare analysis mode indicator
             analysis_mode = ""
@@ -6918,8 +6917,8 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                         
                         if fundamental_data:
-                            # Get user's weight preference
-                            fund_weight = user_settings.get('fundamental_weight', 0.3)  # Default 30%
+                            # Get user's weight preference (reuse settings from line 6779)
+                            fund_weight = settings.get('fundamental_weight', 0.3)  # Default 30%
                             tech_weight = 1 - fund_weight  # Remaining for technical
                             
                             # Store original technical confidence
