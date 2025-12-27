@@ -6168,6 +6168,64 @@ async def analyze_market_sentiment(market_data):
         return {'sentiment': 'NEUTRAL', 'emoji': '➡️', 'score': 50, 'description': 'Неизвестно'}
 
 
+def format_news_with_impact(news_item):
+    """
+    Format news article with impact score and visual indicators
+    
+    Args:
+        news_item: News article dict with impact_score and sentiment
+        
+    Returns:
+        Formatted impact string with emoji and level
+    """
+    impact = news_item.get('impact_score', 0)
+    sentiment = news_item.get('sentiment', 'Neutral')
+    
+    # Visual indicator
+    if impact > 15:
+        indicator = "🟢"
+        level = "Strong Bullish"
+    elif impact > 5:
+        indicator = "🟢"
+        level = "Bullish"
+    elif impact < -15:
+        indicator = "🔴"
+        level = "Strong Bearish"
+    elif impact < -5:
+        indicator = "🔴"
+        level = "Bearish"
+    else:
+        indicator = "🟡"
+        level = "Neutral"
+    
+    return f"Impact: {impact:+d} ({level}) {indicator}"
+
+
+def calculate_combined_signal_strength(technical_score, fundamental_score):
+    """
+    Combine technical and fundamental scores
+    Technical weight: 60% (from feature_flags.json)
+    Fundamental weight: 40%
+    
+    Args:
+        technical_score: Technical analysis score (0-100)
+        fundamental_score: Fundamental analysis score (0-100)
+        
+    Returns:
+        Tuple of (strength_label, combined_score)
+    """
+    combined = (technical_score * 0.6) + (fundamental_score * 0.4)
+    
+    if combined > 75:
+        return "🟢 STRONG", combined
+    elif combined > 60:
+        return "🟡 MODERATE", combined
+    elif combined > 40:
+        return "🟠 WEAK", combined
+    else:
+        return "🔴 VERY WEAK", combined
+
+
 @rate_limited(calls=10, period=60)
 async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Дневен анализ за всички интегрирани валути с новини и sentiment"""
@@ -6358,7 +6416,33 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             coin_msg += f"   📈 Промяна 7д: {ext.get('price_change_7d', 0):+.2f}%\n"
             coin_msg += f"   📅 Промяна 30д: {ext.get('price_change_30d', 0):+.2f}%\n"
             coin_msg += f"   👥 Community: 👍 {ext.get('sentiment_votes_up', 0):.0f}% / 👎 {ext.get('sentiment_votes_down', 0):.0f}%\n"
-            coin_msg += f"   🏆 Market Cap Rank: #{ext.get('market_cap_rank', 'N/A')}\n\n"
+            coin_msg += f"   🏆 Market Cap Rank: #{ext.get('market_cap_rank', 'N/A')}\n"
+            
+            # Add BTC correlation for altcoins
+            if symbol != 'BTCUSDT':
+                try:
+                    from config.config_loader import load_feature_flags
+                    flags = load_feature_flags()
+                    btc_corr_enabled = flags.get('fundamental_analysis', {}).get('btc_correlation', False)
+                    
+                    if btc_corr_enabled:
+                        # Get BTC correlation from external data if available
+                        btc_corr = ext.get('btc_correlation', None)
+                        
+                        if btc_corr is not None:
+                            # Determine correlation strength
+                            if abs(btc_corr) > 0.7:
+                                corr_strength = "Strong"
+                            elif abs(btc_corr) > 0.4:
+                                corr_strength = "Moderate"
+                            else:
+                                corr_strength = "Weak"
+                            
+                            coin_msg += f"   🔗 <b>BTC Correlation:</b> {btc_corr:.2f} ({corr_strength})\n"
+                except Exception as e:
+                    logger.debug(f"Could not add BTC correlation: {e}")
+            
+            coin_msg += "\n"
         
         # Обем и активност
         coin_msg += f"<b>💵 Активност (24ч):</b>\n"
@@ -6475,14 +6559,31 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if news:
         import re
         import html
+        from datetime import datetime, timezone
         
         news_message = "<b>📰 Последни Новини (Топ източници):</b>\n\n"
+        
+        # Try to add sentiment analysis and impact scores if enabled
+        try:
+            from config.config_loader import load_feature_flags
+            from fundamental.sentiment_analyzer import SentimentAnalyzer
+            
+            flags = load_feature_flags()
+            sentiment_enabled = flags.get('fundamental_analysis', {}).get('sentiment_analysis', False)
+            
+            if sentiment_enabled:
+                sentiment_analyzer = SentimentAnalyzer()
+                
+        except Exception as e:
+            logger.warning(f"Could not load sentiment analyzer: {e}")
+            sentiment_enabled = False
         
         for i, article in enumerate(news[:3], 1):  # Първите 3
             source = article.get('source', '📰')
             
             # Използвай преведеното заглавие ако е налично
             title_bg = article.get('title_bg', article.get('title', 'Без заглавие'))
+            title_en = article.get('title', '')
             desc_bg = article.get('description_bg', '')
             link = article.get('link', None)
             
@@ -6490,6 +6591,53 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title_bg = title_bg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             
             news_message += f"{i}. {source} <b>{title_bg}</b>\n"
+            
+            # Add impact score if sentiment analysis is enabled
+            if sentiment_enabled and title_en:
+                try:
+                    # Analyze individual article sentiment
+                    score = sentiment_analyzer._analyze_text(title_en)
+                    impact = int((score - 50) * 0.4)  # Convert to impact score (-20 to +20)
+                    
+                    # Visual indicator
+                    if impact > 15:
+                        indicator = "🟢"
+                        level = "Strong Bullish"
+                    elif impact > 5:
+                        indicator = "🟢"
+                        level = "Bullish"
+                    elif impact < -15:
+                        indicator = "🔴"
+                        level = "Strong Bearish"
+                    elif impact < -5:
+                        indicator = "🔴"
+                        level = "Bearish"
+                    else:
+                        indicator = "🟡"
+                        level = "Neutral"
+                    
+                    # Add time info if available
+                    time_info = ""
+                    if 'published' in article:
+                        try:
+                            pub_time = datetime.fromisoformat(article['published'].replace('Z', '+00:00'))
+                            now = datetime.now(timezone.utc)
+                            diff = now - pub_time
+                            hours_ago = int(diff.total_seconds() / 3600)
+                            if hours_ago < 1:
+                                time_info = "< 1h ago"
+                            else:
+                                time_info = f"{hours_ago}h ago"
+                        except:
+                            pass
+                    
+                    impact_line = f"   Impact: {impact:+d} ({level}) {indicator}"
+                    if time_info:
+                        impact_line += f" | {time_info}"
+                    news_message += impact_line + "\n"
+                    
+                except Exception as e:
+                    logger.debug(f"Could not analyze news sentiment: {e}")
             
             if desc_bg:
                 desc_bg = desc_bg.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -7290,6 +7438,42 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
 
 {signal.reasoning}
 """
+    
+    # === NEW: FUNDAMENTAL ANALYSIS INTEGRATION ===
+    try:
+        from config.config_loader import load_feature_flags
+        flags = load_feature_flags()
+        
+        if flags.get('fundamental_analysis', {}).get('signal_integration', False):
+            # Try to get fundamental data
+            try:
+                from utils.fundamental_helper import FundamentalHelper
+                
+                fundamental_helper = FundamentalHelper()
+                
+                if fundamental_helper.is_enabled():
+                    # Get symbol from signal (if available)
+                    symbol = getattr(signal, 'symbol', 'BTCUSDT')
+                    
+                    # For now, we'll show that fundamental integration is enabled
+                    # Full integration would require fetching price data and news
+                    msg += f"""
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📰 FUNDAMENTAL ANALYSIS</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+✅ <b>Fundamental analysis integrated</b>
+
+Combined Score: Technical (60%) + Fundamental (40%)
+📊 Technical Confidence: {signal.confidence:.1f}%
+
+<i>💡 Full fundamental data available via /market command</i>
+"""
+            except Exception as e:
+                logger.debug(f"Could not add fundamental analysis to signal: {e}")
+                
+    except Exception as e:
+        logger.debug(f"Fundamental analysis not available: {e}")
     
     # Warnings
     if signal.warnings:

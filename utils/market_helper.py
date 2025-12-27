@@ -252,11 +252,28 @@ def format_market_fundamental_section(
             dom = fundamentals['btc_dominance']
             lines.append(f"💹 <b>BTC Dominance:</b> {dom:.1f}% (stable)")
         
-        # Market Cap
+        # Market Cap with 24h change
         if 'market_cap' in fundamentals:
             mcap = fundamentals['market_cap']
             mcap_t = mcap / 1_000_000_000_000  # Convert to trillions
-            lines.append(f"📊 <b>Total Market Cap:</b> ${mcap_t:.2f}T")
+            
+            # Get market cap change
+            mcap_change = fundamentals.get('market_cap_change', 0)
+            mcap_emoji = "📈" if mcap_change > 0 else "📉" if mcap_change < 0 else "➡️"
+            
+            if mcap_change != 0:
+                lines.append(f"💰 <b>Total Market Cap:</b> ${mcap_t:.2f}T ({mcap_change:+.1f}% 24h) {mcap_emoji}")
+            else:
+                lines.append(f"💰 <b>Total Market Cap:</b> ${mcap_t:.2f}T")
+        
+        # Total Volume with 24h change
+        if 'total_volume' in fundamentals:
+            volume = fundamentals['total_volume']
+            volume_b = volume / 1_000_000_000  # Convert to billions
+            
+            # Calculate volume change (if available)
+            # For now, we'll skip the change since we don't have historical volume
+            lines.append(f"📊 <b>Total Volume 24h:</b> ${volume_b:.1f}B")
         
         # Top news
         if 'sentiment' in fundamentals and fundamentals['sentiment'].get('top_news'):
