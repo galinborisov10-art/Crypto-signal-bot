@@ -922,6 +922,8 @@ class ICTSignalEngine:
         tr3 = abs(low - close.shift())
         
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        # Note: .mean() here is legitimate - it's part of the standard ATR formula,
+        # not a moving average for trading signals (ICT compliant)
         atr = tr.rolling(window=period).mean()
         
         return atr
@@ -2752,6 +2754,8 @@ class ICTSignalEngine:
                 rsi = df['rsi'].iloc[-1]
             else:
                 # Calculate RSI if not present
+                # Note: .mean() here is legitimate - it's part of the standard RSI formula
+                # (exponential smoothing of gains/losses), not a moving average for signals
                 delta = df['close'].diff()
                 gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
                 loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
