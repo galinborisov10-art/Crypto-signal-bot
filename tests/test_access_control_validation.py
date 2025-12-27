@@ -158,7 +158,10 @@ def test_documentation_exists():
 
 if __name__ == '__main__':
     import os
-    os.chdir('/home/runner/work/Crypto-signal-bot/Crypto-signal-bot')
+    # Get the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Change to parent directory (project root)
+    os.chdir(os.path.dirname(script_dir))
     
     tests = [
         test_decorator_exists_in_bot_py,

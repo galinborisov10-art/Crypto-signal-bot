@@ -8253,41 +8253,6 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @require_access()
 @rate_limited(calls=20, period=60)
-async def workspace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Информація за достъп до Workspace"""
-    workspace_info = f"""💻 <b>GITHUB WORKSPACE</b>
-
-🔗 <b>Твой Codespace:</b>
-https://github.com/codespaces
-
-📂 <b>Repository:</b>
-https://github.com/galinborisov10-art/Crypto-signal-bot
-
-🚀 <b>Бърз достъп:</b>
-• Натисни бутона "💻 Workspace"
-• Или използвай /workspace
-• Или /w (кратко)
-
-💡 <b>Какво можеш да правиш:</b>
-✅ Виждаш copilot_tasks.json
-✅ Редактираш кода
-✅ Пускаш команди в Terminal
-✅ Общуваш с GitHub Copilot
-✅ Commit & Push промени
-
-📋 <b>Текущи задачи:</b>
-Виж: /task
-"""
-    
-    await update.message.reply_text(
-        workspace_info,
-        parse_mode='HTML',
-        disable_web_page_preview=False
-    )
-
-
-@require_access()
-@rate_limited(calls=20, period=60)
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройки на TP/SL и RR"""
     settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
