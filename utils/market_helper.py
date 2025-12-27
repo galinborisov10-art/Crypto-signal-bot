@@ -7,6 +7,7 @@ import logging
 import sys
 import os
 from typing import Dict, Optional
+from datetime import datetime
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -249,7 +250,6 @@ def format_market_fundamental_section(
             
             # Add timestamp if available
             if 'timestamp' in fg:
-                from datetime import datetime
                 try:
                     ts = int(fg['timestamp'])
                     now = int(datetime.now().timestamp())
@@ -264,7 +264,8 @@ def format_market_fundamental_section(
                         time_str = f"преди {hours_ago} ч"
                     
                     lines.append(f"   <i>Обновено: {time_str}</i>")
-                except:
+                except (ValueError, TypeError, KeyError):
+                    # Skip timestamp if data is invalid
                     pass
         
         # BTC Dominance
