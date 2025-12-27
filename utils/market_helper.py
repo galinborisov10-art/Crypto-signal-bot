@@ -159,7 +159,7 @@ class MarketHelper:
                 sent = fundamentals['sentiment']
                 top_news_count = len(sent.get('top_news', []))
                 if top_news_count > 0:
-                    lines.append(f"Позитивен новинарски настроение с {top_news_count} важни статии.")
+                    lines.append(f"Позитивен новинарско настроение с {top_news_count} важни статии.")
             
             # Fear & Greed context
             if 'fear_greed' in fundamentals:
@@ -271,7 +271,7 @@ def format_market_fundamental_section(
         # BTC Dominance
         if 'btc_dominance' in fundamentals:
             dom = fundamentals['btc_dominance']
-            lines.append(f"💹 <b>BTC Dominance:</b> {dom:.1f}% (stable)")
+            lines.append(f"💹 <b>BTC Dominance:</b> {dom:.1f}% (стабилна)")
         
         # Market Cap with 24h change
         if 'market_cap' in fundamentals:
