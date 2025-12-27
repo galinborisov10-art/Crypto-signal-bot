@@ -1,12 +1,12 @@
 {
   "fundamental_analysis": {
-    "enabled": false,
-    "sentiment_analysis": false,
-    "btc_correlation": false,
-    "multi_stage_alerts": false,
-    "critical_news_alerts": false,
-    "signal_integration": false,
-    "market_integration": false
+    "enabled": true,
+    "sentiment_analysis": true,
+    "btc_correlation": true,
+    "multi_stage_alerts": true,
+    "critical_news_alerts": true,
+    "signal_integration": true,
+    "market_integration": true
   },
   "existing_features": {
     "ict_analysis": true,
