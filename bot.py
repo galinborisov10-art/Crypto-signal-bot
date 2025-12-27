@@ -9,6 +9,7 @@ import hashlib
 import gc
 import uuid
 from datetime import datetime, timezone
+from functools import wraps
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -20,6 +21,7 @@ import pandas as pd
 from io import BytesIO
 import os
 from pathlib import Path
+import html
 
 # ================= ENVIRONMENT VARIABLES =================
 from dotenv import load_dotenv
@@ -258,6 +260,13 @@ except Exception as e:
 
 # Tracking на опити за препращане/достъп
 ACCESS_ATTEMPTS = {}  # {user_id: {'username': str, 'attempts': int, 'last_attempt': datetime}}
+
+# Access control messages
+ACCESS_DENIED_MESSAGE = (
+    "⛔ <b>ACCESS DENIED</b>\n\n"
+    "You are not authorized to use this bot.\n\n"
+    "If you believe this is an error, please contact the bot owner."
+)
 
 # Admin парола hash (от .env или fallback към хардкоднат hash)
 ADMIN_PASSWORD_HASH = os.getenv('ADMIN_PASSWORD_HASH', hashlib.sha256("8109".encode()).hexdigest())
@@ -4994,9 +5003,12 @@ async def notify_owner_unauthorized_access(context, user_id: int, username: str,
         owner_id = OWNER_CHAT_ID
         
         if owner_id:
+            # Escape username to prevent HTML injection
+            safe_username = html.escape(username)
+            
             message = (
                 f"⚠️ <b>UNAUTHORIZED ACCESS ATTEMPT</b>\n\n"
-                f"👤 User: @{username}\n"
+                f"👤 User: @{safe_username}\n"
                 f"🆔 User ID: <code>{user_id}</code>\n"
                 f"💬 Chat ID: <code>{chat_id}</code>\n"
                 f"⚡ Command: <code>{command}</code>\n\n"
@@ -5032,8 +5044,6 @@ def require_access(allowed_users: set = None):
             ...
     """
     def decorator(func):
-        from functools import wraps
-        
         @wraps(func)
         async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
             # Get user info
@@ -5057,9 +5067,7 @@ def require_access(allowed_users: set = None):
                 
                 # Send denial message to unauthorized user
                 await update.message.reply_text(
-                    "⛔ <b>ACCESS DENIED</b>\n\n"
-                    "You are not authorized to use this bot.\n\n"
-                    "If you believe this is an error, please contact the bot owner.",
+                    ACCESS_DENIED_MESSAGE,
                     parse_mode='HTML'
                 )
                 
