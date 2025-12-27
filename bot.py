@@ -4979,6 +4979,111 @@ def rate_limited(calls=20, period=60):
     return decorator
 
 
+async def notify_owner_unauthorized_access(context, user_id: int, username: str, command: str, chat_id: int):
+    """
+    Send notification to bot owner about unauthorized access attempt.
+    
+    Args:
+        context: Telegram context
+        user_id: ID of unauthorized user
+        username: Username/name of unauthorized user
+        command: Command that was attempted
+        chat_id: Chat ID where attempt occurred
+    """
+    try:
+        owner_id = OWNER_CHAT_ID
+        
+        if owner_id:
+            message = (
+                f"⚠️ <b>UNAUTHORIZED ACCESS ATTEMPT</b>\n\n"
+                f"👤 User: @{username}\n"
+                f"🆔 User ID: <code>{user_id}</code>\n"
+                f"💬 Chat ID: <code>{chat_id}</code>\n"
+                f"⚡ Command: <code>{command}</code>\n\n"
+                f"🕐 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"<i>This user is not in the whitelist.</i>"
+            )
+            
+            await context.bot.send_message(
+                chat_id=owner_id,
+                text=message,
+                parse_mode='HTML'
+            )
+            
+            logger.info(f"📨 Sent unauthorized access alert to owner (ID: {owner_id})")
+    except Exception as e:
+        logger.error(f"❌ Failed to notify owner about unauthorized access: {e}")
+
+
+def require_access(allowed_users: set = None):
+    """
+    Decorator to restrict command access to whitelisted users.
+    
+    Args:
+        allowed_users: Set of allowed user IDs. If None, uses ALLOWED_USERS from config.
+    
+    Returns:
+        Decorated function that checks access before execution.
+    
+    Usage:
+        @require_access()
+        @rate_limited(calls=5, period=60)
+        async def my_command(update, context):
+            ...
+    """
+    def decorator(func):
+        from functools import wraps
+        
+        @wraps(func)
+        async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+            # Get user info
+            user = update.effective_user
+            user_id = user.id
+            username = user.username or user.first_name or "Unknown"
+            chat_id = update.effective_chat.id
+            
+            # Get allowed users list
+            users_whitelist = allowed_users if allowed_users is not None else ALLOWED_USERS
+            
+            # Check if user is allowed
+            if user_id not in users_whitelist:
+                # Log unauthorized attempt
+                logger.warning(
+                    f"⛔ UNAUTHORIZED ACCESS ATTEMPT: "
+                    f"User: @{username} (ID: {user_id}) | "
+                    f"Command: {func.__name__} | "
+                    f"Chat: {chat_id}"
+                )
+                
+                # Send denial message to unauthorized user
+                await update.message.reply_text(
+                    "⛔ <b>ACCESS DENIED</b>\n\n"
+                    "You are not authorized to use this bot.\n\n"
+                    "If you believe this is an error, please contact the bot owner.",
+                    parse_mode='HTML'
+                )
+                
+                # Notify owner about unauthorized attempt
+                await notify_owner_unauthorized_access(
+                    context=context,
+                    user_id=user_id,
+                    username=username,
+                    command=func.__name__,
+                    chat_id=chat_id
+                )
+                
+                return  # Block execution
+            
+            # User authorized - log and proceed
+            logger.info(f"✅ Authorized access: @{username} (ID: {user_id}) -> {func.__name__}")
+            
+            # Execute original function
+            return await func(update, context, *args, **kwargs)
+        
+        return wrapper
+    return decorator
+
+
 # ================= КОМАНДИ =================
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5047,6 +5152,27 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"🚫 Блокиран опит за forward от @{username} (ID:{user_id})")
             return
     
+    # Check if user is authorized
+    if user_id not in ALLOWED_USERS:
+        # Show limited welcome for unauthorized users
+        unauthorized_text = """👋 <b>Welcome to Crypto Signal Bot!</b>
+
+🔒 <b>This is a private trading bot.</b>
+
+Access is restricted to authorized users only.
+
+If you need access, please contact the bot owner.
+
+📧 <b>Note:</b> Your user ID is <code>{}</code>
+The owner can approve you with: <code>/approve {}</code>
+"""
+        await update.message.reply_text(
+            unauthorized_text.format(user_id, user_id),
+            parse_mode='HTML'
+        )
+        logger.info(f"⚠️ Unauthorized /start from @{username} (ID: {user_id})")
+        return
+    
     # Нормален старт (не е препратен или е от owner)
     welcome_text = """
 🤖 <b>Добре дошли в Crypto Signal Bot!</b>
@@ -5076,6 +5202,7 @@ BTC, ETH, XRP, SOL, BNB, ADA
     await update.message.reply_text(welcome_text, parse_mode='HTML', reply_markup=get_main_keyboard())
 
 
+@require_access()
 async def ml_menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📚 ML Анализ главно меню с описания"""
     ml_menu_text = """📚 <b>ML АНАЛИЗ - Machine Learning</b>
@@ -5115,6 +5242,38 @@ async def ml_menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Помощна информация"""
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "Unknown"
+    
+    # Check if user is authorized
+    if user_id not in ALLOWED_USERS:
+        # Show limited help for unauthorized users
+        unauthorized_help = """📖 <b>Crypto Signal Bot - Help</b>
+
+🔒 <b>This is a private trading bot.</b>
+
+This bot provides advanced crypto trading signals and analysis, but access is restricted to authorized users only.
+
+<b>Features (for authorized users):</b>
+• Real-time trading signals
+• Market analysis
+• ICT methodology
+• ML predictions
+• Risk management
+• Automated alerts
+
+<b>To get access:</b>
+Please contact the bot owner and provide your user ID: <code>{}</code>
+
+The owner can approve you with: <code>/approve {}</code>
+"""
+        await update.message.reply_text(
+            unauthorized_help.format(user_id, user_id),
+            parse_mode='HTML'
+        )
+        logger.info(f"⚠️ Unauthorized /help from @{username} (ID: {user_id})")
+        return
+    
     help_text = """
 📖 <b>ПОМОЩ - Crypto Signal Bot</b>
 
@@ -5246,6 +5405,7 @@ ORDER_BLOCKS_GUIDE.md
     await update.message.reply_text(help_text, parse_mode='HTML')
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показва текущата версия на бота с пълна информация"""
@@ -5322,6 +5482,7 @@ async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error getting version: {str(e)}")
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показва статистика на бота"""
@@ -5329,6 +5490,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_message, parse_mode='HTML')
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def journal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📝 Trading Journal - ML самообучение и insights"""
@@ -6233,6 +6395,7 @@ def calculate_combined_signal_strength(technical_score, fundamental_score):
         return "🔴 VERY WEAK", combined
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Дневен анализ за всички интегрирани валути с новини и sentiment"""
@@ -6706,6 +6869,7 @@ def add_signal_to_monitor(ict_signal, symbol: str, timeframe: str, chat_id: int)
 
 
 
+@require_access()
 @rate_limited(calls=3, period=60)
 async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Анализ и сигнал в реално време"""
@@ -7073,6 +7237,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@require_access()
 @rate_limited(calls=3, period=60)
 async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -7593,6 +7758,7 @@ def format_ict_signal_13_point(signal: ICTSignal) -> str:
     return format_standardized_signal(signal, "MANUAL")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Последни новини от крипто света - Топ надеждни източници"""
@@ -7673,6 +7839,7 @@ async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка при изпращане: {send_err}")
 
 
+@require_access()
 @rate_limited(calls=5, period=60)
 async def breaking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Провери за КРИТИЧНИ новини в момента"""
@@ -7789,6 +7956,7 @@ async def breaking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def workspace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Информация за достъп до Workspace"""
@@ -7823,6 +7991,7 @@ https://github.com/galinborisov10-art/Crypto-signal-bot
     )
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def task_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Създай задание за Copilot разработка"""
@@ -7963,6 +8132,7 @@ When completed, user will receive Telegram notification.
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def dailyreport_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерира ръчен дневен отчет за сигнали"""
@@ -8020,6 +8190,7 @@ async def send_bot_status_notification(bot, status, reason=""):
         logger.error(f"Грешка при изпращане на статус нотификация: {e}")
 
 
+@require_access()
 @rate_limited(calls=5, period=60)
 async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Рестартира бота автоматично"""
@@ -8080,9 +8251,10 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def workspace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Информация за достъп до Workspace"""
+    """Информація за достъп до Workspace"""
     workspace_info = f"""💻 <b>GITHUB WORKSPACE</b>
 
 🔗 <b>Твой Codespace:</b>
@@ -8114,6 +8286,7 @@ https://github.com/galinborisov10-art/Crypto-signal-bot
     )
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройки на TP/SL и RR"""
@@ -8189,6 +8362,7 @@ Fundamental Analysis: {fund_status}
         await update.message.reply_text("❌ Непознат параметър. Използвай: tp, sl, rr")
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def fund_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quick toggle and status for fundamental analysis"""
@@ -8272,6 +8446,7 @@ Use /fund on to re-enable fundamental analysis.
         )
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def backup_settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -8333,6 +8508,7 @@ async def backup_settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def restore_settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -8393,6 +8569,7 @@ async def restore_settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def risk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🛡️ Risk Management настройки и статус"""
@@ -8486,6 +8663,7 @@ async def risk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Грешка при зареждане на Risk Management")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def explain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📖 Речник с ICT/LuxAlgo термини"""
@@ -8802,6 +8980,7 @@ async def explain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='HTML')
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Избор на таймфрейм"""
@@ -8931,6 +9110,7 @@ Fundamental Analysis: {fund_status}
     )
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Включване/изключване на автоматичните сигнали"""
@@ -9002,6 +9182,7 @@ async def alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Невалидна стойност за минути")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def autonews_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Включване/изключване на автоматични новини"""
@@ -9434,6 +9615,7 @@ async def send_auto_news(context: ContextTypes.DEFAULT_TYPE):
 
 # ================= ACTIVE TRADES MANAGEMENT COMMANDS =================
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def close_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -9492,6 +9674,7 @@ async def close_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def active_trades_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -10223,6 +10406,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= DEPLOY КОМАНДА =================
 
+@require_access()
 @rate_limited(calls=3, period=60)
 async def deploy_digitalocean_old_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🚀 OLD Deploy function (deprecated - uses git push via SSH)"""
@@ -10362,6 +10546,7 @@ sudo systemctl status crypto-bot --no-pager
 
 # ================= АДМИН КОМАНДИ =================
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def admin_login_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в админ панела"""
@@ -10387,6 +10572,7 @@ async def admin_login_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Грешна парола!")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def admin_setpass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Задай админ парола (само за owner)"""
@@ -10406,6 +10592,7 @@ async def admin_setpass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def admin_daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерирай дневен отчет"""
@@ -10431,6 +10618,7 @@ async def admin_daily_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def admin_weekly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерирай седмичен отчет"""
@@ -10455,6 +10643,7 @@ async def admin_weekly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def admin_monthly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерирай месечен отчет"""
@@ -10479,6 +10668,7 @@ async def admin_monthly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Грешка: {e}")
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def admin_docs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Изпрати админ документация"""
@@ -10502,6 +10692,7 @@ async def admin_docs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= NEW SECURITY ADMIN COMMANDS (v2.0.0) =================
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def admin_blacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Blacklist a user (Admin only)"""
@@ -10542,6 +10733,7 @@ async def admin_blacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def admin_unblacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Remove user from blacklist (Admin only)"""
@@ -10578,6 +10770,7 @@ async def admin_unblacklist_cmd(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def admin_security_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show security statistics (Admin only)"""
@@ -10609,6 +10802,7 @@ async def admin_security_stats_cmd(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def admin_unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Unban a rate-limited user (Admin only)"""
@@ -10977,6 +11171,7 @@ async def ask_for_confirmation(message_text, context, user_id=None):
         logger.error(f"❌ Грешка при изпращане на заявка за потвърждение: {e}")
 
 
+@require_access()
 @rate_limited(calls=5, period=60)
 async def update_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Опростена команда за обновяване чрез текстово съобщение от чата"""
@@ -10997,6 +11192,7 @@ async def update_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['awaiting_update_password'] = True
 
 
+@require_access()
 @rate_limited(calls=5, period=60)
 async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Автоматично обновяване на бота от GitHub с рестарт - САМО ЗА OWNER"""
@@ -11124,6 +11320,7 @@ async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Тествай системата и автоматично отстрани всички грешки"""
@@ -11330,6 +11527,7 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= USER ACCESS MANAGEMENT =================
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def approve_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Одобрява нов потребител (само owner)"""
@@ -11390,6 +11588,7 @@ async def approve_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Грешка при одобрение на потребител: {e}")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def block_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Блокира потребител (само owner)"""
@@ -11452,6 +11651,7 @@ async def block_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"ℹ️ Потребител {blocked_user_id} не е в списъка с разрешени.")
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def list_users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показва списък с разрешени потребители (само owner)"""
@@ -11652,6 +11852,7 @@ async def admin_mode_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # ================= ML, BACKTEST, REPORTS КОМАНДИ =================
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def backtest_results_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -12496,6 +12697,7 @@ async def deep_dive_symbol_callback(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text(error_message, parse_mode='HTML')
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def verify_alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -12541,6 +12743,7 @@ async def verify_alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@require_access()
 @rate_limited(calls=3, period=60)
 async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -12978,6 +13181,7 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def ml_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📈 Детайлен ML отчет с точност и performance"""
@@ -13028,6 +13232,7 @@ async def ml_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='HTML', reply_markup=get_ml_keyboard())
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def ml_status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показва статус на ML системата"""
@@ -13060,6 +13265,7 @@ async def ml_status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='HTML')
 
 
+@require_access()
 @rate_limited(calls=3, period=60)
 async def ml_train_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ръчно обучава ML модела"""
@@ -13083,6 +13289,7 @@ async def ml_train_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Недостатъчно данни за обучение (мин. 50 samples)")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def daily_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерира дневен отчет"""
@@ -13101,6 +13308,7 @@ async def daily_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Грешка при генериране на отчет")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def weekly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерира седмичен отчет с точност и успеваемост"""
@@ -13187,6 +13395,7 @@ async def weekly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Недостатъчно данни за седмичен отчет")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def monthly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерира месечен отчет с точност и успеваемост"""
@@ -13299,6 +13508,7 @@ async def monthly_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Недостатъчно данни за месечен отчет")
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Централизирано меню за всички отчети"""
@@ -13735,6 +13945,7 @@ async def toggle_ict_command(update, context):
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def toggle_ict_only_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle pure ICT mode (use_ict_only flag)"""
@@ -13780,6 +13991,7 @@ async def toggle_ict_only_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show current configuration and cache statistics"""
@@ -13853,6 +14065,7 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def cache_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show detailed cache statistics"""
@@ -13926,6 +14139,7 @@ async def cache_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@require_access()
 @rate_limited(calls=20, period=60)
 async def performance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -13962,6 +14176,7 @@ async def performance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='HTML')
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def clear_cache_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -13990,6 +14205,7 @@ async def clear_cache_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@require_access()
 @rate_limited(calls=10, period=60)
 async def debug_mode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
