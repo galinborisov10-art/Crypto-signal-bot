@@ -24,7 +24,7 @@ class MarketHelper:
     
     def __init__(self):
         """Initialize market helper with data fetchers"""
-        self.data_fetcher = MarketDataFetcher(cache_ttl=60)
+        self.data_fetcher = MarketDataFetcher(cache_ttl=15)
         self.news_cache = NewsCache(cache_dir='cache', ttl_minutes=60)
         
         # Try to import sentiment analyzer (optional)
@@ -145,20 +145,20 @@ class MarketHelper:
             
             # Price action assessment
             if price_change_24h > 2:
-                lines.append("✅ Strong buying pressure in market.")
+                lines.append("✅ Силен купувачески натиск в пазара.")
             elif price_change_24h > 0:
-                lines.append("✅ Moderate buying pressure.")
+                lines.append("✅ Умерен купувачески натиск.")
             elif price_change_24h > -2:
-                lines.append("⚠️ Moderate selling pressure.")
+                lines.append("⚠️ Умерен продавачески натиск.")
             else:
-                lines.append("❌ Strong selling pressure in market.")
+                lines.append("❌ Силен продавачески натиск в пазара.")
             
             # Sentiment context
             if 'sentiment' in fundamentals:
                 sent = fundamentals['sentiment']
                 top_news_count = len(sent.get('top_news', []))
                 if top_news_count > 0:
-                    lines.append(f"Positive news sentiment with {top_news_count} high-impact articles.")
+                    lines.append(f"Позитивен новинарски sentiment с {top_news_count} важни статии.")
             
             # Fear & Greed context
             if 'fear_greed' in fundamentals:
@@ -167,31 +167,31 @@ class MarketHelper:
                 value = fg['value']
                 
                 if value >= 75:
-                    lines.append(f"Fear & Greed in \"{label}\" zone - potentially overbought conditions.")
+                    lines.append(f"Fear & Greed в зона \"{label}\" - потенциално препродадени условия.")
                 elif value >= 55:
-                    lines.append(f"Fear & Greed in \"{label}\" zone - bullish conditions.")
+                    lines.append(f"Fear & Greed в зона \"{label}\" - бичи условия.")
                 elif value >= 45:
-                    lines.append(f"Fear & Greed in \"{label}\" zone - balanced market.")
+                    lines.append(f"Fear & Greed в зона \"{label}\" - балансиран пазар.")
                 elif value >= 25:
-                    lines.append(f"Fear & Greed in \"{label}\" zone - bearish sentiment.")
+                    lines.append(f"Fear & Greed в зона \"{label}\" - мечи sentiment.")
                 else:
-                    lines.append(f"Fear & Greed in \"{label}\" zone - potential buying opportunity.")
+                    lines.append(f"Fear & Greed в зона \"{label}\" - потенциална възможност за покупка.")
             
             # BTC Dominance context
             if 'btc_dominance' in fundamentals:
                 dom = fundamentals['btc_dominance']
                 if dom > 50:
-                    lines.append(f"BTC dominance high at {dom:.1f}% - BTC leading market.")
+                    lines.append(f"BTC доминация висока на {dom:.1f}% - BTC води пазара.")
                 elif dom > 45:
-                    lines.append(f"BTC dominance stable at {dom:.1f}% - healthy altcoin participation.")
+                    lines.append(f"BTC доминация стабилна на {dom:.1f}% - здравословно участие на altcoins.")
                 else:
-                    lines.append(f"BTC dominance low at {dom:.1f}% - altseason conditions.")
+                    lines.append(f"BTC доминация ниска на {dom:.1f}% - altseason условия.")
             
             return "\n".join(lines)
             
         except Exception as e:
             logger.error(f"Error generating market context: {e}")
-            return "Market analysis complete."
+            return "Пазарен анализ завършен."
 
 
 def format_market_fundamental_section(
@@ -246,6 +246,26 @@ def format_market_fundamental_section(
                 emoji = "🔴"  # Extreme Fear
             
             lines.append(f"📊 <b>Fear & Greed Index:</b> {value} ({label}) {emoji}")
+            
+            # Add timestamp if available
+            if 'timestamp' in fg:
+                from datetime import datetime
+                try:
+                    ts = int(fg['timestamp'])
+                    now = int(datetime.now().timestamp())
+                    minutes_ago = (now - ts) // 60
+                    
+                    if minutes_ago < 1:
+                        time_str = "току-що"
+                    elif minutes_ago < 60:
+                        time_str = f"преди {minutes_ago} мин"
+                    else:
+                        hours_ago = minutes_ago // 60
+                        time_str = f"преди {hours_ago} ч"
+                    
+                    lines.append(f"   <i>Обновено: {time_str}</i>")
+                except:
+                    pass
         
         # BTC Dominance
         if 'btc_dominance' in fundamentals:
