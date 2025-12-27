@@ -6416,7 +6416,33 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             coin_msg += f"   📈 Промяна 7д: {ext.get('price_change_7d', 0):+.2f}%\n"
             coin_msg += f"   📅 Промяна 30д: {ext.get('price_change_30d', 0):+.2f}%\n"
             coin_msg += f"   👥 Community: 👍 {ext.get('sentiment_votes_up', 0):.0f}% / 👎 {ext.get('sentiment_votes_down', 0):.0f}%\n"
-            coin_msg += f"   🏆 Market Cap Rank: #{ext.get('market_cap_rank', 'N/A')}\n\n"
+            coin_msg += f"   🏆 Market Cap Rank: #{ext.get('market_cap_rank', 'N/A')}\n"
+            
+            # Add BTC correlation for altcoins
+            if symbol != 'BTCUSDT':
+                try:
+                    from config.config_loader import load_feature_flags
+                    flags = load_feature_flags()
+                    btc_corr_enabled = flags.get('fundamental_analysis', {}).get('btc_correlation', False)
+                    
+                    if btc_corr_enabled:
+                        # Get BTC correlation from external data if available
+                        btc_corr = ext.get('btc_correlation', None)
+                        
+                        if btc_corr is not None:
+                            # Determine correlation strength
+                            if abs(btc_corr) > 0.7:
+                                corr_strength = "Strong"
+                            elif abs(btc_corr) > 0.4:
+                                corr_strength = "Moderate"
+                            else:
+                                corr_strength = "Weak"
+                            
+                            coin_msg += f"   🔗 <b>BTC Correlation:</b> {btc_corr:.2f} ({corr_strength})\n"
+                except Exception as e:
+                    logger.debug(f"Could not add BTC correlation: {e}")
+            
+            coin_msg += "\n"
         
         # Обем и активност
         coin_msg += f"<b>💵 Активност (24ч):</b>\n"
