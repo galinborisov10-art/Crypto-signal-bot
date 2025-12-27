@@ -888,7 +888,14 @@ def get_user_settings(bot_data, chat_id):
             'alert_interval': 3600,
             'news_enabled': False,
             'news_interval': 7200,
+            'use_fundamental': False,  # Default: fundamental analysis disabled
+            'fundamental_weight': 0.3,  # Default: 30% fundamental, 70% technical
         }
+    # Ensure backward compatibility: add new fields to existing users
+    if 'use_fundamental' not in bot_data[chat_id]:
+        bot_data[chat_id]['use_fundamental'] = False
+    if 'fundamental_weight' not in bot_data[chat_id]:
+        bot_data[chat_id]['fundamental_weight'] = 0.3
     return bot_data[chat_id]
 
 
@@ -6853,19 +6860,33 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             signal_msg = format_ict_signal_13_point(ict_signal)
             
             # ============================================
-            # NEW: FUNDAMENTAL ANALYSIS INTEGRATION
+            # USER-CONTROLLED FUNDAMENTAL ANALYSIS INTEGRATION
             # ============================================
             fundamental_data = None
             combined_analysis = None
             recommendation = ""
             
+            # Get user settings to check if fundamental analysis is enabled
+            user_settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
+            user_wants_fundamental = user_settings.get('use_fundamental', False)
+            
+            # Prepare analysis mode indicator
+            analysis_mode = ""
+            if user_wants_fundamental:
+                analysis_mode = "📊 Analysis Mode: Technical ✅ + Fundamental ✅"
+            else:
+                analysis_mode = "📊 Analysis Mode: Technical ✅ | Fundamental ❌"
+            
             try:
                 from utils.fundamental_helper import FundamentalHelper, format_fundamental_section
+                from config.config_loader import load_feature_flags
                 
                 helper = FundamentalHelper()
+                feature_flags = load_feature_flags()
                 
-                if helper.is_enabled():
-                    logger.info(f"🔬 Running fundamental analysis for {symbol}")
+                # Check BOTH user setting AND feature flag
+                if user_wants_fundamental and feature_flags.get('fundamental_analysis', {}).get('enabled', False):
+                    logger.info(f"🔬 Running user-enabled fundamental analysis for {symbol}")
                     
                     # Get BTC data for correlation
                     btc_klines_response = requests.get(
@@ -6897,33 +6918,89 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                         
                         if fundamental_data:
-                            # Calculate combined score
-                            combined_analysis = helper.calculate_combined_score(
-                                technical_confidence=ict_signal.confidence,
-                                fundamental_data=fundamental_data
-                            )
+                            # Get user's weight preference
+                            fund_weight = user_settings.get('fundamental_weight', 0.3)  # Default 30%
+                            tech_weight = 1 - fund_weight  # Remaining for technical
+                            
+                            # Store original technical confidence
+                            technical_confidence = ict_signal.confidence
+                            
+                            # Calculate weighted combined score
+                            # Instead of using helper's method, calculate directly with user weights
+                            # Get fundamental composite score if available
+                            fundamental_score = 50  # Default neutral
+                            
+                            # Calculate fundamental composite from components
+                            if 'sentiment' in fundamental_data:
+                                fundamental_score = fundamental_data['sentiment'].get('score', 50)
+                            
+                            # Apply BTC correlation impact if available
+                            if 'btc_correlation' in fundamental_data:
+                                btc_impact = fundamental_data['btc_correlation'].get('impact', 0)
+                                fundamental_score = min(100, max(0, fundamental_score + btc_impact))
+                            
+                            # Combine scores with user weights
+                            combined_confidence = (technical_confidence * tech_weight) + (fundamental_score * fund_weight)
+                            
+                            # Update signal confidence
+                            original_confidence = ict_signal.confidence
+                            ict_signal.confidence = combined_confidence
+                            
+                            # Store fundamental data in signal for display
+                            ict_signal.fundamental_data = fundamental_data
+                            
+                            # Create combined analysis info for display
+                            combined_analysis = {
+                                'combined_score': round(combined_confidence, 1),
+                                'technical_score': round(technical_confidence, 1),
+                                'fundamental_score': round(fundamental_score, 1),
+                                'tech_weight': tech_weight,
+                                'fund_weight': fund_weight,
+                                'breakdown': {
+                                    'technical': round(technical_confidence, 1),
+                                    'fundamental': round(fundamental_score, 1)
+                                }
+                            }
+                            
+                            # Update analysis mode with weights
+                            analysis_mode = f"📊 Analysis Mode: Technical ✅ + Fundamental ✅ ({int(tech_weight*100)}/{int(fund_weight*100)})\n\n"
+                            analysis_mode += f"   Technical: {technical_confidence:.1f}% (ICT + ML)\n"
+                            analysis_mode += f"   Fundamental: {fundamental_score:.1f}%\n"
+                            analysis_mode += f"   <b>Combined: {combined_confidence:.1f}%</b>"
                             
                             # Generate recommendation
                             recommendation = helper.generate_recommendation(
                                 signal_direction=ict_signal.signal_type.value,
-                                technical_confidence=ict_signal.confidence,
+                                technical_confidence=technical_confidence,
                                 fundamental_data=fundamental_data,
-                                combined_score=combined_analysis.get('combined_score', 0)
+                                combined_score=combined_confidence
                             )
                             
-                            logger.info(f"✅ Fundamental analysis complete: combined_score={combined_analysis.get('combined_score')}")
+                            logger.info(f"✅ Fundamental analysis complete: tech={technical_confidence:.1f}%, fund={fundamental_score:.1f}%, combined={combined_confidence:.1f}% (weights: {tech_weight}/{fund_weight})")
                         else:
                             logger.info("⚪ No fundamental data available (cache miss or insufficient data)")
                     else:
                         logger.warning(f"⚠️ Failed to fetch BTC data for correlation: {btc_klines_response.status_code}")
                 else:
-                    logger.debug("Fundamental analysis disabled (feature flags)")
+                    if not user_wants_fundamental:
+                        logger.debug("Fundamental analysis disabled by user preference")
+                    else:
+                        logger.debug("Fundamental analysis disabled (feature flags)")
             except Exception as e:
                 logger.warning(f"⚠️ Fundamental analysis unavailable: {e}")
                 # Continue with technical-only signal
             
+            # Insert analysis mode indicator into signal message (after confidence line)
+            # Find the confidence line and add analysis mode after it
+            lines = signal_msg.split('\n')
+            for i, line in enumerate(lines):
+                if 'Увереност:' in line or 'Confidence:' in line or '🎯' in line:
+                    lines.insert(i + 1, analysis_mode)
+                    break
+            signal_msg = '\n'.join(lines)
+            
             # Append fundamental section if available
-            if fundamental_data and combined_analysis:
+            if fundamental_data and combined_analysis and user_wants_fundamental:
                 from utils.fundamental_helper import format_fundamental_section
                 fundamental_section = format_fundamental_section(
                     fundamental_data,
@@ -8044,19 +8121,28 @@ async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
     
     if not context.args:
+        # Get fundamental status
+        fund_status = "✅ ENABLED" if settings.get('use_fundamental', False) else "❌ DISABLED"
+        fund_weight = settings.get('fundamental_weight', 0.3) * 100
+        tech_weight = (1 - settings.get('fundamental_weight', 0.3)) * 100
+        
         # Покажи текущи настройки
         message = f"""
-⚙️ <b>ТВОИТЕ НАСТРОЙКИ</b>
+⚙️ <b>ТВОИТЕ НАСТРОЙКИ - @{update.effective_user.username or update.effective_user.first_name}</b>
 
 📊 <b>Търговски параметри:</b>
 Take Profit (TP): {settings['tp']:.1f}%
 Stop Loss (SL): {settings['sl']:.1f}%
 Risk/Reward (RR): 1:{settings['rr']:.1f}
 
-📈 <b>Анализ (Автоматичен):</b>
-Timeframes: 1h, 4h, 1d
-Сканира всички 3 timeframes за всеки сигнал
-
+📈 <b>Signal Settings:</b>
+Timeframe: {settings.get('timeframe', '4h')}
+Fundamental Analysis: {fund_status}
+"""
+        if settings.get('use_fundamental', False):
+            message += f"Weight Distribution: {tech_weight:.0f}% Technical / {fund_weight:.0f}% Fundamental\n"
+        
+        message += f"""
 🔔 <b>Известия:</b>
 Автоматични сигнали: {'Вкл ✅' if settings['alerts_enabled'] else 'Изкл ❌'}
 Интервал: {settings['alert_interval']/60:.0f} мин
@@ -8065,8 +8151,18 @@ Timeframes: 1h, 4h, 1d
 /settings tp 3.0
 /settings sl 1.5
 /settings rr 2.5
+/fund - Toggle fundamental analysis
 """
-        await update.message.reply_text(message, parse_mode='HTML')
+        
+        # Add interactive keyboard
+        keyboard = [
+            [InlineKeyboardButton("🔄 Toggle Fundamental", callback_data="toggle_fundamental")],
+            [InlineKeyboardButton("⏰ Timeframe Settings", callback_data="timeframe_settings")],
+            [InlineKeyboardButton("🏠 Back to Menu", callback_data="back_to_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
         return
     
     # Промяна на настройка
@@ -8092,6 +8188,89 @@ Timeframes: 1h, 4h, 1d
         await update.message.reply_text(f"✅ Risk/Reward променен на 1:{value}")
     else:
         await update.message.reply_text("❌ Непознат параметър. Използвай: tp, sl, rr")
+
+
+@rate_limited(calls=20, period=60)
+async def fund_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Quick toggle and status for fundamental analysis"""
+    settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
+    
+    if not context.args:
+        # Show current status
+        fund_enabled = settings.get('use_fundamental', False)
+        fund_weight = settings.get('fundamental_weight', 0.3) * 100
+        tech_weight = (1 - settings.get('fundamental_weight', 0.3)) * 100
+        
+        status = "✅ ENABLED" if fund_enabled else "❌ DISABLED"
+        
+        message = f"""
+🧠 <b>FUNDAMENTAL ANALYSIS SETTINGS</b>
+
+Status: {status}
+"""
+        if fund_enabled:
+            message += f"Weight: {fund_weight:.0f}% Fundamental / {tech_weight:.0f}% Technical\n"
+        
+        message += f"""
+<b>Commands:</b>
+/fund on  - Enable fundamental analysis
+/fund off - Disable fundamental analysis
+/fund status - Show this status
+/settings - Full settings menu
+"""
+        await update.message.reply_text(message, parse_mode='HTML')
+        return
+    
+    command = context.args[0].lower()
+    
+    if command == 'on':
+        settings['use_fundamental'] = True
+        fund_weight = settings.get('fundamental_weight', 0.3) * 100
+        tech_weight = (1 - settings.get('fundamental_weight', 0.3)) * 100
+        
+        message = f"""
+✅ <b>Fundamental Analysis ENABLED</b>
+
+Signals will now include:
+• Fear & Greed Index
+• Market Cap & Volume
+• BTC Dominance
+• News Sentiment
+
+Weight Distribution:
+• Technical: {tech_weight:.0f}%
+• Fundamental: {fund_weight:.0f}%
+
+Use /signal to see enhanced analysis!
+"""
+        await update.message.reply_text(message, parse_mode='HTML')
+        
+    elif command == 'off':
+        settings['use_fundamental'] = False
+        
+        message = f"""
+❌ <b>Fundamental Analysis DISABLED</b>
+
+Signals will use:
+• Technical analysis only (ICT + ML)
+
+Use /fund on to re-enable fundamental analysis.
+"""
+        await update.message.reply_text(message, parse_mode='HTML')
+        
+    elif command == 'status':
+        # Redirect to default behavior (show status)
+        context.args = []
+        await fund_cmd(update, context)
+        
+    else:
+        await update.message.reply_text(
+            f"❌ Unknown command: {command}\n\n"
+            "Valid commands:\n"
+            "/fund on\n"
+            "/fund off\n"
+            "/fund status"
+        )
 
 
 @rate_limited(calls=10, period=60)
@@ -8689,6 +8868,68 @@ async def timeframe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     settings['timeframe'] = tf
     
     await query.edit_message_text(f"✅ Таймфрейм променен на {tf}")
+
+
+async def toggle_fundamental_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle fundamental analysis on/off"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    settings = get_user_settings(context.application.bot_data, user_id)
+    
+    # Toggle state
+    settings['use_fundamental'] = not settings.get('use_fundamental', False)
+    
+    # Prepare updated message
+    fund_status = "✅ ENABLED" if settings['use_fundamental'] else "❌ DISABLED"
+    fund_weight = settings.get('fundamental_weight', 0.3) * 100
+    tech_weight = (1 - settings.get('fundamental_weight', 0.3)) * 100
+    
+    message = f"""
+⚙️ <b>SETTINGS - @{query.from_user.username or query.from_user.first_name}</b>
+
+📊 <b>Търговски параметри:</b>
+Take Profit (TP): {settings['tp']:.1f}%
+Stop Loss (SL): {settings['sl']:.1f}%
+Risk/Reward (RR): 1:{settings['rr']:.1f}
+
+📈 <b>Signal Settings:</b>
+Timeframe: {settings.get('timeframe', '4h')}
+Fundamental Analysis: {fund_status}
+"""
+    if settings['use_fundamental']:
+        message += f"Weight Distribution: {tech_weight:.0f}% Technical / {fund_weight:.0f}% Fundamental\n"
+    
+    message += f"""
+🔔 <b>Известия:</b>
+Автоматични сигнали: {'Вкл ✅' if settings['alerts_enabled'] else 'Изкл ❌'}
+Интервал: {settings['alert_interval']/60:.0f} мин
+
+<b>За промяна:</b>
+/settings tp 3.0
+/settings sl 1.5
+/settings rr 2.5
+/fund - Toggle fundamental analysis
+"""
+    
+    # Update keyboard
+    keyboard = [
+        [InlineKeyboardButton("🔄 Toggle Fundamental", callback_data="toggle_fundamental")],
+        [InlineKeyboardButton("⏰ Timeframe Settings", callback_data="timeframe_settings")],
+        [InlineKeyboardButton("🏠 Back to Menu", callback_data="back_to_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
+    
+    # Send confirmation notification
+    status_text = "ENABLED" if settings['use_fundamental'] else "DISABLED"
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=f"✅ Fundamental Analysis {status_text}",
+        parse_mode='HTML'
+    )
 
 
 @rate_limited(calls=20, period=60)
@@ -13815,6 +14056,7 @@ def main():
     app.add_handler(CommandHandler("restart", restart_cmd))  # Рестарт на бота
     app.add_handler(CommandHandler("autonews", autonews_cmd))
     app.add_handler(CommandHandler("settings", settings_cmd))
+    app.add_handler(CommandHandler("fund", fund_cmd))  # Quick fundamental analysis toggle
     app.add_handler(CommandHandler("timeframe", timeframe_cmd))
     app.add_handler(CommandHandler("alerts", alerts_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
@@ -13885,6 +14127,8 @@ def main():
     app.add_handler(CallbackQueryHandler(signal_callback, pattern='^back_to_menu$'))
     app.add_handler(CallbackQueryHandler(signal_callback, pattern='^back_to_signal_menu$'))
     app.add_handler(CallbackQueryHandler(timeframe_callback, pattern='^timeframe_'))
+    app.add_handler(CallbackQueryHandler(timeframe_callback, pattern='^timeframe_settings$'))  # Settings menu timeframe
+    app.add_handler(CallbackQueryHandler(toggle_fundamental_callback, pattern='^toggle_fundamental$'))  # Fundamental toggle
     app.add_handler(CallbackQueryHandler(reports_callback, pattern='^report_'))  # Reports menu
     
     # NEW: Backtest callback handlers
