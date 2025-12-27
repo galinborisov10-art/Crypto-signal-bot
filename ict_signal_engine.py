@@ -900,15 +900,13 @@ class ICTSignalEngine:
         # Calculate ATR
         df['atr'] = self._calculate_atr(df, period=14)
         
-        # Calculate EMAs
-        
-        # Calculate volume metrics
+        # Calculate volume metrics (Pure ICT - no MA)
         if 'volume' in df.columns:
-            df['volume_ma'] = df['volume'].rolling(window=20).mean()
-            df['volume_ratio'] = df['volume'] / df['volume_ma'].replace(0, 1)
+            df['volume_median'] = df['volume'].rolling(window=20).median()
+            df['volume_ratio'] = df['volume'] / df['volume_median'].replace(0, 1)
         else:
             df['volume'] = 0
-            df['volume_ma'] = 0
+            df['volume_median'] = 0
             df['volume_ratio'] = 1.0
         
         return df
@@ -2545,11 +2543,16 @@ class ICTSignalEngine:
             volume_ratio = 1.0
             volume_spike = False
             try:
-                if 'volume' in df.columns and len(df) >= 20:
-                    avg_volume = df['volume'].rolling(20).mean().iloc[-1]
+                if 'volume_ratio' in df.columns:
+                    # Use pre-calculated volume_ratio from dataframe (uses median)
+                    volume_ratio = df['volume_ratio'].iloc[-1]
+                    volume_spike = volume_ratio > 2.0
+                elif 'volume' in df.columns and len(df) >= 20:
+                    # Fallback: calculate using median
+                    volume_median = df['volume'].rolling(20).median().iloc[-1]
                     current_volume = df['volume'].iloc[-1]
-                    if avg_volume > 0:
-                        volume_ratio = current_volume / avg_volume
+                    if volume_median > 0:
+                        volume_ratio = current_volume / volume_median
                         volume_spike = volume_ratio > 2.0
             except Exception as e:
                 logger.debug(f"Volume context calculation error: {e}")
@@ -2755,10 +2758,14 @@ class ICTSignalEngine:
                 rs = gain / loss.replace(0, 1)
                 rsi = 100 - (100 / (1 + rs.iloc[-1]))
             
-            # Volume metrics
-            avg_volume = df['volume'].iloc[-20:].mean()
-            current_volume = df['volume'].iloc[-1]
-            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+            # Volume metrics (use from dataframe - already calculated with median)
+            if 'volume_ratio' in df.columns:
+                volume_ratio = df['volume_ratio'].iloc[-1]
+            else:
+                # Fallback if not in dataframe
+                volume_median = df['volume'].iloc[-20:].median()
+                current_volume = df['volume'].iloc[-1]
+                volume_ratio = current_volume / volume_median if volume_median > 0 else 1.0
             
             # Volatility (ATR-based)
             returns = df['close'].pct_change()
@@ -2767,12 +2774,10 @@ class ICTSignalEngine:
             # Price change
             price_change_pct = ((current_price - df['close'].iloc[-20]) / df['close'].iloc[-20]) * 100
             
-            # Bollinger Bands position (neutral indicator)
-            bb_sma = df['close'].rolling(20).mean().iloc[-1]
-            bb_std = df['close'].rolling(20).std().iloc[-1]
-            bb_upper = bb_sma + (2 * bb_std)
-            bb_lower = bb_sma - (2 * bb_std)
-            bb_position = (current_price - bb_lower) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0.5
+            # Price position in 20-period range (Pure ICT - no MA/Bollinger)
+            range_high = df['high'].iloc[-20:].max()
+            range_low = df['low'].iloc[-20:].min()
+            bb_position = (current_price - range_low) / (range_high - range_low) if (range_high - range_low) > 0 else 0.5
             
             # ═══════════════════════════════════════════════
             # PURE ICT METRICS
