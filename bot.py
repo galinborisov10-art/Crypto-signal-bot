@@ -695,6 +695,90 @@ def log_timing(operation_name: str = None):
     return decorator
 
 
+def format_liquidity_section(signal) -> str:
+    """Format liquidity analysis section for signal message"""
+    if not hasattr(signal, 'liquidity_zones') or not signal.liquidity_zones:
+        return ""
+    
+    section = "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    section += "💧 <b>LIQUIDITY CONTEXT:</b>\n\n"
+    
+    # Show top 3 strongest zones
+    zones_sorted = sorted(signal.liquidity_zones, key=lambda z: z.get('confidence', 0) if isinstance(z, dict) else getattr(z, 'confidence', 0), reverse=True)[:3]
+    
+    for zone in zones_sorted:
+        # Handle both dict and object types
+        if isinstance(zone, dict):
+            zone_type = zone.get('zone_type', 'UNKNOWN')
+            price_level = zone.get('price_level', 0)
+            touches = zone.get('touches', 0)
+            confidence = zone.get('confidence', 0)
+            swept = zone.get('swept', False)
+            sweep_time = zone.get('sweep_time')
+        else:
+            zone_type = getattr(zone, 'zone_type', 'UNKNOWN')
+            price_level = getattr(zone, 'price_level', 0)
+            touches = getattr(zone, 'touches', 0)
+            confidence = getattr(zone, 'confidence', 0)
+            swept = getattr(zone, 'swept', False)
+            sweep_time = getattr(zone, 'sweep_time', None)
+        
+        emoji = "🟢" if zone_type == "BSL" else "🔴"
+        section += f"{emoji} <b>{zone_type} Zone:</b> ${price_level:,.2f}\n"
+        section += f"   • Touches: {touches} | Confidence: {confidence*100:.0f}%\n"
+        if swept and sweep_time:
+            from datetime import datetime
+            if isinstance(sweep_time, datetime):
+                section += f"   • ✅ SWEPT on {sweep_time.strftime('%m/%d %H:%M')}\n"
+        section += "\n"
+    
+    # Show recent sweeps
+    if hasattr(signal, 'liquidity_sweeps') and signal.liquidity_sweeps:
+        # Filter out swept zones and take first 2
+        recent_sweeps = []
+        for sweep in signal.liquidity_sweeps:
+            if isinstance(sweep, dict):
+                swept = sweep.get('liquidity_zone', {}).get('swept', True)
+            else:
+                liq_zone = getattr(sweep, 'liquidity_zone', None)
+                swept = getattr(liq_zone, 'swept', True) if liq_zone else True
+            
+            if not swept:
+                recent_sweeps.append(sweep)
+                if len(recent_sweeps) >= 2:
+                    break
+        
+        if recent_sweeps:
+            section += "<b>Recent Sweeps:</b>\n"
+            for sweep in recent_sweeps:
+                # Handle both dict and object types
+                if isinstance(sweep, dict):
+                    sweep_type = sweep.get('sweep_type', 'UNKNOWN')
+                    price = sweep.get('price', 0)
+                    strength = sweep.get('strength', 0)
+                    timestamp = sweep.get('timestamp')
+                    reversal_candles = sweep.get('reversal_candles', 0)
+                else:
+                    sweep_type = getattr(sweep, 'sweep_type', 'UNKNOWN')
+                    price = getattr(sweep, 'price', 0)
+                    strength = getattr(sweep, 'strength', 0)
+                    timestamp = getattr(sweep, 'timestamp', None)
+                    reversal_candles = getattr(sweep, 'reversal_candles', 0)
+                
+                sweep_emoji = "💥" if sweep_type == "SSL_SWEEP" else "⚡"
+                section += f"{sweep_emoji} {sweep_type}: ${price:,.2f} "
+                section += f"(Strength: {strength*100:.0f}%)\n"
+                
+                if timestamp:
+                    from datetime import datetime
+                    if isinstance(timestamp, datetime):
+                        section += f"   • Time: {timestamp.strftime('%m/%d %H:%M')} | "
+                section += f"Reversal: {reversal_candles} candles\n"
+    
+    section += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    return section
+
+
 def format_user_error(error: Exception, operation: str) -> str:
     """Convert technical error to user-friendly message"""
     
@@ -7041,12 +7125,19 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Get user's fundamental analysis preference (reuse settings from line 6779)
             user_wants_fundamental = settings.get('use_fundamental', False)
             
+            # Check if liquidity zones were detected
+            has_liquidity = hasattr(ict_signal, 'liquidity_zones') and len(ict_signal.liquidity_zones) > 0
+            
             # Prepare analysis mode indicator
             analysis_mode = ""
-            if user_wants_fundamental:
-                analysis_mode = "📊 Analysis Mode: Technical ✅ + Fundamental ✅"
+            if user_wants_fundamental and has_liquidity:
+                analysis_mode = "📊 Analysis Mode: Technical ✅ + Fundamental ✅ + Liquidity 💧"
+            elif user_wants_fundamental:
+                analysis_mode = "📊 Analysis Mode: Technical ✅ + Fundamental ✅ | Liquidity ❌"
+            elif has_liquidity:
+                analysis_mode = "📊 Analysis Mode: Technical ✅ + Liquidity 💧 | Fundamental ❌"
             else:
-                analysis_mode = "📊 Analysis Mode: Technical ✅ | Fundamental ❌"
+                analysis_mode = "📊 Analysis Mode: Technical ✅ | Fundamental ❌ | Liquidity ❌"
             
             try:
                 from utils.fundamental_helper import FundamentalHelper, format_fundamental_section
@@ -7723,6 +7814,14 @@ Combined Score: Technical (60%) + Fundamental (40%)
                 
     except Exception as e:
         logger.debug(f"Fundamental analysis not available: {e}")
+    
+    # === NEW: LIQUIDITY ANALYSIS INTEGRATION ===
+    try:
+        liquidity_section = format_liquidity_section(signal)
+        if liquidity_section:
+            msg += liquidity_section
+    except Exception as e:
+        logger.debug(f"Could not add liquidity analysis to signal: {e}")
     
     # Warnings
     if signal.warnings:
