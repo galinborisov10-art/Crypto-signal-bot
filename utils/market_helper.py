@@ -159,7 +159,7 @@ class MarketHelper:
                 sent = fundamentals['sentiment']
                 top_news_count = len(sent.get('top_news', []))
                 if top_news_count > 0:
-                    lines.append(f"Позитивен новинарски sentiment с {top_news_count} важни статии.")
+                    lines.append(f"Позитивен новинарски настроение с {top_news_count} важни статии.")
             
             # Fear & Greed context
             if 'fear_greed' in fundamentals:
@@ -168,13 +168,13 @@ class MarketHelper:
                 value = fg['value']
                 
                 if value >= 75:
-                    lines.append(f"Fear & Greed в зона \"{label}\" - потенциално препродадени условия.")
+                    lines.append(f"Fear & Greed в зона \"{label}\" - потенциално предкупени условия.")
                 elif value >= 55:
                     lines.append(f"Fear & Greed в зона \"{label}\" - бичи условия.")
                 elif value >= 45:
                     lines.append(f"Fear & Greed в зона \"{label}\" - балансиран пазар.")
                 elif value >= 25:
-                    lines.append(f"Fear & Greed в зона \"{label}\" - мечи sentiment.")
+                    lines.append(f"Fear & Greed в зона \"{label}\" - мечи настроение.")
                 else:
                     lines.append(f"Fear & Greed в зона \"{label}\" - потенциална възможност за покупка.")
             
@@ -264,8 +264,8 @@ def format_market_fundamental_section(
                         time_str = f"преди {hours_ago} ч"
                     
                     lines.append(f"   <i>Обновено: {time_str}</i>")
-                except (ValueError, TypeError, KeyError):
-                    # Skip timestamp if data is invalid
+                except (ValueError, TypeError):
+                    # Skip timestamp if data is invalid or cannot be converted
                     pass
         
         # BTC Dominance
