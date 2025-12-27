@@ -48,7 +48,7 @@ except ImportError:
     logging.warning("WhaleDetector not available")
 
 try:
-    from liquidity_map import LiquidityMapper, LiquidityZone
+    from liquidity_map import LiquidityMapper, LiquidityZone, LiquiditySweep
     LIQUIDITY_AVAILABLE = True
 except ImportError:
     LIQUIDITY_AVAILABLE = False
@@ -607,6 +607,66 @@ class ICTSignalEngine:
             displacement_detected, risk_reward_ratio
         )
         
+        # ============================================
+        # LIQUIDITY-BASED CONFIDENCE ADJUSTMENT
+        # ============================================
+        liquidity_boost = 0.0
+        try:
+            if ict_components.get('liquidity_zones'):
+                logger.info("💧 Applying liquidity-based confidence adjustment")
+                current_price = df['close'].iloc[-1]
+                
+                # Find nearest liquidity zone
+                nearest_zone = None
+                min_distance = float('inf')
+                
+                for zone in ict_components['liquidity_zones']:
+                    zone_price = zone.price_level if hasattr(zone, 'price_level') else zone.get('price_level', 0)
+                    if zone_price > 0:
+                        distance = abs(zone_price - current_price) / current_price
+                        if distance < min_distance:
+                            min_distance = distance
+                            nearest_zone = zone
+                
+                # Boost confidence if near strong liquidity zone
+                if nearest_zone and min_distance < 0.02:  # Within 2% of price
+                    zone_confidence = nearest_zone.confidence if hasattr(nearest_zone, 'confidence') else nearest_zone.get('confidence', 0)
+                    zone_type = nearest_zone.zone_type if hasattr(nearest_zone, 'zone_type') else nearest_zone.get('zone_type', '')
+                    
+                    liquidity_boost = zone_confidence * 0.05  # Up to 5% boost
+                    
+                    # Apply boost in same direction as zone type
+                    bias_str = bias.value if hasattr(bias, 'value') else str(bias)
+                    if (bias_str == 'BULLISH' and zone_type == 'SSL') or \
+                       (bias_str == 'BEARISH' and zone_type == 'BSL'):
+                        base_confidence = min(base_confidence * (1 + liquidity_boost), 100.0)
+                        logger.info(f"💧 Liquidity boost: +{liquidity_boost*100:.1f}% (near {zone_type})")
+            
+            # Check for recent liquidity sweeps
+            if ict_components.get('liquidity_sweeps'):
+                logger.info("💥 Checking liquidity sweeps")
+                recent_sweeps = []
+                for sweep in ict_components['liquidity_sweeps']:
+                    sweep_timestamp = sweep.timestamp if hasattr(sweep, 'timestamp') else sweep.get('timestamp')
+                    if sweep_timestamp and (df.index[-1] - sweep_timestamp).total_seconds() < 3600*4:  # Last 4 hours
+                        recent_sweeps.append(sweep)
+                
+                if recent_sweeps:
+                    last_sweep = recent_sweeps[-1]
+                    sweep_type = last_sweep.sweep_type if hasattr(last_sweep, 'sweep_type') else last_sweep.get('sweep_type', '')
+                    sweep_strength = last_sweep.strength if hasattr(last_sweep, 'strength') else last_sweep.get('strength', 0)
+                    
+                    # Boost if sweep aligns with signal direction
+                    bias_str = bias.value if hasattr(bias, 'value') else str(bias)
+                    if (bias_str == 'BULLISH' and sweep_type == 'SSL_SWEEP') or \
+                       (bias_str == 'BEARISH' and sweep_type == 'BSL_SWEEP'):
+                        sweep_boost = sweep_strength * 0.03  # Up to 3% boost
+                        base_confidence = min(base_confidence * (1 + sweep_boost), 100.0)
+                        logger.info(f"💥 Sweep boost: +{sweep_boost*100:.1f}% ({sweep_type})")
+                        
+        except Exception as e:
+            logger.warning(f"⚠️ Liquidity confidence adjustment failed: {e}")
+        
         # ✅ APPLY CONTEXT-AWARE FILTERS (NEW - Enhances confidence accuracy)
         logger.info("📊 Step 11a: Context-Aware Filtering")
         context_warnings = []
@@ -822,6 +882,7 @@ class ICTSignalEngine:
             risk_reward_ratio=risk_reward_ratio,
             whale_blocks=[wb.to_dict() if hasattr(wb, 'to_dict') else wb for wb in ict_components.get('whale_blocks', [])],
             liquidity_zones=[lz.__dict__ if hasattr(lz, '__dict__') else lz for lz in ict_components.get('liquidity_zones', [])],
+            liquidity_sweeps=[ls.__dict__ if hasattr(ls, '__dict__') else ls for ls in ict_components.get('liquidity_sweeps', [])],
             order_blocks=[ob.to_dict() if hasattr(ob, 'to_dict') else ob for ob in ict_components.get('order_blocks', [])],
             fair_value_gaps=[fvg.to_dict() if hasattr(fvg, 'to_dict') else fvg for fvg in ict_components.get('fvgs', [])],
             internal_liquidity=[ilp for ilp in ict_components.get('internal_liquidity', [])],

@@ -104,6 +104,10 @@ class ChartGenerator:
             self._plot_sibi_ssib_zones(ax_price, signal.sibi_ssib_zones)
             self._plot_liquidity_zones(ax_price, signal.liquidity_zones)
             
+            # Plot liquidity sweeps (if available)
+            if hasattr(signal, 'liquidity_sweeps') and signal.liquidity_sweeps:
+                self._plot_liquidity_sweeps(ax_price, signal.liquidity_sweeps, df)
+            
             # Plot entry/exit levels
             if signal.entry_price:
                 self._plot_entry_exit(ax_price, signal)
@@ -303,19 +307,75 @@ class ChartGenerator:
             ax.add_patch(rect)
     
     def _plot_liquidity_zones(self, ax, liquidity_zones: List):
-        """Plot liquidity zones as horizontal lines"""
+        """Plot liquidity zones as horizontal lines with enhanced visualization"""
         if not liquidity_zones:
             return
         
         for liq in liquidity_zones:
             liq_dict = liq.__dict__ if hasattr(liq, '__dict__') else liq
             
-            liq_type = str(liq_dict.get('type', ''))
-            is_buy_side = 'BSL' in liq_type or 'IBSL' in liq_type
+            # Support both 'type' and 'zone_type' field names
+            liq_type = str(liq_dict.get('zone_type', liq_dict.get('type', '')))
+            is_buy_side = 'BSL' in liq_type
             color = self.COLORS['liquidity_buy'] if is_buy_side else self.COLORS['liquidity_sell']
             
-            price = liq_dict.get('price', 0)
-            ax.axhline(y=price, color=color, linestyle='-.', linewidth=1.5, alpha=0.7, label='Liquidity')
+            price = liq_dict.get('price_level', liq_dict.get('price', 0))
+            confidence = liq_dict.get('confidence', 0.5)
+            touches = liq_dict.get('touches', 0)
+            swept = liq_dict.get('swept', False)
+            
+            # Line style based on whether zone was swept
+            linestyle = ':' if swept else '-.'
+            alpha = 0.4 if swept else 0.7
+            
+            # Plot the liquidity line
+            ax.axhline(y=price, color=color, linestyle=linestyle, linewidth=1.5, alpha=alpha, label='Liquidity')
+            
+            # Add annotation showing confidence and touches
+            if touches > 0:
+                annotation_text = f"{liq_type} ({touches}T)"
+                ax.text(len(ax.get_lines()) * 0.02, price, annotation_text,
+                       fontsize=7, color=color, alpha=0.8,
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.6, edgecolor=color))
+    
+    def _plot_liquidity_sweeps(self, ax, liquidity_sweeps: List, df: pd.DataFrame):
+        """Plot liquidity sweep markers"""
+        if not liquidity_sweeps:
+            return
+        
+        for sweep in liquidity_sweeps:
+            sweep_dict = sweep.__dict__ if hasattr(sweep, '__dict__') else sweep
+            
+            sweep_type = sweep_dict.get('sweep_type', '')
+            timestamp = sweep_dict.get('timestamp')
+            price = sweep_dict.get('price', 0)
+            
+            if not timestamp or price == 0:
+                continue
+            
+            # Find the index in the dataframe
+            try:
+                if hasattr(df.index, 'get_loc'):
+                    idx = df.index.get_loc(timestamp, method='nearest')
+                else:
+                    idx = len(df) - 1
+            except:
+                idx = len(df) - 1
+            
+            # Choose marker based on sweep type
+            if 'BSL' in sweep_type:
+                marker = 'v'  # Down arrow for BSL sweep
+                color = '#E74C3C'
+                y_offset = price * 1.002
+            else:  # SSL sweep
+                marker = '^'  # Up arrow for SSL sweep
+                color = '#2ECC71'
+                y_offset = price * 0.998
+            
+            # Plot the sweep marker
+            ax.scatter(idx, y_offset, marker=marker, s=100, color=color, 
+                      edgecolors='white', linewidths=1.5, alpha=0.9, zorder=10,
+                      label='Liquidity Sweep')
     
     def _plot_entry_exit(self, ax, signal):
         """Plot entry, stop loss, and take profit levels"""
