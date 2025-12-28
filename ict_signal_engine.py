@@ -243,7 +243,7 @@ class ICTSignal:
     entry_status: str = "UNKNOWN"  # NEW: Entry zone status (VALID_WAIT/VALID_NEAR/etc)
     
     # Distance Penalty (Soft Constraint)
-    distance_penalty: bool = False  # NEW: Дали confidence е намален поради distance out of range
+    distance_penalty: bool = False  # NEW: Whether confidence was reduced due to distance out of range
     
     # Explanation
     reasoning: str = ""
@@ -732,7 +732,7 @@ class ICTSignalEngine:
         
         if entry_zone and entry_zone.get('distance_out_of_range'):
             logger.warning(f"⚠️ Entry zone outside optimal range ({entry_zone['distance_pct']:.1f}%), applying confidence penalty")
-            confidence_after_context = confidence_after_context * 0.8  # Намали с 20%
+            confidence_after_context = confidence_after_context * 0.8  # Reduce by 20%
             distance_penalty_applied = True
             logger.info(f"Distance penalty applied: confidence reduced by 20% → {confidence_after_context:.1f}%")
             
@@ -954,7 +954,7 @@ class ICTSignalEngine:
             mtf_consensus_data=mtf_consensus_data,
             entry_zone=entry_zone,  # NEW: Entry zone details (with distance metadata)
             entry_status=entry_status,  # NEW: Entry zone status
-            distance_penalty=distance_penalty_applied,  # ✅ НОВО: Distance penalty tracking
+            distance_penalty=distance_penalty_applied,  # ✅ NEW: Distance penalty tracking
             reasoning=reasoning,
             warnings=warnings,
             zone_explanations=zone_explanations
@@ -1788,7 +1788,7 @@ class ICTSignalEngine:
                 if fvg_low > current_price * (1 + min_distance_pct):
                     distance_pct = (fvg_low - current_price) / current_price
                     
-                    # ✅ SOFT CONSTRAINT: Винаги добавяй зоната, независимо от разстояние
+                    # ✅ SOFT CONSTRAINT: Always add zone, regardless of distance
                     # Get quality
                     quality = fvg.get('strength', 70) if isinstance(fvg, dict) else getattr(fvg, 'strength', 70)
                     if not isinstance(quality, (int, float)):
@@ -1801,7 +1801,7 @@ class ICTSignalEngine:
                         'quality': quality,
                         'distance_pct': distance_pct,
                         'distance_price': fvg_low - current_price,
-                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ НОВО: Soft constraint флаг
+                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ NEW: Soft constraint flag
                     })
             
             # Check Order Blocks
@@ -1825,7 +1825,7 @@ class ICTSignalEngine:
                 if ob_low > current_price * (1 + min_distance_pct):
                     distance_pct = (ob_low - current_price) / current_price
                     
-                    # ✅ SOFT CONSTRAINT: Винаги добавяй зоната, независимо от разстояние
+                    # ✅ SOFT CONSTRAINT: Always add zone, regardless of distance
                     quality = ob.get('strength', 75) if isinstance(ob, dict) else getattr(ob, 'strength', 75)
                     if not isinstance(quality, (int, float)):
                         quality = 75
@@ -1837,7 +1837,7 @@ class ICTSignalEngine:
                         'quality': quality,
                         'distance_pct': distance_pct,
                         'distance_price': ob_low - current_price,
-                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ НОВО: Soft constraint флаг
+                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ NEW: Soft constraint flag
                     })
             
             # Check Resistance levels
@@ -1852,7 +1852,7 @@ class ICTSignalEngine:
                 if res_price > current_price * (1 + min_distance_pct):
                     distance_pct = (res_price - current_price) / current_price
                     
-                    # ✅ SOFT CONSTRAINT: Винаги добавяй зоната, независимо от разстояние
+                    # ✅ SOFT CONSTRAINT: Always add zone, regardless of distance
                     quality = res.get('strength', 60) if isinstance(res, dict) else getattr(res, 'strength', 60)
                     if not isinstance(quality, (int, float)):
                         quality = 60
@@ -1866,7 +1866,7 @@ class ICTSignalEngine:
                         'quality': quality,
                         'distance_pct': distance_pct,
                         'distance_price': res_price - current_price,
-                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ НОВО: Soft constraint флаг
+                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ NEW: Soft constraint flag
                     })
         
         elif is_bullish:
@@ -1893,7 +1893,7 @@ class ICTSignalEngine:
                 if fvg_high < current_price * (1 - min_distance_pct):
                     distance_pct = (current_price - fvg_high) / current_price
                     
-                    # ✅ SOFT CONSTRAINT: Винаги добавяй зоната, независимо от разстояние
+                    # ✅ SOFT CONSTRAINT: Always add zone, regardless of distance
                     quality = fvg.get('strength', 70) if isinstance(fvg, dict) else getattr(fvg, 'strength', 70)
                     if not isinstance(quality, (int, float)):
                         quality = 70
@@ -1905,7 +1905,7 @@ class ICTSignalEngine:
                         'quality': quality,
                         'distance_pct': distance_pct,
                         'distance_price': current_price - fvg_high,
-                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ НОВО: Soft constraint флаг
+                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ NEW: Soft constraint flag
                     })
             
             # Check Order Blocks
@@ -1929,7 +1929,7 @@ class ICTSignalEngine:
                 if ob_high < current_price * (1 - min_distance_pct):
                     distance_pct = (current_price - ob_high) / current_price
                     
-                    # ✅ SOFT CONSTRAINT: Винаги добавяй зоната, независимо от разстояние
+                    # ✅ SOFT CONSTRAINT: Always add zone, regardless of distance
                     quality = ob.get('strength', 75) if isinstance(ob, dict) else getattr(ob, 'strength', 75)
                     if not isinstance(quality, (int, float)):
                         quality = 75
@@ -1941,7 +1941,7 @@ class ICTSignalEngine:
                         'quality': quality,
                         'distance_pct': distance_pct,
                         'distance_price': current_price - ob_high,
-                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ НОВО: Soft constraint флаг
+                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ NEW: Soft constraint flag
                     })
             
             # Check Support levels
@@ -1956,7 +1956,7 @@ class ICTSignalEngine:
                 if sup_price < current_price * (1 - min_distance_pct):
                     distance_pct = (current_price - sup_price) / current_price
                     
-                    # ✅ SOFT CONSTRAINT: Винаги добавяй зоната, независимо от разстояние
+                    # ✅ SOFT CONSTRAINT: Always add zone, regardless of distance
                     quality = sup.get('strength', 60) if isinstance(sup, dict) else getattr(sup, 'strength', 60)
                     if not isinstance(quality, (int, float)):
                         quality = 60
@@ -1970,7 +1970,7 @@ class ICTSignalEngine:
                         'quality': quality,
                         'distance_pct': distance_pct,
                         'distance_price': current_price - sup_price,
-                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ НОВО: Soft constraint флаг
+                        'out_of_optimal_range': distance_pct > max_distance_pct  # ✅ NEW: Soft constraint flag
                     })
         
         # ==== EVALUATE ZONES ====
@@ -2029,8 +2029,8 @@ class ICTSignalEngine:
         
         # ==== BUILD ENTRY ZONE DICT ====
         
-        # Calculate if zone is outside optimal range
-        distance_out_of_range = best_zone['distance_pct'] * 100 > 3.0 or best_zone['distance_pct'] * 100 < 0.5
+        # Calculate if zone is outside optimal range (using constants)
+        distance_out_of_range = best_zone['distance_pct'] * 100 > max_distance_pct * 100 or best_zone['distance_pct'] * 100 < min_distance_pct * 100
         
         entry_zone = {
             'source': best_zone['source'],
@@ -2040,9 +2040,9 @@ class ICTSignalEngine:
             'quality': int(best_zone['quality']),
             'distance_pct': best_zone['distance_pct'] * 100,  # Convert to percentage
             'distance_price': best_zone['distance_price'],
-            # ✅ НОВИ ПОЛЕТА (soft constraint metadata)
+            # ✅ NEW FIELDS (soft constraint metadata)
             'distance_out_of_range': distance_out_of_range,
-            'distance_comment': f"⚠ Entry distance outside optimal range (0.5–3%): {best_zone['distance_pct'] * 100:.1f}%" 
+            'distance_comment': f"⚠ Entry distance outside optimal range ({min_distance_pct*100:.1f}–{max_distance_pct*100:.1f}%): {best_zone['distance_pct'] * 100:.1f}%" 
                                 if distance_out_of_range
                                 else None
         }
