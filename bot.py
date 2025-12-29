@@ -106,7 +106,7 @@ except ImportError as e:
 
 # ICT Signal Engine - New Complete System
 try:
-    from ict_signal_engine import ICTSignalEngine, ICTSignal, MarketBias
+    from ict_signal_engine import ICTSignalEngine, ICTSignal, MarketBias, SignalType
     from ict_80_alert_handler import ICT80AlertHandler
     from order_block_detector import OrderBlockDetector
     from fvg_detector import FVGDetector
