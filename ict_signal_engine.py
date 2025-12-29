@@ -527,7 +527,7 @@ class ICTSignalEngine:
                 mtf_analysis=mtf_analysis
             )
         
-        # От тук нататък САМО BULLISH/BEARISH
+        # From here onwards: BULLISH/BEARISH signals only
         # СТЪПКА 8: ENTRY CALCULATION WITH ICT-COMPLIANT ZONE
         logger.info("📊 Step 8: Entry + ICT Zone Validation")
         

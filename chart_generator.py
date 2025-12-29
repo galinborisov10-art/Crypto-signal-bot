@@ -178,12 +178,16 @@ class ChartGenerator:
             y_high = wb_dict.get('price_high', 0)
             
             # ✅ VALIDATION: Skip invalid zones
-            if x_start == 0 or not y_low or not y_high:
+            if not y_low or not y_high:
                 logger.warning(f"⚠️ Skipping whale block with invalid data: start={x_start}, low={y_low}, high={y_high}")
                 continue
             
             if y_low >= y_high:
                 logger.warning(f"⚠️ Skipping whale block with invalid range: low={y_low} >= high={y_high}")
+                continue
+            
+            if y_low <= 0 or y_high <= 0:
+                logger.warning(f"⚠️ Skipping whale block with non-positive prices: low={y_low}, high={y_high}")
                 continue
             
             # Draw rectangle
@@ -217,12 +221,16 @@ class ChartGenerator:
             y_high = bb_dict.get('price_high', 0)
             
             # ✅ VALIDATION: Skip invalid zones
-            if x_start == 0 or not y_low or not y_high:
+            if not y_low or not y_high:
                 logger.warning(f"⚠️ Skipping breaker block with invalid data: start={x_start}, low={y_low}, high={y_high}")
                 continue
             
             if y_low >= y_high:
                 logger.warning(f"⚠️ Skipping breaker block with invalid range: low={y_low} >= high={y_high}")
+                continue
+            
+            if y_low <= 0 or y_high <= 0:
+                logger.warning(f"⚠️ Skipping breaker block with non-positive prices: low={y_low}, high={y_high}")
                 continue
             
             # Dashed rectangle for breakers
@@ -257,12 +265,16 @@ class ChartGenerator:
             y_high = mb_dict.get('price_high', 0)
             
             # ✅ VALIDATION: Skip invalid zones
-            if x_start == 0 or not y_low or not y_high:
+            if not y_low or not y_high:
                 logger.warning(f"⚠️ Skipping mitigation block with invalid data: start={x_start}, low={y_low}, high={y_high}")
                 continue
             
             if y_low >= y_high:
                 logger.warning(f"⚠️ Skipping mitigation block with invalid range: low={y_low} >= high={y_high}")
+                continue
+            
+            if y_low <= 0 or y_high <= 0:
+                logger.warning(f"⚠️ Skipping mitigation block with non-positive prices: low={y_low}, high={y_high}")
                 continue
             
             rect = patches.Rectangle(
@@ -295,12 +307,16 @@ class ChartGenerator:
             y_high = zone_dict.get('price_high', 0)
             
             # ✅ VALIDATION: Skip invalid zones
-            if x_start == 0 or not y_low or not y_high:
+            if not y_low or not y_high:
                 logger.warning(f"⚠️ Skipping SIBI/SSIB zone with invalid data: start={x_start}, low={y_low}, high={y_high}")
                 continue
             
             if y_low >= y_high:
                 logger.warning(f"⚠️ Skipping SIBI/SSIB zone with invalid range: low={y_low} >= high={y_high}")
+                continue
+            
+            if y_low <= 0 or y_high <= 0:
+                logger.warning(f"⚠️ Skipping SIBI/SSIB zone with non-positive prices: low={y_low}, high={y_high}")
                 continue
             
             rect = patches.Rectangle(
@@ -334,12 +350,16 @@ class ChartGenerator:
             y_high = fvg_dict.get('top') or fvg_dict.get('price_high', 0)
             
             # ✅ VALIDATION: Skip invalid zones
-            if x_start == 0 or not y_low or not y_high:
+            if not y_low or not y_high:
                 logger.warning(f"⚠️ Skipping FVG zone with invalid data: start={x_start}, low={y_low}, high={y_high}")
                 continue
             
             if y_low >= y_high:
                 logger.warning(f"⚠️ Skipping FVG zone with invalid range: low={y_low} >= high={y_high}")
+                continue
+            
+            if y_low <= 0 or y_high <= 0:
+                logger.warning(f"⚠️ Skipping FVG zone with non-positive prices: low={y_low}, high={y_high}")
                 continue
             
             rect = patches.Rectangle(
