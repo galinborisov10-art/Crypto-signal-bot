@@ -106,7 +106,7 @@ except ImportError as e:
 
 # ICT Signal Engine - New Complete System
 try:
-    from ict_signal_engine import ICTSignalEngine, ICTSignal, MarketBias
+    from ict_signal_engine import ICTSignalEngine, ICTSignal, MarketBias, SignalType
     from ict_80_alert_handler import ICT80AlertHandler
     from order_block_detector import OrderBlockDetector
     from fvg_detector import FVGDetector
@@ -3227,6 +3227,11 @@ def save_journal(journal):
 def log_trade_to_journal(symbol, timeframe, signal_type, confidence, entry_price, tp_price, sl_price, analysis_data=None):
     """Логва trade в журнала за ML анализ"""
     try:
+        # ✅ Skip HOLD signals from journal
+        if signal_type == 'HOLD':
+            logger.info("ℹ️ Skipping HOLD signal from journal")
+            return None
+        
         from datetime import datetime
         journal = load_journal()
         if not journal:
@@ -7637,6 +7642,112 @@ def format_ict_signal(signal: ICTSignal) -> str:
     return msg
 
 
+def _format_hold_signal(signal: ICTSignal, signal_source: str = "AUTO") -> str:
+    """
+    Format HOLD signal for NEUTRAL/RANGING market conditions
+    
+    HOLD signals are informational only - no trade setup.
+    
+    Args:
+        signal: ICT signal object with HOLD type
+        signal_source: "AUTO", "MANUAL", "TEST", "BACKTEST"
+        
+    Returns:
+        Formatted HOLD message string
+    """
+    # Source badge
+    source_badge = {
+        "AUTO": "🤖 АВТОМАТИЧЕН",
+        "MANUAL": "👤 РЪЧЕН",
+        "TEST": "🧪 ТЕСТОВ",
+        "BACKTEST": "📊 BACKTEST"
+    }.get(signal_source, "📊 СИГНАЛ")
+    
+    msg = f"""⚪ <b>ICT HOLD SIGNAL</b> ⚪
+{source_badge}
+ℹ️ САМО ИНФОРМАЦИЯ - БЕЗ СДЕЛКА
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📊 ОСНОВНА ИНФОРМАЦИЯ</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+💰 <b>Символ:</b> {signal.symbol}
+⏰ <b>Таймфрейм:</b> {signal.timeframe}
+💪 <b>Пазарна фаза:</b> {signal.bias.value}
+🎯 <b>Увереност на анализа:</b> {signal.confidence:.1f}%
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>ℹ️ ЗАЩО HOLD?</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+{signal.reasoning}
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📊 MULTI-TIMEFRAME CONSENSUS</b>
+━━━━━━━━━━━━━━━━━━━━━━
+"""
+    
+    # MTF Consensus breakdown
+    if hasattr(signal, 'mtf_consensus_data') and signal.mtf_consensus_data:
+        consensus_pct = signal.mtf_consensus_data.get('consensus_pct', 0)
+        breakdown = signal.mtf_consensus_data.get('breakdown', {})
+        
+        msg += f"<b>Consensus:</b> {consensus_pct:.1f}%\n"
+        msg += f"<b>HTF Bias:</b> {signal.htf_bias}\n"
+        msg += f"<b>MTF Structure:</b> {signal.mtf_structure}\n\n"
+        
+        # Show breakdown for key timeframes
+        key_timeframes = ['1m', '15m', '1h', '4h', '1d']
+        msg += "<b>Breakdown:</b>\n"
+        for tf in key_timeframes:
+            if tf in breakdown:
+                data = breakdown[tf]
+                bias = data.get('bias', 'N/A')
+                conf = data.get('confidence', 0)
+                aligned = data.get('aligned', False)
+                emoji_tf = "✅" if aligned else "❌"
+                
+                if bias != 'NO_DATA':
+                    msg += f"{emoji_tf} {tf}: {bias} ({conf:.0f}%)\n"
+    else:
+        msg += "⚠️ MTF данни не са налични\n"
+    
+    msg += f"""
+━━━━━━━━━━━━━━━━━━━━━━
+<b>🔍 ICT КОМПОНЕНТИ</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<i>(за информация)</i>
+
+<b>Order Blocks:</b> {len(signal.order_blocks)} 📦
+<b>FVG:</b> {len(signal.fair_value_gaps)} 🔲
+<b>Liquidity Zones:</b> {len(signal.liquidity_zones)} 💧
+<b>Whale Blocks:</b> {len(signal.whale_blocks)} 🐋
+"""
+    
+    # Warnings
+    if signal.warnings:
+        msg += f"\n<b>⚠️ ПРЕДУПРЕЖДЕНИЯ</b>\n"
+        for warning in signal.warnings:
+            msg += f"   • {warning}\n"
+    
+    # Recommendations
+    msg += f"""
+━━━━━━━━━━━━━━━━━━━━━━
+<b>💡 ПРЕПОРЪКИ</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+• Изчакайте ясен пробив или отхвърляне
+• Наблюдавайте по-висок таймфрейм за посока
+• Следете за структурен пробив (BOS/CHOCH)
+• Използвайте ICT компонентите за планиране
+
+<i>⏰ {signal.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}</i>
+"""
+    
+    return msg
+
+
 def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -> str:
     """
     СТАНДАРТИЗИРАН формат за ВСИЧКИ типове сигнали (STRICT ICT)
@@ -7662,6 +7773,10 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
     Returns:
         Formatted standardized message string
     """
+    # ✅ NEW: Special handling for HOLD signals
+    if signal.signal_type == SignalType.HOLD:
+        return _format_hold_signal(signal, signal_source)
+    
     # Signal type emoji
     signal_emoji = {
         'BUY': '🟢',

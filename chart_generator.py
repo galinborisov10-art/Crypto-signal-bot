@@ -108,8 +108,9 @@ class ChartGenerator:
             if hasattr(signal, 'liquidity_sweeps') and signal.liquidity_sweeps:
                 self._plot_liquidity_sweeps(ax_price, signal.liquidity_sweeps, df)
             
+            # ✅ VALIDATION: Only plot entry/exit if entry_zone is valid (not None for HOLD signals)
             # Plot entry/exit levels
-            if signal.entry_price:
+            if signal.entry_price and signal.entry_zone and isinstance(signal.entry_zone, dict):
                 self._plot_entry_exit(ax_price, signal)
             
             # Plot volume
@@ -176,6 +177,19 @@ class ChartGenerator:
             y_low = wb_dict.get('price_low', 0)
             y_high = wb_dict.get('price_high', 0)
             
+            # ✅ VALIDATION: Skip invalid zones
+            if not y_low or not y_high:
+                logger.warning(f"⚠️ Skipping whale block with invalid data: start={x_start}, low={y_low}, high={y_high}")
+                continue
+            
+            if y_low >= y_high:
+                logger.warning(f"⚠️ Skipping whale block with invalid range: low={y_low} >= high={y_high}")
+                continue
+            
+            if y_low <= 0 or y_high <= 0:
+                logger.warning(f"⚠️ Skipping whale block with non-positive prices: low={y_low}, high={y_high}")
+                continue
+            
             # Draw rectangle
             rect = patches.Rectangle(
                 (x_start, y_low),
@@ -205,6 +219,19 @@ class ChartGenerator:
             x_end = x_start + 10
             y_low = bb_dict.get('price_low', 0)
             y_high = bb_dict.get('price_high', 0)
+            
+            # ✅ VALIDATION: Skip invalid zones
+            if not y_low or not y_high:
+                logger.warning(f"⚠️ Skipping breaker block with invalid data: start={x_start}, low={y_low}, high={y_high}")
+                continue
+            
+            if y_low >= y_high:
+                logger.warning(f"⚠️ Skipping breaker block with invalid range: low={y_low} >= high={y_high}")
+                continue
+            
+            if y_low <= 0 or y_high <= 0:
+                logger.warning(f"⚠️ Skipping breaker block with non-positive prices: low={y_low}, high={y_high}")
+                continue
             
             # Dashed rectangle for breakers
             rect = patches.Rectangle(
@@ -237,6 +264,19 @@ class ChartGenerator:
             y_low = mb_dict.get('price_low', 0)
             y_high = mb_dict.get('price_high', 0)
             
+            # ✅ VALIDATION: Skip invalid zones
+            if not y_low or not y_high:
+                logger.warning(f"⚠️ Skipping mitigation block with invalid data: start={x_start}, low={y_low}, high={y_high}")
+                continue
+            
+            if y_low >= y_high:
+                logger.warning(f"⚠️ Skipping mitigation block with invalid range: low={y_low} >= high={y_high}")
+                continue
+            
+            if y_low <= 0 or y_high <= 0:
+                logger.warning(f"⚠️ Skipping mitigation block with non-positive prices: low={y_low}, high={y_high}")
+                continue
+            
             rect = patches.Rectangle(
                 (x_start, y_low),
                 x_end - x_start,
@@ -265,6 +305,19 @@ class ChartGenerator:
             x_end = x_start + 6
             y_low = zone_dict.get('price_low', 0)
             y_high = zone_dict.get('price_high', 0)
+            
+            # ✅ VALIDATION: Skip invalid zones
+            if not y_low or not y_high:
+                logger.warning(f"⚠️ Skipping SIBI/SSIB zone with invalid data: start={x_start}, low={y_low}, high={y_high}")
+                continue
+            
+            if y_low >= y_high:
+                logger.warning(f"⚠️ Skipping SIBI/SSIB zone with invalid range: low={y_low} >= high={y_high}")
+                continue
+            
+            if y_low <= 0 or y_high <= 0:
+                logger.warning(f"⚠️ Skipping SIBI/SSIB zone with non-positive prices: low={y_low}, high={y_high}")
+                continue
             
             rect = patches.Rectangle(
                 (x_start, y_low),
@@ -295,6 +348,19 @@ class ChartGenerator:
             # FVG zones use 'bottom'/'top' or 'price_low'/'price_high' depending on source
             y_low = fvg_dict.get('bottom') or fvg_dict.get('price_low', 0)
             y_high = fvg_dict.get('top') or fvg_dict.get('price_high', 0)
+            
+            # ✅ VALIDATION: Skip invalid zones
+            if not y_low or not y_high:
+                logger.warning(f"⚠️ Skipping FVG zone with invalid data: start={x_start}, low={y_low}, high={y_high}")
+                continue
+            
+            if y_low >= y_high:
+                logger.warning(f"⚠️ Skipping FVG zone with invalid range: low={y_low} >= high={y_high}")
+                continue
+            
+            if y_low <= 0 or y_high <= 0:
+                logger.warning(f"⚠️ Skipping FVG zone with non-positive prices: low={y_low}, high={y_high}")
+                continue
             
             rect = patches.Rectangle(
                 (x_start, y_low),

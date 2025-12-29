@@ -495,6 +495,39 @@ class ICTSignalEngine:
         structure_broken = self._check_structure_break(df)
         displacement_detected = self._check_displacement(df)
         
+        # СТЪПКА 7b: EARLY EXIT за HOLD/RANGING
+        if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
+            logger.info(f"🔄 Market bias is {bias.value} - creating HOLD signal (early exit)")
+            
+            # Calculate base confidence for informational purposes
+            base_confidence = self._calculate_signal_confidence(
+                ict_components, mtf_analysis, bias, structure_broken, 
+                displacement_detected, 0.0  # RR not applicable for HOLD
+            )
+            
+            # Get current price
+            current_price = df['close'].iloc[-1]
+            
+            # Calculate MTF consensus data
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            
+            return self._create_hold_signal(
+                symbol=symbol,
+                timeframe=timeframe,
+                bias=bias,
+                confidence=base_confidence,
+                df=df,
+                ict_components=ict_components,
+                mtf_data=mtf_data,
+                current_price=current_price,
+                htf_bias=htf_bias,
+                mtf_consensus_data=mtf_consensus_data,
+                structure_broken=structure_broken,
+                displacement_detected=displacement_detected,
+                mtf_analysis=mtf_analysis
+            )
+        
+        # From here onwards: BULLISH/BEARISH signals only
         # СТЪПКА 8: ENTRY CALCULATION WITH ICT-COMPLIANT ZONE
         logger.info("📊 Step 8: Entry + ICT Zone Validation")
         
@@ -2085,6 +2118,30 @@ class ICTSignalEngine:
         MANDATORY: Calculate TP with GUARANTEED RR >= 1:3
         Now with Fibonacci integration for optimal TP placement
         """
+        # ✅ NORMALIZE BIAS: str or enum → uppercase string
+        bias_str = None
+        if bias:
+            if isinstance(bias, MarketBias):
+                bias_str = bias.value.upper()
+            elif isinstance(bias, str):
+                bias_str = bias.upper()
+            else:
+                bias_str = str(bias).upper()
+        
+        # ✅ GUARD: Raise exception for HOLD/RANGING
+        if bias_str in ['NEUTRAL', 'RANGING']:
+            raise ValueError(
+                f"CRITICAL: _calculate_tp_with_min_rr() called for {bias_str} signal! "
+                f"HOLD/RANGING must use early exit. Pipeline violation."
+            )
+        
+        # ✅ VALIDATE params
+        if sl_price is None or entry_price is None:
+            raise ValueError(
+                f"Invalid params: entry={entry_price}, sl={sl_price}. "
+                f"Cannot calculate TP without valid prices."
+            )
+        
         risk = abs(entry_price - sl_price)
         direction = 'LONG' if entry_price > sl_price else 'SHORT'
         
@@ -2156,6 +2213,13 @@ class ICTSignalEngine:
         bias: MarketBias
     ) -> float:
         """Calculate stop loss using ICT invalidation levels"""
+        # ✅ GUARD: Raise exception for HOLD/RANGING
+        if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
+            raise ValueError(
+                f"CRITICAL: _calculate_sl_price() called for {bias.value} signal! "
+                f"HOLD/RANGING must use early exit. Pipeline violation."
+            )
+        
         atr = df['atr'].iloc[-1]
         
         if bias == MarketBias.BULLISH:
@@ -2413,6 +2477,141 @@ class ICTSignalEngine:
             strength = min(5, strength + 1)
         
         return SignalStrength(strength)
+    
+    def _create_hold_signal(
+        self,
+        symbol: str,
+        timeframe: str,
+        bias: MarketBias,
+        confidence: float,
+        df: pd.DataFrame,
+        ict_components: Dict,
+        mtf_data: Optional[Dict[str, pd.DataFrame]],
+        current_price: float,
+        htf_bias: str,
+        mtf_consensus_data: Dict,
+        structure_broken: bool,
+        displacement_detected: bool,
+        mtf_analysis: Optional[Dict]
+    ) -> ICTSignal:
+        """
+        Create HOLD signal for NEUTRAL/RANGING market conditions
+        
+        HOLD signals are informational only:
+        - NO entry price
+        - NO stop loss
+        - NO take profit
+        - NO risk/reward ratio
+        - entry_zone is None (not empty dict)
+        - entry_status is 'HOLD'
+        
+        Args:
+            symbol: Trading symbol
+            timeframe: Timeframe
+            bias: Market bias (NEUTRAL or RANGING)
+            confidence: Signal confidence
+            df: Price dataframe
+            ict_components: Detected ICT components
+            mtf_data: Multi-timeframe data
+            current_price: Current price
+            htf_bias: Higher timeframe bias
+            mtf_consensus_data: MTF consensus breakdown
+            structure_broken: Whether structure was broken
+            displacement_detected: Whether displacement was detected
+            mtf_analysis: MTF analysis data
+            
+        Returns:
+            ICTSignal with HOLD type (informational only)
+        """
+        # Reasoning based on bias type
+        if bias == MarketBias.RANGING:
+            reasoning = "ℹ️ Пазарът консолидира в диапазон. Няма ясна посока."
+        else:  # NEUTRAL
+            reasoning = "ℹ️ Пазарната структура е неутрална. Открити са противоречиви сигнали."
+        
+        # Add ICT component counts to reasoning
+        whale_count = len(ict_components.get('whale_blocks', []))
+        liq_count = len(ict_components.get('liquidity_zones', []))
+        ob_count = len(ict_components.get('order_blocks', []))
+        fvg_count = len(ict_components.get('fvgs', []))
+        
+        reasoning += f"\n\nICT Компоненти открити:"
+        if whale_count > 0:
+            reasoning += f"\n• {whale_count} Whale Order Blocks"
+        if liq_count > 0:
+            reasoning += f"\n• {liq_count} Liquidity Zones"
+        if ob_count > 0:
+            reasoning += f"\n• {ob_count} Order Blocks"
+        if fvg_count > 0:
+            reasoning += f"\n• {fvg_count} Fair Value Gaps"
+        
+        reasoning += "\n\nТези зони са информативни и могат да бъдат използвани за наблюдение на пазара."
+        
+        # Warnings specific to HOLD signals
+        warnings = [
+            "Цената се движи странично между поддръжка и съпротива",
+            "Изчакайте потвърждение на пробив преди вход",
+            "Ниска вероятност за посочни сделки"
+        ]
+        
+        # Add MTF warning if applicable
+        if mtf_consensus_data and mtf_consensus_data.get('consensus_pct', 0) < 50:
+            warnings.append(f"MTF консенсус е нисък ({mtf_consensus_data['consensus_pct']:.1f}%)")
+        
+        # Zone explanations (if available)
+        zone_explanations = {}
+        if self.zone_explainer:
+            try:
+                bias_str = bias.value if hasattr(bias, 'value') else str(bias)
+                zone_explanations = self.zone_explainer.generate_all_explanations(ict_components, bias_str)
+            except Exception as e:
+                logger.error(f"Zone explanations error: {e}")
+        
+        # Create HOLD signal
+        signal = ICTSignal(
+            timestamp=datetime.now(),
+            symbol=symbol,
+            timeframe=timeframe,
+            signal_type=SignalType.HOLD,
+            signal_strength=SignalStrength.WEAK,  # Always WEAK for HOLD
+            entry_price=None,  # ✅ NO entry price for HOLD
+            sl_price=None,  # ✅ NO stop loss for HOLD
+            tp_prices=[],  # ✅ NO take profits for HOLD
+            confidence=confidence,
+            risk_reward_ratio=None,  # ✅ NO RR for HOLD
+            whale_blocks=[wb.to_dict() if hasattr(wb, 'to_dict') else wb for wb in ict_components.get('whale_blocks', [])],
+            liquidity_zones=[lz.__dict__ if hasattr(lz, '__dict__') else lz for lz in ict_components.get('liquidity_zones', [])],
+            liquidity_sweeps=[ls.__dict__ if hasattr(ls, '__dict__') else ls for ls in ict_components.get('liquidity_sweeps', [])],
+            order_blocks=[ob.to_dict() if hasattr(ob, 'to_dict') else ob for ob in ict_components.get('order_blocks', [])],
+            fair_value_gaps=[fvg.to_dict() if hasattr(fvg, 'to_dict') else fvg for fvg in ict_components.get('fvgs', [])],
+            internal_liquidity=[ilp for ilp in ict_components.get('internal_liquidity', [])],
+            breaker_blocks=[bb.to_dict() for bb in ict_components.get('breaker_blocks', [])],
+            mitigation_blocks=[mb.to_dict() for mb in ict_components.get('mitigation_blocks', [])],
+            sibi_ssib_zones=[sz.to_dict() for sz in ict_components.get('sibi_ssib_zones', [])],
+            fibonacci_data=ict_components.get('fibonacci_data', {}),
+            luxalgo_sr=ict_components.get('luxalgo_sr', {}),
+            luxalgo_ict=ict_components.get('luxalgo_ict', {}),
+            luxalgo_combined=ict_components.get('luxalgo_combined', {}),
+            bias=bias,
+            structure_broken=structure_broken,
+            displacement_detected=displacement_detected,
+            mtf_confluence=mtf_analysis.get('confluence_count', 0) if mtf_analysis else 0,
+            htf_bias=htf_bias,
+            mtf_structure=mtf_analysis.get('mtf_structure', 'NEUTRAL') if mtf_analysis else 'NEUTRAL',
+            mtf_consensus_data=mtf_consensus_data,
+            entry_zone=None,  # ✅ None for HOLD (not empty dict)
+            entry_status='HOLD',  # ✅ HOLD status
+            distance_penalty=False,
+            reasoning=reasoning,
+            warnings=warnings,
+            zone_explanations=zone_explanations
+        )
+        
+        logger.info(f"✅ Generated HOLD signal (early exit) - {bias.value}")
+        logger.info(f"   Confidence: {confidence:.1f}%")
+        logger.info(f"   MTF Consensus: {mtf_consensus_data.get('consensus_pct', 0):.1f}%")
+        
+        return signal
     
     def _determine_signal_type(
         self,

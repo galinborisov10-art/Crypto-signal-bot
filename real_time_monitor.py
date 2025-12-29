@@ -88,6 +88,11 @@ class RealTimePositionMonitor:
             timeframe: Trading timeframe
             user_chat_id: User's chat ID (defaults to owner)
         """
+        # ✅ Skip HOLD signals from monitoring
+        if signal_type == 'HOLD':
+            logger.info("ℹ️ Skipping HOLD signal from monitor")
+            return
+        
         if user_chat_id is None:
             user_chat_id = self.owner_chat_id
         
