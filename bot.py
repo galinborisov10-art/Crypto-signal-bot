@@ -9245,7 +9245,7 @@ async def toggle_fundamental_callback(update: Update, context: ContextTypes.DEFA
     settings = get_user_settings(context.application.bot_data, chat_id)
     
     # Toggle настройката
-    settings['use_fundamental'] = not settings['use_fundamental']
+    settings['use_fundamental'] = not settings.get('use_fundamental', False)
     
     # Статус текст
     status = "ON ✅" if settings['use_fundamental'] else "OFF ❌"
