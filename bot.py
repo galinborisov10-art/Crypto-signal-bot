@@ -6470,8 +6470,8 @@ def format_news_with_impact(news_item):
 def calculate_combined_signal_strength(technical_score, fundamental_score):
     """
     Combine technical and fundamental scores
-    Technical weight: 60% (from feature_flags.json)
-    Fundamental weight: 40%
+    Technical weight: 70% (default, matches user settings)
+    Fundamental weight: 30%
     
     Args:
         technical_score: Technical analysis score (0-100)
@@ -6480,7 +6480,7 @@ def calculate_combined_signal_strength(technical_score, fundamental_score):
     Returns:
         Tuple of (strength_label, combined_score)
     """
-    combined = (technical_score * 0.6) + (fundamental_score * 0.4)
+    combined = (technical_score * 0.7) + (fundamental_score * 0.3)
     
     if combined > 75:
         return "🟢 STRONG", combined
