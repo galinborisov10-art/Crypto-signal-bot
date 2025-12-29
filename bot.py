@@ -7919,7 +7919,7 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
 
 ✅ <b>Fundamental analysis integrated</b>
 
-Combined Score: Technical (60%) + Fundamental (40%)
+Combined Score: Technical (70%) + Fundamental (30%)
 📊 Technical Confidence: {signal.confidence:.1f}%
 
 <i>💡 Full fundamental data available via /market command</i>
@@ -9238,16 +9238,19 @@ async def timeframe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def toggle_fundamental_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle fundamental analysis on/off"""
     query = update.callback_query
-    await query.answer()
     
-    user_id = query.from_user.id
-    settings = get_user_settings(context.application.bot_data, user_id)
+    chat_id = query.message.chat_id
     
-    # Toggle state
+    # Вземи настройките
+    settings = get_user_settings(context.application.bot_data, chat_id)
+    
+    # Toggle настройката
     settings['use_fundamental'] = not settings.get('use_fundamental', False)
     
+    # Статус текст
+    status = "ON ✅" if settings['use_fundamental'] else "OFF ❌"
+    
     # Prepare updated message
-    fund_status = "✅ ENABLED" if settings['use_fundamental'] else "❌ DISABLED"
     fund_weight = settings.get('fundamental_weight', 0.3) * 100
     tech_weight = (1 - settings.get('fundamental_weight', 0.3)) * 100
     
@@ -9261,7 +9264,7 @@ Risk/Reward (RR): 1:{settings['rr']:.1f}
 
 📈 <b>Signal Settings:</b>
 Timeframe: {settings.get('timeframe', '4h')}
-Fundamental Analysis: {fund_status}
+Fundamental Analysis: {status}
 """
     if settings['use_fundamental']:
         message += f"Weight Distribution: {tech_weight:.0f}% Technical / {fund_weight:.0f}% Fundamental\n"
@@ -9286,15 +9289,13 @@ Fundamental Analysis: {fund_status}
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    # Update the settings message
     await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
     
-    # Send confirmation notification
-    status_text = "ENABLED" if settings['use_fundamental'] else "DISABLED"
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=f"✅ Fundamental Analysis {status_text}",
-        parse_mode='HTML'
-    )
+    # Confirmation with alert popup
+    await query.answer(f"Fundamental Analysis: {status}", show_alert=True)
+    
+    logger.info(f"User {chat_id} toggled fundamental: {status}")
 
 
 @require_access()
