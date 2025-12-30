@@ -878,18 +878,19 @@ class ICTSignalEngine:
             # ═══════════════════════════════════════════════════════════════
             if self.ml_predictor and self.ml_predictor.is_trained:
                 try:
-                    # Prepare trade data (same format as production ML Predictor uses)
+                    # Prepare trade data (EXACT SAME format as production ML Predictor)
                     shadow_trade_data = {
+                        'entry_price': entry_price,
                         'analysis_data': ml_features,
                         'ict_components': ict_components,
-                        'rsi': ml_features.get('rsi', 50.0),
-                        'volume_ratio': ml_features.get('volume_ratio', 1.0),
-                        'volatility': ml_features.get('volatility', 1.0),
-                        'confidence': base_confidence,
-                        'btc_correlation': ml_features.get('btc_correlation', 0.5),
-                        'sentiment_score': ml_features.get('sentiment_score', 50.0),
+                        'volume_ratio': context_data.get('volume_ratio', 1.0),
+                        'volatility': context_data.get('volatility_pct', 1.0),
+                        'btc_correlation': context_data.get('btc_correlation', 0.0),
                         'mtf_confluence': mtf_analysis.get('confluence_count', 0) / 5 if mtf_analysis else 0.5,
-                        'risk_reward_ratio': 3.0  # Default, will be calculated later
+                        'risk_reward_ratio': risk_reward_ratio,
+                        'rsi': context_data.get('rsi', 50.0),
+                        'sentiment_score': 50.0,  # Placeholder (same as production)
+                        'confidence': base_confidence  # Use base confidence (before ML adjustment)
                     }
                     
                     # Get shadow prediction (NOT USED FOR DECISIONS)
