@@ -878,25 +878,22 @@ class ICTSignalEngine:
             # ═══════════════════════════════════════════════════════════════
             if self.ml_predictor and self.ml_predictor.is_trained:
                 try:
-                    # Prepare features (same as ML Engine uses)
-                    shadow_features = {
+                    # Prepare trade data (same format as production ML Predictor uses)
+                    shadow_trade_data = {
+                        'analysis_data': ml_features,
+                        'ict_components': ict_components,
                         'rsi': ml_features.get('rsi', 50.0),
                         'volume_ratio': ml_features.get('volume_ratio', 1.0),
                         'volatility': ml_features.get('volatility', 1.0),
                         'confidence': base_confidence,
-                        'market_structure_score': ml_features.get('market_structure_score', 0.5),
-                        'order_block_strength': ml_features.get('order_block_strength', 0.5),
-                        'displacement_score': ml_features.get('displacement_score', 0.5),
-                        'fvg_quality': ml_features.get('fvg_quality', 0.5),
-                        'liquidity_score': ml_features.get('liquidity_score', 0.5),
                         'btc_correlation': ml_features.get('btc_correlation', 0.5),
                         'sentiment_score': ml_features.get('sentiment_score', 50.0),
-                        'mtf_alignment': mtf_analysis.get('confluence_count', 0) / 5 if mtf_analysis else 0.5,
-                        'risk_reward': 3.0  # Default, will be calculated later
+                        'mtf_confluence': mtf_analysis.get('confluence_count', 0) / 5 if mtf_analysis else 0.5,
+                        'risk_reward_ratio': 3.0  # Default, will be calculated later
                     }
                     
                     # Get shadow prediction (NOT USED FOR DECISIONS)
-                    shadow_prediction = self.ml_predictor.predict(shadow_features)
+                    shadow_prediction = self.ml_predictor.predict(shadow_trade_data)
                     
                     if shadow_prediction is not None:
                         # Calculate final confidence (production logic, unchanged)
