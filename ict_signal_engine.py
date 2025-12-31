@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 import logging
+import json
 
 # Import ICT modules
 try:
@@ -871,6 +872,57 @@ class ICTSignalEngine:
                         
                 except Exception as e:
                     logger.error(f"❌ ML Predictor error: {e}")
+            
+            # ═══════════════════════════════════════════════════════════════
+            # SHADOW ML PREDICTOR (LOG-ONLY, NO PRODUCTION IMPACT)
+            # ═══════════════════════════════════════════════════════════════
+            if self.ml_predictor and self.ml_predictor.is_trained:
+                try:
+                    # Prepare trade data (EXACT SAME format as production ML Predictor)
+                    shadow_trade_data = {
+                        'entry_price': entry_price,
+                        'analysis_data': ml_features,
+                        'ict_components': ict_components,
+                        'volume_ratio': context_data.get('volume_ratio', 1.0),
+                        'volatility': context_data.get('volatility_pct', 1.0),
+                        'btc_correlation': context_data.get('btc_correlation', 0.0),
+                        'mtf_confluence': mtf_analysis.get('confluence_count', 0) / 5 if mtf_analysis else 0.5,
+                        'risk_reward_ratio': risk_reward_ratio,
+                        'rsi': context_data.get('rsi', 50.0),
+                        'sentiment_score': 50.0,  # Placeholder (same as production)
+                        'confidence': base_confidence  # Use base confidence (before ML adjustment)
+                    }
+                    
+                    # Get shadow prediction (NOT USED FOR DECISIONS)
+                    shadow_prediction = self.ml_predictor.predict(shadow_trade_data)
+                    
+                    if shadow_prediction is not None:
+                        # Calculate final confidence (production logic, unchanged)
+                        final_conf = base_confidence + ml_confidence_adjustment
+                        
+                        # Determine decision (for logging only, NOT USED)
+                        decision = "SIGNAL" if final_conf >= self.config['min_confidence'] else "REJECT"
+                        
+                        # Log structured data (JSON on one line)
+                        shadow_log = json.dumps({
+                            "symbol": symbol,
+                            "timeframe": timeframe,
+                            "ict_confidence": round(base_confidence, 2),
+                            "ml_engine_adjustment": round(ml_confidence_adjustment, 2),
+                            "final_confidence": round(final_conf, 2),
+                            "ml_predictor_confidence": round(shadow_prediction, 2),
+                            "delta": round(shadow_prediction - final_conf, 2),
+                            "decision": decision
+                        })
+                        
+                        logger.info(f"[SHADOW_ML_PREDICTOR] {shadow_log}")
+                        
+                except Exception as e:
+                    # Shadow error is non-critical - log and continue
+                    logger.debug(f"[SHADOW_ML_PREDICTOR] Non-critical error: {e}")
+            # ═══════════════════════════════════════════════════════════════
+            # END SHADOW MODE
+            # ═══════════════════════════════════════════════════════════════
             
             # ✅ ML RESTRICTIONS (STRICT ICT) - Step 11.25
             logger.info("📊 Step 11.25: ML ICT Compliance Check")
