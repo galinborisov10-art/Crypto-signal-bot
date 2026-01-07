@@ -9589,6 +9589,10 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             if not ict_signal or (isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE'):
                 return None
             
+            # Guard: Skip HOLD signals (informational only, no entry price)
+            if hasattr(ict_signal, 'signal_type') and ict_signal.signal_type.value == 'HOLD':
+                return None
+            
             # ✅ DEDUPLICATION with entry_price
             if is_signal_already_sent(
                 symbol=symbol,

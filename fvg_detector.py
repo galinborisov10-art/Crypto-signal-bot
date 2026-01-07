@@ -260,10 +260,8 @@ class FVGDetector:
                 gap_size = gap_top - gap_bottom
                 gap_size_pct = (gap_size / gap_bottom) * 100
                 
-                # Check minimum gap size
-                if gap_size_pct < self.config['min_gap_size_pct']:
-                    continue
-                if gap_size < self.config['min_gap_size_abs']:
+                # Check minimum gap size (OR logic: either percentage OR absolute satisfies)
+                if gap_size_pct < self.config['min_gap_size_pct'] and gap_size < self.config['min_gap_size_abs']:
                     continue
                 
                 # Calculate volume imbalance
@@ -338,10 +336,8 @@ class FVGDetector:
                 gap_size = gap_top - gap_bottom
                 gap_size_pct = (gap_size / gap_top) * 100
                 
-                # Check minimum gap size
-                if gap_size_pct < self.config['min_gap_size_pct']:
-                    continue
-                if gap_size < self.config['min_gap_size_abs']:
+                # Check minimum gap size (OR logic: either percentage OR absolute satisfies)
+                if gap_size_pct < self.config['min_gap_size_pct'] and gap_size < self.config['min_gap_size_abs']:
                     continue
                 
                 # Calculate volume imbalance
