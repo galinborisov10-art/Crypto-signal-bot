@@ -3400,7 +3400,7 @@ class ICTSignalEngine:
             # Опит 1: 1D timeframe (HTF)
             if '1d' in mtf_data or '1D' in mtf_data:
                 df_1d = mtf_data.get('1d') or mtf_data.get('1D')
-                if df_1d is not None and len(df_1d) >= 20:
+                if df_1d is not None and not df_1d.empty and len(df_1d) >= 20:
                     # Determine bias from 1D
                     bias_components = self._detect_ict_components(df_1d, '1d')
                     htf_bias = self._determine_market_bias(df_1d, bias_components, None)
@@ -3412,7 +3412,7 @@ class ICTSignalEngine:
             logger.warning("⚠️ 1D bias failed, trying 4H fallback...")
             if '4h' in mtf_data or '4H' in mtf_data:
                 df_4h = mtf_data.get('4h') or mtf_data.get('4H')
-                if df_4h is not None and len(df_4h) >= 20:
+                if df_4h is not None and not df_4h.empty and len(df_4h) >= 20:
                     bias_components = self._detect_ict_components(df_4h, '4h')
                     htf_bias = self._determine_market_bias(df_4h, bias_components, None)
                     htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
