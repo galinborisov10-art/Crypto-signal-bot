@@ -22,10 +22,11 @@ class TestLine3402OrOperatorFix:
             })
         }
         
+        # NOTE: The following OLD code is commented out because it demonstrates the bug
         # OLD: df_1d = mtf_data.get('1d') or mtf_data.get('1D')
         # This would trigger: ValueError: The truth value of a DataFrame is ambiguous
         
-        # NEW: df_1d = mtf_data.get('1d') if mtf_data.get('1d') is not None else mtf_data.get('1D')
+        # NEW (FIXED): df_1d = mtf_data.get('1d') if mtf_data.get('1d') is not None else mtf_data.get('1D')
         df_1d = mtf_data.get('1d') if mtf_data.get('1d') is not None else mtf_data.get('1D')
         
         assert df_1d is not None

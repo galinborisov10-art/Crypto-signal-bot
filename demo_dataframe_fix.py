@@ -152,8 +152,8 @@ if __name__ == '__main__':
     print("SUMMARY")
     print("="*70)
     if old_failed and new_succeeded:
-        print("\n✅ OLD CODE: FAILED (as expected)")
-        print("✅ NEW CODE: SUCCEEDED")
+        print("\n🔴 OLD CODE: Triggered error (demonstrating the bug)")
+        print("✅ NEW CODE: Executed successfully (fix verified)")
         print("\n🎯 Result: BUG #3 FINAL FIX is VERIFIED!")
         print("   - HTF bias errors eliminated")
         print("   - DataFrame boolean conversion prevented")
