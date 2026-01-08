@@ -18,6 +18,9 @@ from ict_enhancement.breaker_detector import detect_breaker_blocks
 
 logger = logging.getLogger(__name__)
 
+# Constants
+ERROR_MESSAGE_MAX_LENGTH = 50  # Maximum length for error messages in status field
+
 
 class CombinedLuxAlgoAnalysis:
     """
@@ -40,7 +43,8 @@ class CombinedLuxAlgoAnalysis:
         ict_swing_length: int = 10,
         enable_sr: bool = True,
         enable_ict: bool = True,
-        min_periods: int = 50
+        min_periods: int = 50,
+        breaker_lookback: int = 50
     ):
         # Initialize both analyzers
         self.sr_analyzer = LuxAlgoSRMTF(
@@ -61,6 +65,7 @@ class CombinedLuxAlgoAnalysis:
         self.enable_sr = enable_sr
         self.enable_ict = enable_ict
         self.min_periods = min_periods
+        self.breaker_lookback = breaker_lookback
     
     def analyze(self, df: pd.DataFrame) -> Dict:
         """
@@ -132,7 +137,7 @@ class CombinedLuxAlgoAnalysis:
                             lows=df["low"].tolist(),
                             closes=df["close"].tolist(),
                             order_blocks=ict_results.get("order_blocks", []),
-                            lookback=50
+                            lookback=self.breaker_lookback
                         )
                         ict_results["breaker_blocks"] = breaker_blocks
                         logger.info(f"🔥 Breaker Blocks detected: {len(breaker_blocks)}")
@@ -157,7 +162,7 @@ class CombinedLuxAlgoAnalysis:
             
         except Exception as e:
             logger.error(f"Error in combined LuxAlgo analysis: {e}")
-            default_result['status'] = f"exception: {str(e)[:50]}"
+            default_result['status'] = f"exception: {str(e)[:ERROR_MESSAGE_MAX_LENGTH]}"
             return default_result
     
     def _generate_combined_signal(
