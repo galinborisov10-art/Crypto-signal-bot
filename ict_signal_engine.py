@@ -478,7 +478,7 @@ class ICTSignalEngine:
         
         # СТЪПКА 2: MTF STRUCTURE (4H)
         logger.info("📊 Step 2: MTF Structure")
-        mtf_analysis = self._analyze_mtf_confluence(df, mtf_data, symbol) if mtf_data else None
+        mtf_analysis = self._analyze_mtf_confluence(df, mtf_data, symbol) if mtf_data is not None and isinstance(mtf_data, dict) else None
         
         # СТЪПКА 3: ENTRY MODEL (текущ TF)
         logger.info(f"📊 Step 3: Entry Model ({timeframe})")
@@ -1301,7 +1301,7 @@ class ICTSignalEngine:
         symbol: str
     ) -> Optional[Dict]:
         """Analyze multi-timeframe confluence"""
-        if not self.mtf_analyzer or not mtf_data:
+        if not self.mtf_analyzer or mtf_data is None or not isinstance(mtf_data, dict):
             return None
         
         try:
