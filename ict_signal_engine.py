@@ -3392,7 +3392,7 @@ class ICTSignalEngine:
         """
         ЗАДЪЛЖИТЕЛНО: Получава HTF bias от 1D → 4H fallback
         """
-        if not mtf_data:
+        if mtf_data is None or not isinstance(mtf_data, dict):
             logger.warning("No MTF data available, using NEUTRAL bias")
             return 'NEUTRAL'
         
