@@ -1257,14 +1257,39 @@ class ICTSignalEngine:
         if self.luxalgo_combined:
             try:
                 luxalgo_result = self.luxalgo_combined.analyze(df)
+                
+                # Ensure result is valid dict (defensive)
+                if not isinstance(luxalgo_result, dict):
+                    logger.warning(f"LuxAlgo returned invalid type: {type(luxalgo_result)}, using defaults")
+                    luxalgo_result = {
+                        "sr_data": {},
+                        "ict_data": {},
+                        "combined_signal": {},
+                        "entry_valid": False,
+                        "status": "invalid_return_type"
+                    }
+                
                 components['luxalgo_sr'] = luxalgo_result.get('sr_data', {})
                 components['luxalgo_ict'] = luxalgo_result.get('ict_data', {})
                 components['luxalgo_combined'] = luxalgo_result.get('combined_signal', {})
                 
-                logger.info(f"LuxAlgo Combined analysis complete - "
-                           f"S/R zones: {len(components['luxalgo_sr'].get('support_zones', []))} + "
-                           f"{len(components['luxalgo_sr'].get('resistance_zones', []))}, "
-                           f"Entry valid: {luxalgo_result.get('entry_valid', False)}")
+                # Extract entry_valid and status for observability
+                entry_valid = luxalgo_result.get('entry_valid', False)
+                status = luxalgo_result.get('status', 'unknown')
+                
+                # Structured logging (mandatory)
+                sr_zones_count = (
+                    len(components['luxalgo_sr'].get('support_zones', [])) +
+                    len(components['luxalgo_sr'].get('resistance_zones', []))
+                )
+                logger.info(
+                    f"LuxAlgo result: entry_valid={entry_valid}, status={status}, "
+                    f"sr_zones={sr_zones_count}"
+                )
+                
+                # ADVISORY MODE: entry_valid is used for confidence, NOT as hard gate
+                # (Existing downstream logic should use entry_valid as confidence modifier)
+                
             except Exception as e:
                 logger.error(f"LuxAlgo Combined analysis error: {e}")
                 components['luxalgo_sr'] = {}
