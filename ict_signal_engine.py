@@ -1257,14 +1257,33 @@ class ICTSignalEngine:
         if self.luxalgo_combined:
             try:
                 luxalgo_result = self.luxalgo_combined.analyze(df)
+                
+                # CRITICAL: Handle None explicitly (defensive)
+                if luxalgo_result is None:
+                    logger.warning("LuxAlgo returned None - using safe defaults")
+                    luxalgo_result = {
+                        'sr_data': {'support_zones': [], 'resistance_zones': []},
+                        'ict_data': {},
+                        'combined_signal': {},
+                        'entry_valid': False,
+                        'status': 'returned_none'
+                    }
+                
                 components['luxalgo_sr'] = luxalgo_result.get('sr_data', {})
                 components['luxalgo_ict'] = luxalgo_result.get('ict_data', {})
                 components['luxalgo_combined'] = luxalgo_result.get('combined_signal', {})
                 
-                logger.info(f"LuxAlgo Combined analysis complete - "
-                           f"S/R zones: {len(components['luxalgo_sr'].get('support_zones', []))} + "
-                           f"{len(components['luxalgo_sr'].get('resistance_zones', []))}, "
-                           f"Entry valid: {luxalgo_result.get('entry_valid', False)}")
+                # NEW: Structured logging
+                entry_valid = luxalgo_result.get('entry_valid', False)
+                status = luxalgo_result.get('status', 'unknown')
+                sr_zones = len(luxalgo_result.get('sr_data', {}).get('support_zones', [])) + \
+                           len(luxalgo_result.get('sr_data', {}).get('resistance_zones', []))
+                
+                logger.info(f"LuxAlgo result: entry_valid={entry_valid}, status={status}, sr_zones={sr_zones}")
+                
+                # NOTE: LuxAlgo is now ADVISORY only, not a hard gate
+                # entry_valid is used for confidence scoring, not signal blocking
+                
             except Exception as e:
                 logger.error(f"LuxAlgo Combined analysis error: {e}")
                 components['luxalgo_sr'] = {}

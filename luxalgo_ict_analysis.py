@@ -64,49 +64,83 @@ class CombinedLuxAlgoAnalysis:
         """
         Perform combined LuxAlgo analysis
         
+        CRITICAL: This method MUST NEVER return None. Always returns a valid dict.
+        
         Args:
             df: DataFrame with columns: open, high, low, close, volume
         
         Returns:
             Complete analysis with both S/R and ICT elements
+            Always includes:
+            - sr_data: dict (empty dict if no data)
+            - ict_data: dict (empty dict if no data)
+            - combined_signal: dict (empty dict if no signal)
+            - entry_valid: bool
+            - status: str (explains the result)
         """
+        # CRITICAL: Initialize with safe defaults to prevent None returns
         results = {
-            'sr_data': None,
-            'ict_data': None,
-            'combined_signal': None,
+            'sr_data': {'support_zones': [], 'resistance_zones': []},
+            'ict_data': {},
+            'combined_signal': {},
             'entry_valid': False,
             'sl_price': None,
             'tp_price': None,
-            'bias': 'neutral'
+            'bias': 'neutral',
+            'status': 'unknown'  # NEW: Status field
         }
         
         try:
+            # Validate input data
+            if df is None or df.empty or len(df) < 20:
+                logger.warning("LuxAlgo: Insufficient data for analysis")
+                results['status'] = 'insufficient_data'
+                return results
+            
+            # Check required columns
+            required_cols = ['open', 'high', 'low', 'close']
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            if missing_cols:
+                logger.warning(f"LuxAlgo: Missing required columns: {missing_cols}")
+                results['status'] = f'insufficient_data: missing {missing_cols}'
+                return results
+            
             # Run S/R MTF analysis
             if self.enable_sr and self.sr_analyzer:
                 sr_results = self.sr_analyzer.analyze(df)
-                results['sr_data'] = sr_results
-                logger.info(f"S/R Analysis: {len(sr_results.get('support_zones', []))} support, "
-                           f"{len(sr_results.get('resistance_zones', []))} resistance zones")
+                if sr_results:
+                    results['sr_data'] = sr_results
+                    logger.info(f"S/R Analysis: {len(sr_results.get('support_zones', []))} support, "
+                               f"{len(sr_results.get('resistance_zones', []))} resistance zones")
+                else:
+                    logger.warning("S/R analyzer returned None, using empty dict")
+                    results['sr_data'] = {'support_zones': [], 'resistance_zones': []}
             
             # Run ICT analysis
+            ict_results = None
             if self.enable_ict and self.ict_analyzer:
                 ict_results = self.ict_analyzer.analyze(df)
-                results['ict_data'] = ict_results
-                logger.info(f"ICT Analysis: {len(ict_results.get('order_blocks', []))} OBs, "
-                           f"{len(ict_results.get('fvgs', []))} FVGs, "
-                           f"trend: {ict_results.get('trend')}")
+                if ict_results:
+                    results['ict_data'] = ict_results
+                    logger.info(f"ICT Analysis: {len(ict_results.get('order_blocks', []))} OBs, "
+                               f"{len(ict_results.get('fvgs', []))} FVGs, "
+                               f"trend: {ict_results.get('trend')}")
+                else:
+                    logger.warning("ICT analyzer returned None, using empty dict")
+                    results['ict_data'] = {}
             
             # Detect Breaker Blocks
             if self.enable_ict and ict_results: 
                 breaker_blocks = detect_breaker_blocks(
-                    highs=df["high"]. tolist(),
+                    highs=df["high"].tolist(),
                     lows=df["low"].tolist(),
                     closes=df["close"].tolist(),
-                    order_blocks=ict_results. get("order_blocks", []),
+                    order_blocks=ict_results.get("order_blocks", []),
                     lookback=50
                 )
                 ict_results["breaker_blocks"] = breaker_blocks
                 logger.info(f"🔥 Breaker Blocks detected: {len(breaker_blocks)}")
+            
             # Generate combined trading signal
             if self.enable_sr and self.enable_ict and results['sr_data'] and results['ict_data']:
                 combined = self._generate_combined_signal(
@@ -114,13 +148,37 @@ class CombinedLuxAlgoAnalysis:
                     results['sr_data'],
                     results['ict_data']
                 )
-                results.update(combined)
+                if combined:
+                    results.update(combined)
+                    results['status'] = 'success'
+                else:
+                    logger.warning("Combined signal generation returned None")
+                    results['status'] = 'no_structure'
+            else:
+                # No structure detected
+                logger.info("LuxAlgo: No structure detected or components disabled")
+                results['status'] = 'no_structure'
+            
+            # Final validation - ensure we have a status
+            if results['status'] == 'unknown':
+                results['status'] = 'success'
             
             return results
             
         except Exception as e:
-            logger.error(f"Error in combined LuxAlgo analysis: {e}")
-            return results
+            # CRITICAL: Never raise, always return safe defaults
+            logger.error(f"Error in combined LuxAlgo analysis: {e}", exc_info=True)
+            # Return safe defaults with exception status
+            return {
+                'sr_data': {'support_zones': [], 'resistance_zones': []},
+                'ict_data': {},
+                'combined_signal': {},
+                'entry_valid': False,
+                'sl_price': None,
+                'tp_price': None,
+                'bias': 'neutral',
+                'status': f'exception: {str(e)}'
+            }
     
     def _generate_combined_signal(
         self,
