@@ -485,7 +485,7 @@ class ICTSignalEngine:
         
         # СТЪПКА 4: LIQUIDITY MAP (с cache fallback)
         logger.info("📊 Step 4: Liquidity Map")
-        liquidity_zones = self._get_liquidity_zones_with_fallback(symbol, timeframe)
+        liquidity_zones = self._get_liquidity_zones_with_fallback(df, symbol, timeframe)
         
         # СТЪПКА 5-7: ICT COMPONENTS
         logger.info("📊 Steps 5-7: ICT Components")
@@ -3717,7 +3717,7 @@ class ICTSignalEngine:
             logger.error(f"Error calculating liquidity distance: {e}")
             return None
 
-    def _get_liquidity_zones_with_fallback(self, symbol: str, timeframe: str) -> List:
+    def _get_liquidity_zones_with_fallback(self, df: pd.DataFrame, symbol: str, timeframe: str) -> List:
         """
         ЗАДЪЛЖИТЕЛНО: Опитва fresh liquidity map, САМО АКО НЕ е готова → cache
         """
@@ -3725,7 +3725,7 @@ class ICTSignalEngine:
             # Опит 1: Fresh liquidity map
             if hasattr(self, 'liquidity_mapper') and self.liquidity_mapper:
                 try:
-                    liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(symbol, timeframe)
+                    liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df, timeframe)
                     if liquidity_zones:
                         logger.info(f"✅ Fresh liquidity map: {len(liquidity_zones)} zones")
                         return liquidity_zones
