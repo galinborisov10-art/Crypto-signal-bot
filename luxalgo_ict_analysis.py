@@ -161,6 +161,7 @@ class CombinedLuxAlgoAnalysis:
             return results
             
         except Exception as e:
+            # Log full error for debugging before truncating for status
             logger.error(f"Error in combined LuxAlgo analysis: {e}")
             default_result['status'] = f"exception: {str(e)[:ERROR_MESSAGE_MAX_LENGTH]}"
             return default_result

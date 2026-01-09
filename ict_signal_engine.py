@@ -1279,10 +1279,7 @@ class ICTSignalEngine:
                 
                 # Structured logging (mandatory)
                 sr_data = components['luxalgo_sr']
-                sr_zones_count = (
-                    len(sr_data.get('support_zones', [])) +
-                    len(sr_data.get('resistance_zones', []))
-                )
+                sr_zones_count = len(sr_data.get('support_zones', [])) + len(sr_data.get('resistance_zones', []))
                 logger.info(
                     f"LuxAlgo result: entry_valid={entry_valid}, status={status}, "
                     f"sr_zones={sr_zones_count}"
