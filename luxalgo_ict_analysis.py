@@ -18,6 +18,9 @@ from ict_enhancement.breaker_detector import detect_breaker_blocks
 
 logger = logging.getLogger(__name__)
 
+# Constants
+ERROR_MESSAGE_MAX_LENGTH = 50  # Maximum length for error messages in status field
+
 
 class CombinedLuxAlgoAnalysis:
     """
@@ -39,7 +42,9 @@ class CombinedLuxAlgoAnalysis:
         sr_margin: float = 2.0,
         ict_swing_length: int = 10,
         enable_sr: bool = True,
-        enable_ict: bool = True
+        enable_ict: bool = True,
+        min_periods: int = 50,
+        breaker_lookback: int = 50
     ):
         # Initialize both analyzers
         self.sr_analyzer = LuxAlgoSRMTF(
@@ -59,6 +64,8 @@ class CombinedLuxAlgoAnalysis:
         
         self.enable_sr = enable_sr
         self.enable_ict = enable_ict
+        self.min_periods = min_periods
+        self.breaker_lookback = breaker_lookback
     
     def analyze(self, df: pd.DataFrame) -> Dict:
         """
@@ -69,58 +76,95 @@ class CombinedLuxAlgoAnalysis:
         
         Returns:
             Complete analysis with both S/R and ICT elements
+            NEVER returns None - always returns dict with consistent structure
         """
-        results = {
-            'sr_data': None,
-            'ict_data': None,
-            'combined_signal': None,
+        # Safe default structure - ALWAYS returned, never None
+        default_result = {
+            'sr_data': {},
+            'ict_data': {},
+            'combined_signal': {},
             'entry_valid': False,
             'sl_price': None,
             'tp_price': None,
-            'bias': 'neutral'
+            'bias': 'neutral',
+            'status': 'unknown'
         }
         
+        # Validate input
+        if df is None:
+            default_result['status'] = 'invalid_input_none'
+            logger.warning("LuxAlgo analyze() called with None DataFrame")
+            return default_result
+        
+        if len(df) < self.min_periods:
+            default_result['status'] = 'insufficient_data'
+            logger.warning(f"LuxAlgo analyze() insufficient data: {len(df)} < {self.min_periods}")
+            return default_result
+        
         try:
+            results = {
+                'sr_data': {},
+                'ict_data': {},
+                'combined_signal': {},
+                'entry_valid': False,
+                'sl_price': None,
+                'tp_price': None,
+                'bias': 'neutral',
+                'status': 'success'
+            }
+            
             # Run S/R MTF analysis
             if self.enable_sr and self.sr_analyzer:
                 sr_results = self.sr_analyzer.analyze(df)
-                results['sr_data'] = sr_results
-                logger.info(f"S/R Analysis: {len(sr_results.get('support_zones', []))} support, "
-                           f"{len(sr_results.get('resistance_zones', []))} resistance zones")
+                if sr_results:
+                    results['sr_data'] = sr_results
+                    logger.info(f"S/R Analysis: {len(sr_results.get('support_zones', []))} support, "
+                               f"{len(sr_results.get('resistance_zones', []))} resistance zones")
             
             # Run ICT analysis
             if self.enable_ict and self.ict_analyzer:
                 ict_results = self.ict_analyzer.analyze(df)
-                results['ict_data'] = ict_results
-                logger.info(f"ICT Analysis: {len(ict_results.get('order_blocks', []))} OBs, "
-                           f"{len(ict_results.get('fvgs', []))} FVGs, "
-                           f"trend: {ict_results.get('trend')}")
+                if ict_results:
+                    results['ict_data'] = ict_results
+                    logger.info(f"ICT Analysis: {len(ict_results.get('order_blocks', []))} OBs, "
+                               f"{len(ict_results.get('fvgs', []))} FVGs, "
+                               f"trend: {ict_results.get('trend')}")
+                    
+                    # Detect Breaker Blocks
+                    try:
+                        breaker_blocks = detect_breaker_blocks(
+                            highs=df["high"].tolist(),
+                            lows=df["low"].tolist(),
+                            closes=df["close"].tolist(),
+                            order_blocks=ict_results.get("order_blocks", []),
+                            lookback=self.breaker_lookback
+                        )
+                        ict_results["breaker_blocks"] = breaker_blocks
+                        logger.info(f"🔥 Breaker Blocks detected: {len(breaker_blocks)}")
+                    except Exception as e:
+                        logger.warning(f"Breaker block detection failed: {e}")
+                        ict_results["breaker_blocks"] = []
             
-            # Detect Breaker Blocks
-            if self.enable_ict and ict_results: 
-                breaker_blocks = detect_breaker_blocks(
-                    highs=df["high"]. tolist(),
-                    lows=df["low"].tolist(),
-                    closes=df["close"].tolist(),
-                    order_blocks=ict_results. get("order_blocks", []),
-                    lookback=50
-                )
-                ict_results["breaker_blocks"] = breaker_blocks
-                logger.info(f"🔥 Breaker Blocks detected: {len(breaker_blocks)}")
             # Generate combined trading signal
             if self.enable_sr and self.enable_ict and results['sr_data'] and results['ict_data']:
-                combined = self._generate_combined_signal(
-                    df,
-                    results['sr_data'],
-                    results['ict_data']
-                )
-                results.update(combined)
+                try:
+                    combined = self._generate_combined_signal(
+                        df,
+                        results['sr_data'],
+                        results['ict_data']
+                    )
+                    results.update(combined)
+                except Exception as e:
+                    logger.error(f"Combined signal generation failed: {e}")
+                    # Keep defaults for combined signal fields
             
             return results
             
         except Exception as e:
+            # Log full error for debugging before truncating for status
             logger.error(f"Error in combined LuxAlgo analysis: {e}")
-            return results
+            default_result['status'] = f"exception: {str(e)[:ERROR_MESSAGE_MAX_LENGTH]}"
+            return default_result
     
     def _generate_combined_signal(
         self,
