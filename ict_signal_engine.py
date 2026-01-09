@@ -642,7 +642,18 @@ class ICTSignalEngine:
         
         # ✅ SOFT CONSTRAINT: Handle NO_ZONE case with fallback instead of rejection
         if entry_status == 'NO_ZONE' or entry_zone is None:
-            logger.warning(f"⚠️ No valid entry zone found, creating fallback zone at current price")
+            # ✅ NON-INVASIVE DIAGNOSTIC LOGGING
+            logger.warning(f"⚠️ No ICT zone found in optimal range (0.5-5%) for {symbol}")
+            logger.info(f"   → Creating fallback entry zone at current price ${current_price:.2f}")
+            logger.debug(f"   → Fallback zone: ±1% from current price")
+            
+            # Diagnostic: Log available ICT components
+            sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
+            logger.debug(f"   → Available ICT components:")
+            logger.debug(f"      - Order Blocks: {len(order_blocks)}")
+            logger.debug(f"      - FVG Zones: {len(fvg_zones)}")
+            logger.debug(f"      - S/R Levels: {sr_count}")
+            
             # Create fallback entry zone based on current price with small buffer
             fallback_distance = 0.01  # 1% from current price
             if bias_str == 'BEARISH':
