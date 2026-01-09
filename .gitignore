@@ -79,3 +79,4 @@ test_distance_filter_removal.py
 test_no_zone_logging.py
 test_fallback_logging_integration.py
 demo_no_zone_logging.py
+validate_no_zone_logging.py
