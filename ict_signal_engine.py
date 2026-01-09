@@ -648,10 +648,11 @@ class ICTSignalEngine:
             logger.debug(f"   → Fallback zone: ±1% from current price")
             
             # Diagnostic: Log available ICT components
+            sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
             logger.debug(f"   → Available ICT components:")
             logger.debug(f"      - Order Blocks: {len(order_blocks)}")
             logger.debug(f"      - FVG Zones: {len(fvg_zones)}")
-            logger.debug(f"      - S/R Levels: {len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))}")
+            logger.debug(f"      - S/R Levels: {sr_count}")
             
             # Create fallback entry zone based on current price with small buffer
             fallback_distance = 0.01  # 1% from current price
