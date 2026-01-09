@@ -497,36 +497,106 @@ class ICTSignalEngine:
         displacement_detected = self._check_displacement(df)
         
         # СТЪПКА 7b: EARLY EXIT за HOLD/RANGING
+        # ✅ ALT-Independent Mode: Only BTC respects HTF bias early exit
+        # Altcoins (ETH, SOL, BNB, ADA, XRP) will continue analysis using their OWN structure
         if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-            logger.info(f"🔄 Market bias is {bias.value} - creating HOLD signal (early exit)")
             
-            # Calculate base confidence for informational purposes
-            base_confidence = self._calculate_signal_confidence(
-                ict_components, mtf_analysis, bias, structure_broken, 
-                displacement_detected, 0.0  # RR not applicable for HOLD
-            )
+            # Define altcoins that use independent analysis
+            ALT_INDEPENDENT_SYMBOLS = ["ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT"]
             
-            # Get current price
-            current_price = df['close'].iloc[-1]
+            # BTC follows HTF bias strictly
+            if symbol == "BTCUSDT":
+                logger.info(f"🔄 BTC bias is {bias.value} - creating HOLD signal (early exit)")
+                
+                base_confidence = self._calculate_signal_confidence(
+                    ict_components, mtf_analysis, bias, structure_broken, 
+                    displacement_detected, 0.0
+                )
+                current_price = df['close'].iloc[-1]
+                mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+                
+                return self._create_hold_signal(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bias=bias,
+                    confidence=base_confidence,
+                    df=df,
+                    ict_components=ict_components,
+                    mtf_data=mtf_data,
+                    current_price=current_price,
+                    htf_bias=htf_bias,
+                    mtf_consensus_data=mtf_consensus_data,
+                    structure_broken=structure_broken,
+                    displacement_detected=displacement_detected,
+                    mtf_analysis=mtf_analysis
+                )
             
-            # Calculate MTF consensus data
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            # Altcoins: Continue analysis using their OWN bias
+            elif symbol in ALT_INDEPENDENT_SYMBOLS:
+                logger.info(f"⚠️ BTC HTF bias is {bias.value}, but {symbol} using ALT-independent mode")
+                logger.info(f"   → Continuing analysis with {symbol}'s own ICT structure")
+                
+                # Re-determine bias using ONLY altcoin's own ICT components (no HTF influence)
+                bias = self._determine_market_bias(df, ict_components, mtf_analysis=None)
+                logger.info(f"   → {symbol} own bias (from ICT components): {bias.value}")
+                
+                # If altcoin's own bias is still NEUTRAL/RANGING, exit with HOLD
+                if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
+                    logger.info(f"   → {symbol} own bias is {bias.value} - creating HOLD signal")
+                    
+                    base_confidence = self._calculate_signal_confidence(
+                        ict_components, mtf_analysis, bias, structure_broken, 
+                        displacement_detected, 0.0
+                    )
+                    current_price = df['close'].iloc[-1]
+                    mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+                    
+                    return self._create_hold_signal(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        bias=bias,
+                        confidence=base_confidence,
+                        df=df,
+                        ict_components=ict_components,
+                        mtf_data=mtf_data,
+                        current_price=current_price,
+                        htf_bias=htf_bias,
+                        mtf_consensus_data=mtf_consensus_data,
+                        structure_broken=structure_broken,
+                        displacement_detected=displacement_detected,
+                        mtf_analysis=mtf_analysis
+                    )
+                
+                # Altcoin has BULLISH/BEARISH bias - continue to signal generation
+                logger.info(f"   → {symbol} has {bias.value} bias - continuing to signal generation")
+                # ✅ Continue to next steps with altcoin's own bias
             
-            return self._create_hold_signal(
-                symbol=symbol,
-                timeframe=timeframe,
-                bias=bias,
-                confidence=base_confidence,
-                df=df,
-                ict_components=ict_components,
-                mtf_data=mtf_data,
-                current_price=current_price,
-                htf_bias=htf_bias,
-                mtf_consensus_data=mtf_consensus_data,
-                structure_broken=structure_broken,
-                displacement_detected=displacement_detected,
-                mtf_analysis=mtf_analysis
-            )
+            # Other symbols: Follow HTF bias (backward compatibility)
+            else:
+                logger.info(f"🔄 Market bias is {bias.value} - creating HOLD signal (early exit)")
+                
+                base_confidence = self._calculate_signal_confidence(
+                    ict_components, mtf_analysis, bias, structure_broken, 
+                    displacement_detected, 0.0
+                )
+                current_price = df['close'].iloc[-1]
+                mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+                
+                return self._create_hold_signal(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bias=bias,
+                    confidence=base_confidence,
+                    df=df,
+                    ict_components=ict_components,
+                    mtf_data=mtf_data,
+                    current_price=current_price,
+                    htf_bias=htf_bias,
+                    mtf_consensus_data=mtf_consensus_data,
+                    structure_broken=structure_broken,
+                    displacement_detected=displacement_detected,
+                    mtf_analysis=mtf_analysis
+                )
         
         # From here onwards: BULLISH/BEARISH signals only
         # СТЪПКА 8: ENTRY CALCULATION WITH ICT-COMPLIANT ZONE
