@@ -293,6 +293,9 @@ class ICTSignalEngine:
     - Multi-Timeframe Analysis
     """
     
+    # Altcoins that use independent analysis mode (bypass BTC HTF bias early exit)
+    ALT_INDEPENDENT_SYMBOLS = ["ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT"]
+    
     def __init__(self, config: Optional[Dict] = None):
         """
         Initialize ICT Signal Engine
@@ -501,9 +504,6 @@ class ICTSignalEngine:
         # Altcoins (ETH, SOL, BNB, ADA, XRP) will continue analysis using their OWN structure
         if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
             
-            # Define altcoins that use independent analysis
-            ALT_INDEPENDENT_SYMBOLS = ["ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT"]
-            
             # BTC follows HTF bias strictly
             if symbol == "BTCUSDT":
                 logger.info(f"🔄 BTC bias is {bias.value} - creating HOLD signal (early exit)")
@@ -532,8 +532,8 @@ class ICTSignalEngine:
                 )
             
             # Altcoins: Continue analysis using their OWN bias
-            elif symbol in ALT_INDEPENDENT_SYMBOLS:
-                logger.info(f"⚠️ BTC HTF bias is {bias.value}, but {symbol} using ALT-independent mode")
+            elif symbol in self.ALT_INDEPENDENT_SYMBOLS:
+                logger.info(f"⚠️ Initial bias is {bias.value}, but {symbol} using ALT-independent mode")
                 logger.info(f"   → Continuing analysis with {symbol}'s own ICT structure")
                 
                 # Re-determine bias using ONLY altcoin's own ICT components (no HTF influence)
