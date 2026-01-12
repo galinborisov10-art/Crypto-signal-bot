@@ -495,18 +495,47 @@ class ICTSignalEngine:
         ict_components = self._detect_ict_components(df, timeframe)
         ict_components['liquidity_zones'] = liquidity_zones  # Add liquidity zones
         
+        # STEP 7: Bias Determination - START DIAGNOSTIC LOGGING
+        logger.info("🔍 Step 7: Bias Determination")
+        
+        # Calculate bias with diagnostic details
         bias = self._determine_market_bias(df, ict_components, mtf_analysis)
         structure_broken = self._check_structure_break(df)
         displacement_detected = self._check_displacement(df)
+        
+        # Log bias calculation breakdown
+        bullish_obs = [ob for ob in ict_components.get('order_blocks', []) 
+                       if hasattr(ob, 'type') and 'BULLISH' in str(ob.type.value)]
+        bearish_obs = [ob for ob in ict_components.get('order_blocks', []) 
+                       if hasattr(ob, 'type') and 'BEARISH' in str(ob.type.value)]
+        bullish_fvgs = [fvg for fvg in ict_components.get('fvgs', []) 
+                        if hasattr(fvg, 'is_bullish') and fvg.is_bullish]
+        bearish_fvgs = [fvg for fvg in ict_components.get('fvgs', []) 
+                        if hasattr(fvg, 'is_bullish') and not fvg.is_bullish]
+        
+        ob_score = len(bullish_obs) - len(bearish_obs)
+        fvg_score = len(bullish_fvgs) - len(bearish_fvgs)
+        mtf_bias_str = mtf_analysis.get('htf_bias', 'NEUTRAL') if mtf_analysis else 'NEUTRAL'
+        
+        logger.info(f"   → Bias Calculation Breakdown:")
+        logger.info(f"      • OB Score: {ob_score} (Bullish: {len(bullish_obs)}, Bearish: {len(bearish_obs)})")
+        logger.info(f"      • FVG Score: {fvg_score} (Bullish: {len(bullish_fvgs)}, Bearish: {len(bearish_fvgs)})")
+        logger.info(f"      • MTF Bias: {mtf_bias_str}")
+        logger.info(f"      • Structure Broken: {structure_broken}")
+        logger.info(f"      • Displacement Detected: {displacement_detected}")
+        logger.info(f"   → Final Bias: {bias.value}")
         
         # СТЪПКА 7b: EARLY EXIT за HOLD/RANGING
         # ✅ ALT-Independent Mode: Only BTC respects HTF bias early exit
         # Altcoins (ETH, SOL, BNB, ADA, XRP) will continue analysis using their OWN structure
         if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
+            logger.info("🔍 Step 7b: Early Exit Check")
+            logger.info(f"   → Bias is {bias.value} (not directional)")
             
             # BTC follows HTF bias strictly
             if symbol == "BTCUSDT":
-                logger.info(f"🔄 BTC bias is {bias.value} - creating HOLD signal (early exit)")
+                logger.info(f"❌ BLOCKED at Step 7b: {symbol} bias is {bias.value} (early exit)")
+                logger.info(f"✅ Generating HOLD signal (blocked_at_step: 7b, reason: {bias.value} bias)")
                 
                 base_confidence = self._calculate_signal_confidence(
                     ict_components, mtf_analysis, bias, structure_broken, 
@@ -542,7 +571,8 @@ class ICTSignalEngine:
                 
                 # If altcoin's own bias is still NEUTRAL/RANGING, exit with HOLD
                 if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-                    logger.info(f"   → {symbol} own bias is {bias.value} - creating HOLD signal")
+                    logger.info(f"❌ BLOCKED at Step 7b: {symbol} own bias is {bias.value} (early exit)")
+                    logger.info(f"✅ Generating HOLD signal (blocked_at_step: 7b, reason: {symbol} {bias.value} bias)")
                     
                     base_confidence = self._calculate_signal_confidence(
                         ict_components, mtf_analysis, bias, structure_broken, 
@@ -573,7 +603,8 @@ class ICTSignalEngine:
             
             # Other symbols: Follow HTF bias (backward compatibility)
             else:
-                logger.info(f"🔄 Market bias is {bias.value} - creating HOLD signal (early exit)")
+                logger.info(f"❌ BLOCKED at Step 7b: Market bias is {bias.value} (early exit)")
+                logger.info(f"✅ Generating HOLD signal (blocked_at_step: 7b, reason: {bias.value} bias)")
                 
                 base_confidence = self._calculate_signal_confidence(
                     ict_components, mtf_analysis, bias, structure_broken, 
@@ -599,17 +630,28 @@ class ICTSignalEngine:
                 )
         
         # From here onwards: BULLISH/BEARISH signals only
+        logger.info(f"✅ PASSED Step 7: Bias is directional ({bias.value})")
+        
         # СТЪПКА 8: ENTRY CALCULATION WITH ICT-COMPLIANT ZONE
-        logger.info("📊 Step 8: Entry + ICT Zone Validation")
+        logger.info("🔍 Step 8: Entry Zone Validation")
         
         # Get current price
         current_price = df['close'].iloc[-1]
+        logger.info(f"   → Current Price: ${current_price:.2f}")
         
         # Calculate ICT-compliant entry zone
         bias_str = bias.value if hasattr(bias, 'value') else str(bias)
         fvg_zones = ict_components.get('fvgs', [])
         order_blocks = ict_components.get('order_blocks', [])
         sr_levels = ict_components.get('luxalgo_sr', {})
+        
+        logger.info(f"   → Available ICT Components:")
+        logger.info(f"      • Order Blocks: {len(order_blocks)}")
+        logger.info(f"      • FVG Zones: {len(fvg_zones)}")
+        sr_count = 0
+        if sr_levels and isinstance(sr_levels, dict):
+            sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
+        logger.info(f"      • S/R Levels: {sr_count}")
         
         entry_zone, entry_status = self._calculate_ict_compliant_entry_zone(
             current_price=current_price,
@@ -619,10 +661,18 @@ class ICTSignalEngine:
             sr_levels=sr_levels
         )
         
+        logger.info(f"   → Entry Zone Status: {entry_status}")
+        if entry_zone:
+            logger.info(f"      • Zone Center: ${entry_zone.get('center', 0):.2f}")
+            logger.info(f"      • Zone Range: ${entry_zone.get('low', 0):.2f} - ${entry_zone.get('high', 0):.2f}")
+            logger.info(f"      • Source: {entry_zone.get('source', 'UNKNOWN')}")
+            logger.info(f"      • Quality: {entry_zone.get('quality', 0)}")
+        
         # ✅ UPDATED: Only reject for TOO_LATE (timing issue), not NO_ZONE (distance issue)
         # Validate entry zone timing
         if entry_status == 'TOO_LATE':
-            logger.error(f"❌ Entry zone validation failed: {entry_status}")
+            logger.info(f"❌ BLOCKED at Step 8: Entry zone validation failed (TOO_LATE)")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 8, reason: Price already passed entry zone)")
             context = self._extract_context_data(df, bias)
             # Calculate MTF consensus for detailed breakdown
             mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
@@ -642,6 +692,7 @@ class ICTSignalEngine:
         
         # ✅ SOFT CONSTRAINT: Handle NO_ZONE case with fallback instead of rejection
         if entry_status == 'NO_ZONE' or entry_zone is None:
+            logger.info(f"⚠️ Step 8 Warning: No ICT zone in optimal range, using fallback")
             # ✅ NON-INVASIVE DIAGNOSTIC LOGGING
             logger.warning(f"⚠️ No ICT zone found in optimal range (0.5-5%) for {symbol}")
             logger.info(f"   → Creating fallback entry zone at current price ${current_price:.2f}")
@@ -685,9 +736,8 @@ class ICTSignalEngine:
             entry_status = 'VALID_FALLBACK'
             logger.info(f"✅ Fallback entry zone created at ${entry_zone['center']:.2f}")
         
-        # Use entry zone center as entry price
-        entry_price = entry_zone['center']
-        logger.info(f"✅ Entry price set to entry zone center: ${entry_price:.2f}")
+        # Log successful entry zone validation
+        logger.info(f"✅ PASSED Step 8: Entry zone validated ({entry_status})")
         
         # Keep existing entry setup for SL calculation (fallback)
         entry_setup = self._identify_entry_setup(df, ict_components, bias)
@@ -700,17 +750,28 @@ class ICTSignalEngine:
             }
         
         # СТЪПКА 9: SL/TP + VALIDATION
-        logger.info("📊 Step 9: SL/TP + Validation")
+        logger.info("🔍 Step 9: SL/TP Calculation & Validation")
         sl_price = self._calculate_sl_price(df, entry_setup, entry_price, bias)
+        logger.info(f"   → Calculated SL: ${sl_price:.2f}")
         
         # ✅ VALIDATE SL (STRICT ICT)
         order_block = entry_setup.get('ob') or (ict_components['order_blocks'][0] if ict_components.get('order_blocks') else None)
         if order_block:
+            logger.info(f"   → Validating SL against Order Block")
+            if hasattr(order_block, 'zone_low'):
+                logger.info(f"      • OB Range: ${order_block.zone_low:.2f} - ${order_block.zone_high:.2f}")
+            
             sl_price, sl_valid = self._validate_sl_position(sl_price, order_block, bias, entry_price)
+            
             if not sl_valid or sl_price is None:
+                logger.info(f"❌ BLOCKED at Step 9: SL cannot be ICT-compliant")
+                logger.info(f"   → SL validation failed - signal rejected")
                 logger.error("❌ SL не може да бъде ICT-compliant - сигналът НЕ СЕ ИЗПРАЩА")
                 return None
+            
+            logger.info(f"   → SL validated: ${sl_price:.2f}")
         else:
+            logger.info(f"❌ BLOCKED at Step 9: No Order Block for SL validation")
             logger.error("❌ Няма Order Block за SL валидация - сигналът НЕ СЕ ИЗПРАЩА")
             return None
         
@@ -724,21 +785,32 @@ class ICTSignalEngine:
             bias=bias_str
         )
         
+        logger.info(f"   → TP Levels: {[f'${tp:.2f}' for tp in tp_prices]}")
+        logger.info(f"✅ PASSED Step 9: SL/TP calculated and validated")
+        
         # СТЪПКА 10: RR CHECK
-        logger.info("📊 Step 10: RR Guarantee")
+        logger.info("🔍 Step 10: Risk/Reward Validation")
         risk = abs(entry_price - sl_price)
         reward = abs(tp_prices[0] - entry_price) if tp_prices else 0
         risk_reward_ratio = reward / risk if risk > 0 else 0
         
+        logger.info(f"   → Risk: ${risk:.2f}")
+        logger.info(f"   → Reward (TP1): ${reward:.2f}")
+        logger.info(f"   → RR Ratio: {risk_reward_ratio:.2f}")
+        logger.info(f"   → Minimum Required: {self.config['min_risk_reward']:.2f}")
+        
         if risk_reward_ratio < 3.0:
-            logger.error(f"❌ RR {risk_reward_ratio:.2f} < 3.0 - adjusting")
+            logger.warning(f"⚠️ RR {risk_reward_ratio:.2f} < 3.0 - adjusting to guarantee minimum")
             if bias == MarketBias.BULLISH:
                 tp_prices[0] = entry_price + (risk * 3.0)
             else:
                 tp_prices[0] = entry_price - (risk * 3.0)
             risk_reward_ratio = 3.0
+            logger.info(f"   → Adjusted TP1 to: ${tp_prices[0]:.2f} (RR: {risk_reward_ratio:.2f})")
         
         if risk_reward_ratio < self.config['min_risk_reward']:
+            logger.info(f"❌ BLOCKED at Step 10: RR {risk_reward_ratio:.2f} < {self.config['min_risk_reward']}")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 10, reason: Insufficient RR)")
             logger.error(f"❌ RR {risk_reward_ratio:.2f} < {self.config['min_risk_reward']} - сигналът НЕ СЕ ИЗПРАЩА")
             context = self._extract_context_data(df, bias)
             return self._create_no_trade_message(
@@ -754,11 +826,15 @@ class ICTSignalEngine:
                 confidence=None
             )
         
+        logger.info(f"✅ PASSED Step 10: RR validated ({risk_reward_ratio:.2f} ≥ {self.config['min_risk_reward']:.2f})")
+        
         # BASE CONFIDENCE
+        logger.info("🔍 Step 11: Confidence Calculation")
         base_confidence = self._calculate_signal_confidence(
             ict_components, mtf_analysis, bias, structure_broken, 
             displacement_detected, risk_reward_ratio
         )
+        logger.info(f"   → Base Confidence: {base_confidence:.1f}%")
         
         # ============================================
         # LIQUIDITY-BASED CONFIDENCE ADJUSTMENT
@@ -1022,17 +1098,25 @@ class ICTSignalEngine:
         confidence = confidence_after_context + ml_confidence_adjustment
         confidence = max(0.0, min(100.0, confidence))
         
+        logger.info(f"   → Final Confidence (after ML): {confidence:.1f}%")
+        
         # ✅ ML RESTRICTION: Гарантирай че confidence не пада под минимум
         if confidence < self.config['min_confidence'] and ml_confidence_adjustment < 0:
             logger.warning(f"⚠️ ML adjustment би свалил confidence под {self.config['min_confidence']}% - ограничаване")
             confidence = self.config['min_confidence']
         
         # СТЪПКА 11.5: MTF CONSENSUS CHECK (STRICT ICT)
-        logger.info("📊 Step 11.5: MTF Consensus Check")
+        logger.info("🔍 Step 11.5: MTF Consensus Validation")
         mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+        
+        logger.info(f"   → MTF Consensus: {mtf_consensus_data['consensus_pct']:.1f}%")
+        logger.info(f"   → Aligned TFs: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}")
+        logger.info(f"   → Minimum Required: 50%")
         
         # Ако MTF consensus < 50%, confidence = 0 и сигналът НЕ СЕ ИЗПРАЩА
         if mtf_consensus_data['consensus_pct'] < 50.0:
+            logger.info(f"❌ BLOCKED at Step 11.5: MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50%")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 11.5, reason: Insufficient MTF consensus)")
             logger.error(f"❌ MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50% - сигналът НЕ СЕ ИЗПРАЩА")
             # Изпрати информативно съобщение
             context = self._extract_context_data(df, bias)
@@ -1049,8 +1133,16 @@ class ICTSignalEngine:
                 confidence=confidence
             )
         
+        logger.info(f"✅ PASSED Step 11.5: MTF consensus validated ({mtf_consensus_data['consensus_pct']:.1f}% ≥ 50%)")
+        
         # Confidence check
+        logger.info("🔍 Step 11.6: Final Confidence Check")
+        logger.info(f"   → Final Confidence: {confidence:.1f}%")
+        logger.info(f"   → Minimum Required: {self.config['min_confidence']}%")
+        
         if confidence < self.config['min_confidence']:
+            logger.info(f"❌ BLOCKED at Step 11.6: Confidence {confidence:.1f}% < {self.config['min_confidence']}%")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 11.6, reason: Low confidence)")
             logger.error(f"❌ Confidence {confidence:.1f}% < {self.config['min_confidence']}% - сигналът НЕ СЕ ИЗПРАЩА")
             context = self._extract_context_data(df, bias)
             return self._create_no_trade_message(
@@ -1066,10 +1158,17 @@ class ICTSignalEngine:
                 confidence=confidence
             )
         
-        # СТЪПКА 12: CONFIDENCE SCORING
-        logger.info("📊 Step 12: Final Confidence")
+        logger.info(f"✅ PASSED Step 11.6: Confidence validated ({confidence:.1f}% ≥ {self.config['min_confidence']}%)")
+        
+        # СТЪПКА 12: FINAL SIGNAL GENERATION
+        logger.info("🔍 Step 12: Final Signal Generation")
         signal_strength = self._calculate_signal_strength(confidence, risk_reward_ratio, ict_components)
         signal_type = self._determine_signal_type(bias, signal_strength, confidence)
+        
+        logger.info(f"   → Signal Type: {signal_type.value}")
+        logger.info(f"   → Signal Strength: {signal_strength.value}")
+        logger.info(f"   → Confidence: {confidence:.1f}%")
+        
         reasoning = self._generate_reasoning(ict_components, bias, entry_setup, mtf_analysis)
         warnings = self._generate_warnings(ict_components, risk_reward_ratio, df)
         
@@ -1126,6 +1225,16 @@ class ICTSignalEngine:
             zone_explanations=zone_explanations
         )
         
+        logger.info("=" * 60)
+        logger.info("✅ SIGNAL GENERATION COMPLETE")
+        logger.info(f"   Signal Type: {signal_type.value}")
+        logger.info(f"   Entry: ${entry_price:.2f}")
+        logger.info(f"   SL: ${sl_price:.2f}")
+        logger.info(f"   TP1: ${tp_prices[0]:.2f}")
+        logger.info(f"   RR: {risk_reward_ratio:.2f}")
+        logger.info(f"   Confidence: {confidence:.1f}%")
+        logger.info(f"   MTF Consensus: {mtf_consensus_data['consensus_pct']:.1f}%")
+        logger.info("=" * 60)
         logger.info(f"✅ Generated {signal_type.value} signal (UNIFIED)")
         
         # Generate chart if chart generator available
