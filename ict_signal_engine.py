@@ -1856,9 +1856,9 @@ class ICTSignalEngine:
                 bearish_score += 2
         
         # Determine bias
-        if bullish_score >= 4 and bullish_score > bearish_score:
+        if bullish_score >= 2 and bullish_score > bearish_score:
             return MarketBias.BULLISH
-        elif bearish_score >= 4 and bearish_score > bullish_score:
+        elif bearish_score >= 2 and bearish_score > bullish_score:
             return MarketBias.BEARISH
         elif abs(bullish_score - bearish_score) <= 1:
             return MarketBias.RANGING
