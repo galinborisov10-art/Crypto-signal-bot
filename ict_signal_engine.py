@@ -648,7 +648,9 @@ class ICTSignalEngine:
         logger.info(f"   → Available ICT Components:")
         logger.info(f"      • Order Blocks: {len(order_blocks)}")
         logger.info(f"      • FVG Zones: {len(fvg_zones)}")
-        sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
+        sr_count = 0
+        if sr_levels and isinstance(sr_levels, dict):
+            sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
         logger.info(f"      • S/R Levels: {sr_count}")
         
         entry_zone, entry_status = self._calculate_ict_compliant_entry_zone(
@@ -671,7 +673,6 @@ class ICTSignalEngine:
         if entry_status == 'TOO_LATE':
             logger.info(f"❌ BLOCKED at Step 8: Entry zone validation failed (TOO_LATE)")
             logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 8, reason: Price already passed entry zone)")
-            logger.error(f"❌ Entry zone validation failed: {entry_status}")
             context = self._extract_context_data(df, bias)
             # Calculate MTF consensus for detailed breakdown
             mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
@@ -738,10 +739,6 @@ class ICTSignalEngine:
         # Log successful entry zone validation
         logger.info(f"✅ PASSED Step 8: Entry zone validated ({entry_status})")
         
-        # Use entry zone center as entry price
-        entry_price = entry_zone['center']
-        logger.info(f"   → Entry Price: ${entry_price:.2f}")
-        
         # Keep existing entry setup for SL calculation (fallback)
         entry_setup = self._identify_entry_setup(df, ict_components, bias)
         if not entry_setup:
@@ -804,7 +801,6 @@ class ICTSignalEngine:
         
         if risk_reward_ratio < 3.0:
             logger.warning(f"⚠️ RR {risk_reward_ratio:.2f} < 3.0 - adjusting to guarantee minimum")
-            logger.error(f"❌ RR {risk_reward_ratio:.2f} < 3.0 - adjusting")
             if bias == MarketBias.BULLISH:
                 tp_prices[0] = entry_price + (risk * 3.0)
             else:
