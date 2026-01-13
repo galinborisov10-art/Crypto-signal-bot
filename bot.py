@@ -9660,11 +9660,11 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         ict_signal = sig['ict_signal']
         df = sig['df']
         
-        # ✅ USE 13-POINT FORMAT (same as manual signals)
-        signal_msg = format_ict_signal_13_point(ict_signal)
+        # ✅ PR #3 FIX #2: Use AUTO source for auto signals
+        signal_msg = format_standardized_signal(ict_signal, "AUTO")
         
-        # Add auto-signal header
-        final_msg = f"🤖 <b>АВТОМАТИЧЕН СИГНАЛ</b> 🤖\n━━━━━━━━━━━━━━━━━━━━\n\n{signal_msg}"
+        # Auto-signal already has source badge in format, no need for additional header
+        final_msg = signal_msg
         
         # Send message
         try:

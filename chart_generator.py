@@ -112,6 +112,18 @@ class ChartGenerator:
             if hasattr(signal, 'whale_blocks') and signal.whale_blocks:
                 self._plot_whale_blocks_enhanced(ax_price, signal.whale_blocks, df)
             
+            # ✅ PR #3 FIX #1: Plot Breaker Blocks with enhanced labels
+            if hasattr(signal, 'breaker_blocks') and signal.breaker_blocks:
+                self._plot_breaker_blocks_enhanced(ax_price, signal.breaker_blocks, df)
+            
+            # ✅ PR #3 FIX #1: Plot Liquidity Zones with enhanced labels
+            if hasattr(signal, 'liquidity_zones') and signal.liquidity_zones:
+                self._plot_liquidity_zones_enhanced(ax_price, signal.liquidity_zones, df)
+            
+            # ✅ PR #3 FIX #1: Add FVG strength labels to existing FVG zones
+            if hasattr(signal, 'fair_value_gaps') and signal.fair_value_gaps:
+                self._add_fvg_strength_labels(ax_price, signal.fair_value_gaps, df)
+            
             # Plot liquidity sweeps (if available)
             if hasattr(signal, 'liquidity_sweeps') and signal.liquidity_sweeps:
                 self._plot_liquidity_sweeps(ax_price, signal.liquidity_sweeps, df)
@@ -614,6 +626,218 @@ class ChartGenerator:
                 
             except Exception as e:
                 logger.warning(f"⚠️ Error adding Whale {i+1} label: {e}")
+    
+    def _plot_breaker_blocks_enhanced(self, ax, breaker_blocks: List, df: pd.DataFrame):
+        """
+        ✅ FIX #1: Plot Breaker Blocks with labels (top 3)
+        
+        Breaker Blocks are Order Blocks that have been broken (invalidated)
+        They often act as reversal zones in the opposite direction
+        
+        Args:
+            ax: Matplotlib axis
+            breaker_blocks: List of breaker block dicts
+            df: Price dataframe for positioning
+        """
+        logger.info("🔨 Plotting Breaker Blocks with labels...")
+        
+        # Take top 3 breaker blocks by strength
+        top_breakers = breaker_blocks[:3] if len(breaker_blocks) > 3 else breaker_blocks
+        
+        for i, bb in enumerate(top_breakers):
+            try:
+                # Extract breaker data (dict type from breaker_detector.py)
+                if isinstance(bb, dict):
+                    bb_high = bb.get('high') or bb.get('price_high') or bb.get('zone_high')
+                    bb_low = bb.get('low') or bb.get('price_low') or bb.get('zone_low')
+                    bb_type = bb.get('type', 'UNKNOWN')
+                    bb_strength = bb.get('strength', 'medium')
+                else:
+                    bb_high = getattr(bb, 'high', None) or getattr(bb, 'price_high', None) or getattr(bb, 'zone_high', None)
+                    bb_low = getattr(bb, 'low', None) or getattr(bb, 'price_low', None) or getattr(bb, 'zone_low', None)
+                    bb_type = str(getattr(bb, 'type', 'UNKNOWN'))
+                    bb_strength = getattr(bb, 'strength', 'medium')
+                
+                if not bb_high or not bb_low:
+                    logger.warning(f"⚠️ Skipping Breaker {i+1} - invalid bounds")
+                    continue
+                
+                # Color based on type
+                is_bullish = 'bullish' in str(bb_type).lower()
+                color = 'green' if is_bullish else 'red'
+                
+                # Alpha based on strength
+                if isinstance(bb_strength, str):
+                    alpha = 0.25 if bb_strength == 'high' else 0.15
+                else:
+                    alpha = 0.15 + (bb_strength / 100) * 0.10
+                
+                # Plot box with DASHED border (distinguishes from solid OB boxes)
+                ax.axhspan(
+                    bb_low, bb_high,
+                    color=color, alpha=alpha,
+                    linestyle='--',  # Dashed style
+                    linewidth=2,
+                    label=f'Breaker Block' if i == 0 else '',
+                    zorder=3
+                )
+                
+                # Add text label with icon
+                label_x = len(df) * 0.50  # Center position (OBs are left, Whales are right)
+                label_y = (bb_low + bb_high) / 2
+                
+                # Icon based on strength
+                strength_icon = '💥' if str(bb_strength) == 'high' else '🔨'
+                
+                ax.text(
+                    label_x, label_y,
+                    f'{strength_icon} BB{i+1}',
+                    fontsize=8,
+                    color=color,
+                    weight='bold',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8),
+                    zorder=6,
+                    ha='center',
+                    va='center'
+                )
+                
+                logger.info(f"✅ Plotted Breaker {i+1}: ${bb_low:.2f}-${bb_high:.2f} ({bb_type}, {bb_strength})")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Error plotting Breaker {i+1}: {e}")
+    
+    def _plot_liquidity_zones_enhanced(self, ax, liquidity_zones: List, df: pd.DataFrame):
+        """
+        ✅ FIX #1: Plot Liquidity Zones with labels
+        
+        Liquidity zones are price levels where significant buy/sell orders accumulate
+        Buy-side liquidity (above price) attracts upward sweeps
+        Sell-side liquidity (below price) attracts downward sweeps
+        
+        Args:
+            ax: Matplotlib axis
+            liquidity_zones: List of liquidity zone dicts
+            df: Price dataframe for positioning
+        """
+        logger.info("💧 Plotting Liquidity Zones with labels...")
+        
+        # Separate buy-side and sell-side liquidity
+        buy_side = [lz for lz in liquidity_zones if 'buy' in str(lz.get('type', '')).lower()][:2]
+        sell_side = [lz for lz in liquidity_zones if 'sell' in str(lz.get('type', '')).lower()][:2]
+        
+        # Plot both types
+        for i, lz in enumerate(buy_side + sell_side):
+            try:
+                if isinstance(lz, dict):
+                    lz_price = lz.get('price') or lz.get('level')
+                    lz_type = lz.get('type', 'UNKNOWN')
+                    lz_strength = lz.get('strength', 50)
+                else:
+                    lz_price = getattr(lz, 'price', None) or getattr(lz, 'level', None)
+                    lz_type = str(getattr(lz, 'type', 'UNKNOWN'))
+                    lz_strength = getattr(lz, 'strength', 50)
+                
+                if not lz_price:
+                    logger.warning(f"⚠️ Skipping Liquidity zone - invalid price")
+                    continue
+                
+                # Color based on type
+                is_buy_side = 'buy' in str(lz_type).lower()
+                color = 'cyan' if is_buy_side else 'magenta'
+                
+                # Plot horizontal line (dotted for liquidity)
+                ax.axhline(
+                    y=lz_price,
+                    color=color,
+                    linestyle=':',  # Dotted style
+                    linewidth=2,
+                    alpha=0.6,
+                    label=f'Liquidity' if i == 0 else '',
+                    zorder=4
+                )
+                
+                # Add text label
+                label_x = len(df) * 0.98  # Far right
+                icon = '💰' if is_buy_side else '🎯'
+                
+                ax.text(
+                    label_x, lz_price,
+                    f'{icon} LQ',
+                    fontsize=7,
+                    color=color,
+                    weight='bold',
+                    ha='right',
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7),
+                    zorder=6
+                )
+                
+                logger.info(f"✅ Plotted Liquidity: ${lz_price:.2f} ({lz_type})")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Error plotting Liquidity zone: {e}")
+    
+    def _add_fvg_strength_labels(self, ax, fvgs: List, df: pd.DataFrame):
+        """
+        ✅ FIX #1: Add strength labels to existing FVG zones
+        
+        FVG (Fair Value Gap) strength indicates likelihood of price returning to fill the gap
+        STRONG: 70%+ strength, likely to hold as support/resistance
+        MEDIUM: 40-70% strength, moderate reliability
+        WEAK: <40% strength, may be filled quickly
+        
+        Args:
+            ax: Matplotlib axis
+            fvgs: List of FVG dicts
+            df: Price dataframe
+        """
+        logger.info("🏷️ Adding FVG strength labels...")
+        
+        # Take top 5 FVGs
+        for i, fvg in enumerate(fvgs[:5]):
+            try:
+                if isinstance(fvg, dict):
+                    fvg_low = fvg.get('gap_low') or fvg.get('low')
+                    fvg_high = fvg.get('gap_high') or fvg.get('high')
+                    fvg_strength = fvg.get('strength', 50)
+                else:
+                    fvg_low = getattr(fvg, 'gap_low', None) or getattr(fvg, 'low', None)
+                    fvg_high = getattr(fvg, 'gap_high', None) or getattr(fvg, 'high', None)
+                    fvg_strength = getattr(fvg, 'strength', 50)
+                
+                if not fvg_low or not fvg_high:
+                    continue
+                
+                # Determine strength category
+                if fvg_strength >= 70:
+                    strength_label = 'STRONG'
+                    color = 'darkgreen'
+                elif fvg_strength >= 40:
+                    strength_label = 'MEDIUM'
+                    color = 'orange'
+                else:
+                    strength_label = 'WEAK'
+                    color = 'gray'
+                
+                # Add label at center of FVG zone
+                label_x = len(df) * 0.15  # Left side (OBs are at 5%)
+                label_y = (fvg_low + fvg_high) / 2
+                
+                ax.text(
+                    label_x, label_y,
+                    f'FVG\n{strength_label}',
+                    fontsize=7,
+                    color=color,
+                    weight='bold',
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7),
+                    zorder=5,
+                    ha='center',
+                    va='center'
+                )
+                
+                logger.info(f"✅ Added FVG label: {strength_label} ({fvg_strength:.0f}%)")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Error adding FVG label: {e}")
 
 
 def generate_chart(df: pd.DataFrame, signal, symbol: str, timeframe: str) -> bytes:

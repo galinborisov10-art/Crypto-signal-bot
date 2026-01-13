@@ -3351,18 +3351,27 @@ class ICTSignalEngine:
         Signal blocking is still controlled by existing min_confidence threshold.
         """
         warnings = []
+        context_info = []  # ✅ PR #3 FIX #4: Separate context from warnings
         adjustment = 0.0
         
         try:
+            # ✅ PR #3 FIX #4: Determine current session first
+            session = context.get('trading_session', 'UNKNOWN')
+            is_peak_session = session in ['LONDON', 'NEW_YORK']
+            
             # === FILTER 1: VOLUME ANALYSIS ===
             volume_ratio = context.get('volume_ratio', 1.0)
             volume_spike = context.get('volume_spike', False)
             
             if volume_ratio < 0.5:
-                # Very low volume - reduce confidence
-                warnings.append("⚠️ LOW VOLUME - Reduced liquidity may affect execution")
-                adjustment -= 10
-                logger.info("Context filter: Low volume detected (-10%)")
+                # ✅ PR #3 FIX #4: Only warn about low volume during off-peak sessions
+                if not is_peak_session:
+                    warnings.append("⚠️ LOW VOLUME - Reduced liquidity may affect execution")
+                    adjustment -= 10
+                    logger.info("Context filter: Low volume detected (-10%)")
+                else:
+                    # During peak sessions, low volume relative to 24h avg is less critical
+                    logger.info("Context filter: Low volume detected but ignored (peak session)")
             elif volume_spike:
                 # High volume spike - increase confidence
                 warnings.append("✅ HIGH VOLUME - Strong market participation")
@@ -3380,21 +3389,21 @@ class ICTSignalEngine:
                 logger.info(f"Context filter: High volatility ({volatility_pct:.1f}%) detected (-5%)")
             
             # === FILTER 3: TRADING SESSION ===
-            session = context.get('trading_session', 'UNKNOWN')
+            # ✅ PR #3 FIX #4: Move session info to context (not warnings)
             
             if session == 'ASIAN':
                 # Asian session - typically lower liquidity for crypto
-                warnings.append("ℹ️ ASIAN SESSION - Lower liquidity period")
+                context_info.append("ℹ️ ASIAN SESSION - Lower liquidity period")
                 adjustment -= 5
                 logger.info("Context filter: Asian session (-5%)")
             elif session == 'LONDON':
                 # London session - high liquidity
-                warnings.append("✅ LONDON SESSION - Peak liquidity period")
+                context_info.append("🌍 LONDON SESSION - Peak liquidity period")
                 adjustment += 5
                 logger.info("Context filter: London session (+5%)")
             elif session == 'NEW_YORK':
                 # NY session - high liquidity (especially overlap with London)
-                warnings.append("✅ NEW YORK SESSION - High liquidity period")
+                context_info.append("🗽 NEW YORK SESSION - High liquidity period")
                 adjustment += 3
                 logger.info("Context filter: New York session (+3%)")
             
@@ -3427,7 +3436,11 @@ class ICTSignalEngine:
             else:
                 logger.info("✅ Context filters: No adjustments needed")
             
-            return adjusted_confidence, warnings
+            # ✅ PR #3 FIX #4: Return both warnings and context info
+            # Combine context_info into warnings for now (backward compatible)
+            all_messages = warnings + context_info
+            
+            return adjusted_confidence, all_messages
             
         except Exception as e:
             logger.error(f"❌ Context filter error: {e}")
