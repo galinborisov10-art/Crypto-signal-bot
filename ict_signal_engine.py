@@ -739,6 +739,10 @@ class ICTSignalEngine:
         # Log successful entry zone validation
         logger.info(f"✅ PASSED Step 8: Entry zone validated ({entry_status})")
         
+        # Extract entry price from entry zone for Step 9
+        entry_price = entry_zone.get('center', current_price)
+        logger.info(f"   → Entry Price: ${entry_price:.2f} (from entry zone)")
+        
         # Keep existing entry setup for SL calculation (fallback)
         entry_setup = self._identify_entry_setup(df, ict_components, bias)
         if not entry_setup:
