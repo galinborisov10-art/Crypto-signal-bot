@@ -148,7 +148,7 @@ class OrderBlockDetector:
         return {
             'min_displacement_pct': 0.5,  # Min 0.5% move to qualify
             'min_volume_ratio': 1.0,       # Min 1.2x average volume
-            'min_strength':  45,             # Min strength score 60/100
+            'min_strength': 35,            # ✅ FIX #3: Lowered from 45 → 35 for better detection (2-5 OBs per signal)
             'lookback_candles': 5,          # Look back 5 candles for OB
             'displacement_candles': 3,      # Displacement within 3 candles
             'max_wick_ratio': 0.4,          # Max 40% wick size

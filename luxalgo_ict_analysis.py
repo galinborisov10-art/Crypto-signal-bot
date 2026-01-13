@@ -69,7 +69,10 @@ class CombinedLuxAlgoAnalysis:
     
     def analyze(self, df: pd.DataFrame) -> Dict:
         """
-        Perform combined LuxAlgo analysis
+        Perform combined LuxAlgo analysis with comprehensive error handling
+        
+        ✅ FIX #1: Graceful degradation instead of crashes
+        Returns empty zones with status on errors
         
         Args:
             df: DataFrame with columns: open, high, low, close, volume
@@ -78,30 +81,32 @@ class CombinedLuxAlgoAnalysis:
             Complete analysis with both S/R and ICT elements
             NEVER returns None - always returns dict with consistent structure
         """
-        # Safe default structure - ALWAYS returned, never None
-        default_result = {
-            'sr_data': {},
-            'ict_data': {},
-            'combined_signal': {},
-            'entry_valid': False,
-            'sl_price': None,
-            'tp_price': None,
-            'bias': 'neutral',
-            'status': 'unknown'
-        }
-        
-        # Validate input
-        if df is None:
-            default_result['status'] = 'invalid_input_none'
-            logger.warning("LuxAlgo analyze() called with None DataFrame")
-            return default_result
-        
-        if len(df) < self.min_periods:
-            default_result['status'] = 'insufficient_data'
-            logger.warning(f"LuxAlgo analyze() insufficient data: {len(df)} < {self.min_periods}")
-            return default_result
-        
         try:
+            # ✅ VALIDATION: Check dataframe exists
+            if df is None:
+                logger.warning("⚠️ LuxAlgo analyze() called with None DataFrame")
+                return self._get_empty_result('invalid_input_none')
+            
+            # ✅ VALIDATION: Check dataframe has sufficient data
+            if len(df) < 20:
+                logger.warning(f"⚠️ Insufficient data for LuxAlgo analysis (need ≥20 candles, got {len(df)})")
+                return self._get_empty_result('insufficient_data')
+            
+            # ✅ VALIDATION: Check required columns
+            required_cols = ['high', 'low', 'close']
+            missing = [col for col in required_cols if col not in df.columns]
+            if missing:
+                logger.error(f"❌ Missing required columns for LuxAlgo: {missing}")
+                return self._get_empty_result('missing_columns')
+            
+            # ✅ VALIDATION: Check for NaN values
+            if df[required_cols].isnull().any().any():
+                logger.warning("⚠️ NaN values detected in price data - cleaning")
+                df = df.dropna(subset=required_cols)
+                if len(df) < 20:
+                    return self._get_empty_result('insufficient_valid_data')
+            
+            # Initialize results structure
             results = {
                 'sr_data': {},
                 'ict_data': {},
@@ -113,24 +118,24 @@ class CombinedLuxAlgoAnalysis:
                 'status': 'success'
             }
             
-            # Run S/R MTF analysis
+            # Run S/R MTF analysis with error handling
             if self.enable_sr and self.sr_analyzer:
-                sr_results = self.sr_analyzer.analyze(df)
+                sr_results = self._analyze_sr(df)
                 if sr_results:
                     results['sr_data'] = sr_results
                     logger.info(f"S/R Analysis: {len(sr_results.get('support_zones', []))} support, "
                                f"{len(sr_results.get('resistance_zones', []))} resistance zones")
             
-            # Run ICT analysis
+            # Run ICT analysis with error handling
             if self.enable_ict and self.ict_analyzer:
-                ict_results = self.ict_analyzer.analyze(df)
+                ict_results = self._analyze_ict(df)
                 if ict_results:
                     results['ict_data'] = ict_results
                     logger.info(f"ICT Analysis: {len(ict_results.get('order_blocks', []))} OBs, "
                                f"{len(ict_results.get('fvgs', []))} FVGs, "
                                f"trend: {ict_results.get('trend')}")
                     
-                    # Detect Breaker Blocks
+                    # Detect Breaker Blocks with error handling
                     try:
                         breaker_blocks = detect_breaker_blocks(
                             highs=df["high"].tolist(),
@@ -142,10 +147,10 @@ class CombinedLuxAlgoAnalysis:
                         ict_results["breaker_blocks"] = breaker_blocks
                         logger.info(f"🔥 Breaker Blocks detected: {len(breaker_blocks)}")
                     except Exception as e:
-                        logger.warning(f"Breaker block detection failed: {e}")
+                        logger.warning(f"⚠️ Breaker block detection failed: {e}")
                         ict_results["breaker_blocks"] = []
             
-            # Generate combined trading signal
+            # Generate combined trading signal with error handling
             if self.enable_sr and self.enable_ict and results['sr_data'] and results['ict_data']:
                 try:
                     combined = self._generate_combined_signal(
@@ -155,16 +160,123 @@ class CombinedLuxAlgoAnalysis:
                     )
                     results.update(combined)
                 except Exception as e:
-                    logger.error(f"Combined signal generation failed: {e}")
+                    logger.error(f"❌ Combined signal generation failed: {e}")
                     # Keep defaults for combined signal fields
             
             return results
             
+        except IndexError as e:
+            logger.error(f"❌ LuxAlgo IndexError (likely data access issue): {e}")
+            return self._get_empty_result('index_error')
+        except KeyError as e:
+            logger.error(f"❌ LuxAlgo KeyError (missing data key): {e}")
+            return self._get_empty_result('key_error')
+        except ValueError as e:
+            logger.error(f"❌ LuxAlgo ValueError (invalid data): {e}")
+            return self._get_empty_result('value_error')
         except Exception as e:
-            # Log full error for debugging before truncating for status
-            logger.error(f"Error in combined LuxAlgo analysis: {e}")
-            default_result['status'] = f"exception: {str(e)[:ERROR_MESSAGE_MAX_LENGTH]}"
-            return default_result
+            # Catch-all for unexpected errors
+            logger.error(f"❌ LuxAlgo unexpected error: {type(e).__name__}: {e}")
+            return self._get_empty_result(f'exception_{type(e).__name__}')
+    
+    def _get_empty_result(self, status: str) -> Dict:
+        """
+        Return empty result structure with error status
+        Allows pipeline to continue gracefully
+        
+        ✅ FIX #1: Helper method for graceful degradation
+        
+        Args:
+            status: Error status code
+            
+        Returns:
+            Empty result structure with status
+        """
+        return {
+            'sr_data': {
+                'support_zones': [],
+                'resistance_zones': [],
+                'signals': [],
+                'status': status
+            },
+            'ict_data': {
+                'order_blocks': [],
+                'fvgs': [],
+                'breaker_blocks': [],
+                'liquidity_levels': [],
+                'status': status
+            },
+            'combined_signal': {},
+            'entry_valid': False,
+            'sl_price': None,
+            'tp_price': None,
+            'bias': 'neutral',
+            'status': status
+        }
+    
+    def _analyze_sr(self, df: pd.DataFrame) -> Dict:
+        """
+        S/R zone analysis with individual error handling
+        
+        ✅ FIX #1: Added error handling for S/R analysis
+        
+        Args:
+            df: DataFrame with OHLCV data
+            
+        Returns:
+            S/R analysis results or empty dict on error
+        """
+        try:
+            # Run S/R analyzer
+            sr_results = self.sr_analyzer.analyze(df)
+            
+            # Ensure result has status
+            if sr_results and 'status' not in sr_results:
+                sr_results['status'] = 'success'
+            
+            return sr_results
+            
+        except Exception as e:
+            logger.warning(f"⚠️ S/R analysis failed: {e}")
+            return {
+                'support_zones': [],
+                'resistance_zones': [],
+                'signals': [],
+                'status': f'sr_error_{type(e).__name__}'
+            }
+    
+    def _analyze_ict(self, df: pd.DataFrame) -> Dict:
+        """
+        ICT component analysis with error handling
+        
+        ✅ FIX #1: Added error handling for ICT analysis
+        
+        Args:
+            df: DataFrame with OHLCV data
+            
+        Returns:
+            ICT analysis results or empty dict on error
+        """
+        try:
+            # Run ICT analyzer
+            ict_results = self.ict_analyzer.analyze(df)
+            
+            # Ensure result has status
+            if ict_results and 'status' not in ict_results:
+                ict_results['status'] = 'success'
+            
+            return ict_results
+            
+        except Exception as e:
+            logger.warning(f"⚠️ ICT analysis failed: {e}")
+            return {
+                'order_blocks': [],
+                'fvgs': [],
+                'breaker_blocks': [],
+                'liquidity_levels': [],
+                'status': f'ict_error_{type(e).__name__}'
+            }
+
     
     def _generate_combined_signal(
         self,
