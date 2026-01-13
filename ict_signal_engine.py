@@ -540,27 +540,57 @@ class ICTSignalEngine:
                 own_bias = self._determine_market_bias(df, ict_components, mtf_analysis=None)
                 
                 if own_bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-                    logger.warning(f"❌ {symbol} own bias still {own_bias.value} - applying heavy penalty")
-                    confidence_penalty = 0.40  # 40% penalty for non-directional own structure
-                    bias = own_bias  # Use own bias (even if NEUTRAL/RANGING)
-                    logger.info(f"   → Continuing with {bias.value} bias and -40% confidence penalty")
+                    # Even own structure is non-directional - must generate NO_TRADE
+                    logger.warning(f"❌ {symbol} own bias still {own_bias.value} - cannot generate directional signal")
+                    logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7b, reason: No directional bias)")
+                    
+                    context = self._extract_context_data(df, own_bias, symbol)
+                    mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, own_bias, mtf_data)
+                    
+                    return self._create_no_trade_message(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        reason=f"{symbol} bias is {own_bias.value} (no directional structure)",
+                        details=f"Both HTF ({bias.value}) and own structure ({own_bias.value}) are non-directional. Waiting for clearer setup.",
+                        mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                        current_price=context['current_price'],
+                        price_change_24h=context['price_change_24h'],
+                        rsi=context['rsi'],
+                        signal_direction=context['signal_direction'],
+                        confidence=None
+                    )
                 else:
                     logger.info(f"✅ {symbol} own bias is {own_bias.value} (improved from HTF {bias.value})")
                     confidence_penalty = 0.20  # 20% penalty (HTF was unclear, but own structure is clear)
                     bias = own_bias  # Use improved own bias
                     logger.info(f"   → Continuing with {bias.value} bias and -20% confidence penalty")
             else:
-                # Non-ALT symbols: Apply penalty but continue
-                logger.warning(f"⚠️ Non-ALT symbol with {bias.value} bias - applying confidence penalty")
-                confidence_penalty = 0.35  # 35% penalty for NEUTRAL/RANGING HTF
-                logger.info(f"   → Continuing with {bias.value} bias and -35% confidence penalty")
+                # Non-ALT symbols with NEUTRAL/RANGING - convert to NO_TRADE
+                logger.warning(f"❌ Non-ALT symbol {symbol} with {bias.value} bias - cannot generate directional signal")
+                logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7b, reason: Non-directional bias)")
+                
+                context = self._extract_context_data(df, bias, symbol)
+                mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+                
+                return self._create_no_trade_message(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    reason=f"Market bias is {bias.value}",
+                    details=f"HTF analysis shows {bias.value} conditions. Waiting for directional structure.",
+                    mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                    current_price=context['current_price'],
+                    price_change_24h=context['price_change_24h'],
+                    rsi=context['rsi'],
+                    signal_direction=context['signal_direction'],
+                    confidence=None
+                )
         else:
             # Directional bias (BULLISH/BEARISH) - no penalty
             confidence_penalty = 0.0
             logger.info(f"✅ Step 7b: Directional bias {bias.value} - no penalty")
         
-        # ✅ CONTINUE TO STEP 8 (NO EARLY EXIT)
-        # Store penalty for application in Step 11 (confidence calculation)
+        # ✅ CONTINUE TO STEP 8 (NO EARLY EXIT FOR DIRECTIONAL BIAS)
+        # At this point, bias is guaranteed to be BULLISH or BEARISH
         logger.info(f"✅ PASSED Step 7: Continuing with bias {bias.value} (penalty: {confidence_penalty*100:.0f}%)")
         
         # СТЪПКА 8: ENTRY CALCULATION WITH ICT-COMPLIANT ZONE
