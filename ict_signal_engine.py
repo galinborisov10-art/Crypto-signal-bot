@@ -525,112 +525,73 @@ class ICTSignalEngine:
         logger.info(f"      • Displacement Detected: {displacement_detected}")
         logger.info(f"   → Final Bias: {bias.value}")
         
-        # СТЪПКА 7b: EARLY EXIT за HOLD/RANGING
-        # ✅ ALT-Independent Mode: Only BTC respects HTF bias early exit
-        # Altcoins (ETH, SOL, BNB, ADA, XRP) will continue analysis using their OWN structure
+        # СТЪПКА 7b: Apply confidence penalty for NEUTRAL/RANGING bias (NO EARLY EXIT)
+        # ✅ FIX #1: HTF is now a soft constraint (penalty) instead of hard block
+        confidence_penalty = 0.0  # Track penalty for Step 11 confidence calculation
+        
         if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-            logger.info("🔍 Step 7b: Early Exit Check")
-            logger.info(f"   → Bias is {bias.value} (not directional)")
+            logger.warning(f"⚠️ Step 7b: {symbol} bias is {bias.value} - checking mitigation options")
             
-            # BTC follows HTF bias strictly
-            if symbol == "BTCUSDT":
-                logger.info(f"❌ BLOCKED at Step 7b: {symbol} bias is {bias.value} (early exit)")
-                logger.info(f"✅ Generating HOLD signal (blocked_at_step: 7b, reason: {bias.value} bias)")
+            # Check ALT-independent mode
+            if symbol in self.ALT_INDEPENDENT_SYMBOLS:
+                logger.info(f"⚠️ {symbol} using ALT-independent mode - analyzing own structure")
                 
-                base_confidence = self._calculate_signal_confidence(
-                    ict_components, mtf_analysis, bias, structure_broken, 
-                    displacement_detected, 0.0
-                )
-                current_price = df['close'].iloc[-1]
-                mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+                # Re-analyze with own ICT components (ignore HTF)
+                own_bias = self._determine_market_bias(df, ict_components, mtf_analysis=None)
                 
-                return self._create_hold_signal(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    bias=bias,
-                    confidence=base_confidence,
-                    df=df,
-                    ict_components=ict_components,
-                    mtf_data=mtf_data,
-                    current_price=current_price,
-                    htf_bias=htf_bias,
-                    mtf_consensus_data=mtf_consensus_data,
-                    structure_broken=structure_broken,
-                    displacement_detected=displacement_detected,
-                    mtf_analysis=mtf_analysis
-                )
-            
-            # Altcoins: Continue analysis using their OWN bias
-            elif symbol in self.ALT_INDEPENDENT_SYMBOLS:
-                logger.info(f"⚠️ Initial bias is {bias.value}, but {symbol} using ALT-independent mode")
-                logger.info(f"   → Continuing analysis with {symbol}'s own ICT structure")
-                
-                # Re-determine bias using ONLY altcoin's own ICT components (no HTF influence)
-                bias = self._determine_market_bias(df, ict_components, mtf_analysis=None)
-                logger.info(f"   → {symbol} own bias (from ICT components): {bias.value}")
-                
-                # If altcoin's own bias is still NEUTRAL/RANGING, exit with HOLD
-                if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-                    logger.info(f"❌ BLOCKED at Step 7b: {symbol} own bias is {bias.value} (early exit)")
-                    logger.info(f"✅ Generating HOLD signal (blocked_at_step: 7b, reason: {symbol} {bias.value} bias)")
+                if own_bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
+                    # Even own structure is non-directional - must generate NO_TRADE
+                    logger.warning(f"❌ {symbol} own bias still {own_bias.value} - cannot generate directional signal")
+                    logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7b, reason: No directional bias)")
                     
-                    base_confidence = self._calculate_signal_confidence(
-                        ict_components, mtf_analysis, bias, structure_broken, 
-                        displacement_detected, 0.0
-                    )
-                    current_price = df['close'].iloc[-1]
-                    mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+                    context = self._extract_context_data(df, own_bias, symbol)
+                    mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, own_bias, mtf_data)
                     
-                    return self._create_hold_signal(
+                    return self._create_no_trade_message(
                         symbol=symbol,
                         timeframe=timeframe,
-                        bias=bias,
-                        confidence=base_confidence,
-                        df=df,
-                        ict_components=ict_components,
-                        mtf_data=mtf_data,
-                        current_price=current_price,
-                        htf_bias=htf_bias,
-                        mtf_consensus_data=mtf_consensus_data,
-                        structure_broken=structure_broken,
-                        displacement_detected=displacement_detected,
-                        mtf_analysis=mtf_analysis
+                        reason=f"{symbol} bias is {own_bias.value} (no directional structure)",
+                        details=f"Both HTF ({bias.value}) and own structure ({own_bias.value}) are non-directional. Waiting for clearer setup.",
+                        mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                        current_price=context['current_price'],
+                        price_change_24h=context['price_change_24h'],
+                        rsi=context['rsi'],
+                        signal_direction=context['signal_direction'],
+                        confidence=None
                     )
-                
-                # Altcoin has BULLISH/BEARISH bias - continue to signal generation
-                logger.info(f"   → {symbol} has {bias.value} bias - continuing to signal generation")
-                # ✅ Continue to next steps with altcoin's own bias
-            
-            # Other symbols: Follow HTF bias (backward compatibility)
+                else:
+                    logger.info(f"✅ {symbol} own bias is {own_bias.value} (improved from HTF {bias.value})")
+                    confidence_penalty = 0.20  # 20% penalty (HTF was unclear, but own structure is clear)
+                    bias = own_bias  # Use improved own bias
+                    logger.info(f"   → Continuing with {bias.value} bias and -20% confidence penalty")
             else:
-                logger.info(f"❌ BLOCKED at Step 7b: Market bias is {bias.value} (early exit)")
-                logger.info(f"✅ Generating HOLD signal (blocked_at_step: 7b, reason: {bias.value} bias)")
+                # Non-ALT symbols with NEUTRAL/RANGING - convert to NO_TRADE
+                logger.warning(f"❌ Non-ALT symbol {symbol} with {bias.value} bias - cannot generate directional signal")
+                logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7b, reason: Non-directional bias)")
                 
-                base_confidence = self._calculate_signal_confidence(
-                    ict_components, mtf_analysis, bias, structure_broken, 
-                    displacement_detected, 0.0
-                )
-                current_price = df['close'].iloc[-1]
+                context = self._extract_context_data(df, bias, symbol)
                 mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
                 
-                return self._create_hold_signal(
+                return self._create_no_trade_message(
                     symbol=symbol,
                     timeframe=timeframe,
-                    bias=bias,
-                    confidence=base_confidence,
-                    df=df,
-                    ict_components=ict_components,
-                    mtf_data=mtf_data,
-                    current_price=current_price,
-                    htf_bias=htf_bias,
-                    mtf_consensus_data=mtf_consensus_data,
-                    structure_broken=structure_broken,
-                    displacement_detected=displacement_detected,
-                    mtf_analysis=mtf_analysis
+                    reason=f"Market bias is {bias.value}",
+                    details=f"HTF analysis shows {bias.value} conditions. Waiting for directional structure.",
+                    mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                    current_price=context['current_price'],
+                    price_change_24h=context['price_change_24h'],
+                    rsi=context['rsi'],
+                    signal_direction=context['signal_direction'],
+                    confidence=None
                 )
+        else:
+            # Directional bias (BULLISH/BEARISH) - no penalty
+            confidence_penalty = 0.0
+            logger.info(f"✅ Step 7b: Directional bias {bias.value} - no penalty")
         
-        # From here onwards: BULLISH/BEARISH signals only
-        logger.info(f"✅ PASSED Step 7: Bias is directional ({bias.value})")
+        # ✅ CONTINUE TO STEP 8 (NO EARLY EXIT FOR DIRECTIONAL BIAS)
+        # At this point, bias is guaranteed to be BULLISH or BEARISH
+        logger.info(f"✅ PASSED Step 7: Continuing with bias {bias.value} (penalty: {confidence_penalty*100:.0f}%)")
         
         # СТЪПКА 8: ENTRY CALCULATION WITH ICT-COMPLIANT ZONE
         logger.info("🔍 Step 8: Entry Zone Validation")
@@ -921,19 +882,40 @@ class ICTSignalEngine:
             confidence_after_context = base_confidence
             context_warnings = []
         
-        # ✅ DISTANCE PENALTY (Soft Constraint - NEW)
+        # ✅ DISTANCE PENALTY (Soft Constraint - FIX #4)
         logger.info("📊 Step 11b: Distance Penalty Check")
         distance_penalty_applied = False
         
-        if entry_zone and entry_zone.get('distance_out_of_range'):
-            logger.warning(f"⚠️ Entry zone outside optimal range ({entry_zone['distance_pct']:.1f}%), applying confidence penalty")
-            confidence_after_context = confidence_after_context * 0.8  # Reduce by 20%
-            distance_penalty_applied = True
-            logger.info(f"Distance penalty applied: confidence reduced by 20% → {confidence_after_context:.1f}%")
+        if entry_zone:
+            distance_pct = entry_zone.get('distance_pct', 0)
             
-            # Add warning about distance
-            if entry_zone.get('distance_comment'):
-                context_warnings.append(entry_zone['distance_comment'])
+            # ✅ FIX #4: Only penalize very close entries (<0.5%)
+            # Entries 0.5-10% are optimal, >10% just get informational warning
+            if distance_pct < 0.5:
+                logger.warning(f"⚠️ Entry very close to current price ({distance_pct:.1f}%) - low risk/reward potential")
+                confidence_after_context = confidence_after_context * 0.9  # Reduce by 10%
+                distance_penalty_applied = True
+                logger.info(f"Distance penalty applied: confidence reduced by 10% → {confidence_after_context:.1f}%")
+                context_warnings.append(f"⚠️ Entry very close to current price ({distance_pct:.1f}%) - low risk/reward")
+            elif distance_pct > 10.0:
+                # Just informational - no penalty
+                logger.info(f"ℹ️ Entry {distance_pct:.1f}% from current price - waiting for retracement")
+                context_warnings.append(f"ℹ️ Entry {distance_pct:.1f}% from current price - valid ICT retracement setup")
+        
+        # ✅ HTF BIAS PENALTY (Soft Constraint - FIX #1)
+        logger.info("📊 Step 11c: HTF Bias Penalty Check")
+        if confidence_penalty > 0:
+            logger.warning(f"⚠️ Applying HTF bias penalty: -{confidence_penalty*100:.0f}%")
+            confidence_after_context = confidence_after_context * (1 - confidence_penalty)
+            logger.info(f"HTF penalty applied: confidence reduced to {confidence_after_context:.1f}%")
+            
+            # Add warning about HTF bias
+            if confidence_penalty >= 0.40:
+                context_warnings.append("⚠️ Non-directional bias on both HTF and own structure - high uncertainty")
+            elif confidence_penalty >= 0.35:
+                context_warnings.append("⚠️ Non-directional HTF bias - reduced confidence")
+            elif confidence_penalty >= 0.20:
+                context_warnings.append("ℹ️ HTF bias unclear, relying on own structure")
         
         # СТЪПКА 11: ML OPTIMIZATION (ЗАПАЗВАМЕ existing logic)
         logger.info("📊 Step 11: ML Optimization")
@@ -1573,7 +1555,10 @@ class ICTSignalEngine:
         mtf_data: Optional[Dict[str, pd.DataFrame]] = None
     ) -> Dict:
         """
-        Изчисли Multi-Timeframe Consensus (STRICT ICT)
+        ✅ FIX #3: Calculate Multi-Timeframe Consensus (REALISTIC)
+        
+        Only EXACT bias match counts as aligned
+        NEUTRAL = not aligned, not conflicting (excluded from calculation)
         
         Проверява bias на всички timeframes: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d, 3d, 1w
         
@@ -1583,11 +1568,14 @@ class ICTSignalEngine:
                 - breakdown: детайлен breakdown по TF
                 - aligned_tfs: списък със съгласни TF
                 - conflicting_tfs: списък с конфликтни TF
+                - neutral_tfs: списък с неутрални TF
         """
         all_timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d', '3d', '1w']
         
         breakdown = {}
         aligned_count = 0
+        conflicting_count = 0
+        neutral_count = 0
         total_count = 0
         
         # Проверка на първичния timeframe
@@ -1611,8 +1599,16 @@ class ICTSignalEngine:
                     try:
                         tf_bias, confidence = self._calculate_pure_ict_bias_for_tf(tf_df)
                         
-                        # Провери alignment
-                        is_aligned = (tf_bias == target_bias) or (tf_bias == MarketBias.NEUTRAL)
+                        # ✅ FIX #3: Only exact match counts as aligned
+                        if tf_bias == target_bias:
+                            is_aligned = True
+                            aligned_count += 1
+                        elif tf_bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
+                            is_aligned = False  # Not aligned (but also not conflicting)
+                            neutral_count += 1
+                        else:
+                            is_aligned = False  # Opposite bias
+                            conflicting_count += 1
                         
                         breakdown[tf] = {
                             'bias': tf_bias.value if hasattr(tf_bias, 'value') else str(tf_bias),
@@ -1620,8 +1616,6 @@ class ICTSignalEngine:
                             'aligned': is_aligned
                         }
                         
-                        if is_aligned:
-                            aligned_count += 1
                         total_count += 1
                         
                     except Exception as e:
@@ -1629,46 +1623,55 @@ class ICTSignalEngine:
                         breakdown[tf] = {
                             'bias': 'NEUTRAL',
                             'confidence': 0,
-                            'aligned': True
+                            'aligned': False
                         }
-                        aligned_count += 1
+                        neutral_count += 1
                         total_count += 1
                 else:
-                    # Няма данни за този TF - счита се за aligned (не пречи)
+                    # Няма данни за този TF - не се брои
                     breakdown[tf] = {
                         'bias': 'NO_DATA',
                         'confidence': 0,
-                        'aligned': True
+                        'aligned': False
                     }
-                    aligned_count += 1
-                    total_count += 1
+                    # Don't increment counters for missing data
         else:
-            # Няма MTF data - счита се всичко като aligned
-            for tf in all_timeframes:
-                if tf != primary_timeframe:
-                    breakdown[tf] = {
-                        'bias': 'NO_DATA',
-                        'confidence': 0,
-                        'aligned': True
-                    }
-                    aligned_count += 1
-                    total_count += 1
+            # Няма MTF data - само primary TF
+            pass
         
-        # Изчисли consensus процент
-        consensus_pct = (aligned_count / total_count * 100) if total_count > 0 else 0
+        # ✅ FIX #3: Consensus = aligned / (aligned + conflicting)
+        # NEUTRAL timeframes excluded from calculation
+        consensus_denominator = aligned_count + conflicting_count
+        
+        if consensus_denominator > 0:
+            consensus_pct = (aligned_count / consensus_denominator * 100)
+        elif aligned_count > 0:
+            # All timeframes are aligned (no conflicts, no neutrals) - 100%
+            consensus_pct = 100.0
+        else:
+            # All timeframes are NEUTRAL/RANGING - undefined consensus, use 0%
+            # This indicates market indecision across all timeframes
+            consensus_pct = 0.0
+            logger.warning("All MTF timeframes are NEUTRAL/RANGING - market indecision")
         
         # Подготви списъци
-        aligned_tfs = [tf for tf, data in breakdown.items() if data['aligned']]
-        conflicting_tfs = [tf for tf, data in breakdown.items() if not data['aligned']]
+        aligned_tfs = [tf for tf, data in breakdown.items() if data.get('aligned', False)]
+        conflicting_tfs = [tf for tf, data in breakdown.items() 
+                          if not data.get('aligned', False) and data.get('bias') not in ['NEUTRAL', 'RANGING', 'NO_DATA']]
+        neutral_tfs = [tf for tf, data in breakdown.items() 
+                      if data.get('bias') in ['NEUTRAL', 'RANGING']]
         
-        logger.info(f"📊 MTF Consensus: {consensus_pct:.1f}% ({aligned_count}/{total_count} TFs aligned)")
+        logger.info(f"📊 MTF Consensus: {consensus_pct:.1f}% ({aligned_count} aligned, {neutral_count} neutral, {conflicting_count} conflicting)")
         
         return {
             'consensus_pct': round(consensus_pct, 1),
             'breakdown': breakdown,
             'aligned_tfs': aligned_tfs,
             'conflicting_tfs': conflicting_tfs,
+            'neutral_tfs': neutral_tfs,  # ✅ NEW
             'aligned_count': aligned_count,
+            'conflicting_count': conflicting_count,  # ✅ NEW
+            'neutral_count': neutral_count,  # ✅ NEW
             'total_count': total_count
         }
     
@@ -1875,14 +1878,17 @@ class ICTSignalEngine:
                 bearish_score += 2
         
         # Determine bias
-        if bullish_score >= 2 and bullish_score > bearish_score:
+        # ✅ FIX #2: LOWERED THRESHOLD: 2 → 1 (easier to get directional bias)
+        if bullish_score >= 1 and bullish_score > bearish_score:
             return MarketBias.BULLISH
-        elif bearish_score >= 2 and bearish_score > bullish_score:
+        elif bearish_score >= 1 and bearish_score > bullish_score:
             return MarketBias.BEARISH
-        elif abs(bullish_score - bearish_score) <= 1:
-            return MarketBias.RANGING
+        elif bullish_score == bearish_score > 0:
+            # Equal scores but directional components exist
+            return MarketBias.NEUTRAL  # Less severe than RANGING
         else:
-            return MarketBias.NEUTRAL
+            # No directional components or conflicting signals
+            return MarketBias.RANGING
     
     def _check_structure_break(self, df: pd.DataFrame) -> bool:
         """Check for recent structure break (BOS/CHOCH)"""
@@ -2068,8 +2074,9 @@ class ICTSignalEngine:
             - 'TOO_LATE': Price already passed the entry zone (hard reject)
             - 'NO_ZONE': No valid entry zone found (converted to fallback in calling code)
         """
-        min_distance_pct = 0.005  # 0.5%
-        max_distance_pct = 0.030  # 3.0%
+        # ✅ FIX #4: RELAXED distance validation with ICT-friendly thresholds
+        min_distance_pct = 0.005  # 0.5% (unchanged)
+        max_distance_pct = 0.100  # 10.0% (increased from 3.0%)
         entry_buffer_pct = 0.002  # 0.2%
         
         valid_zones = []
@@ -2363,6 +2370,35 @@ class ICTSignalEngine:
                                 if distance_out_of_range
                                 else None
         }
+        
+        # ✅ FIX #5: Validate distance DIRECTION (not just magnitude)
+        entry_center = entry_zone['center']
+        
+        if is_bearish:
+            # BEARISH: Entry should be ABOVE current price (waiting for rally to sell)
+            if entry_center <= current_price:
+                logger.warning(f"⚠️ BEARISH entry ${entry_center:.2f} is NOT above current ${current_price:.2f}")
+                logger.warning(f"   → Entry may have been hit already (check Step 12a)")
+            
+            # Calculate UPWARD distance
+            distance_directional = (entry_center - current_price) / current_price * 100
+            distance_direction = "above"
+            entry_zone['distance_direction'] = distance_direction
+            entry_zone['distance_directional'] = distance_directional
+            logger.info(f"   → Entry {abs(distance_directional):.1f}% {distance_direction} current price")
+            
+        elif is_bullish:
+            # BULLISH: Entry should be BELOW current price (waiting for dip to buy)
+            if entry_center >= current_price:
+                logger.warning(f"⚠️ BULLISH entry ${entry_center:.2f} is NOT below current ${current_price:.2f}")
+                logger.warning(f"   → Entry may have been hit already (check Step 12a)")
+            
+            # Calculate DOWNWARD distance
+            distance_directional = (current_price - entry_center) / current_price * 100
+            distance_direction = "below"
+            entry_zone['distance_direction'] = distance_direction
+            entry_zone['distance_directional'] = distance_directional
+            logger.info(f"   → Entry {abs(distance_directional):.1f}% {distance_direction} current price")
         
         # ==== DETERMINE STATUS ====
         
