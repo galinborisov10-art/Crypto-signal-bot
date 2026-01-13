@@ -246,6 +246,9 @@ class ICTSignal:
     # Distance Penalty (Soft Constraint)
     distance_penalty: bool = False  # NEW: Whether confidence was reduced due to distance out of range
     
+    # ✅ PR #4: Timeframe Hierarchy
+    timeframe_hierarchy: Dict = field(default_factory=dict)  # NEW: TF hierarchy info (Structure/Confirmation/Entry)
+    
     # Explanation
     reasoning: str = ""
     warnings: List[str] = field(default_factory=list)
@@ -393,6 +396,10 @@ class ICTSignalEngine:
                 except Exception as e:
                     logger.warning(f"⚠️ ML Predictor initialization failed: {e}")
         
+        # ✅ PR #4: Load timeframe hierarchy configuration
+        self.tf_hierarchy = self._load_tf_hierarchy()
+        logger.info(f"✅ TF Hierarchy loaded: {len(self.tf_hierarchy.get('hierarchies', {}))} timeframes configured")
+        
         logger.info("ICT Signal Engine initialized")
         logger.info(f"Order Blocks: {ORDER_BLOCK_AVAILABLE}")
         logger.info(f"FVG: {FVG_AVAILABLE}")
@@ -443,6 +450,195 @@ class ICTSignalEngine:
             'ml_override_threshold': 15,       # Min confidence diff for ML override
         }
     
+    def _load_tf_hierarchy(self) -> Dict:
+        """
+        ✅ PR #4: Load timeframe hierarchy configuration
+        
+        Returns:
+            Dict with TF hierarchy rules for each entry timeframe
+        """
+        try:
+            # Try to load from config file
+            from pathlib import Path
+            config_path = Path(__file__).parent / 'config' / 'timeframe_hierarchy.json'
+            
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    hierarchy = json.load(f)
+                logger.info(f"📊 Loaded TF hierarchy from {config_path}")
+                return hierarchy
+            else:
+                logger.warning("⚠️ TF hierarchy config not found, using defaults")
+                return self._get_default_tf_hierarchy()
+                
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ JSON decode error in TF hierarchy: {e}")
+            return self._get_default_tf_hierarchy()
+        except Exception as e:
+            logger.error(f"❌ Error loading TF hierarchy: {e}")
+            return self._get_default_tf_hierarchy()
+    
+    def _get_default_tf_hierarchy(self) -> Dict:
+        """
+        Fallback TF hierarchy if config file not available
+        
+        Returns:
+            Default hierarchy configuration
+        """
+        return {
+            "hierarchies": {
+                "1h": {
+                    "entry_tf": "1h",
+                    "confirmation_tf": "2h",
+                    "structure_tf": "4h",
+                    "htf_bias_tf": "1d"
+                },
+                "2h": {
+                    "entry_tf": "2h",
+                    "confirmation_tf": "4h",
+                    "structure_tf": "1d",
+                    "htf_bias_tf": "1d"
+                },
+                "4h": {
+                    "entry_tf": "4h",
+                    "confirmation_tf": "4h",
+                    "structure_tf": "1d",
+                    "htf_bias_tf": "1w"
+                },
+                "1d": {
+                    "entry_tf": "1d",
+                    "confirmation_tf": "1d",
+                    "structure_tf": "1w",
+                    "htf_bias_tf": "1w"
+                }
+            },
+            "validation_rules": {
+                "structure_penalty_if_missing": 0.25,
+                "confirmation_penalty_if_missing": 0.15,
+                "allow_fallback_tfs": True
+            }
+        }
+    
+    def _validate_mtf_hierarchy(
+        self,
+        entry_tf: str,
+        mtf_analysis: Dict,
+        confidence: float
+    ) -> Tuple[float, List[str], Dict]:
+        """
+        ✅ PR #4: Validate MTF analysis follows ICT timeframe hierarchy
+        
+        Validates that the expected Structure TF and Confirmation TF are present.
+        Applies penalties (not rejections) if TFs are missing.
+        
+        Args:
+            entry_tf: Entry timeframe (e.g., '1h', '2h', '4h', '1d')
+            mtf_analysis: Dictionary of MTF analysis results keyed by timeframe
+            confidence: Current confidence score
+            
+        Returns:
+            Tuple of (adjusted_confidence, warnings, hierarchy_info)
+        """
+        warnings = []
+        adjusted_confidence = confidence
+        hierarchy_info = {}
+        
+        try:
+            # Get expected hierarchy for this entry TF
+            hierarchies = self.tf_hierarchy.get('hierarchies', {})
+            hierarchy = hierarchies.get(entry_tf)
+            
+            if not hierarchy:
+                logger.warning(f"⚠️ No TF hierarchy defined for {entry_tf}, skipping validation")
+                return adjusted_confidence, warnings, hierarchy_info
+            
+            # Extract expected TFs
+            expected_confirmation_tf = hierarchy.get('confirmation_tf')
+            expected_structure_tf = hierarchy.get('structure_tf')
+            expected_htf_bias_tf = hierarchy.get('htf_bias_tf')
+            
+            # Store hierarchy info for signal message
+            hierarchy_info = {
+                'entry_tf': entry_tf,
+                'confirmation_tf': expected_confirmation_tf,
+                'structure_tf': expected_structure_tf,
+                'htf_bias_tf': expected_htf_bias_tf,
+                'description': hierarchy.get('description', '')
+            }
+            
+            # Get validation rules
+            rules = self.tf_hierarchy.get('validation_rules', {})
+            confirmation_penalty = rules.get('confirmation_penalty_if_missing', 0.15)
+            structure_penalty = rules.get('structure_penalty_if_missing', 0.25)
+            
+            # Get available TFs from MTF analysis
+            available_tfs = list(mtf_analysis.keys()) if mtf_analysis else []
+            
+            logger.info(f"📊 TF Hierarchy Validation for {entry_tf}:")
+            logger.info(f"   Expected - Structure: {expected_structure_tf}, Confirmation: {expected_confirmation_tf}")
+            logger.info(f"   Available: {available_tfs}")
+            
+            # VALIDATION 1: Check Confirmation TF
+            if expected_confirmation_tf:
+                if expected_confirmation_tf in available_tfs:
+                    logger.info(f"   ✅ Confirmation TF ({expected_confirmation_tf}) present")
+                    hierarchy_info['confirmation_tf_present'] = True
+                else:
+                    warning_msg = (
+                        f"⚠️ Missing Confirmation TF ({expected_confirmation_tf}) "
+                        f"- intermediate pattern validation limited"
+                    )
+                    warnings.append(warning_msg)
+                    adjusted_confidence -= confirmation_penalty
+                    hierarchy_info['confirmation_tf_present'] = False
+                    logger.warning(f"   {warning_msg} (-{confirmation_penalty*100:.0f}%)")
+            
+            # VALIDATION 2: Check Structure TF
+            if expected_structure_tf:
+                if expected_structure_tf in available_tfs:
+                    logger.info(f"   ✅ Structure TF ({expected_structure_tf}) present")
+                    hierarchy_info['structure_tf_present'] = True
+                    
+                    # Additional check: Structure bias alignment (if data available)
+                    structure_data = mtf_analysis.get(expected_structure_tf, {})
+                    structure_bias = structure_data.get('bias')
+                    
+                    if structure_bias:
+                        hierarchy_info['structure_bias'] = structure_bias
+                        logger.info(f"   📊 Structure bias: {structure_bias}")
+                else:
+                    warning_msg = (
+                        f"⚠️ Missing Structure TF ({expected_structure_tf}) "
+                        f"- major trend validation limited"
+                    )
+                    warnings.append(warning_msg)
+                    adjusted_confidence -= structure_penalty
+                    hierarchy_info['structure_tf_present'] = False
+                    logger.warning(f"   {warning_msg} (-{structure_penalty*100:.0f}%)")
+            
+            # VALIDATION 3: Check HTF Bias TF (informational only, no penalty)
+            if expected_htf_bias_tf:
+                if expected_htf_bias_tf in available_tfs:
+                    logger.info(f"   ✅ HTF Bias TF ({expected_htf_bias_tf}) present")
+                    hierarchy_info['htf_bias_tf_present'] = True
+                else:
+                    logger.info(f"   ℹ️ HTF Bias TF ({expected_htf_bias_tf}) not available (optional)")
+                    hierarchy_info['htf_bias_tf_present'] = False
+            
+            # Summary
+            if not warnings:
+                logger.info("   ✅ TF hierarchy fully compliant")
+            else:
+                logger.info(f"   ⚠️ TF hierarchy: {len(warnings)} issue(s), confidence adjusted")
+            
+            return adjusted_confidence, warnings, hierarchy_info
+            
+        except Exception as e:
+            logger.error(f"❌ TF hierarchy validation error: {e}")
+            import traceback
+            traceback.print_exc()
+            return confidence, warnings, hierarchy_info
+    
     def generate_signal(
         self,
         df: pd.DataFrame,
@@ -482,6 +678,35 @@ class ICTSignalEngine:
         # СТЪПКА 2: MTF STRUCTURE (4H)
         logger.info("📊 Step 2: MTF Structure")
         mtf_analysis = self._analyze_mtf_confluence(df, mtf_data, symbol) if mtf_data is not None and isinstance(mtf_data, dict) else None
+        
+        # ✅ PR #4: СТЪПКА 6b: TIMEFRAME HIERARCHY VALIDATION (NEW)
+        logger.info("=" * 60)
+        logger.info("STEP 6b: TIMEFRAME HIERARCHY VALIDATION")
+        logger.info("=" * 60)
+        
+        # Initialize variables for hierarchy validation
+        tf_warnings = []
+        hierarchy_info = {}
+        initial_confidence = 80.0  # Starting confidence before validation
+        
+        # Perform TF hierarchy validation
+        validated_confidence, tf_warnings, hierarchy_info = self._validate_mtf_hierarchy(
+            entry_tf=timeframe,
+            mtf_analysis=mtf_analysis if mtf_analysis else {},
+            confidence=initial_confidence
+        )
+        
+        # Store hierarchy info for later use in signal generation
+        context_warnings = tf_warnings  # Will be added to signal warnings later
+        
+        if tf_warnings:
+            logger.warning(f"⚠️ TF hierarchy issues: {len(tf_warnings)} warnings")
+            for warning in tf_warnings:
+                logger.warning(f"   {warning}")
+        else:
+            logger.info("✅ TF hierarchy validated - full compliance")
+        
+        logger.info(f"📊 Confidence after TF validation: {validated_confidence:.1f}%")
         
         # СТЪПКА 3: ENTRY MODEL (текущ TF)
         logger.info(f"📊 Step 3: Entry Model ({timeframe})")
@@ -1221,6 +1446,7 @@ class ICTSignalEngine:
             entry_zone=entry_zone,  # NEW: Entry zone details (with distance metadata)
             entry_status=entry_status,  # NEW: Entry zone status
             distance_penalty=distance_penalty_applied,  # ✅ NEW: Distance penalty tracking
+            timeframe_hierarchy=hierarchy_info,  # ✅ PR #4: TF hierarchy info
             reasoning=reasoning,
             warnings=warnings,
             zone_explanations=zone_explanations
