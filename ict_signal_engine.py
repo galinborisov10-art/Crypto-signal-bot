@@ -1642,7 +1642,17 @@ class ICTSignalEngine:
         # ✅ FIX #3: Consensus = aligned / (aligned + conflicting)
         # NEUTRAL timeframes excluded from calculation
         consensus_denominator = aligned_count + conflicting_count
-        consensus_pct = (aligned_count / consensus_denominator * 100) if consensus_denominator > 0 else 0
+        
+        if consensus_denominator > 0:
+            consensus_pct = (aligned_count / consensus_denominator * 100)
+        elif aligned_count > 0:
+            # All timeframes are aligned (no conflicts, no neutrals) - 100%
+            consensus_pct = 100.0
+        else:
+            # All timeframes are NEUTRAL/RANGING - undefined consensus, use 0%
+            # This indicates market indecision across all timeframes
+            consensus_pct = 0.0
+            logger.warning("All MTF timeframes are NEUTRAL/RANGING - market indecision")
         
         # Подготви списъци
         aligned_tfs = [tf for tf, data in breakdown.items() if data.get('aligned', False)]
@@ -1873,7 +1883,7 @@ class ICTSignalEngine:
             return MarketBias.BULLISH
         elif bearish_score >= 1 and bearish_score > bullish_score:
             return MarketBias.BEARISH
-        elif bullish_score == bearish_score and bullish_score > 0:
+        elif bullish_score == bearish_score > 0:
             # Equal scores but directional components exist
             return MarketBias.NEUTRAL  # Less severe than RANGING
         else:
