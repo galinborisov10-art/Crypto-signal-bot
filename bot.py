@@ -132,6 +132,18 @@ except ImportError as e:
     logger.warning(f"⚠️ Trade Re-analysis Engine not available: {e}")
     reanalysis_engine_global = None
 
+# Position Manager (PR #7)
+try:
+    from position_manager import PositionManager
+    from init_positions_db import create_positions_database
+    POSITION_MANAGER_AVAILABLE = True
+    logger.info("✅ Position Manager loaded")
+    position_manager_global = PositionManager()
+except ImportError as e:
+    POSITION_MANAGER_AVAILABLE = False
+    logger.warning(f"⚠️ Position Manager not available: {e}")
+    position_manager_global = None
+
 # Chart Visualization System
 try:
     from chart_generator import ChartGenerator
@@ -334,6 +346,13 @@ SYMBOLS = {
 # Tracking на изпратени автоматични сигнали (за предотвратяване на дублиране)
 # Формат: {"BTCUSDT_BUY_4h": {'timestamp': datetime, 'confidence': 75, 'entry_price': 97100}, ...}
 SENT_SIGNALS_CACHE = {}
+
+# ================= PR #7: POSITION MONITORING CONFIG =================
+AUTO_POSITION_TRACKING_ENABLED = True  # Auto-open positions from auto signals
+AUTO_CLOSE_ON_SL_HIT = True  # Auto-close when SL hit
+AUTO_CLOSE_ON_TP_HIT = True  # Auto-close when TP hit
+CHECKPOINT_MONITORING_ENABLED = True  # Enable checkpoint monitoring
+POSITION_MONITORING_INTERVAL_SECONDS = 60  # Check every 60 seconds
 
 # ================= ACTIVE TRADES TRACKING =================
 # Global variable for active trades tracking (for 80% alerts and final alerts)
@@ -10124,6 +10143,29 @@ async def auto_signal_job(timeframe: str, bot_instance):
                         logger.info(f"📝 AUTO-SIGNAL logged to ML journal (ID: {journal_id})")
                 except Exception as e:
                     logger.error(f"❌ Journal logging error in auto-signal: {e}")
+            
+            # ✅ PR #7: AUTO-OPEN POSITION FOR TRACKING
+            if AUTO_POSITION_TRACKING_ENABLED and POSITION_MANAGER_AVAILABLE and position_manager_global:
+                try:
+                    position_id = position_manager_global.open_position(
+                        signal=ict_signal,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        source='AUTO'
+                    )
+                    
+                    if position_id > 0:
+                        logger.info(f"✅ Position auto-opened for tracking (ID: {position_id})")
+                        
+                        # Send confirmation
+                        await bot_instance.send_message(
+                            chat_id=OWNER_CHAT_ID,
+                            text=f"📊 Position tracking started for {symbol} (ID: {position_id})",
+                            parse_mode='HTML'
+                        )
+                    
+                except Exception as e:
+                    logger.error(f"❌ Auto position open error: {e}")
         
         # 🧹 MEMORY CLEANUP
         plt.close('all')
@@ -10132,6 +10174,556 @@ async def auto_signal_job(timeframe: str, bot_instance):
         
     except Exception as e:
         logger.error(f"❌ Auto signal job error for {timeframe}: {e}")
+
+
+# ============================================================================
+# PR #7: POSITION MONITORING - HELPER FUNCTIONS
+# ============================================================================
+
+def get_live_price(symbol: str) -> Optional[float]:
+    """
+    Get live price from Binance
+    
+    Args:
+        symbol: Trading pair (e.g., 'BTCUSDT')
+        
+    Returns:
+        Current price or None
+    """
+    try:
+        response = requests.get(
+            BINANCE_PRICE_URL,
+            params={'symbol': symbol},
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            return float(data['price'])
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"❌ Get live price error for {symbol}: {e}")
+        return None
+
+
+def calculate_checkpoint_price(entry_price: float, tp_price: float, checkpoint_percent: float, signal_type: str) -> float:
+    """
+    Calculate checkpoint price
+    
+    Args:
+        entry_price: Entry price
+        tp_price: Take profit price
+        checkpoint_percent: Checkpoint percentage (0.25, 0.50, 0.75, 0.85)
+        signal_type: 'BUY' or 'SELL'
+        
+    Returns:
+        Checkpoint price
+    """
+    if signal_type == 'BUY':
+        # For BUY: checkpoint is between entry and TP (above entry)
+        distance = tp_price - entry_price
+        return entry_price + (distance * checkpoint_percent)
+    else:  # SELL
+        # For SELL: checkpoint is between entry and TP (below entry)
+        distance = entry_price - tp_price
+        return entry_price - (distance * checkpoint_percent)
+
+
+def check_checkpoint_reached(current_price: float, checkpoint_price: float, signal_type: str) -> bool:
+    """
+    Check if checkpoint has been reached
+    
+    Args:
+        current_price: Current market price
+        checkpoint_price: Checkpoint target price
+        signal_type: 'BUY' or 'SELL'
+        
+    Returns:
+        True if checkpoint reached
+    """
+    if signal_type == 'BUY':
+        # For BUY: price must reach or exceed checkpoint
+        return current_price >= checkpoint_price
+    else:  # SELL
+        # For SELL: price must reach or go below checkpoint
+        return current_price <= checkpoint_price
+
+
+def check_sl_hit(current_price: float, sl_price: float, signal_type: str) -> bool:
+    """
+    Check if stop-loss has been hit
+    
+    Args:
+        current_price: Current market price
+        sl_price: Stop loss price
+        signal_type: 'BUY' or 'SELL'
+        
+    Returns:
+        True if SL hit
+    """
+    if signal_type == 'BUY':
+        # For BUY: SL hit if price drops below SL
+        return current_price <= sl_price
+    else:  # SELL
+        # For SELL: SL hit if price rises above SL
+        return current_price >= sl_price
+
+
+def check_tp_hit(current_price: float, tp_price: float, signal_type: str) -> bool:
+    """
+    Check if take-profit has been hit
+    
+    Args:
+        current_price: Current market price
+        tp_price: Take profit price
+        signal_type: 'BUY' or 'SELL'
+        
+    Returns:
+        True if TP hit
+    """
+    if signal_type == 'BUY':
+        # For BUY: TP hit if price reaches or exceeds TP
+        return current_price >= tp_price
+    else:  # SELL
+        # For SELL: TP hit if price reaches or goes below TP
+        return current_price <= tp_price
+
+
+def reconstruct_signal_from_json(signal_json: str) -> Optional[Any]:
+    """
+    Reconstruct ICTSignal object from JSON string
+    
+    Args:
+        signal_json: JSON string of signal
+        
+    Returns:
+        Mock signal object with needed attributes or None
+    """
+    try:
+        from dataclasses import dataclass
+        
+        signal_dict = json.loads(signal_json)
+        
+        # Define a proper dataclass for signal reconstruction
+        @dataclass
+        class SignalTypeValue:
+            """Simple wrapper for signal type with value attribute"""
+            value: str
+        
+        @dataclass
+        class MockSignal:
+            """Mock signal object reconstructed from JSON"""
+            timestamp: str
+            symbol: str
+            timeframe: str
+            signal_type: SignalTypeValue
+            entry_price: float
+            sl_price: float
+            tp_prices: list
+            confidence: float
+            risk_reward_ratio: float
+            htf_bias: str
+        
+        # Create signal object
+        return MockSignal(
+            timestamp=signal_dict.get('timestamp', ''),
+            symbol=signal_dict.get('symbol', ''),
+            timeframe=signal_dict.get('timeframe', ''),
+            signal_type=SignalTypeValue(value=signal_dict.get('signal_type', '')),
+            entry_price=signal_dict.get('entry_price', 0),
+            sl_price=signal_dict.get('sl_price', 0),
+            tp_prices=signal_dict.get('tp_prices', []),
+            confidence=signal_dict.get('confidence', 0),
+            risk_reward_ratio=signal_dict.get('risk_reward_ratio', 0),
+            htf_bias=signal_dict.get('htf_bias', '')
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Signal reconstruction error: {e}")
+        return None
+
+
+def format_checkpoint_alert(
+    symbol: str,
+    timeframe: str,
+    checkpoint_level: str,
+    current_price: float,
+    entry_price: float,
+    analysis: Any
+) -> str:
+    """
+    Format beautiful checkpoint alert message
+    
+    Args:
+        symbol: Trading pair
+        timeframe: Timeframe
+        checkpoint_level: '25%', '50%', '75%', '85%'
+        current_price: Current market price
+        entry_price: Entry price
+        analysis: CheckpointAnalysis object
+        
+    Returns:
+        Formatted HTML message
+    """
+    recommendation_emoji = {
+        'HOLD': '🟢',
+        'PARTIAL_CLOSE': '🟡',
+        'CLOSE_NOW': '🔴',
+        'MOVE_SL': '🔵'
+    }
+    
+    # Get recommendation value
+    if hasattr(analysis, 'recommendation'):
+        rec_value = analysis.recommendation.value if hasattr(analysis.recommendation, 'value') else str(analysis.recommendation)
+    else:
+        rec_value = analysis.get('recommendation', 'HOLD')
+    
+    emoji = recommendation_emoji.get(rec_value, '⚪')
+    
+    # Calculate gain from entry
+    gain_percent = ((current_price - entry_price) / entry_price) * 100
+    
+    # Get analysis values
+    orig_conf = analysis.original_confidence if hasattr(analysis, 'original_confidence') else analysis.get('original_confidence', 0)
+    curr_conf = analysis.current_confidence if hasattr(analysis, 'current_confidence') else analysis.get('current_confidence', 0)
+    conf_delta = analysis.confidence_delta if hasattr(analysis, 'confidence_delta') else analysis.get('confidence_delta', 0)
+    htf_changed = analysis.htf_bias_changed if hasattr(analysis, 'htf_bias_changed') else analysis.get('htf_bias_changed', False)
+    struct_broken = analysis.structure_broken if hasattr(analysis, 'structure_broken') else analysis.get('structure_broken', False)
+    valid_comps = analysis.valid_components_count if hasattr(analysis, 'valid_components_count') else analysis.get('valid_components_count', 0)
+    curr_rr = analysis.current_rr_ratio if hasattr(analysis, 'current_rr_ratio') else analysis.get('current_rr_ratio', 0)
+    reasoning = analysis.reasoning if hasattr(analysis, 'reasoning') else analysis.get('reasoning', '')
+    warnings = analysis.warnings if hasattr(analysis, 'warnings') else analysis.get('warnings', [])
+    
+    msg = f"""
+🔄 <b>CHECKPOINT ALERT - {checkpoint_level} to TP1</b>
+
+━━━━━━━━━━━━━━━━━
+📊 <b>{symbol}</b> ({timeframe.upper()})
+Current Price: ${current_price:,.2f}
+Gain from Entry: {gain_percent:+.2f}%
+
+━━━━━━━━━━━━━━━━━
+📈 <b>RE-ANALYSIS COMPLETE</b>
+
+Original Confidence: {orig_conf:.1f}%
+Current Confidence: {curr_conf:.1f}%
+<b>Change: {conf_delta:+.1f}%</b>
+
+HTF Bias: {"❌ <b>CHANGED</b>" if htf_changed else "✅ Unchanged"}
+Structure: {"❌ <b>BROKEN</b>" if struct_broken else "✅ Intact"}
+Valid Components: {valid_comps}
+Current R:R: {curr_rr:.2f}
+
+━━━━━━━━━━━━━━━━━
+{emoji} <b>RECOMMENDATION: {rec_value}</b>
+
+<i>{reasoning}</i>
+"""
+    
+    if warnings:
+        msg += "\n\n⚠️ <b>Warnings:</b>\n"
+        for warning in warnings:
+            msg += f"• {warning}\n"
+    
+    return msg
+
+
+async def handle_sl_hit(position: Dict, exit_price: float, bot_instance):
+    """
+    Handle stop-loss hit - auto close position
+    
+    Args:
+        position: Position dictionary
+        exit_price: Exit price
+        bot_instance: Telegram bot instance
+    """
+    try:
+        if not POSITION_MANAGER_AVAILABLE or not position_manager_global:
+            return
+        
+        pl_percent = position_manager_global.close_position(
+            position_id=position['id'],
+            exit_price=exit_price,
+            outcome='SL'
+        )
+        
+        # Calculate duration
+        opened_at = datetime.fromisoformat(position['opened_at'])
+        duration = datetime.now(timezone.utc) - opened_at
+        hours = duration.total_seconds() / 3600
+        
+        msg = f"""
+🛑 <b>STOP-LOSS HIT</b>
+
+━━━━━━━━━━━━━━━━━
+📊 <b>{position['symbol']}</b> ({position['timeframe'].upper()})
+Signal: {position['signal_type']}
+
+Entry: ${position['entry_price']:,.2f}
+Exit (SL): ${exit_price:,.2f}
+<b>Loss: {pl_percent:.2f}%</b>
+
+Duration: {hours:.1f} hours
+
+━━━━━━━━━━━━━━━━━
+✅ Position closed automatically.
+"""
+        
+        await bot_instance.send_message(
+            chat_id=OWNER_CHAT_ID,
+            text=msg,
+            parse_mode='HTML'
+        )
+        
+        logger.info(f"🛑 SL hit for {position['symbol']}: {pl_percent:.2f}%")
+        
+    except Exception as e:
+        logger.error(f"❌ Handle SL hit error: {e}")
+
+
+async def handle_tp_hit(position: Dict, exit_price: float, tp_level: str, bot_instance):
+    """
+    Handle take-profit hit - auto close position
+    
+    Args:
+        position: Position dictionary
+        exit_price: Exit price
+        tp_level: 'TP1', 'TP2', or 'TP3'
+        bot_instance: Telegram bot instance
+    """
+    try:
+        if not POSITION_MANAGER_AVAILABLE or not position_manager_global:
+            return
+        
+        pl_percent = position_manager_global.close_position(
+            position_id=position['id'],
+            exit_price=exit_price,
+            outcome=tp_level
+        )
+        
+        # Calculate duration
+        opened_at = datetime.fromisoformat(position['opened_at'])
+        duration = datetime.now(timezone.utc) - opened_at
+        hours = duration.total_seconds() / 3600
+        
+        msg = f"""
+🎯 <b>TAKE-PROFIT HIT - {tp_level}</b>
+
+━━━━━━━━━━━━━━━━━
+📊 <b>{position['symbol']}</b> ({position['timeframe'].upper()})
+Signal: {position['signal_type']}
+
+Entry: ${position['entry_price']:,.2f}
+Exit ({tp_level}): ${exit_price:,.2f}
+<b>Profit: +{pl_percent:.2f}%</b>
+
+Duration: {hours:.1f} hours
+
+━━━━━━━━━━━━━━━━━
+🎉 Position closed successfully!
+"""
+        
+        await bot_instance.send_message(
+            chat_id=OWNER_CHAT_ID,
+            text=msg,
+            parse_mode='HTML'
+        )
+        
+        logger.info(f"🎯 {tp_level} hit for {position['symbol']}: +{pl_percent:.2f}%")
+        
+    except Exception as e:
+        logger.error(f"❌ Handle TP hit error: {e}")
+
+
+# ============================================================================
+# PR #7: POSITION MONITORING JOB
+# ============================================================================
+
+@safe_job("position_monitor", max_retries=2, retry_delay=30)
+async def monitor_positions_job(bot_instance):
+    """
+    Monitor all open positions every minute
+    - Check checkpoint triggers
+    - Perform re-analysis
+    - Send alerts
+    - Detect SL/TP hits
+    """
+    try:
+        if not POSITION_MANAGER_AVAILABLE or not position_manager_global:
+            return
+        
+        if not CHECKPOINT_MONITORING_ENABLED:
+            return
+        
+        positions = position_manager_global.get_open_positions()
+        
+        if not positions:
+            return
+        
+        logger.info(f"📊 Monitoring {len(positions)} open position(s)")
+        
+        for position in positions:
+            try:
+                symbol = position['symbol']
+                timeframe = position['timeframe']
+                signal_type = position['signal_type']
+                entry_price = position['entry_price']
+                tp1_price = position['tp1_price']
+                sl_price = position['sl_price']
+                
+                # Get live price
+                current_price = get_live_price(symbol)
+                if not current_price:
+                    logger.warning(f"⚠️ Could not get live price for {symbol}")
+                    continue
+                
+                # Check SL/TP hits first
+                if AUTO_CLOSE_ON_SL_HIT and check_sl_hit(current_price, sl_price, signal_type):
+                    await handle_sl_hit(position, current_price, bot_instance)
+                    continue
+                
+                if AUTO_CLOSE_ON_TP_HIT and check_tp_hit(current_price, tp1_price, signal_type):
+                    await handle_tp_hit(position, current_price, 'TP1', bot_instance)
+                    continue
+                
+                # Calculate checkpoints
+                checkpoints = {
+                    '25%': calculate_checkpoint_price(entry_price, tp1_price, 0.25, signal_type),
+                    '50%': calculate_checkpoint_price(entry_price, tp1_price, 0.50, signal_type),
+                    '75%': calculate_checkpoint_price(entry_price, tp1_price, 0.75, signal_type),
+                    '85%': calculate_checkpoint_price(entry_price, tp1_price, 0.85, signal_type)
+                }
+                
+                # Check each checkpoint
+                for level, checkpoint_price in checkpoints.items():
+                    checkpoint_key = f'checkpoint_{level.replace("%", "")}_triggered'
+                    
+                    if position.get(checkpoint_key):
+                        continue  # Already triggered
+                    
+                    # Check if reached
+                    reached = check_checkpoint_reached(current_price, checkpoint_price, signal_type)
+                    
+                    if not reached:
+                        continue
+                    
+                    # ✅ CHECKPOINT REACHED - RE-ANALYZE
+                    logger.info(f"🔄 {symbol} reached {level} checkpoint at ${current_price:,.2f}")
+                    
+                    # Fetch current market data
+                    try:
+                        klines_response = requests.get(
+                            BINANCE_KLINES_URL,
+                            params={'symbol': symbol, 'interval': timeframe, 'limit': 200},
+                            timeout=10
+                        )
+                        
+                        if klines_response.status_code != 200:
+                            logger.warning(f"⚠️ Failed to fetch klines for {symbol}")
+                            continue
+                        
+                        klines_data = klines_response.json()
+                        df = pd.DataFrame(klines_data, columns=[
+                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                            'taker_buy_quote', 'ignore'
+                        ])
+                        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                        for col in ['open', 'high', 'low', 'close', 'volume']:
+                            df[col] = df[col].astype(float)
+                        
+                        # Fetch MTF data
+                        mtf_data = fetch_mtf_data(symbol, timeframe, df)
+                        
+                        # Generate current signal
+                        current_signal = ict_engine_global.generate_signal(
+                            df=df,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            mtf_data=mtf_data
+                        )
+                        
+                        if not current_signal:
+                            logger.warning(f"⚠️ No current signal generated for {symbol}")
+                            continue
+                        
+                        # Reconstruct original signal from JSON
+                        original_signal = reconstruct_signal_from_json(position['original_signal_json'])
+                        
+                        if not original_signal:
+                            logger.warning(f"⚠️ Could not reconstruct original signal for {symbol}")
+                            continue
+                        
+                        # Perform re-analysis
+                        if TRADE_REANALYSIS_AVAILABLE and reanalysis_engine_global:
+                            analysis = reanalysis_engine_global.reanalyze_at_checkpoint(
+                                original_signal=original_signal,
+                                current_signal=current_signal,
+                                checkpoint_level=level,
+                                current_price=current_price,
+                                entry_price=entry_price,
+                                tp_price=tp1_price,
+                                sl_price=sl_price
+                            )
+                        else:
+                            # Fallback: create simple analysis
+                            analysis = {
+                                'checkpoint_level': level,
+                                'original_confidence': original_signal.confidence,
+                                'current_confidence': current_signal.confidence,
+                                'confidence_delta': current_signal.confidence - original_signal.confidence,
+                                'htf_bias_changed': original_signal.htf_bias != current_signal.htf_bias,
+                                'structure_broken': False,
+                                'valid_components_count': 0,
+                                'current_rr_ratio': 0,
+                                'recommendation': 'HOLD',
+                                'reasoning': 'Checkpoint reached',
+                                'warnings': []
+                            }
+                        
+                        # Mark as triggered
+                        position_manager_global.update_checkpoint_triggered(position['id'], level)
+                        
+                        # Log to database
+                        position_manager_global.log_checkpoint_alert(
+                            position_id=position['id'],
+                            checkpoint_level=level,
+                            trigger_price=current_price,
+                            analysis=analysis,
+                            action_taken='ALERTED'
+                        )
+                        
+                        # Send Telegram alert
+                        alert_msg = format_checkpoint_alert(
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            checkpoint_level=level,
+                            current_price=current_price,
+                            entry_price=entry_price,
+                            analysis=analysis
+                        )
+                        
+                        await bot_instance.send_message(
+                            chat_id=OWNER_CHAT_ID,
+                            text=alert_msg,
+                            parse_mode='HTML',
+                            disable_notification=False  # Sound alert
+                        )
+                        
+                        logger.info(f"✅ Checkpoint alert sent for {symbol} {level}")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Checkpoint re-analysis error for {symbol}: {e}")
+                        continue
+                
+            except Exception as e:
+                logger.error(f"❌ Position monitoring error for {position.get('symbol', 'unknown')}: {e}")
+                continue
+        
+    except Exception as e:
+        logger.error(f"❌ Position monitor job error: {e}")
 
 
 async def send_auto_news(context: ContextTypes.DEFAULT_TYPE):
@@ -14817,6 +15409,300 @@ async def debug_mode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='HTML')
 
 
+# ============================================================================
+# PR #7: POSITION MANAGEMENT COMMANDS
+# ============================================================================
+
+@require_access()
+@rate_limited(calls=20, period=60)
+async def position_list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /position_list
+    Show all open positions with current prices and unrealized P&L
+    """
+    try:
+        if not POSITION_MANAGER_AVAILABLE or not position_manager_global:
+            await update.message.reply_text(
+                "❌ Position Manager not available",
+                parse_mode='HTML'
+            )
+            return
+        
+        positions = position_manager_global.get_open_positions()
+        
+        if not positions:
+            await update.message.reply_text(
+                "📊 No open positions",
+                parse_mode='HTML'
+            )
+            return
+        
+        msg = f"<b>📊 OPEN POSITIONS ({len(positions)})</b>\n\n"
+        
+        for pos in positions:
+            symbol = pos['symbol']
+            current_price = get_live_price(symbol)
+            
+            # Calculate unrealized P&L
+            if current_price:
+                if pos['signal_type'] == 'BUY':
+                    unrealized_pl = ((current_price - pos['entry_price']) / pos['entry_price']) * 100
+                else:  # SELL
+                    unrealized_pl = ((pos['entry_price'] - current_price) / pos['entry_price']) * 100
+            else:
+                unrealized_pl = 0.0
+            
+            pl_emoji = "🟢" if unrealized_pl > 0 else "🔴" if unrealized_pl < 0 else "⚪"
+            
+            # Format checkpoints status
+            checkpoints_status = []
+            if pos.get('checkpoint_25_triggered'):
+                checkpoints_status.append('25%')
+            if pos.get('checkpoint_50_triggered'):
+                checkpoints_status.append('50%')
+            if pos.get('checkpoint_75_triggered'):
+                checkpoints_status.append('75%')
+            if pos.get('checkpoint_85_triggered'):
+                checkpoints_status.append('85%')
+            
+            checkpoints_str = ', '.join(checkpoints_status) if checkpoints_status else 'None'
+            
+            # Format timestamp
+            try:
+                opened_at = datetime.fromisoformat(pos['opened_at'])
+                opened_str = opened_at.strftime('%Y-%m-%d %H:%M')
+            except:
+                opened_str = pos['opened_at']
+            
+            msg += f"""
+━━━━━━━━━━━━━━━━━
+<b>{symbol}</b> ({pos['timeframe'].upper()}) - {pos['signal_type']}
+ID: {pos['id']}
+Entry: ${pos['entry_price']:,.2f}
+Current: ${current_price:,.2f if current_price else 'N/A'}
+{pl_emoji} Unrealized P&L: {unrealized_pl:+.2f}%
+
+TP1: ${pos['tp1_price']:,.2f}
+SL: ${pos['sl_price']:,.2f}
+Size: {pos.get('current_size', 1.0)*100:.0f}%
+
+Checkpoints: {checkpoints_str}
+Opened: {opened_str}
+Source: {pos.get('source', 'N/A')}
+"""
+        
+        await update.message.reply_text(msg, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Position list error: {e}")
+        await update.message.reply_text(f"❌ Error: {e}", parse_mode='HTML')
+
+
+@require_access()
+@rate_limited(calls=10, period=60)
+async def position_close_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /position_close <symbol>
+    Manually close a position
+    
+    Example: /position_close BTCUSDT
+    """
+    try:
+        if not POSITION_MANAGER_AVAILABLE or not position_manager_global:
+            await update.message.reply_text(
+                "❌ Position Manager not available",
+                parse_mode='HTML'
+            )
+            return
+        
+        if not context.args or len(context.args) < 1:
+            await update.message.reply_text(
+                "❌ Usage: /position_close <symbol>\nExample: /position_close BTCUSDT",
+                parse_mode='HTML'
+            )
+            return
+        
+        symbol = context.args[0].upper()
+        
+        # Find position by symbol
+        positions = position_manager_global.get_open_positions()
+        position = None
+        for pos in positions:
+            if pos['symbol'] == symbol:
+                position = pos
+                break
+        
+        if not position:
+            await update.message.reply_text(
+                f"❌ No open position found for {symbol}",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Get current price
+        current_price = get_live_price(symbol)
+        if not current_price:
+            await update.message.reply_text(
+                f"❌ Could not get current price for {symbol}",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Close position
+        pl_percent = position_manager_global.close_position(
+            position_id=position['id'],
+            exit_price=current_price,
+            outcome='MANUAL_CLOSE'
+        )
+        
+        msg = f"""
+✅ <b>POSITION CLOSED</b>
+
+━━━━━━━━━━━━━━━━━
+📊 <b>{symbol}</b> ({position['timeframe'].upper()})
+Signal: {position['signal_type']}
+
+Entry: ${position['entry_price']:,.2f}
+Exit: ${current_price:,.2f}
+<b>P&L: {pl_percent:+.2f}%</b>
+
+━━━━━━━━━━━━━━━━━
+Position closed manually.
+"""
+        
+        await update.message.reply_text(msg, parse_mode='HTML')
+        logger.info(f"✅ Position manually closed: {symbol}, P&L: {pl_percent:+.2f}%")
+        
+    except Exception as e:
+        logger.error(f"Position close error: {e}")
+        await update.message.reply_text(f"❌ Error: {e}", parse_mode='HTML')
+
+
+@require_access()
+@rate_limited(calls=20, period=60)
+async def position_history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /position_history [limit]
+    Show recent closed positions with P&L stats
+    
+    Example: /position_history 10
+    """
+    try:
+        if not POSITION_MANAGER_AVAILABLE or not position_manager_global:
+            await update.message.reply_text(
+                "❌ Position Manager not available",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Get limit from args or default to 10
+        limit = 10
+        if context.args and len(context.args) > 0:
+            try:
+                limit = min(int(context.args[0]), 50)  # Max 50
+            except:
+                pass
+        
+        history = position_manager_global.get_position_history(limit=limit)
+        
+        if not history:
+            await update.message.reply_text(
+                "📊 No position history",
+                parse_mode='HTML'
+            )
+            return
+        
+        msg = f"<b>📊 POSITION HISTORY (Last {len(history)})</b>\n\n"
+        
+        for pos in history:
+            pl_emoji = "🟢" if pos['profit_loss_percent'] > 0 else "🔴"
+            
+            # Format timestamp
+            try:
+                closed_at = datetime.fromisoformat(pos['closed_at'])
+                closed_str = closed_at.strftime('%Y-%m-%d %H:%M')
+            except:
+                closed_str = pos['closed_at']
+            
+            msg += f"""
+━━━━━━━━━━━━━━━━━
+<b>{pos['symbol']}</b> ({pos['timeframe'].upper()}) - {pos['signal_type']}
+{pl_emoji} P&L: <b>{pos['profit_loss_percent']:+.2f}%</b>
+Outcome: {pos['outcome']}
+Duration: {pos.get('duration_hours', 0):.1f}h
+Checkpoints: {pos.get('checkpoints_triggered', 0)}
+Closed: {closed_str}
+"""
+        
+        await update.message.reply_text(msg, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Position history error: {e}")
+        await update.message.reply_text(f"❌ Error: {e}", parse_mode='HTML')
+
+
+@require_access()
+@rate_limited(calls=10, period=60)
+async def position_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /position_stats
+    Show aggregate position statistics
+    """
+    try:
+        if not POSITION_MANAGER_AVAILABLE or not position_manager_global:
+            await update.message.reply_text(
+                "❌ Position Manager not available",
+                parse_mode='HTML'
+            )
+            return
+        
+        stats = position_manager_global.get_position_stats()
+        
+        if not stats or stats['total_positions'] == 0:
+            await update.message.reply_text(
+                "📊 No position statistics available",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Format message
+        win_emoji = "🔥" if stats['win_rate'] >= 70 else "💪" if stats['win_rate'] >= 60 else "👍"
+        pl_emoji = "💰" if stats['avg_pl_percent'] > 0 else "📉"
+        
+        msg = f"""
+<b>📊 POSITION STATISTICS</b>
+
+━━━━━━━━━━━━━━━━━
+📈 <b>OVERVIEW</b>
+
+Total Positions: {stats['total_positions']}
+Open Positions: {stats['open_positions']}
+
+━━━━━━━━━━━━━━━━━
+🎯 <b>PERFORMANCE</b>
+
+{win_emoji} Win Rate: <b>{stats['win_rate']:.1f}%</b>
+✅ Winning: {stats['winning_positions']}
+❌ Losing: {stats['losing_positions']}
+
+{pl_emoji} Avg P&L: <b>{stats['avg_pl_percent']:+.2f}%</b>
+
+━━━━━━━━━━━━━━━━━
+⏱️ <b>METRICS</b>
+
+Avg Duration: {stats['avg_duration_hours']:.1f}h
+Avg Checkpoints: {stats['avg_checkpoints_triggered']:.1f}
+"""
+        
+        await update.message.reply_text(msg, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Position stats error: {e}")
+        await update.message.reply_text(f"❌ Error: {e}", parse_mode='HTML')
+
+
+
+
 def main():
     # HTTPx клиент с persistent connection и retry логика
     from httpx import Limits
@@ -14912,6 +15798,12 @@ def main():
     app.add_handler(CommandHandler("weekly_report", weekly_report_cmd))  # Седмичен отчет
     app.add_handler(CommandHandler("monthly_report", monthly_report_cmd))  # Месечен отчет
     app.add_handler(CommandHandler("reports", reports_cmd))  # Централизирани отчети
+    
+    # PR #7: Position management commands
+    app.add_handler(CommandHandler("position_list", position_list_cmd))  # Show open positions
+    app.add_handler(CommandHandler("position_close", position_close_cmd))  # Close position manually
+    app.add_handler(CommandHandler("position_history", position_history_cmd))  # Position history
+    app.add_handler(CommandHandler("position_stats", position_stats_cmd))  # Position statistics
     
     # Кратки съкращения
     app.add_handler(CommandHandler("m", market_cmd))  # /m = /market
@@ -15556,8 +16448,21 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             )
             logger.info("✅ Auto signal 1D scheduled (daily at 09:15 UTC)")
             
+            # ================= PR #7: POSITION MONITORING JOB =================
+            # Position monitoring - Every 1 minute
+            if POSITION_MANAGER_AVAILABLE and CHECKPOINT_MONITORING_ENABLED:
+                scheduler.add_job(
+                    lambda: asyncio.create_task(monitor_positions_job(application.bot)),
+                    'cron',
+                    minute='*',  # Every minute
+                    id='position_monitor',
+                    name='Position Monitor',
+                    replace_existing=True
+                )
+                logger.info("✅ Position monitor scheduled (every 1 minute)")
+            
             scheduler.start()
-            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC) + 🧹 CACHE CLEANUP (10 min) + 🤖 ML AUTO-TRAINING (weekly) + 🤖 AUTO SIGNALS (1H, 2H, 4H, 1D)")
+            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC) + 🧹 CACHE CLEANUP (10 min) + 🤖 ML AUTO-TRAINING (weekly) + 🤖 AUTO SIGNALS (1H, 2H, 4H, 1D) + 📊 POSITION MONITORING (PR #7)")
             
             # 🎯 INITIALIZE AND START REAL-TIME POSITION MONITOR (v2.1.0)
             global real_time_monitor_global
