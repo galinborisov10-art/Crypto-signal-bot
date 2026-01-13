@@ -104,6 +104,14 @@ class ChartGenerator:
             self._plot_sibi_ssib_zones(ax_price, signal.sibi_ssib_zones)
             self._plot_liquidity_zones(ax_price, signal.liquidity_zones)
             
+            # ✅ FIX 4: Plot Order Blocks with strength labels (top 5)
+            if hasattr(signal, 'order_blocks') and signal.order_blocks:
+                self._plot_order_blocks_enhanced(ax_price, signal.order_blocks, df)
+            
+            # ✅ FIX 4: Enhanced Whale Blocks with confidence labels (already plotted, add labels)
+            if hasattr(signal, 'whale_blocks') and signal.whale_blocks:
+                self._plot_whale_blocks_enhanced(ax_price, signal.whale_blocks, df)
+            
             # Plot liquidity sweeps (if available)
             if hasattr(signal, 'liquidity_sweeps') and signal.liquidity_sweeps:
                 self._plot_liquidity_sweeps(ax_price, signal.liquidity_sweeps, df)
@@ -490,6 +498,122 @@ class ChartGenerator:
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
             family='monospace'
         )
+    
+    def _plot_order_blocks_enhanced(self, ax, order_blocks: List, df: pd.DataFrame):
+        """
+        ✅ FIX 4: Plot Order Blocks with strength labels (top 5)
+        
+        Args:
+            ax: Matplotlib axis
+            order_blocks: List of order block objects/dicts
+            df: Price dataframe for positioning
+        """
+        logger.info("📦 Plotting Order Blocks with strength labels...")
+        
+        # Take top 5 order blocks
+        top_obs = order_blocks[:5] if len(order_blocks) > 5 else order_blocks
+        
+        for i, ob in enumerate(top_obs):
+            try:
+                # Handle both dict and object types
+                if isinstance(ob, dict):
+                    ob_low = ob.get('zone_low') or ob.get('bottom')
+                    ob_high = ob.get('zone_high') or ob.get('top')
+                    ob_type = ob.get('type', 'UNKNOWN')
+                    ob_strength = ob.get('strength', 50)
+                else:
+                    ob_low = getattr(ob, 'zone_low', None) or getattr(ob, 'bottom', None)
+                    ob_high = getattr(ob, 'zone_high', None) or getattr(ob, 'top', None)
+                    ob_type = str(getattr(ob, 'type', 'UNKNOWN'))
+                    ob_strength = getattr(ob, 'strength', 50)
+                
+                if not ob_low or not ob_high:
+                    logger.warning(f"⚠️ Skipping OB {i+1} - invalid bounds")
+                    continue
+                
+                # Color based on type
+                is_bullish = 'BULLISH' in ob_type.upper()
+                color = 'dodgerblue' if is_bullish else 'tomato'
+                alpha = 0.15 + (ob_strength / 100) * 0.25  # 0.15-0.40 based on strength
+                
+                # Plot horizontal span across the chart
+                ax.axhspan(
+                    ob_low, ob_high,
+                    color=color, alpha=alpha,
+                    label=f'Order Block' if i == 0 else '',
+                    zorder=2
+                )
+                
+                # Add text label (positioned on left side)
+                label_x = len(df) * 0.05  # 5% from left
+                label_y = (ob_low + ob_high) / 2
+                
+                ax.text(
+                    label_x, label_y,
+                    f'OB{i+1}\n{ob_strength:.0f}%',
+                    fontsize=8,
+                    color=color,
+                    weight='bold',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7),
+                    zorder=5,
+                    ha='center',
+                    va='center'
+                )
+                
+                logger.info(f"✅ Plotted OB {i+1}: ${ob_low:.2f}-${ob_high:.2f} ({ob_type}, {ob_strength:.0f}%)")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Error plotting OB {i+1}: {e}")
+    
+    def _plot_whale_blocks_enhanced(self, ax, whale_blocks: List, df: pd.DataFrame):
+        """
+        ✅ FIX 4: Add confidence labels to Whale Blocks (top 3)
+        
+        Args:
+            ax: Matplotlib axis
+            whale_blocks: List of whale block objects/dicts
+            df: Price dataframe for positioning
+        """
+        logger.info("🐋 Adding confidence labels to Whale Blocks...")
+        
+        # Take top 3 whale blocks
+        top_whales = whale_blocks[:3] if len(whale_blocks) > 3 else whale_blocks
+        
+        for i, wb in enumerate(top_whales):
+            try:
+                if isinstance(wb, dict):
+                    wb_low = wb.get('bottom') or wb.get('low') or wb.get('price_low')
+                    wb_high = wb.get('top') or wb.get('high') or wb.get('price_high')
+                    wb_confidence = wb.get('confidence', 50)
+                else:
+                    wb_low = getattr(wb, 'bottom', None) or getattr(wb, 'low', None) or getattr(wb, 'price_low', None)
+                    wb_high = getattr(wb, 'top', None) or getattr(wb, 'high', None) or getattr(wb, 'price_high', None)
+                    wb_confidence = getattr(wb, 'confidence', 50)
+                
+                if not wb_low or not wb_high:
+                    logger.warning(f"⚠️ Skipping Whale {i+1} - invalid bounds")
+                    continue
+                
+                # Add label (positioned on right side)
+                label_x = len(df) * 0.95  # 95% from left (right side)
+                label_y = (wb_low + wb_high) / 2
+                
+                ax.text(
+                    label_x, label_y,
+                    f'🐋{i+1}\n{wb_confidence:.0f}%',
+                    fontsize=8,
+                    color='purple',
+                    weight='bold',
+                    ha='right',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7),
+                    zorder=5,
+                    va='center'
+                )
+                
+                logger.info(f"✅ Added Whale {i+1} label: ${wb_low:.2f}-${wb_high:.2f} ({wb_confidence:.0f}%)")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Error adding Whale {i+1} label: {e}")
 
 
 def generate_chart(df: pd.DataFrame, signal, symbol: str, timeframe: str) -> bytes:

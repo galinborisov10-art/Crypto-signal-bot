@@ -1173,6 +1173,21 @@ class ICTSignalEngine:
         logger.info(f"   → Signal Strength: {signal_strength.value}")
         logger.info(f"   → Confidence: {confidence:.1f}%")
         
+        # ✅ FIX 3: STEP 12a - Entry Timing Validation
+        logger.info("🔍 Step 12a: Entry Timing Validation")
+        is_valid, reason = self._validate_entry_timing(
+            entry_price, 
+            current_price, 
+            signal_type,
+            bias
+        )
+        
+        if not is_valid:
+            logger.error(f"❌ BLOCKED at Step 12a: {reason}")
+            return None  # Don't send invalid signal
+        else:
+            logger.info(f"   → {reason}")
+        
         reasoning = self._generate_reasoning(ict_components, bias, entry_setup, mtf_analysis)
         warnings = self._generate_warnings(ict_components, risk_reward_ratio, df)
         
@@ -2501,16 +2516,19 @@ class ICTSignalEngine:
             zone_low = min(price_zone)
             
             # SL = lower of:  zone bottom - buffer OR recent swing low
-            buffer = atr * 0.5  # 0.5 ATR buffer
+            buffer = atr * 1.5  # ✅ INCREASED: 1.5 ATR buffer for volatility protection
             sl_from_zone = zone_low - buffer
             sl_from_swing = recent_low - buffer
             
             sl_price = min(sl_from_zone, sl_from_swing)
             
-            # Ensure minimum distance (1% from entry)
-            # ✅ BULLISH: SL MUST be BELOW entry, so use max() to push SL downward
-            min_sl = entry_price * 0.99
-            return max(sl_price, min_sl)  # FIXED: Changed min() to max()
+            # Ensure minimum distance (3% from entry for volatility protection)
+            # ✅ BULLISH: SL MUST be BELOW entry
+            min_sl_distance = entry_price * 0.03
+            if abs(sl_price - entry_price) < min_sl_distance:
+                sl_price = entry_price * 0.97  # At least 3% below for BUY
+            
+            return sl_price
         
         else:  # BEARISH
             # SL above last swing high OR above OB/FVG zone
@@ -2522,16 +2540,67 @@ class ICTSignalEngine:
             zone_high = max(price_zone)
             
             # SL = higher of: zone top + buffer OR recent swing high
-            buffer = atr * 0.5
+            buffer = atr * 1.5  # ✅ INCREASED: 1.5 ATR buffer for volatility protection
             sl_from_zone = zone_high + buffer
             sl_from_swing = recent_high + buffer
             
             sl_price = max(sl_from_zone, sl_from_swing)
             
-            # Ensure minimum distance (1% from entry)
-            # ✅ BEARISH: SL MUST be ABOVE entry, so use min() to keep SL tight but compliant
-            max_sl = entry_price * 1.01
-            return min(sl_price, max_sl)  # FIXED: Changed max() to min()
+            # ✅ REMOVED 1% CAP - Now using minimum 3% distance for volatility protection
+            # Ensure minimum distance (3% from entry for volatility protection)
+            # ✅ BEARISH: SL MUST be ABOVE entry
+            min_sl_distance = entry_price * 0.03
+            if abs(sl_price - entry_price) < min_sl_distance:
+                sl_price = entry_price * 1.03  # At least 3% above for SELL
+            
+            return sl_price
+
+    def _validate_entry_timing(
+        self,
+        entry_price: float,
+        current_price: float,
+        signal_type,
+        bias
+    ) -> Tuple[bool, str]:
+        """
+        ✅ FIX 3: Validate that entry is still achievable
+        
+        ICT Rule: 
+        - SELL: Entry MUST be ABOVE current price (waiting for retracement rally)
+        - BUY: Entry MUST be BELOW current price (waiting for pullback)
+        
+        Args:
+            entry_price: Proposed entry price
+            current_price: Current market price
+            signal_type: Signal type (BUY/SELL/STRONG_BUY/STRONG_SELL)
+            bias: Market bias
+            
+        Returns:
+            Tuple[bool, str]: (is_valid, reason_message)
+        """
+        # Get signal type string
+        signal_type_str = signal_type.value if hasattr(signal_type, 'value') else str(signal_type)
+        
+        # Maximum acceptable distance: 20% (likely stale if further)
+        max_distance_pct = 0.20
+        
+        if signal_type_str in ['SELL', 'STRONG_SELL']:
+            if entry_price <= current_price:
+                return False, f"❌ SELL entry ${entry_price:.2f} is NOT above current price ${current_price:.2f} - trade already happened!"
+            
+            distance_pct = (entry_price - current_price) / current_price
+            if distance_pct > max_distance_pct:
+                return False, f"❌ SELL entry {distance_pct*100:.1f}% above current price - likely stale signal (max 20%)"
+        
+        elif signal_type_str in ['BUY', 'STRONG_BUY']:
+            if entry_price >= current_price:
+                return False, f"❌ BUY entry ${entry_price:.2f} is NOT below current price ${current_price:.2f} - trade already happened!"
+            
+            distance_pct = (current_price - entry_price) / current_price
+            if distance_pct > max_distance_pct:
+                return False, f"❌ BUY entry {distance_pct*100:.1f}% below current price - likely stale signal (max 20%)"
+        
+        return True, "✅ Entry timing valid"
 
     def _validate_sl_position(self, sl_price: float, order_block, direction, entry_price: float) -> Tuple[float, bool]:
         """

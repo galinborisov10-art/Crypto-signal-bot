@@ -7789,14 +7789,22 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
     emoji = signal_emoji.get(signal.signal_type.value, '⚪')
     strength_stars = '🔥' * signal.signal_strength.value
     
-    # Определи знака за TP процентите
-    is_buy = signal.signal_type.value in ['BUY', 'STRONG_BUY']
-    tp_sign = '+' if is_buy else '-'
+    # ✅ FIX 2: Determine signal direction and calculate TP percentages correctly
+    is_sell = signal.signal_type.value in ['SELL', 'STRONG_SELL']
     
-    # Изчисли TP процентите спрямо Entry
-    tp1_pct = abs((signal.tp_prices[0] - signal.entry_price) / signal.entry_price * 100) if signal.tp_prices else 0
-    tp2_pct = abs((signal.tp_prices[1] - signal.entry_price) / signal.entry_price * 100) if len(signal.tp_prices) > 1 else 0
-    tp3_pct = abs((signal.tp_prices[2] - signal.entry_price) / signal.entry_price * 100) if len(signal.tp_prices) > 2 else 0
+    # Calculate TP percentages with correct direction
+    if is_sell:
+        # For SELL: Lower TP = Profit (invert calculation)
+        tp_direction = "▼"
+        tp1_pct = ((signal.entry_price - signal.tp_prices[0]) / signal.entry_price * 100) if signal.tp_prices else 0
+        tp2_pct = ((signal.entry_price - signal.tp_prices[1]) / signal.entry_price * 100) if len(signal.tp_prices) > 1 else 0
+        tp3_pct = ((signal.entry_price - signal.tp_prices[2]) / signal.entry_price * 100) if len(signal.tp_prices) > 2 else 0
+    else:
+        # For BUY: Higher TP = Profit (normal calculation)
+        tp_direction = "▲"
+        tp1_pct = ((signal.tp_prices[0] - signal.entry_price) / signal.entry_price * 100) if signal.tp_prices else 0
+        tp2_pct = ((signal.tp_prices[1] - signal.entry_price) / signal.entry_price * 100) if len(signal.tp_prices) > 1 else 0
+        tp3_pct = ((signal.tp_prices[2] - signal.entry_price) / signal.entry_price * 100) if len(signal.tp_prices) > 2 else 0
     
     # Source badge
     source_badge = {
@@ -7827,9 +7835,9 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
 <b>🛑 STOP LOSS:</b> ${signal.sl_price:,.4f}
 
 <b>🎯 TAKE PROFITS:</b>
-   • TP1: ${signal.tp_prices[0]:,.4f} ({tp_sign}{tp1_pct:.2f}%)
-   • TP2: ${signal.tp_prices[1]:,.4f} ({tp_sign}{tp2_pct:.2f}%)
-   • TP3: ${signal.tp_prices[2]:,.4f} ({tp_sign}{tp3_pct:.2f}%)
+   • TP1: ${signal.tp_prices[0]:,.4f} ({tp_direction}{tp1_pct:.2f}%)
+   • TP2: ${signal.tp_prices[1]:,.4f} ({tp_direction}{tp2_pct:.2f}%)
+   • TP3: ${signal.tp_prices[2]:,.4f} ({tp_direction}{tp3_pct:.2f}%)
 
 <b>⚖️ RISK/REWARD:</b> 1:{signal.risk_reward_ratio:.2f} {'✅' if signal.risk_reward_ratio >= 3.0 else '⚠️'}
 
