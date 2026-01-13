@@ -5466,6 +5466,8 @@ The owner can approve you with: <code>/approve {}</code>
 /alerts - Вкл/Изкл
 /alerts 30 - Промени интервала на 30 мин
 
+<i>📊 Auto timeframes: 1H (hourly), 2H (every 2h), 4H (every 4h), 1D (daily)</i>
+
 <b>🔐 11. Админ панел:</b>
 /admin_login - Вход в админ (нужна парола)
 /admin_daily - Дневен отчет
@@ -9929,6 +9931,207 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     plt.close('all')
     gc.collect()
     logger.info(f"✅ Auto signal cycle complete. Sent {len(signals_to_send)} signals.")
+
+
+# ✅ PR #6: AUTO SIGNAL SCHEDULER JOB - для конкретного timeframe
+@safe_job("auto_signal_timeframe", max_retries=3, retry_delay=60)
+async def auto_signal_job(timeframe: str, bot_instance):
+    """
+    Auto signal job for scheduled timeframes (1h, 2h, 4h, 1d)
+    Generates and sends signals automatically at specific intervals
+    
+    Args:
+        timeframe: '1h', '2h', '4h', or '1d'
+        bot_instance: Telegram bot instance for sending messages
+    """
+    try:
+        logger.info(f"🤖 Running auto signal job for {timeframe.upper()}")
+        
+        # Get all symbols to check
+        symbols_to_check = list(SYMBOLS.values())
+        
+        # 🚀 ASYNC PARALLEL ANALYSIS - all symbols for this timeframe
+        async def analyze_single_symbol(symbol):
+            """Analyze one symbol with ICT Engine"""
+            try:
+                # Fetch klines for primary timeframe
+                klines_response = requests.get(
+                    BINANCE_KLINES_URL,
+                    params={'symbol': symbol, 'interval': timeframe, 'limit': 200},
+                    timeout=10
+                )
+                
+                if klines_response.status_code != 200:
+                    return None
+                
+                klines_data = klines_response.json()
+                df = pd.DataFrame(klines_data, columns=[
+                    'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                    'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                    'taker_buy_quote', 'ignore'
+                ])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    df[col] = df[col].astype(float)
+                
+                # ✅ FETCH MTF DATA
+                mtf_data = fetch_mtf_data(symbol, timeframe, df)
+                
+                # ✅ USE ICT ENGINE
+                ict_signal = ict_engine_global.generate_signal(
+                    df=df,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    mtf_data=mtf_data
+                )
+                
+                # Handle NO_TRADE
+                if not ict_signal or (isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE'):
+                    return None
+                
+                # Skip HOLD signals (informational only)
+                if hasattr(ict_signal, 'signal_type') and ict_signal.signal_type.value == 'HOLD':
+                    return None
+                
+                # ✅ DEDUPLICATION
+                if is_signal_already_sent(
+                    symbol=symbol,
+                    signal_type=ict_signal.signal_type.value,
+                    timeframe=timeframe,
+                    confidence=ict_signal.confidence,
+                    entry_price=ict_signal.entry_price,
+                    cooldown_minutes=60
+                ):
+                    return None
+                
+                # Return ICT signal data
+                return {
+                    'symbol': symbol,
+                    'timeframe': timeframe,
+                    'ict_signal': ict_signal,
+                    'confidence': ict_signal.confidence,
+                    'df': df
+                }
+                
+            except Exception as e:
+                logger.error(f"❌ Auto signal analysis error for {symbol} {timeframe}: {e}")
+                return None
+        
+        # Execute all tasks in parallel
+        tasks = [analyze_single_symbol(symbol) for symbol in symbols_to_check]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Filter valid signals
+        all_good_signals = [r for r in results if r is not None and not isinstance(r, Exception)]
+        
+        # If no good signals, cleanup and exit
+        if not all_good_signals:
+            logger.info(f"⚠️ No signals for {timeframe.upper()} (or all already sent)")
+            plt.close('all')
+            gc.collect()
+            return
+        
+        # Sort by confidence (highest first)
+        all_good_signals.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        # Take top 3 (or fewer if less available)
+        signals_to_send = all_good_signals[:3]
+        
+        logger.info(f"📤 Sending {len(signals_to_send)} auto signal(s) for {timeframe.upper()}")
+        
+        # Send each signal to owner
+        for sig in signals_to_send:
+            symbol = sig['symbol']
+            ict_signal = sig['ict_signal']
+            df = sig['df']
+            
+            # ✅ Format signal with AUTO source
+            signal_msg = format_standardized_signal(ict_signal, "AUTO")
+            
+            # Send message to owner
+            try:
+                await bot_instance.send_message(
+                    chat_id=OWNER_CHAT_ID,
+                    text=signal_msg,
+                    parse_mode='HTML',
+                    disable_web_page_preview=True,
+                    disable_notification=False  # Sound alert for auto signals
+                )
+                logger.info(f"✅ Auto signal sent for {symbol} ({timeframe.upper()})")
+            except Exception as e:
+                logger.error(f"❌ Failed to send auto signal message for {symbol}: {e}")
+                continue
+            
+            # Send chart if available
+            if CHART_VISUALIZATION_AVAILABLE:
+                try:
+                    generator = ChartGenerator()
+                    chart_bytes = generator.generate(df, ict_signal, symbol, timeframe)
+                    
+                    if chart_bytes:
+                        await bot_instance.send_photo(
+                            chat_id=OWNER_CHAT_ID,
+                            photo=BytesIO(chart_bytes),
+                            caption=f"📊 {symbol} ({timeframe.upper()})",
+                            parse_mode='HTML'
+                        )
+                        logger.info(f"✅ Chart sent for auto signal {symbol}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Chart generation failed for auto signal: {e}")
+            
+            # Record signal to stats
+            try:
+                signal_id = record_signal(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    signal_type=ict_signal.signal_type.value,
+                    confidence=ict_signal.confidence,
+                    entry_price=ict_signal.entry_price,
+                    tp_price=ict_signal.tp_prices[0],
+                    sl_price=ict_signal.sl_price
+                )
+                logger.info(f"📊 AUTO-SIGNAL recorded to stats (ID: {signal_id})")
+            except Exception as e:
+                logger.error(f"❌ Stats recording error in auto-signal: {e}")
+            
+            # Log to ML journal for high confidence signals
+            if ict_signal.confidence >= 65:
+                try:
+                    analysis_data = {
+                        'market_bias': ict_signal.market_bias.value,
+                        'htf_bias': ict_signal.htf_bias.value if ict_signal.htf_bias else None,
+                        'structure_broken': ict_signal.structure_broken,
+                        'displacement_detected': ict_signal.displacement_detected,
+                        'order_blocks_count': len(ict_signal.order_blocks),
+                        'liquidity_zones_count': len(ict_signal.liquidity_zones),
+                        'fvg_count': len(ict_signal.fair_value_gaps),
+                        'mtf_confluence': ict_signal.mtf_confluence_score,
+                        'whale_blocks': len(ict_signal.whale_blocks) if ict_signal.whale_blocks else 0
+                    }
+                    
+                    journal_id = log_trade_to_journal(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        signal_type=ict_signal.signal_type.value,
+                        confidence=ict_signal.confidence,
+                        entry_price=ict_signal.entry_price,
+                        tp_price=ict_signal.tp_prices[0],
+                        sl_price=ict_signal.sl_price,
+                        analysis_data=analysis_data
+                    )
+                    
+                    if journal_id:
+                        logger.info(f"📝 AUTO-SIGNAL logged to ML journal (ID: {journal_id})")
+                except Exception as e:
+                    logger.error(f"❌ Journal logging error in auto-signal: {e}")
+        
+        # 🧹 MEMORY CLEANUP
+        plt.close('all')
+        gc.collect()
+        logger.info(f"✅ Auto signal job complete for {timeframe.upper()}. Sent {len(signals_to_send)} signals.")
+        
+    except Exception as e:
+        logger.error(f"❌ Auto signal job error for {timeframe}: {e}")
 
 
 async def send_auto_news(context: ContextTypes.DEFAULT_TYPE):
@@ -15302,8 +15505,59 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             )
             logger.info("✅ Cache cleanup scheduled (every 10 minutes)")
             
+            # ================= PR #6: AUTO SIGNAL SCHEDULER JOBS =================
+            # Auto signal scheduler jobs for 1H, 2H, 4H, 1D timeframes
+            # Staggered timing to prevent overlaps
+            
+            # 1H - Every hour at :05
+            scheduler.add_job(
+                lambda: asyncio.create_task(auto_signal_job('1h', application.bot)),
+                'cron',
+                minute=5,
+                id='auto_signal_1h',
+                name='Auto Signal 1H',
+                replace_existing=True
+            )
+            logger.info("✅ Auto signal 1H scheduled (every hour at :05)")
+            
+            # 2H - Every 2 hours at :07
+            scheduler.add_job(
+                lambda: asyncio.create_task(auto_signal_job('2h', application.bot)),
+                'cron',
+                hour='*/2',
+                minute=7,
+                id='auto_signal_2h',
+                name='Auto Signal 2H',
+                replace_existing=True
+            )
+            logger.info("✅ Auto signal 2H scheduled (every 2 hours at :07)")
+            
+            # 4H - Every 4 hours at :10
+            scheduler.add_job(
+                lambda: asyncio.create_task(auto_signal_job('4h', application.bot)),
+                'cron',
+                hour='*/4',
+                minute=10,
+                id='auto_signal_4h',
+                name='Auto Signal 4H',
+                replace_existing=True
+            )
+            logger.info("✅ Auto signal 4H scheduled (every 4 hours at :10)")
+            
+            # 1D - Daily at 09:15
+            scheduler.add_job(
+                lambda: asyncio.create_task(auto_signal_job('1d', application.bot)),
+                'cron',
+                hour=9,
+                minute=15,
+                id='auto_signal_1d',
+                name='Auto Signal 1D',
+                replace_existing=True
+            )
+            logger.info("✅ Auto signal 1D scheduled (daily at 09:15 UTC)")
+            
             scheduler.start()
-            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC) + 🧹 CACHE CLEANUP (10 min) + 🤖 ML AUTO-TRAINING (weekly)")
+            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC) + 🧹 CACHE CLEANUP (10 min) + 🤖 ML AUTO-TRAINING (weekly) + 🤖 AUTO SIGNALS (1H, 2H, 4H, 1D)")
             
             # 🎯 INITIALIZE AND START REAL-TIME POSITION MONITOR (v2.1.0)
             global real_time_monitor_global
