@@ -14,7 +14,7 @@ def test_auto_signal_job_exists():
     
     # Check for the function definition
     assert 'async def auto_signal_job(' in content, "auto_signal_job function not found"
-    assert 'def auto_signal_job(timeframe: str, bot_instance)' in content, "auto_signal_job signature incorrect"
+    assert 'async def auto_signal_job(timeframe: str, bot_instance)' in content, "auto_signal_job signature incorrect"
     print("✅ auto_signal_job function exists with correct signature")
 
 def test_scheduler_jobs_configured():
