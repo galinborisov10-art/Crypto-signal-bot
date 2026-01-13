@@ -121,6 +121,17 @@ except ImportError as e:
     logger.warning(f"⚠️ ICT Signal Engine not available: {e}")
     real_time_monitor_global = None
 
+# Trade Re-analysis Engine (PR #5)
+try:
+    from trade_reanalysis_engine import TradeReanalysisEngine, RecommendationType, CheckpointAnalysis
+    TRADE_REANALYSIS_AVAILABLE = True
+    logger.info("✅ Trade Re-analysis Engine loaded")
+    reanalysis_engine_global = TradeReanalysisEngine(ict_engine_global if ICT_SIGNAL_ENGINE_AVAILABLE else None)
+except ImportError as e:
+    TRADE_REANALYSIS_AVAILABLE = False
+    logger.warning(f"⚠️ Trade Re-analysis Engine not available: {e}")
+    reanalysis_engine_global = None
+
 # Chart Visualization System
 try:
     from chart_generator import ChartGenerator
@@ -5446,11 +5457,16 @@ The owner can approve you with: <code>/approve {}</code>
 /timeframe - Покажи опции
 /timeframe 4h - Избери 4-часов таймфрейм
 
-<b>8. Автоматични сигнали:</b>
+<b>9. 🔄 Trade Management:</b>
+/trade_status BTCUSDT 45000 46500,47500 44500 - Checkpoint анализ
+  • Изчислява контролни точки на 25%, 50%, 75%, 85%
+  • Показва препоръки (HOLD/PARTIAL_CLOSE/CLOSE_NOW/MOVE_SL)
+
+<b>10. Автоматични сигнали:</b>
 /alerts - Вкл/Изкл
 /alerts 30 - Промени интервала на 30 мин
 
-<b>🔐 9. Админ панел:</b>
+<b>🔐 11. Админ панел:</b>
 /admin_login - Вход в админ (нужна парола)
 /admin_daily - Дневен отчет
 /admin_weekly - Седмичен отчет
@@ -5465,7 +5481,7 @@ The owner can approve you with: <code>/approve {}</code>
 /block USER_ID - Блокирай потребител
 /users - Списък с разрешени потребители
 
-<b>🧪 11. Система:</b>
+<b>🧪 12. Система:</b>
 /test - Тест и автоматично отстраняване на грешки
 /stats - Статистика на бота
 /journal - 📝 Trading Journal с ML самообучение
@@ -9263,6 +9279,150 @@ async def timeframe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     settings['timeframe'] = tf
     
     await query.edit_message_text(f"✅ Таймфрейм променен на {tf}")
+
+
+def format_checkpoint_analysis(analysis: CheckpointAnalysis) -> str:
+    """Format checkpoint analysis for Telegram"""
+    lines = []
+    lines.append(f"<b>🔄 TRADE CHECKPOINT ANALYSIS</b>\n")
+    lines.append(f"<b>Checkpoint:</b> {analysis.checkpoint_level}")
+    lines.append(f"<b>Checkpoint Price:</b> ${analysis.checkpoint_price:,.2f}")
+    lines.append(f"<b>Current Price:</b> ${analysis.current_price:,.2f}\n")
+    
+    lines.append(f"<b>📊 Distance to Targets:</b>")
+    lines.append(f"  • To TP: {analysis.distance_to_tp:.2f}%")
+    lines.append(f"  • To SL: {analysis.distance_to_sl:.2f}%\n")
+    
+    if analysis.original_signal:
+        lines.append(f"<b>📈 Confidence Tracking:</b>")
+        lines.append(f"  • Original: {analysis.original_confidence:.1f}%")
+        lines.append(f"  • Current: {analysis.current_confidence:.1f}%")
+        delta_sign = "+" if analysis.confidence_delta >= 0 else ""
+        lines.append(f"  • Delta: {delta_sign}{analysis.confidence_delta:.1f}%\n")
+        
+        if analysis.current_signal:
+            lines.append(f"<b>🔍 Component Status:</b>")
+            lines.append(f"  • HTF Bias Changed: {'⚠️ YES' if analysis.htf_bias_changed else '✅ NO'}")
+            lines.append(f"  • Structure Broken: {'⚠️ YES' if analysis.structure_broken else '✅ NO'}")
+            lines.append(f"  • Valid Components: {analysis.valid_components_count}")
+            lines.append(f"  • Current R:R: {analysis.current_rr_ratio:.2f}\n")
+    
+    # Recommendation
+    rec_emoji = {
+        'HOLD': '✅',
+        'MOVE_SL': '🎯',
+        'PARTIAL_CLOSE': '⚠️',
+        'CLOSE_NOW': '🚨'
+    }
+    emoji = rec_emoji.get(analysis.recommendation.value, '📌')
+    lines.append(f"<b>{emoji} RECOMMENDATION: {analysis.recommendation.value}</b>")
+    lines.append(f"<i>{analysis.reasoning}</i>")
+    
+    if analysis.warnings:
+        lines.append(f"\n<b>⚠️ Warnings:</b>")
+        for warning in analysis.warnings:
+            lines.append(f"  • {warning}")
+    
+    return '\n'.join(lines)
+
+
+@require_access()
+@rate_limited(calls=20, period=60)
+async def trade_status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Check trade status at checkpoint
+    
+    Usage: /trade_status BTCUSDT 45000 46500,47500,49000 44500
+    Args: symbol entry_price tp_prices(comma-separated) sl_price
+    """
+    if not TRADE_REANALYSIS_AVAILABLE:
+        await update.message.reply_text(
+            "❌ Trade re-analysis engine not available.",
+            parse_mode='HTML'
+        )
+        return
+    
+    if not context.args or len(context.args) < 4:
+        help_msg = """<b>🔄 TRADE STATUS - Checkpoint Analysis</b>
+
+<b>Usage:</b>
+<code>/trade_status SYMBOL ENTRY TP1,TP2,TP3 SL</code>
+
+<b>Example:</b>
+<code>/trade_status BTCUSDT 45000 46500,47500,49000 44500</code>
+
+<b>This will calculate checkpoints at:</b>
+  • 25% - Early checkpoint (quarter way to TP1)
+  • 50% - Midpoint checkpoint (halfway to TP1)
+  • 75% - Pre-TP checkpoint (three-quarters to TP1)
+  • 85% - Final checkpoint (near TP1)
+
+<i>Note: Full re-analysis requires stored signals (future enhancement).
+Currently shows checkpoint price levels.</i>"""
+        
+        await update.message.reply_text(help_msg, parse_mode='HTML')
+        return
+    
+    try:
+        # Parse arguments
+        symbol = context.args[0].upper()
+        entry_price = float(context.args[1])
+        tp_prices_str = context.args[2]
+        sl_price = float(context.args[3])
+        
+        # Parse TP prices
+        tp_prices = [float(tp.strip()) for tp in tp_prices_str.split(',')]
+        tp1_price = tp_prices[0]
+        
+        # Determine signal type based on entry vs TP1
+        signal_type = "BUY" if tp1_price > entry_price else "SELL"
+        
+        # Calculate checkpoints
+        checkpoints = reanalysis_engine_global.calculate_checkpoint_prices(
+            signal_type=signal_type,
+            entry_price=entry_price,
+            tp1_price=tp1_price,
+            sl_price=sl_price
+        )
+        
+        # Format response
+        message = f"<b>🔄 TRADE CHECKPOINT LEVELS</b>\n\n"
+        message += f"<b>Symbol:</b> {symbol}\n"
+        message += f"<b>Signal:</b> {signal_type}\n"
+        message += f"<b>Entry:</b> ${entry_price:,.2f}\n"
+        message += f"<b>TP1:</b> ${tp1_price:,.2f}\n"
+        
+        if len(tp_prices) > 1:
+            message += f"<b>TP2:</b> ${tp_prices[1]:,.2f}\n"
+        if len(tp_prices) > 2:
+            message += f"<b>TP3:</b> ${tp_prices[2]:,.2f}\n"
+        
+        message += f"<b>SL:</b> ${sl_price:,.2f}\n\n"
+        
+        message += f"<b>📊 Checkpoint Monitoring Points:</b>\n"
+        for level, price in checkpoints.items():
+            distance = abs((price - entry_price) / entry_price) * 100
+            direction = "+" if signal_type == "BUY" else "-"
+            message += f"  <b>{level}:</b> ${price:,.2f} ({direction}{distance:.2f}% from entry)\n"
+        
+        message += f"\n<i>💡 At each checkpoint, the system will re-analyze market conditions"
+        message += f" and provide actionable recommendations (HOLD/PARTIAL_CLOSE/CLOSE_NOW/MOVE_SL).</i>\n\n"
+        message += f"<i>⚠️ Note: Full re-analysis requires original signal data (future enhancement).</i>"
+        
+        await update.message.reply_text(message, parse_mode='HTML')
+        
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ Invalid input format. Use:\n"
+            f"<code>/trade_status BTCUSDT 45000 46500,47500,49000 44500</code>",
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        logger.error(f"Error in trade_status_cmd: {e}")
+        await update.message.reply_text(
+            f"❌ Error calculating checkpoints: {str(e)}",
+            parse_mode='HTML'
+        )
 
 
 async def toggle_fundamental_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -14495,6 +14655,7 @@ def main():
     app.add_handler(CommandHandler("settings", settings_cmd))
     app.add_handler(CommandHandler("fund", fund_cmd))  # Quick fundamental analysis toggle
     app.add_handler(CommandHandler("timeframe", timeframe_cmd))
+    app.add_handler(CommandHandler("trade_status", trade_status_cmd))  # 🔄 Trade checkpoint analysis
     app.add_handler(CommandHandler("alerts", alerts_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("journal", journal_cmd))  # 📝 Trading Journal с ML
