@@ -7890,6 +7890,28 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
 <b>Whale Blocks:</b> {len(signal.whale_blocks)} 🐋
 """
     
+    # ✅ PR #4: Add TF hierarchy section
+    if hasattr(signal, 'timeframe_hierarchy') and signal.timeframe_hierarchy:
+        hierarchy = signal.timeframe_hierarchy
+        
+        # Build TF status indicators
+        structure_status = "✅" if hierarchy.get('structure_tf_present') else "⚠️"
+        confirmation_status = "✅" if hierarchy.get('confirmation_tf_present') else "⚠️"
+        htf_bias_status = "✅" if hierarchy.get('htf_bias_tf_present') else "ℹ️"
+        
+        msg += f"""
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📊 TIMEFRAME ANALYSIS</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>ICT Hierarchy:</b> {hierarchy.get('description', 'N/A')}
+
+• <b>Entry TF:</b> {hierarchy.get('entry_tf', 'N/A')}
+• <b>Confirmation TF:</b> {hierarchy.get('confirmation_tf', 'N/A')} {confirmation_status}
+• <b>Structure TF:</b> {hierarchy.get('structure_tf', 'N/A')} {structure_status}
+• <b>HTF Bias TF:</b> {hierarchy.get('htf_bias_tf', 'N/A')} {htf_bias_status}
+"""
+    
     # LuxAlgo информация (ако има)
     if hasattr(signal, 'luxalgo_sr') and signal.luxalgo_sr:
         msg += f"\n<b>LuxAlgo SR:</b> ✅ Activated\n"

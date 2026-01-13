@@ -1,0 +1,77 @@
+{
+  "description": "ICT Timeframe Hierarchy - Structure provides market direction, Confirmation validates setup, Entry executes trade",
+  "version": "1.0",
+  "last_updated": "2026-01-13",
+  
+  "hierarchies": {
+    "1h": {
+      "entry_tf": "1h",
+      "confirmation_tf": "2h",
+      "structure_tf": "4h",
+      "htf_bias_tf": "1d",
+      "description": "1H entries with 2H confirmation and 4H structure",
+      "rationale": "4H provides swing structure, 2H confirms pullback/continuation, 1H for precise entry",
+      "min_lookback": {
+        "1h": 100,
+        "2h": 50,
+        "4h": 50,
+        "1d": 20
+      }
+    },
+    "2h": {
+      "entry_tf": "2h",
+      "confirmation_tf": "4h",
+      "structure_tf": "1d",
+      "htf_bias_tf": "1d",
+      "description": "2H entries with 4H confirmation and 1D structure",
+      "rationale": "1D provides major trend, 4H confirms retracement/breakout, 2H for entry",
+      "min_lookback": {
+        "2h": 100,
+        "4h": 50,
+        "1d": 20
+      }
+    },
+    "4h": {
+      "entry_tf": "4h",
+      "confirmation_tf": "4h",
+      "structure_tf": "1d",
+      "htf_bias_tf": "1w",
+      "description": "4H entries with 4H confirmation and 1D structure",
+      "rationale": "1D major trend, 4H both confirms and executes (swing trading)",
+      "min_lookback": {
+        "4h": 100,
+        "1d": 20,
+        "1w": 10
+      }
+    },
+    "1d": {
+      "entry_tf": "1d",
+      "confirmation_tf": "1d",
+      "structure_tf": "1w",
+      "htf_bias_tf": "1w",
+      "description": "1D entries with 1D confirmation and 1W structure",
+      "rationale": "1W macro trend, 1D both confirms and executes (position trading)",
+      "min_lookback": {
+        "1d": 100,
+        "1w": 20
+      }
+    }
+  },
+  
+  "validation_rules": {
+    "structure_must_exist": false,
+    "confirmation_must_exist": false,
+    "structure_penalty_if_missing": 0.25,
+    "confirmation_penalty_if_missing": 0.15,
+    "misaligned_structure_bias_penalty": 0.20,
+    "allow_fallback_tfs": true,
+    "fallback_penalty": 0.10
+  },
+  
+  "penalty_explanation": {
+    "structure_penalty": "Structure TF missing (25%): Can't validate major trend direction",
+    "confirmation_penalty": "Confirmation TF missing (15%): Can't validate intermediate pattern",
+    "misaligned_bias": "Structure bias conflicts with entry bias (20%): Counter-trend risk",
+    "fallback": "Using fallback TF instead of preferred (10%): Sub-optimal analysis"
+  }
+}
