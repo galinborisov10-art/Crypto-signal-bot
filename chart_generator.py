@@ -683,7 +683,8 @@ class ChartGenerator:
                 )
                 
                 # Add text label with icon
-                label_x = len(df) * 0.50  # Center position (OBs are left, Whales are right)
+                # Positioning: Breakers at center (50%), OBs at left (5%), Whales at right (95%)
+                label_x = len(df) * 0.50  # Center position
                 label_y = (bb_low + bb_high) / 2
                 
                 # Icon based on strength
