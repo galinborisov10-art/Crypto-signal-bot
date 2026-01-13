@@ -10302,23 +10302,43 @@ def reconstruct_signal_from_json(signal_json: str) -> Optional[Any]:
         Mock signal object with needed attributes or None
     """
     try:
+        from dataclasses import dataclass
+        
         signal_dict = json.loads(signal_json)
         
-        # Create a simple object with needed attributes
-        class MockSignal:
-            def __init__(self, data):
-                self.timestamp = data.get('timestamp')
-                self.symbol = data.get('symbol')
-                self.timeframe = data.get('timeframe')
-                self.signal_type = type('obj', (object,), {'value': data.get('signal_type')})()
-                self.entry_price = data.get('entry_price')
-                self.sl_price = data.get('sl_price')
-                self.tp_prices = data.get('tp_prices', [])
-                self.confidence = data.get('confidence')
-                self.risk_reward_ratio = data.get('risk_reward_ratio')
-                self.htf_bias = data.get('htf_bias')
+        # Define a proper dataclass for signal reconstruction
+        @dataclass
+        class SignalTypeValue:
+            """Simple wrapper for signal type with value attribute"""
+            value: str
         
-        return MockSignal(signal_dict)
+        @dataclass
+        class MockSignal:
+            """Mock signal object reconstructed from JSON"""
+            timestamp: str
+            symbol: str
+            timeframe: str
+            signal_type: SignalTypeValue
+            entry_price: float
+            sl_price: float
+            tp_prices: list
+            confidence: float
+            risk_reward_ratio: float
+            htf_bias: str
+        
+        # Create signal object
+        return MockSignal(
+            timestamp=signal_dict.get('timestamp', ''),
+            symbol=signal_dict.get('symbol', ''),
+            timeframe=signal_dict.get('timeframe', ''),
+            signal_type=SignalTypeValue(value=signal_dict.get('signal_type', '')),
+            entry_price=signal_dict.get('entry_price', 0),
+            sl_price=signal_dict.get('sl_price', 0),
+            tp_prices=signal_dict.get('tp_prices', []),
+            confidence=signal_dict.get('confidence', 0),
+            risk_reward_ratio=signal_dict.get('risk_reward_ratio', 0),
+            htf_bias=signal_dict.get('htf_bias', '')
+        )
         
     except Exception as e:
         logger.error(f"❌ Signal reconstruction error: {e}")

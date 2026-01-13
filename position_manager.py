@@ -82,6 +82,33 @@ class PositionManager:
         conn.row_factory = sqlite3.Row  # Enable column access by name
         return conn
     
+    def _get_attr_value(self, obj: Any, attr: str, default: Any = None) -> Any:
+        """
+        Safely get attribute value, handling enum values
+        
+        Args:
+            obj: Object to get attribute from
+            attr: Attribute name
+            default: Default value if attribute doesn't exist
+            
+        Returns:
+            Attribute value or default
+        """
+        if not hasattr(obj, attr):
+            return default
+        
+        value = getattr(obj, attr)
+        
+        # Handle enum types
+        if hasattr(value, 'value'):
+            return value.value
+        
+        # Handle datetime types
+        if hasattr(value, 'isoformat'):
+            return value.isoformat()
+        
+        return value
+    
     def _serialize_signal(self, signal: Any) -> str:
         """
         Serialize ICTSignal to JSON string
@@ -93,20 +120,20 @@ class PositionManager:
             JSON string
         """
         try:
-            # Convert ICTSignal to dict
+            # Convert ICTSignal to dict using helper method
             signal_dict = {
-                'timestamp': signal.timestamp.isoformat() if hasattr(signal.timestamp, 'isoformat') else str(signal.timestamp),
-                'symbol': signal.symbol,
-                'timeframe': signal.timeframe,
-                'signal_type': signal.signal_type.value if hasattr(signal.signal_type, 'value') else str(signal.signal_type),
-                'signal_strength': signal.signal_strength.value if hasattr(signal.signal_strength, 'value') else str(signal.signal_strength),
-                'entry_price': signal.entry_price,
-                'sl_price': signal.sl_price,
-                'tp_prices': signal.tp_prices,
-                'confidence': signal.confidence,
-                'risk_reward_ratio': signal.risk_reward_ratio,
-                'bias': signal.bias.value if hasattr(signal.bias, 'value') else str(signal.bias),
-                'htf_bias': signal.htf_bias if hasattr(signal, 'htf_bias') else None,
+                'timestamp': self._get_attr_value(signal, 'timestamp', ''),
+                'symbol': self._get_attr_value(signal, 'symbol', ''),
+                'timeframe': self._get_attr_value(signal, 'timeframe', ''),
+                'signal_type': self._get_attr_value(signal, 'signal_type', ''),
+                'signal_strength': self._get_attr_value(signal, 'signal_strength', ''),
+                'entry_price': self._get_attr_value(signal, 'entry_price', 0),
+                'sl_price': self._get_attr_value(signal, 'sl_price', 0),
+                'tp_prices': self._get_attr_value(signal, 'tp_prices', []),
+                'confidence': self._get_attr_value(signal, 'confidence', 0),
+                'risk_reward_ratio': self._get_attr_value(signal, 'risk_reward_ratio', 0),
+                'bias': self._get_attr_value(signal, 'bias', ''),
+                'htf_bias': self._get_attr_value(signal, 'htf_bias', None),
             }
             
             return json.dumps(signal_dict)
@@ -272,7 +299,7 @@ class PositionManager:
             conn = self._get_connection()
             cursor = conn.cursor()
             
-            # Map checkpoint level to column name
+            # Map checkpoint level to column name (whitelist validation)
             checkpoint_map = {
                 '25%': 'checkpoint_25_triggered',
                 '50%': 'checkpoint_50_triggered',
@@ -285,13 +312,37 @@ class PositionManager:
                 logger.error(f"❌ Invalid checkpoint level: {checkpoint_level}")
                 return False
             
-            # Update checkpoint and last_checked_at
-            cursor.execute(f"""
-                UPDATE open_positions
-                SET {column} = 1,
-                    last_checked_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (position_id,))
+            # Safe: column is validated from whitelist, not user input
+            # Only 4 possible values: checkpoint_25_triggered, checkpoint_50_triggered,
+            # checkpoint_75_triggered, checkpoint_85_triggered
+            if column == 'checkpoint_25_triggered':
+                cursor.execute("""
+                    UPDATE open_positions
+                    SET checkpoint_25_triggered = 1,
+                        last_checked_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (position_id,))
+            elif column == 'checkpoint_50_triggered':
+                cursor.execute("""
+                    UPDATE open_positions
+                    SET checkpoint_50_triggered = 1,
+                        last_checked_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (position_id,))
+            elif column == 'checkpoint_75_triggered':
+                cursor.execute("""
+                    UPDATE open_positions
+                    SET checkpoint_75_triggered = 1,
+                        last_checked_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (position_id,))
+            elif column == 'checkpoint_85_triggered':
+                cursor.execute("""
+                    UPDATE open_positions
+                    SET checkpoint_85_triggered = 1,
+                        last_checked_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (position_id,))
             
             conn.commit()
             conn.close()
