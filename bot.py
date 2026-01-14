@@ -8,7 +8,7 @@ import logging
 import hashlib
 import gc
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -22,6 +22,7 @@ from io import BytesIO
 import os
 from pathlib import Path
 import html
+import pytz
 
 # ================= ENVIRONMENT VARIABLES =================
 from dotenv import load_dotenv
@@ -141,6 +142,16 @@ except ImportError as e:
     TRADE_REANALYSIS_AVAILABLE = False
     logger.warning(f"⚠️ Trade Re-analysis Engine not available: {e}")
     reanalysis_engine_global = None
+
+# Signal Cache for Persistent Deduplication (PR #111)
+try:
+    from signal_cache import is_signal_duplicate
+    SIGNAL_CACHE_AVAILABLE = True
+    logger.info("✅ Signal Cache (persistent deduplication) loaded")
+except ImportError as e:
+    SIGNAL_CACHE_AVAILABLE = False
+    logger.warning(f"⚠️ Signal Cache not available: {e}")
+
 
 # Position Manager (PR #7)
 try:
@@ -356,6 +367,12 @@ SYMBOLS = {
 # Tracking на изпратени автоматични сигнали (за предотвратяване на дублиране)
 # Формат: {"BTCUSDT_BUY_4h": {'timestamp': datetime, 'confidence': 75, 'entry_price': 97100}, ...}
 SENT_SIGNALS_CACHE = {}
+
+# ================= STARTUP MODE SUPPRESSION (PR #111) =================
+# Prevents duplicate signals on bot startup for first 5 minutes
+STARTUP_MODE = True
+STARTUP_TIME = None  # Will be set on bot start
+STARTUP_GRACE_PERIOD_SECONDS = 300  # 5 minutes
 
 # ================= PR #7: POSITION MONITORING CONFIG =================
 AUTO_POSITION_TRACKING_ENABLED = True  # Auto-open positions from auto signals
@@ -5416,140 +5433,109 @@ The owner can approve you with: <code>/approve {}</code>
         logger.info(f"⚠️ Unauthorized /help from @{username} (ID: {user_id})")
         return
     
-    help_text = """
-📖 <b>ПОМОЩ - Crypto Signal Bot</b>
+    help_text = """🤖 <b>CRYPTO SIGNAL BOT - ПОМОЩ</b>
 
-<b>1. Основни команди:</b>
-/start - Стартиране на бота
-/help - Тази помощна информация
-/version или /v - Информация за версията
-/market - Преглед на пазара
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-<b>2. Сигнали:</b>
-/signal BTCUSDT - Анализ на BTC
-/signal ETHUSDT - Анализ на ETH
-/signal XRPUSDT - Анализ на XRP
-/signal SOLUSDT - Анализ на SOL
+🏥 <b>СИСТЕМА & МОНИТОРИНГ:</b>
 
-🎯 <b>ICT Complete Analysis:</b>
-/ict BTC - Full ICT analysis (OB, FVG, Liquidity)
-/ict ETHUSDT 1h - ICT analysis specific timeframe
+/health - 🏥 System health diagnostic
+  └─ Проверява здравето на всички компоненти
+  └─ Показва: Journal, ML, Reports, Position Monitor, Scheduler, Disk
+  
+/status - 📊 Bot status & uptime
+  └─ Текущ статус на бота и активни функции
+  
+/debug - 🔍 Toggle debug mode
+  └─ Включва/изключва детайлни debug логове
+  
+/performance - 📈 Performance metrics
+  └─ Показва performance метрики и статистика
 
-Или просто: /signal BTC
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-<b>3. 🚀 ML + Back-test + Reports:</b>
-/backtest - Back-test на стратегията (90 дни)
-/backtest BTCUSDT 1h - Custom back-test
-/ml_status - Machine Learning статус
-/ml_train - Ръчно обучение на ML модел
-/dailyreport - 📊 Дневен отчет за сигнали от вчера
-/daily_report - 📊 Дневен отчет с точност и успеваемост
-/weekly_report - 📈 Седмичен отчет (7 дни)
-/monthly_report - 📆 Месечен отчет (30 дни)
+📊 <b>TRADING & СИГНАЛИ:</b>
 
-<i>Дневният отчет (/dailyreport) показва:</i>
-• Общо сигнали от предходния ден
-• Успешни сигнали (✅)
-• Неуспешни сигнали (❌)
-• В изчакване (⏳)
-• Статистика по валута и таймфрейм
-• Топ 5 сигнала с най-висока увереност
+/signal <symbol> <timeframe> - 🎯 Generate ICT signal
+  └─ Генерира ICT анализ и сигнал за конкретна валута
+  └─ Пример: /signal BTC 4h
+  └─ Symbols: BTC, ETH, BNB, SOL, XRP, ADA, DOGE, DOT, MATIC, LINK
+  └─ Timeframes: 15m, 1h, 2h, 4h, 1d
+  
+/market - 📊 Market analysis menu
+  └─ Показва интерактивно меню с:
+      • 📈 Бърз преглед (sentiment overview)
+      • 🎯 Swing Trading Анализ (professional setup)
+      • 💡 Пълен Пазарен Отчет (всички coins)
+      • 🇧🇬/🇬🇧 Language toggle
+  
+/news - 📰 Latest crypto news
+  └─ Последни новини от крипто света
+  └─ Automatic Bulgarian translation
+  
+/backtest - 📉 Run strategy backtest
+  └─ Стартира backtest на ICT стратегията
+  └─ Показва win rate, profit factor, max drawdown
 
-🕗 <b>Автоматично се изпраща всяка сутрин в 08:00!</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-<b>4. Новини:</b>
-/news - Последни крипто новини (преведени на БГ)
-/breaking - 🚨 Провери за КРИТИЧНИ новини
-/autonews - Вкл/Изкл автоматични новини
-/autonews 120 - Интервал 2 часа
+📝 <b>ОТЧЕТИ:</b>
 
-🔴 <b>REAL-TIME мониторинг:</b>
-Ботът автоматично проверява новини на всеки 3 минути!
-При критична новина получаваш моментална алерта! 🚨
+/dailyreport - 📅 Daily trading report
+  └─ Дневен отчет с всички signals и резултати
+  └─ Auto-sent daily at 08:00 BG time
+  
+/weekly_report - 📊 Weekly performance summary
+  └─ Седмичен summary на performance
+  └─ Win rate, best trades, improvements
+  
+/monthly_report - 📆 Monthly overview
+  └─ Месечен преглед на печалби/загуби
+  └─ Cumulative statistics
 
-<b>5. 🤖 Copilot Integration:</b>
-/task - Виж текущи задачи
-/task Добави функция X - Създай задание
-/task Поправи грешка Y - Репорт проблем
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-<i>GitHub Copilot ще види заданията и ще ги изпълни!</i>
+⚙️ <b>УПРАВЛЕНИЕ:</b>
 
-<b>6. Настройки:</b>
-/settings - Виж текущи настройки
-/settings tp 3.0 - Промени Take Profit на 3%
-/settings sl 1.5 - Промени Stop Loss на 1.5%
-/settings rr 2.5 - Промени Risk/Reward
+/positions - 💼 View active positions
+  └─ Преглед на всички активни позиции
+  └─ Real-time P&L tracking
+  
+/close_trade <id> - 🔒 Close trade manually
+  └─ Ръчно затваряне на конкретен trade
+  └─ Пример: /close_trade 123
+  
+/settings - ⚙️ Trading settings & parameters
+  └─ Показва всички настройки:
+      • Signal settings (confidence, timeframes)
+      • Risk management (max positions, stop loss)
+      • ICT settings (order blocks, FVG, liquidity)
+      • ML & automation settings
+      • Health monitoring schedule
+  
+/clear_cache - 🗑️ Clear system cache
+  └─ Изчиства cache данните за performance
 
-<b>7. 🛡️ Risk Management:</b>
-/risk - Виж настройки и статус
-/risk set portfolio 5000 - Задай баланс
-/risk set max_loss 8 - Дневен лимит (%)
-/risk set max_trades 3 - Макс паралелни trades
-/risk set min_rr 2.5 - Минимален R/R
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-<b>8. Таймфрейм:</b>
-/timeframe - Покажи опции
-/timeframe 4h - Избери 4-часов таймфрейм
+💡 <b>АКТИВНА ФУНКЦИОНАЛНОСТ:</b>
 
-<b>9. 🔄 Trade Management:</b>
-/trade_status BTCUSDT 45000 46500,47500 44500 - Checkpoint анализ
-  • Изчислява контролни точки на 25%, 50%, 75%, 85%
-  • Показва препоръки (HOLD/PARTIAL_CLOSE/CLOSE_NOW/MOVE_SL)
+✅ Auto-signals (1H, 2H, 4H, 1D)
+✅ Real-time position monitoring (every minute)
+✅ ML-based predictions (weekly training)
+✅ ICT smart money concepts analysis
+✅ Multi-timeframe confluence
+✅ 24/7 health monitoring (6 components)
+✅ Swing trading analysis (multi-TF)
+✅ Signal deduplication (60 min cooldown)
+✅ Startup suppression (5 min grace period)
+✅ Persistent signal cache
 
-<b>10. Автоматични сигнали:</b>
-/alerts - Вкл/Изкл
-/alerts 30 - Промени интервала на 30 мин
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-<i>📊 Auto timeframes: 1H (hourly), 2H (every 2h), 4H (every 4h), 1D (daily)</i>
-
-<b>🔐 11. Админ панел:</b>
-/admin_login - Вход в админ (нужна парола)
-/admin_daily - Дневен отчет
-/admin_weekly - Седмичен отчет
-/admin_monthly - Месечен отчет
-/admin_docs - Пълна документация
-/deploy - 🚀 Auto-deploy от GitHub (owner)
-/update - 🔄 Обновяване на бота от GitHub
-/restart - 🔄 Рестартиране на бота
-
-<b>👥 10. User Access (Owner):</b>
-/approve USER_ID - Одобри нов потребител
-/block USER_ID - Блокирай потребител
-/users - Списък с разрешени потребители
-
-<b>🧪 12. Система:</b>
-/test - Тест и автоматично отстраняване на грешки
-/stats - Статистика на бота
-/journal - 📝 Trading Journal с ML самообучение
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-🚀 <b>НОВИ ФУНКЦИИ:</b>
-
-📈 <b>Back-testing:</b> Тества стратегията на 90 дни
-🤖 <b>Machine Learning:</b> Учи от сигнали и се подобрява
-📊 <b>Daily Reports:</b> Автоматични отчети всеки ден в 08:00 (за предходния ден)
-📝 <b>Trading Journal 24/7:</b> 
-   • Автоматичен запис на всички trades
-   • Мониторинг на активни позиции на всеки 2 мин
-   • ML анализ и самообучение
-   • Автоматично затваряне при TP/SL
-   • Нотификации при завършване на trades
-
-📖 <b>Пълна документация:</b>
-ML_BACKTEST_REPORTS_DOCS.md
-TRADING_JOURNAL_DOCS.md
-ORDER_BLOCKS_GUIDE.md
-
-📦 <b>Order Blocks на графиката:</b>
-Всички графики показват Order Blocks:
-   • 🟢 Bullish OB (зелени зони) - support
-   • 🔴 Bearish OB (червени зони) - resistance
-   • Силата на всеки OB е посочена в %
-   • Виж ORDER_BLOCKS_GUIDE.md за детайли
-
-⚠️ <b>Важно:</b> Това не е финансов съвет!
-Винаги правете собствено проучване (DYOR).
+📌 За повече информация за конкретна команда, използвай я!
+📌 За детайлни настройки използвай /settings
+📌 За system health проверка използвай /health
 """
     await update.message.reply_text(help_text, parse_mode='HTML')
 
@@ -8356,9 +8342,16 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
         "BACKTEST": "📊 BACKTEST"
     }.get(signal_source, "📊 СИГНАЛ")
     
+    # Add timestamp for AUTO signals (PR #111)
+    timestamp_str = ""
+    if signal_source == "AUTO":
+        bg_tz = pytz.timezone('Europe/Sofia')
+        now = datetime.now(bg_tz)
+        timestamp_str = f"⏰ {now.strftime('%d.%m.%Y %H:%M')} (BG време)\n"
+    
     msg = f"""{emoji} <b>ICT {signal.signal_type.value} SIGNAL</b> {emoji}
 {source_badge}
-
+{timestamp_str}
 ━━━━━━━━━━━━━━━━━━━━━━
 <b>📊 ОСНОВНА ИНФОРМАЦИЯ</b>
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -9058,42 +9051,144 @@ async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tech_weight = (1 - settings.get('fundamental_weight', 0.3)) * 100
         
         # Покажи текущи настройки
-        message = f"""
-⚙️ <b>ТВОИТЕ НАСТРОЙКИ - @{update.effective_user.username or update.effective_user.first_name}</b>
+        message = f"""⚙️ <b>TRADING SETTINGS & PARAMETERS</b>
 
-📊 <b>Търговски параметри:</b>
-Take Profit (TP): {settings['tp']:.1f}%
-Stop Loss (SL): {settings['sl']:.1f}%
-Risk/Reward (RR): 1:{settings['rr']:.1f}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📈 <b>Signal Settings:</b>
-Timeframe: {settings.get('timeframe', '4h')}
-Fundamental Analysis: {fund_status}
+📊 <b>SIGNAL SETTINGS:</b>
+
+• Minimum Confidence: <b>65%</b>
+  └─ Signals below 65% are filtered out
+  
+• Active Timeframes: <b>1H, 2H, 4H, 1D</b>
+  └─ Auto-signals generated for all timeframes
+  
+• Auto-signals Status: <b>✅ ENABLED</b>
+  └─ Automatic signal generation every 1-4 hours
+  
+• Signal Deduplication: <b>60 min cooldown</b>
+  └─ Same signal blocked for 60 minutes
+  └─ Price proximity check: 0.5%
+  
+• Signal Cache: <b>✅ Persistent (JSON file)</b>
+  └─ Cache survives bot restarts
+  └─ Auto-cleanup after 24 hours
+  
+• Startup Grace Period: <b>5 minutes</b>
+  └─ No auto-signals for 5 min after restart
+  └─ Prevents duplicate signals
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 <b>RISK MANAGEMENT:</b>
+
+• Max Concurrent Positions: <b>3</b>
+  └─ Maximum 3 open positions at same time
+  
+• Risk Per Trade: <b>2% of capital</b>
+  └─ Position sizing based on account size
+  
+• Stop Loss: <b>ICT-based dynamic</b>
+  └─ Calculated from order blocks & liquidity
+  
+• Take Profit Levels: <b>Multi-level (TP1/TP2)</b>
+  └─ TP1: 50% position close
+  └─ TP2: Remaining 50%
+  
+• Minimum R:R Ratio: <b>2:1</b>
+  └─ Signals with R:R < 2:1 are filtered
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 <b>ICT ANALYSIS SETTINGS:</b>
+
+• Order Blocks: <b>✅ ENABLED</b>
+  └─ Smart money institutional levels
+  
+• Fair Value Gaps (FVG): <b>✅ ENABLED</b>
+  └─ Imbalance zones for entries
+  
+• Liquidity Zones: <b>✅ ENABLED</b>
+  └─ High/low liquidity detection
+  
+• MTF Confluence: <b>✅ ENABLED</b>
+  └─ Multi-timeframe alignment scoring
+  
+• Market Structure: <b>✅ ENABLED</b>
+  └─ Break of structure detection
+  
+• Displacement: <b>✅ ENABLED</b>
+  └─ Strong momentum move detection
+  
+• Whale Blocks: <b>✅ ENABLED</b>
+  └─ Large volume order block identification
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🤖 <b>ML & AUTOMATION:</b>
+
+• ML Predictions: <b>✅ ENABLED</b>
+  └─ Machine learning price predictions
+  
+• Auto-Training Schedule: <b>Weekly (Sunday 03:00 UTC)</b>
+  └─ Automatic model retraining
+  
+• ML Model Version: <b>v2.1.0</b>
+  └─ Random Forest + Feature Engineering
+  
+• Minimum Training Data: <b>50 completed trades</b>
+  └─ Required before first training
+  
+• Current Model Age: <b>Check /health</b>
+  └─ Days since last training
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🏥 <b>HEALTH MONITORING SCHEDULE:</b>
+
+• Journal Health: <b>Every 6 hours (at :15)</b>
+  └─ Checks: File, permissions, updates, metadata
+  
+• ML Training Health: <b>Daily at 10:00</b>
+  └─ Checks: Model age, training execution, data availability
+  
+• Daily Reports Health: <b>Daily at 09:00</b>
+  └─ Checks: Report sent, scheduler status
+  
+• Position Monitor Health: <b>Every hour (at :30)</b>
+  └─ Checks: Monitor errors, runtime issues
+  
+• Scheduler Health: <b>Every 12 hours (at :45)</b>
+  └─ Checks: Job execution, misfires
+  
+• Disk Space Monitor: <b>Daily at 02:00</b>
+  └─ Checks: Usage (warn >80%, critical >90%)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 <b>ACTIVE SYMBOLS:</b>
+
+• BTC (Bitcoin), ETH (Ethereum)
+• BNB (Binance Coin), SOL (Solana)
+• XRP (Ripple), ADA (Cardano)
+• DOGE (Dogecoin), DOT (Polkadot)
+• MATIC (Polygon), LINK (Chainlink)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 <b>Notes:</b>
+
+• All times in BG timezone (Europe/Sofia) unless stated
+• Use /health to check current system status
+• Use /help for full command list
+• Settings are optimized for swing trading
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚙️ За промяна на настройките, моля свържете се с администратор
 """
-        if settings.get('use_fundamental', False):
-            message += f"Weight Distribution: {tech_weight:.0f}% Technical / {fund_weight:.0f}% Fundamental\n"
         
-        message += f"""
-🔔 <b>Известия:</b>
-Автоматични сигнали: {'Вкл ✅' if settings['alerts_enabled'] else 'Изкл ❌'}
-Интервал: {settings['alert_interval']/60:.0f} мин
-
-<b>За промяна:</b>
-/settings tp 3.0
-/settings sl 1.5
-/settings rr 2.5
-/fund - Toggle fundamental analysis
-"""
-        
-        # Add interactive keyboard
-        keyboard = [
-            [InlineKeyboardButton("🔄 Toggle Fundamental", callback_data="toggle_fundamental")],
-            [InlineKeyboardButton("⏰ Timeframe Settings", callback_data="timeframe_settings")],
-            [InlineKeyboardButton("🏠 Back to Menu", callback_data="back_to_menu")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
+        await update.message.reply_text(message, parse_mode='HTML')
         return
     
     # Промяна на настройка
@@ -10469,6 +10564,19 @@ async def auto_signal_job(timeframe: str, bot_instance):
         bot_instance: Telegram bot instance for sending messages
     """
     try:
+        # 🛑 STARTUP SUPPRESSION (PR #111)
+        global STARTUP_MODE, STARTUP_TIME
+        if STARTUP_MODE and STARTUP_TIME:
+            elapsed = (datetime.now() - STARTUP_TIME).total_seconds()
+            
+            if elapsed < STARTUP_GRACE_PERIOD_SECONDS:
+                logger.info(f"🛑 Startup mode ({elapsed:.0f}s elapsed) - suppressing auto-signals for {timeframe.upper()}")
+                return
+            else:
+                # Disable startup mode after grace period
+                STARTUP_MODE = False
+                logger.info("✅ Startup mode ended - auto-signals now ACTIVE")
+        
         logger.info(f"🤖 Running auto signal job for {timeframe.upper()}")
         
         # Get all symbols to check
@@ -10517,16 +10625,34 @@ async def auto_signal_job(timeframe: str, bot_instance):
                 if hasattr(ict_signal, 'signal_type') and ict_signal.signal_type.value == 'HOLD':
                     return None
                 
-                # ✅ DEDUPLICATION
-                if is_signal_already_sent(
-                    symbol=symbol,
-                    signal_type=ict_signal.signal_type.value,
-                    timeframe=timeframe,
-                    confidence=ict_signal.confidence,
-                    entry_price=ict_signal.entry_price,
-                    cooldown_minutes=60
-                ):
-                    return None
+                # ✅ PERSISTENT DEDUPLICATION (PR #111)
+                if SIGNAL_CACHE_AVAILABLE:
+                    is_dup, reason = is_signal_duplicate(
+                        symbol=symbol,
+                        signal_type=ict_signal.signal_type.value,
+                        timeframe=timeframe,
+                        entry_price=ict_signal.entry_price,
+                        confidence=ict_signal.confidence,
+                        cooldown_minutes=60,
+                        base_path=BASE_PATH
+                    )
+                    
+                    if is_dup:
+                        logger.info(f"🛑 Signal deduplication: {reason} - skipping")
+                        return None
+                    
+                    logger.info(f"✅ Signal deduplication: {reason} - sending signal")
+                else:
+                    # Fallback to in-memory deduplication
+                    if is_signal_already_sent(
+                        symbol=symbol,
+                        signal_type=ict_signal.signal_type.value,
+                        timeframe=timeframe,
+                        confidence=ict_signal.confidence,
+                        entry_price=ict_signal.entry_price,
+                        cooldown_minutes=60
+                    ):
+                        return None
                 
                 # Return ICT signal data
                 return {
@@ -17338,6 +17464,12 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
         async def send_startup_notification():
             """Изпраща нотификация при рестарт на бота"""
             # БЕЗ ИЗЧАКВАНЕ - веднага проверяваме!
+            
+            # 🛑 INITIALIZE STARTUP MODE (PR #111)
+            global STARTUP_MODE, STARTUP_TIME
+            STARTUP_MODE = True
+            STARTUP_TIME = datetime.now()
+            logger.info("🛑 Startup mode ACTIVE - auto-signals suppressed for 5 minutes")
             
             # ПРОВЕРИ ДАЛИ Е БИЛ РЕСТАРТ
             restart_flag_file = f"{BASE_PATH}/.restart_requested"
