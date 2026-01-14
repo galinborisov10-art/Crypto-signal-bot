@@ -50,5 +50,13 @@
   "chart_dpi": 100,
   "max_zones_per_chart": 10,
   "include_volume_subplot": true,
-  "cache_charts": false
+  "cache_charts": false,
+  "pr8_structure_aware_tp": {
+    "enabled": true,
+    "use_news_filter": true,
+    "use_structure_tp": true,
+    "use_bulgarian_messages": true,
+    "min_obstacle_strength": 60,
+    "backward_compatible_mode": false
+  }
 }
