@@ -363,6 +363,11 @@ active_trades = []
 TRADE_OUTCOME_WIN = ['WIN', 'SUCCESS']
 TRADE_OUTCOME_LOSS = ['LOSS', 'FAILED']
 
+# ================= SCHEDULER CONFIGURATION =================
+DAILY_REPORT_MISFIRE_GRACE_TIME = 3600  # 1 hour grace period for missed daily reports
+STARTUP_CHECK_DELAY_SECONDS = 10  # Delay before checking for missed reports on startup
+DEFAULT_SWING_RR_RATIO = 3.5  # Default risk/reward ratio for ranging markets
+
 # Константи за 4-степенна проверка на близост на цена
 PRICE_PROXIMITY_TIGHT = 0.2      # Много близка цена (%)
 PRICE_PROXIMITY_NORMAL = 0.5     # Близка цена (%)
@@ -6573,15 +6578,18 @@ async def generate_swing_trading_analysis(symbol: str, language: str = 'bg') -> 
         alignment = "MIXED"
         
         if ict_4h and ict_1d:
-            # Map bias to structure
-            if ict_4h.bias.value in ['BULLISH', 'STRONG_BULLISH']:
+            # Map bias to structure (defensive - handle both enum and string)
+            bias_4h_val = ict_4h.bias.value if hasattr(ict_4h.bias, 'value') else str(ict_4h.bias)
+            bias_1d_val = ict_1d.bias.value if hasattr(ict_1d.bias, 'value') else str(ict_1d.bias)
+            
+            if bias_4h_val in ['BULLISH', 'STRONG_BULLISH']:
                 structure_4h = "BULLISH"
-            elif ict_4h.bias.value in ['BEARISH', 'STRONG_BEARISH']:
+            elif bias_4h_val in ['BEARISH', 'STRONG_BEARISH']:
                 structure_4h = "BEARISH"
             
-            if ict_1d.bias.value in ['BULLISH', 'STRONG_BULLISH']:
+            if bias_1d_val in ['BULLISH', 'STRONG_BULLISH']:
                 structure_1d = "BULLISH"
-            elif ict_1d.bias.value in ['BEARISH', 'STRONG_BEARISH']:
+            elif bias_1d_val in ['BEARISH', 'STRONG_BEARISH']:
                 structure_1d = "BEARISH"
             
             # Determine alignment
@@ -6647,7 +6655,7 @@ async def generate_swing_trading_analysis(symbol: str, language: str = 'bg') -> 
             tp1 = entry_price * 1.038
             tp2 = entry_price * 1.062
             sl = entry_price * 0.997
-            rr_ratio = 3.5
+            rr_ratio = DEFAULT_SWING_RR_RATIO  # Use constant instead of hardcoded value
         
         # Format message based on language
         if language == 'bg':
@@ -16419,7 +16427,7 @@ def main():
                     'cron',
                     hour=8,
                     minute=0,
-                    misfire_grace_time=3600,  # Allow 1 hour window for missed reports
+                    misfire_grace_time=DAILY_REPORT_MISFIRE_GRACE_TIME,  # Allow 1 hour window for missed reports
                     coalesce=True,            # Combine multiple missed runs into one
                     max_instances=1           # Only one instance at a time
                 )
@@ -16448,7 +16456,7 @@ def main():
                 scheduler.add_job(
                     check_missed_daily_report,
                     'date',
-                    run_date=datetime.now(bg_tz) + timedelta(seconds=10),
+                    run_date=datetime.now(bg_tz) + timedelta(seconds=STARTUP_CHECK_DELAY_SECONDS),
                     id='missed_report_check',
                     name='Missed Report Check'
                 )
