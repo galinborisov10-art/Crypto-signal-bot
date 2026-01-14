@@ -4813,7 +4813,9 @@ class ICTSignalEngine:
             return obstacles
             
         except Exception as e:
-            logger.error(f"Error finding obstacles: {e}")
+            logger.error(f"Error finding obstacles in path from ${entry_price:.2f} to ${target_price:.2f}: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.debug(f"Obstacle detection traceback: {traceback.format_exc()}")
             return []
     
     def _evaluate_obstacle_strength(
@@ -5341,14 +5343,18 @@ class ICTSignalEngine:
             news_weight_important = config.get('news_weight_important', 2.0)
             news_weight_normal = config.get('news_weight_normal', 1.0)
             
+            # Sentiment normalization constants
+            SENTIMENT_NEUTRAL_BASELINE = 50.0  # Base sentiment value (neutral)
+            SENTIMENT_SCALE_FACTOR = 2.0       # Multiplier to convert 0-100 to -100 to +100
+            
             total_sentiment = 0.0
             total_weight = 0.0
             critical_news = []
             
             for article in recent_news:
-                # Analyze individual article
-                title = article.get('title', '')
-                single_sentiment = sentiment_analyzer._analyze_text(title)
+                # Analyze individual article using public analyze_news method
+                single_result = sentiment_analyzer.analyze_news([article])
+                single_sentiment = single_result.get('score', SENTIMENT_NEUTRAL_BASELINE)
                 
                 # Determine importance weight
                 importance = article.get('importance', 'NORMAL').upper()
@@ -5372,7 +5378,7 @@ class ICTSignalEngine:
                     weight = news_weight_normal
                 
                 # Convert 0-100 to -100 to +100
-                normalized_sentiment = (single_sentiment - 50) * 2
+                normalized_sentiment = (single_sentiment - SENTIMENT_NEUTRAL_BASELINE) * SENTIMENT_SCALE_FACTOR
                 
                 total_sentiment += normalized_sentiment * weight
                 total_weight += weight

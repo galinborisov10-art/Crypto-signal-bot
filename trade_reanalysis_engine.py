@@ -352,8 +352,9 @@ class TradeReanalysisEngine:
                 )
                 
                 # Add news impact to analysis for later use
-                if hasattr(analysis, 'news_impact'):
-                    analysis.news_impact = news_impact
+                # Store in warnings list since CheckpointAnalysis doesn't have news_impact attribute
+                if news_impact['reasoning']:
+                    analysis.warnings.append(f"📰 News: {news_impact['reasoning']}")
                 
                 # Act on news recommendation
                 if news_impact['recommendation'] == 'CLOSE_NOW':
