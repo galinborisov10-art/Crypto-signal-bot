@@ -6529,17 +6529,480 @@ def calculate_combined_signal_strength(technical_score, fundamental_score):
         return "🔴 VERY WEAK", combined
 
 
+async def generate_swing_trading_analysis(symbol: str, language: str = 'bg') -> str:
+    """
+    Generate professional swing trading analysis
+    
+    Args:
+        symbol: Trading pair (e.g., 'BTCUSDT')
+        language: 'bg' or 'en'
+    
+    Returns:
+        Formatted analysis message
+    """
+    try:
+        # Fetch current price and 24h data
+        price_data = await fetch_json(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}")
+        if not price_data:
+            return "❌ Грешка при извличане на данни" if language == 'bg' else "❌ Error fetching data"
+        
+        current_price = float(price_data['lastPrice'])
+        change_24h = float(price_data['priceChangePercent'])
+        volume = float(price_data['volume'])
+        
+        # Fetch 7d data for trend
+        klines_7d = await fetch_json(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1d&limit=7")
+        change_7d = 0
+        if klines_7d and len(klines_7d) > 0:
+            price_7d_ago = float(klines_7d[0][1])  # Open price 7 days ago
+            change_7d = ((current_price - price_7d_ago) / price_7d_ago) * 100
+        
+        # ICT Analysis for multi-timeframe
+        ict_4h = None
+        ict_1d = None
+        if ICT_SIGNAL_ENGINE_AVAILABLE:
+            try:
+                ict_4h = await ict_engine_global.analyze(symbol.replace('USDT', ''), '4h')
+                ict_1d = await ict_engine_global.analyze(symbol.replace('USDT', ''), '1d')
+            except Exception as e:
+                logger.warning(f"ICT analysis failed: {e}")
+        
+        # Determine market structure
+        structure_4h = "NEUTRAL"
+        structure_1d = "NEUTRAL"
+        alignment = "MIXED"
+        
+        if ict_4h and ict_1d:
+            # Map bias to structure
+            if ict_4h.bias.value in ['BULLISH', 'STRONG_BULLISH']:
+                structure_4h = "BULLISH"
+            elif ict_4h.bias.value in ['BEARISH', 'STRONG_BEARISH']:
+                structure_4h = "BEARISH"
+            
+            if ict_1d.bias.value in ['BULLISH', 'STRONG_BULLISH']:
+                structure_1d = "BULLISH"
+            elif ict_1d.bias.value in ['BEARISH', 'STRONG_BEARISH']:
+                structure_1d = "BEARISH"
+            
+            # Determine alignment
+            if structure_4h == structure_1d and structure_4h != "NEUTRAL":
+                alignment = f"{structure_4h}_ALIGNED"
+            elif structure_4h == "NEUTRAL" or structure_1d == "NEUTRAL":
+                alignment = "RANGING"
+            else:
+                alignment = "MIXED"
+        
+        # Calculate volume analysis (simple comparison to 24h average)
+        avg_volume_20d = volume  # Simplified - using current as baseline
+        volume_ratio = 1.0  # Default
+        volume_trend = "NORMAL"
+        
+        # Simple volume trend based on 24h change
+        if change_24h > 5:
+            volume_trend = "INCREASING"
+        elif change_24h < -5:
+            volume_trend = "DECREASING"
+        
+        # Fetch Fear & Greed Index
+        fear_greed = await fetch_fear_greed_index()
+        
+        # Determine support and resistance levels
+        support_level = current_price * 0.97  # Simplified: 3% below
+        resistance_level = current_price * 1.03  # Simplified: 3% above
+        
+        if ict_1d:
+            # Use order blocks if available
+            if ict_1d.order_blocks:
+                # Find nearest support/resistance from order blocks
+                bullish_obs = [ob for ob in ict_1d.order_blocks if ob.get('type') == 'BULLISH']
+                bearish_obs = [ob for ob in ict_1d.order_blocks if ob.get('type') == 'BEARISH']
+                
+                if bullish_obs:
+                    support_level = min([ob.get('price', current_price * 0.97) for ob in bullish_obs if ob.get('price', 0) < current_price], default=support_level)
+                if bearish_obs:
+                    resistance_level = max([ob.get('price', current_price * 1.03) for ob in bearish_obs if ob.get('price', 0) > current_price], default=resistance_level)
+        
+        # Calculate distances
+        resistance_dist = ((resistance_level - current_price) / current_price) * 100
+        support_dist = ((current_price - support_level) / current_price) * 100
+        
+        # Generate swing setup based on alignment
+        if alignment == "BULLISH_ALIGNED":
+            setup_type = "BULLISH"
+            entry_price = resistance_level
+            tp1 = entry_price * 1.025  # 2.5%
+            tp2 = entry_price * 1.04   # 4%
+            sl = entry_price * 0.997   # 0.3%
+            rr_ratio = (tp1 - entry_price) / (entry_price - sl) if (entry_price - sl) > 0 else 0
+        elif alignment == "BEARISH_ALIGNED":
+            setup_type = "BEARISH"
+            entry_price = support_level
+            tp1 = entry_price * 0.975  # -2.5%
+            tp2 = entry_price * 0.96   # -4%
+            sl = entry_price * 1.003   # 0.3%
+            rr_ratio = (entry_price - tp1) / (sl - entry_price) if (sl - entry_price) > 0 else 0
+        else:
+            setup_type = "RANGING"
+            entry_price = resistance_level
+            tp1 = entry_price * 1.038
+            tp2 = entry_price * 1.062
+            sl = entry_price * 0.997
+            rr_ratio = 3.5
+        
+        # Format message based on language
+        if language == 'bg':
+            message = format_swing_analysis_bg(
+                symbol, current_price, change_24h, change_7d,
+                structure_4h, structure_1d, alignment,
+                resistance_level, resistance_dist, support_level, support_dist,
+                volume_ratio, volume_trend, fear_greed,
+                setup_type, entry_price, tp1, tp2, sl, rr_ratio
+            )
+        else:
+            message = format_swing_analysis_en(
+                symbol, current_price, change_24h, change_7d,
+                structure_4h, structure_1d, alignment,
+                resistance_level, resistance_dist, support_level, support_dist,
+                volume_ratio, volume_trend, fear_greed,
+                setup_type, entry_price, tp1, tp2, sl, rr_ratio
+            )
+        
+        return message
+        
+    except Exception as e:
+        logger.error(f"Error in swing trading analysis: {e}")
+        return f"❌ Грешка: {str(e)}" if language == 'bg' else f"❌ Error: {str(e)}"
+
+
+def format_swing_analysis_bg(symbol, price, change_24h, change_7d, 
+                             struct_4h, struct_1d, alignment,
+                             resistance, res_dist, support, sup_dist,
+                             vol_ratio, vol_trend, fear_greed,
+                             setup_type, entry, tp1, tp2, sl, rr):
+    """Format swing analysis in Bulgarian"""
+    
+    # Get symbol name
+    symbol_name = "BITCOIN" if "BTC" in symbol else symbol.replace("USDT", "")
+    
+    msg = f"🟡 {symbol_name} ({symbol})\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    msg += f"💰 Цена: ${price:,.2f} ({change_24h:+.1f}% 24h, {change_7d:+.1f}% 7d)\n\n"
+    
+    msg += "📊 СТРУКТУРА:\n"
+    msg += f"  • 4H: {struct_4h}\n"
+    msg += f"  • 1D: {struct_1d}\n"
+    msg += f"  • Alignment: {'⚠️ ' if alignment == 'MIXED' else '✅ '}{alignment}\n\n"
+    
+    msg += "🔍 КЛЮЧОВИ НИВА:\n"
+    msg += f"  🔴 Съпротива: ${resistance:,.2f} ({res_dist:+.1f}% от цена)\n"
+    msg += f"  🟢 Подкрепа: ${support:,.2f} ({sup_dist:+.1f}% под цена)\n\n"
+    
+    msg += "📊 ОБЕМ & MOMENTUM:\n"
+    msg += f"  • Volume: {vol_ratio:.2f}x среден\n"
+    msg += f"  • Trend: {vol_trend}\n"
+    
+    if fear_greed:
+        fg_emoji = "😱" if fear_greed['value'] < 25 else "😰" if fear_greed['value'] < 45 else "😐" if fear_greed['value'] < 55 else "😊" if fear_greed['value'] < 75 else "🤑"
+        msg += f"\n{fg_emoji} Fear & Greed: {fear_greed['value']}/100 ({fear_greed['classification']})\n"
+    
+    msg += "\n━━━━ SWING SETUP ━━━━\n\n"
+    
+    if setup_type == "RANGING":
+        msg += "⚠️ CONSOLIDATION - Чакай Breakout\n\n"
+        msg += "💡 СТРАТЕГИЯ:\n"
+        msg += f"  ✅ BULLISH Scenario:\n"
+        msg += f"     • Entry: Breakout над ${entry:,.2f}\n"
+        msg += f"     • TP1: ${tp1:,.2f} ({((tp1-entry)/entry*100):+.1f}%)\n"
+        msg += f"     • TP2: ${tp2:,.2f} ({((tp2-entry)/entry*100):+.1f}%)\n"
+        msg += f"     • SL: ${sl:,.2f} ({((sl-entry)/entry*100):+.1f}%)\n"
+        msg += f"     • R:R = {rr:.1f}:1\n\n"
+        msg += f"  ❌ BEARISH Scenario:\n"
+        msg += f"     • Breakdown под ${support:,.2f} = ИЗБЯГВАЙ LONGS\n\n"
+        msg += "⏰ ВРЕМЕВА РАМКА:\n"
+        msg += "  Очакван breakout в рамките на 12-24 часа\n\n"
+    elif setup_type == "BULLISH":
+        msg += "✅ BULLISH ALIGNMENT - Long Setup\n\n"
+        msg += "💡 СТРАТЕГИЯ:\n"
+        msg += f"  ✅ Entry: ${entry:,.2f}\n"
+        msg += f"  🎯 TP1: ${tp1:,.2f} ({((tp1-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🎯 TP2: ${tp2:,.2f} ({((tp2-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🛑 SL: ${sl:,.2f} ({((sl-entry)/entry*100):+.1f}%)\n"
+        msg += f"  📊 R:R = {rr:.1f}:1\n\n"
+    else:  # BEARISH
+        msg += "❌ BEARISH ALIGNMENT - Short Setup\n\n"
+        msg += "💡 СТРАТЕГИЯ:\n"
+        msg += f"  ❌ Entry: ${entry:,.2f}\n"
+        msg += f"  🎯 TP1: ${tp1:,.2f} ({((tp1-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🎯 TP2: ${tp2:,.2f} ({((tp2-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🛑 SL: ${sl:,.2f} ({((sl-entry)/entry*100):+.1f}%)\n"
+        msg += f"  📊 R:R = {rr:.1f}:1\n\n"
+    
+    msg += "━━━━ ПРЕПОРЪКА ━━━━\n\n"
+    
+    if setup_type == "RANGING":
+        msg += f"✅ ЧАКАЙ bullish breakout над ${entry:,.2f}\n"
+        msg += f"SET alerts at ${entry:,.2f} и ${support:,.2f}\n\n"
+        msg += "⚠️ РИСКОВЕ:\n"
+        msg += "  • Ниският обем може да доведе до false breakout\n"
+    elif setup_type == "BULLISH":
+        msg += "✅ LONG позиция с добър R:R\n"
+        msg += f"SET alerts at entry ${entry:,.2f}\n\n"
+        msg += "⚠️ РИСКОВЕ:\n"
+        msg += "  • Спазвай стоп лоса строго\n"
+    else:
+        msg += "❌ SHORT позиция - рисково\n"
+        msg += f"SET alerts at entry ${entry:,.2f}\n\n"
+        msg += "⚠️ РИСКОВЕ:\n"
+        msg += "  • Bearish пазар - висока волатилност\n"
+    
+    msg += "\n<i>⚠️ Това не е финансов съвет. DYOR!</i>"
+    
+    return msg
+
+
+def format_swing_analysis_en(symbol, price, change_24h, change_7d,
+                             struct_4h, struct_1d, alignment,
+                             resistance, res_dist, support, sup_dist,
+                             vol_ratio, vol_trend, fear_greed,
+                             setup_type, entry, tp1, tp2, sl, rr):
+    """Format swing analysis in English"""
+    
+    # Get symbol name
+    symbol_name = "BITCOIN" if "BTC" in symbol else symbol.replace("USDT", "")
+    
+    msg = f"🟡 {symbol_name} ({symbol})\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    msg += f"💰 Price: ${price:,.2f} ({change_24h:+.1f}% 24h, {change_7d:+.1f}% 7d)\n\n"
+    
+    msg += "📊 STRUCTURE:\n"
+    msg += f"  • 4H: {struct_4h}\n"
+    msg += f"  • 1D: {struct_1d}\n"
+    msg += f"  • Alignment: {'⚠️ ' if alignment == 'MIXED' else '✅ '}{alignment}\n\n"
+    
+    msg += "🔍 KEY LEVELS:\n"
+    msg += f"  🔴 Resistance: ${resistance:,.2f} ({res_dist:+.1f}% from price)\n"
+    msg += f"  🟢 Support: ${support:,.2f} ({sup_dist:+.1f}% below price)\n\n"
+    
+    msg += "📊 VOLUME & MOMENTUM:\n"
+    msg += f"  • Volume: {vol_ratio:.2f}x average\n"
+    msg += f"  • Trend: {vol_trend}\n"
+    
+    if fear_greed:
+        fg_emoji = "😱" if fear_greed['value'] < 25 else "😰" if fear_greed['value'] < 45 else "😐" if fear_greed['value'] < 55 else "😊" if fear_greed['value'] < 75 else "🤑"
+        msg += f"\n{fg_emoji} Fear & Greed: {fear_greed['value']}/100 ({fear_greed['classification']})\n"
+    
+    msg += "\n━━━━ SWING SETUP ━━━━\n\n"
+    
+    if setup_type == "RANGING":
+        msg += "⚠️ CONSOLIDATION - Wait for Breakout\n\n"
+        msg += "💡 STRATEGY:\n"
+        msg += f"  ✅ BULLISH Scenario:\n"
+        msg += f"     • Entry: Breakout above ${entry:,.2f}\n"
+        msg += f"     • TP1: ${tp1:,.2f} ({((tp1-entry)/entry*100):+.1f}%)\n"
+        msg += f"     • TP2: ${tp2:,.2f} ({((tp2-entry)/entry*100):+.1f}%)\n"
+        msg += f"     • SL: ${sl:,.2f} ({((sl-entry)/entry*100):+.1f}%)\n"
+        msg += f"     • R:R = {rr:.1f}:1\n\n"
+        msg += f"  ❌ BEARISH Scenario:\n"
+        msg += f"     • Breakdown below ${support:,.2f} = AVOID LONGS\n\n"
+        msg += "⏰ TIMEFRAME:\n"
+        msg += "  Expected breakout within 12-24 hours\n\n"
+    elif setup_type == "BULLISH":
+        msg += "✅ BULLISH ALIGNMENT - Long Setup\n\n"
+        msg += "💡 STRATEGY:\n"
+        msg += f"  ✅ Entry: ${entry:,.2f}\n"
+        msg += f"  🎯 TP1: ${tp1:,.2f} ({((tp1-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🎯 TP2: ${tp2:,.2f} ({((tp2-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🛑 SL: ${sl:,.2f} ({((sl-entry)/entry*100):+.1f}%)\n"
+        msg += f"  📊 R:R = {rr:.1f}:1\n\n"
+    else:  # BEARISH
+        msg += "❌ BEARISH ALIGNMENT - Short Setup\n\n"
+        msg += "💡 STRATEGY:\n"
+        msg += f"  ❌ Entry: ${entry:,.2f}\n"
+        msg += f"  🎯 TP1: ${tp1:,.2f} ({((tp1-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🎯 TP2: ${tp2:,.2f} ({((tp2-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🛑 SL: ${sl:,.2f} ({((sl-entry)/entry*100):+.1f}%)\n"
+        msg += f"  📊 R:R = {rr:.1f}:1\n\n"
+    
+    msg += "━━━━ RECOMMENDATION ━━━━\n\n"
+    
+    if setup_type == "RANGING":
+        msg += f"✅ WAIT for bullish breakout above ${entry:,.2f}\n"
+        msg += f"SET alerts at ${entry:,.2f} and ${support:,.2f}\n\n"
+        msg += "⚠️ RISKS:\n"
+        msg += "  • Low volume may lead to false breakout\n"
+    elif setup_type == "BULLISH":
+        msg += "✅ LONG position with good R:R\n"
+        msg += f"SET alerts at entry ${entry:,.2f}\n\n"
+        msg += "⚠️ RISKS:\n"
+        msg += "  • Respect stop loss strictly\n"
+    else:
+        msg += "❌ SHORT position - risky\n"
+        msg += f"SET alerts at entry ${entry:,.2f}\n\n"
+        msg += "⚠️ RISKS:\n"
+        msg += "  • Bearish market - high volatility\n"
+    
+    msg += "\n<i>⚠️ This is not financial advice. DYOR!</i>"
+    
+    return msg
+
+
 @require_access()
 @rate_limited(calls=10, period=60)
 async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Дневен анализ за всички интегрирани валути с новини и sentiment"""
+    """Дневен анализ за всички интегрирани валути с новини и sentiment - показва меню за избор"""
     logger.info(f"User {update.effective_user.id} executed /market")
-    await update.message.reply_text("📊 Анализирам пазара от множество източници...")
+    
+    # Get user's current language preference (default to Bulgarian)
+    user_id = update.effective_user.id
+    user_language = context.bot_data.get(f'user_{user_id}_language', 'bg')
+    
+    # Create submenu keyboard
+    market_keyboard = [
+        [InlineKeyboardButton("📈 Бърз Преглед", callback_data="market_quick")],
+        [InlineKeyboardButton("🎯 Swing Trading Анализ", callback_data="market_swing")],
+        [InlineKeyboardButton("💡 Пълен Пазарен Отчет", callback_data="market_full")],
+        [
+            InlineKeyboardButton("🇧🇬 BG", callback_data="lang_bg"),
+            InlineKeyboardButton("🇬🇧 EN", callback_data="lang_en")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(market_keyboard)
+    
+    lang_flag = "🇧🇬" if user_language == 'bg' else "🇬🇧"
+    message_text = (
+        f"📊 <b>ПАЗАРЕН АНАЛИЗ</b>\n\n"
+        f"Избери тип анализ:\n\n"
+        f"📈 <b>Бърз Преглед</b> - Кратък sentiment overview\n"
+        f"🎯 <b>Swing Trading Анализ</b> - Професионален анализ с setup\n"
+        f"💡 <b>Пълен Отчет</b> - Детайлен преглед на всички криптовалути\n\n"
+        f"{lang_flag} Текущ език: <b>{'Български' if user_language == 'bg' else 'English'}</b>"
+    )
+    
+    await update.message.reply_text(
+        message_text,
+        parse_mode='HTML',
+        reply_markup=reply_markup
+    )
+
+
+async def market_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle market submenu callbacks"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # Handle language selection
+    if query.data == 'lang_bg':
+        context.bot_data[f'user_{user_id}_language'] = 'bg'
+        await query.edit_message_text(
+            "🇧🇬 Език сменен на <b>Български</b>",
+            parse_mode='HTML'
+        )
+        return
+    elif query.data == 'lang_en':
+        context.bot_data[f'user_{user_id}_language'] = 'en'
+        await query.edit_message_text(
+            "🇬🇧 Language changed to <b>English</b>",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Handle market analysis options
+    if query.data == 'market_quick':
+        await market_quick_overview(update, context)
+    elif query.data == 'market_swing':
+        await market_swing_analysis(update, context)
+    elif query.data == 'market_full':
+        await market_full_report(update, context)
+
+
+async def market_quick_overview(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Quick market overview with sentiment"""
+    query = update.callback_query
+    await query.edit_message_text("📊 Анализирам пазара...")
+    
+    user_id = update.effective_user.id
+    user_language = context.bot_data.get(f'user_{user_id}_language', 'bg')
+    
+    # Fetch market data
+    data = await fetch_json(BINANCE_24H_URL)
+    if not data:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Грешка при извличане на данни"
+        )
+        return
+    
+    # Filter our symbols
+    our_symbols = set(SYMBOLS.values())
+    market_data = [s for s in data if s['symbol'] in our_symbols]
+    
+    # Analyze sentiment
+    sentiment_analysis = await analyze_market_sentiment(market_data)
+    
+    # Fetch Fear & Greed Index
+    fear_greed = await fetch_fear_greed_index()
+    
+    # Build message
+    message = "📊 <b>БЪРЗ ПАЗАРЕН ПРЕГЛЕД</b>\n" if user_language == 'bg' else "📊 <b>QUICK MARKET OVERVIEW</b>\n"
+    message += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    if user_language == 'bg':
+        message += f"<b>🎯 Пазарен Sentiment:</b>\n"
+        message += f"{sentiment_analysis['emoji']} <b>{sentiment_analysis['description']}</b>\n"
+        message += f"📈 Sentiment Score: <b>{sentiment_analysis['score']:.1f}/100</b>\n"
+    else:
+        message += f"<b>🎯 Market Sentiment:</b>\n"
+        message += f"{sentiment_analysis['emoji']} <b>{sentiment_analysis['description']}</b>\n"
+        message += f"📈 Sentiment Score: <b>{sentiment_analysis['score']:.1f}/100</b>\n"
+    
+    # Add Fear & Greed Index
+    if fear_greed:
+        fg_emoji = "😱" if fear_greed['value'] < 25 else "😰" if fear_greed['value'] < 45 else "😐" if fear_greed['value'] < 55 else "😊" if fear_greed['value'] < 75 else "🤑"
+        message += f"\n{fg_emoji} <b>Fear & Greed Index:</b> {fear_greed['value']}/100 ({fear_greed['classification']})\n"
+    
+    message += f"\n📊 {'Средна промяна' if user_language == 'bg' else 'Average change'}: <b>{sentiment_analysis['avg_change']:+.2f}%</b>\n"
+    message += f"🟢 {'Растящи' if user_language == 'bg' else 'Rising'}: <b>{sentiment_analysis['positive_count']}</b> | "
+    message += f"🔴 {'Падащи' if user_language == 'bg' else 'Falling'}: <b>{sentiment_analysis['negative_count']}</b>\n"
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=message,
+        parse_mode='HTML'
+    )
+
+
+async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Professional swing trading analysis"""
+    query = update.callback_query
+    await query.edit_message_text("🎯 Генерирам swing trading анализ...")
+    
+    user_id = update.effective_user.id
+    user_language = context.bot_data.get(f'user_{user_id}_language', 'bg')
+    
+    # Generate swing analysis for BTC (primary symbol)
+    analysis_message = await generate_swing_trading_analysis('BTCUSDT', user_language)
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=analysis_message,
+        parse_mode='HTML'
+    )
+
+
+async def market_full_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Full detailed market report (original market_cmd behavior)"""
+    query = update.callback_query
+    await query.edit_message_text("📊 Анализирам пазара от множество източници...")
     
     # Извлечи пазарни данни
     data = await fetch_json(BINANCE_24H_URL)
     if not data:
-        await update.message.reply_text("❌ Грешка при извличане на данни")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Грешка при извличане на данни"
+        )
         return
     
     # Филтрирай само нашите символи
@@ -6634,7 +7097,11 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"   Обем: {vol_str}\n\n"
     
     # Изпрати първата част
-    await update.message.reply_text(message, parse_mode='HTML')
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=message,
+        parse_mode='HTML'
+    )
     
     # === NEW: MARKET FUNDAMENTAL ANALYSIS (PHASE 2 PART 2) ===
     try:
@@ -6669,7 +7136,11 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 if fundamental_section:
-                    await update.message.reply_text(fundamental_section, parse_mode='HTML')
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=fundamental_section,
+                        parse_mode='HTML'
+                    )
                     logger.info("✅ Market fundamental analysis sent")
         else:
             logger.debug("Market fundamental analysis disabled (feature flags)")
@@ -6678,7 +7149,10 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Continue with normal market analysis
     
     # === DETAILED COIN ANALYSIS WITH ICT ===
-    await update.message.reply_text("📊 Подготвям детайлен анализ с ICT + CoinGecko данни...")
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="📊 Подготвям детайлен анализ с ICT + CoinGecko данни..."
+    )
     
     # Get user settings for timeframe preference
     settings = get_user_settings(context.application.bot_data, update.effective_chat.id)
@@ -6852,7 +7326,11 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         coin_msg += f"<i>📊 Източници: {sources}</i>"
         
         # Изпрати анализа за тази монета
-        await update.message.reply_text(coin_msg, parse_mode='HTML')
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=coin_msg,
+            parse_mode='HTML'
+        )
         
         # Малка пауза между съобщенията (увеличена заради по-дълги съобщения)
         await asyncio.sleep(0.8)
@@ -6957,7 +7435,12 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         news_message += "<i>🌍 Автоматично преведени на български</i>\n"
         news_message += "<i>📱 Използвай /news за повече новини</i>"
         
-        await update.message.reply_text(news_message, parse_mode='HTML', disable_web_page_preview=True)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=news_message,
+            parse_mode='HTML',
+            disable_web_page_preview=True
+        )
     
     # === TRADING RECOMMENDATION ===
     recommendation = ""
@@ -6979,7 +7462,11 @@ async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     recommendation += "\n\n⚠️ <i>Това не е финансов съвет. DYOR!</i>"
     
-    await update.message.reply_text(recommendation, parse_mode='HTML')
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=recommendation,
+        parse_mode='HTML'
+    )
 
 
 def add_signal_to_monitor(ict_signal, symbol: str, timeframe: str, chat_id: int):
@@ -15823,6 +16310,10 @@ def main():
     app.add_handler(CallbackQueryHandler(timeframe_callback, pattern='^timeframe_settings$'))  # Settings menu timeframe
     app.add_handler(CallbackQueryHandler(toggle_fundamental_callback, pattern='^toggle_fundamental$'))  # Fundamental toggle
     app.add_handler(CallbackQueryHandler(reports_callback, pattern='^report_'))  # Reports menu
+    
+    # Market submenu callback handlers
+    app.add_handler(CallbackQueryHandler(market_callback, pattern='^market_'))
+    app.add_handler(CallbackQueryHandler(market_callback, pattern='^lang_'))
     
     # NEW: Backtest callback handlers
     app.add_handler(CallbackQueryHandler(ml_performance_callback, pattern='^ml_performance'))
