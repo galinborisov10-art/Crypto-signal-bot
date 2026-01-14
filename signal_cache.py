@@ -6,9 +6,10 @@ Prevents duplicate signals across bot restarts
 
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 SENT_SIGNALS_FILE = 'sent_signals_cache.json'
+CACHE_CLEANUP_HOURS = 24  # Clean entries older than 24 hours
 
 def load_sent_signals(base_path=None):
     """
@@ -20,15 +21,15 @@ def load_sent_signals(base_path=None):
     if base_path is None:
         base_path = os.path.dirname(os.path.abspath(__file__))
     
-    file_path = f'{base_path}/{SENT_SIGNALS_FILE}'
+    file_path = os.path.join(base_path, SENT_SIGNALS_FILE)
     
     try:
         if os.path.exists(file_path):
             with open(file_path, 'r') as f:
                 cache = json.load(f)
                 
-                # Clean old entries (older than 24 hours)
-                cutoff = datetime.now().timestamp() - (24 * 3600)
+                # Clean old entries (older than CACHE_CLEANUP_HOURS)
+                cutoff = datetime.now().timestamp() - timedelta(hours=CACHE_CLEANUP_HOURS).total_seconds()
                 cache = {
                     k: v for k, v in cache.items() 
                     if datetime.fromisoformat(v['timestamp']).timestamp() > cutoff
@@ -51,7 +52,7 @@ def save_sent_signals(cache, base_path=None):
     if base_path is None:
         base_path = os.path.dirname(os.path.abspath(__file__))
     
-    file_path = f'{base_path}/{SENT_SIGNALS_FILE}'
+    file_path = os.path.join(base_path, SENT_SIGNALS_FILE)
     
     try:
         with open(file_path, 'w') as f:
