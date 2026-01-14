@@ -288,6 +288,8 @@ OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '7003238836'))
 # ================= USER ACCESS CONTROL =================
 # Списък с разрешени потребители (Owner винаги е разрешен)
 # PR #113: Defensive fallback to ensure access even if env var issues
+# NOTE: Hardcoded owner ID (7003238836) is intentional as emergency fallback
+# to prevent lockout if environment variable is misconfigured
 ALLOWED_USERS = {
     7003238836,  # Hardcoded owner ID as fallback
     int(os.getenv('OWNER_CHAT_ID', '7003238836'))
@@ -354,6 +356,12 @@ SYMBOLS = {
     'BNB': 'BNBUSDT',
     'ADA': 'ADAUSDT',
 }
+
+# PR #113: Swing analysis constants
+SWING_KLINES_LIMIT = 100  # Number of candles to fetch for swing analysis
+SWING_MIN_CANDLES = 20    # Minimum candles needed for analysis
+SWING_UPPER_THRESHOLD = 0.66  # Price in upper 33% = bullish
+SWING_LOWER_THRESHOLD = 0.33  # Price in lower 33% = bearish
 
 # Настройки за потребителите (съхраняват се в bot_data)
 # Структура: bot_data[chat_id] = {
@@ -7090,13 +7098,15 @@ async def detect_market_swing_state(symbol: str, timeframe: str = '4h') -> str:
     """
     try:
         # Fetch historical klines data from Binance
-        klines = await fetch_json(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={timeframe}&limit=100")
+        klines = await fetch_json(
+            f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={timeframe}&limit={SWING_KLINES_LIMIT}"
+        )
         
-        if not klines or len(klines) < 20:
+        if not klines or len(klines) < SWING_MIN_CANDLES:
             return 'UNKNOWN'
         
-        # Extract recent 20 candles for analysis
-        recent_candles = klines[-20:]
+        # Extract recent candles for analysis
+        recent_candles = klines[-SWING_MIN_CANDLES:]
         
         # Get highs, lows, and current close
         recent_highs = [float(candle[2]) for candle in recent_candles]  # Index 2 = high
@@ -7112,8 +7122,8 @@ async def detect_market_swing_state(symbol: str, timeframe: str = '4h') -> str:
         if price_range == 0:
             return 'NEUTRAL'
         
-        upper_third = recent_low + (price_range * 0.66)
-        lower_third = recent_low + (price_range * 0.33)
+        upper_third = recent_low + (price_range * SWING_UPPER_THRESHOLD)
+        lower_third = recent_low + (price_range * SWING_LOWER_THRESHOLD)
         
         if current_price > upper_third:
             return 'BULLISH'
