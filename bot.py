@@ -7089,18 +7089,23 @@ async def detect_market_swing_state(symbol: str, timeframe: str = '4h') -> str:
         'BULLISH', 'BEARISH', or 'NEUTRAL'
     """
     try:
-        # Fetch historical data using existing fetch_binance_data function
-        from utils.market_data_fetcher import fetch_binance_data
+        # Fetch historical klines data from Binance
+        klines = await fetch_json(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={timeframe}&limit=100")
         
-        df = await fetch_binance_data(symbol, timeframe, limit=100)
-        
-        if df is None or len(df) < 20:
+        if not klines or len(klines) < 20:
             return 'UNKNOWN'
         
+        # Extract recent 20 candles for analysis
+        recent_candles = klines[-20:]
+        
+        # Get highs, lows, and current close
+        recent_highs = [float(candle[2]) for candle in recent_candles]  # Index 2 = high
+        recent_lows = [float(candle[3]) for candle in recent_candles]   # Index 3 = low
+        current_price = float(klines[-1][4])  # Index 4 = close of last candle
+        
         # Calculate swing based on recent price structure
-        recent_high = df['high'].tail(20).max()
-        recent_low = df['low'].tail(20).min()
-        current_price = df['close'].iloc[-1]
+        recent_high = max(recent_highs)
+        recent_low = min(recent_lows)
         
         # Simple swing detection (divide range into thirds)
         price_range = recent_high - recent_low
