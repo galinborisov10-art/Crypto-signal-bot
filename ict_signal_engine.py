@@ -1505,6 +1505,31 @@ class ICTSignalEngine:
             logger.info(f"   Context Warnings: {context_warnings}")
         logger.info("=" * 60)
         
+        # ═══════════════════════════════════════════════════════════
+        # ✅ PR #8 LAYER 1: NEWS SENTIMENT FILTER (Before final return)
+        # ═══════════════════════════════════════════════════════════
+        logger.info("📰 Step 12b: News Sentiment Filter (PR #8)")
+        
+        news_check = self._check_news_sentiment_before_signal(
+            symbol=symbol,
+            signal_type=signal_type.value if hasattr(signal_type, 'value') else str(signal_type),
+            timeframe=timeframe
+        )
+        
+        if not news_check['allow_signal']:
+            logger.warning(f"❌ BLOCKED at Step 12b: {news_check['reasoning']}")
+            logger.info(f"   Sentiment Score: {news_check['sentiment_score']:.0f}")
+            if news_check['critical_news']:
+                logger.info(f"   Critical News: {len(news_check['critical_news'])} articles")
+            return None  # Don't send signal
+        
+        # Add news sentiment to warnings if there's a mild conflict
+        if abs(news_check['sentiment_score']) > 10 and news_check['reasoning']:
+            warnings.append(news_check['reasoning'])
+            logger.info(f"Added news sentiment warning: {news_check['reasoning']}")
+        
+        logger.info(f"✅ PASSED Step 12b: News sentiment check ({news_check['sentiment_score']:.0f})")
+        
         return signal
     
     def _prepare_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -4506,6 +4531,221 @@ class ICTSignalEngine:
         except Exception as e:
             logger.warning(f"BTC correlation calculation error: {e}")
             return None, None
+    
+    def _check_news_sentiment_before_signal(
+        self,
+        symbol: str,
+        signal_type: str,  # 'BUY' or 'SELL'
+        timeframe: str
+    ) -> Dict:
+        """
+        Check recent news sentiment BEFORE generating signal (PR #8 Layer 1)
+        
+        Logic:
+        - Get news from last 24h (configurable)
+        - Calculate weighted sentiment (-100 to +100)
+        - CRITICAL news: × 3 weight
+        - IMPORTANT news: × 2 weight
+        - NORMAL news: × 1 weight
+        
+        Decision matrix:
+        - BUY signal + sentiment < -30: BLOCK signal
+        - BUY signal + sentiment -10 to -30: WARN
+        - SELL signal + sentiment > +30: BLOCK signal
+        - SELL signal + sentiment +10 to +30: WARN
+        
+        Args:
+            symbol: Trading pair (e.g., 'BTCUSDT')
+            signal_type: 'BUY' or 'SELL'
+            timeframe: Timeframe being analyzed
+            
+        Returns:
+            {
+                'allow_signal': True/False,
+                'sentiment_score': -100 to +100,
+                'critical_news': List[news],
+                'reasoning': 'Explanation in Bulgarian'
+            }
+        """
+        try:
+            # Check if news filter is enabled
+            from config.trading_config import get_trading_config
+            config = get_trading_config()
+            
+            if not config.get('use_news_filter', True):
+                logger.info("📰 News filter disabled - allowing signal")
+                return {
+                    'allow_signal': True,
+                    'sentiment_score': 0,
+                    'critical_news': [],
+                    'reasoning': 'News filter disabled'
+                }
+            
+            # Try to get fundamental helper
+            try:
+                from utils.fundamental_helper import FundamentalHelper
+                fundamental_helper = FundamentalHelper()
+                
+                # Check if fundamental analysis is enabled
+                if not fundamental_helper.is_enabled():
+                    logger.info("📰 Fundamental analysis disabled - allowing signal")
+                    return {
+                        'allow_signal': True,
+                        'sentiment_score': 0,
+                        'critical_news': [],
+                        'reasoning': 'Fundamental analysis disabled'
+                    }
+            except Exception as e:
+                logger.warning(f"⚠️ Could not initialize FundamentalHelper: {e}")
+                # Allow signal if news system unavailable
+                return {
+                    'allow_signal': True,
+                    'sentiment_score': 0,
+                    'critical_news': [],
+                    'reasoning': 'News system unavailable'
+                }
+            
+            # Get news from cache
+            from utils.news_cache import NewsCache
+            news_cache = NewsCache(cache_dir='cache', ttl_minutes=60)
+            news_articles = news_cache.get_cached_news(symbol)
+            
+            if not news_articles:
+                logger.info(f"📰 No news available for {symbol} - allowing signal")
+                return {
+                    'allow_signal': True,
+                    'sentiment_score': 0,
+                    'critical_news': [],
+                    'reasoning': 'No recent news'
+                }
+            
+            # Filter news from last N hours
+            from datetime import datetime, timedelta
+            lookback_hours = config.get('news_lookback_hours', 24)
+            cutoff = datetime.now() - timedelta(hours=lookback_hours)
+            
+            recent_news = []
+            for article in news_articles:
+                try:
+                    time_str = article.get('time', '')
+                    if time_str:
+                        article_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                        if article_time >= cutoff:
+                            recent_news.append(article)
+                    else:
+                        # Include if no timestamp (better safe than sorry)
+                        recent_news.append(article)
+                except:
+                    recent_news.append(article)
+            
+            if not recent_news:
+                logger.info(f"📰 No recent news (last {lookback_hours}h) - allowing signal")
+                return {
+                    'allow_signal': True,
+                    'sentiment_score': 0,
+                    'critical_news': [],
+                    'reasoning': f'No news in last {lookback_hours}h'
+                }
+            
+            # Analyze sentiment with weighted importance
+            from fundamental.sentiment_analyzer import SentimentAnalyzer
+            sentiment_analyzer = SentimentAnalyzer()
+            
+            # Calculate weighted sentiment (-100 to +100)
+            news_weight_critical = config.get('news_weight_critical', 3.0)
+            news_weight_important = config.get('news_weight_important', 2.0)
+            news_weight_normal = config.get('news_weight_normal', 1.0)
+            
+            total_sentiment = 0.0
+            total_weight = 0.0
+            critical_news = []
+            
+            for article in recent_news:
+                # Analyze individual article
+                title = article.get('title', '')
+                single_sentiment = sentiment_analyzer._analyze_text(title)
+                
+                # Determine importance weight
+                importance = article.get('importance', 'NORMAL').upper()
+                if importance == 'CRITICAL':
+                    weight = news_weight_critical
+                    critical_news.append({
+                        'title': title,
+                        'importance': 'CRITICAL',
+                        'sentiment': single_sentiment,
+                        'time_ago': article.get('time_ago', 'N/A')
+                    })
+                elif importance == 'IMPORTANT':
+                    weight = news_weight_important
+                    critical_news.append({
+                        'title': title,
+                        'importance': 'IMPORTANT',
+                        'sentiment': single_sentiment,
+                        'time_ago': article.get('time_ago', 'N/A')
+                    })
+                else:
+                    weight = news_weight_normal
+                
+                # Convert 0-100 to -100 to +100
+                normalized_sentiment = (single_sentiment - 50) * 2
+                
+                total_sentiment += normalized_sentiment * weight
+                total_weight += weight
+            
+            # Calculate weighted average sentiment
+            sentiment_score = total_sentiment / total_weight if total_weight > 0 else 0
+            
+            logger.info(f"📰 News sentiment for {symbol}: {sentiment_score:.1f} (from {len(recent_news)} articles)")
+            
+            # Get thresholds from config
+            block_negative = config.get('news_block_threshold_negative', -30)
+            block_positive = config.get('news_block_threshold_positive', 30)
+            warn_threshold = config.get('news_warn_threshold', 10)
+            
+            # Decision logic
+            allow_signal = True
+            reasoning = ""
+            
+            if signal_type in ['BUY', 'STRONG_BUY']:
+                if sentiment_score < block_negative:
+                    allow_signal = False
+                    reasoning = f"⛔ СИГНАЛ БЛОКИРАН: Силно негативни новини (Sentiment: {sentiment_score:.0f}). LONG позиция е рискова."
+                    logger.warning(f"❌ Blocking BUY signal - negative sentiment: {sentiment_score:.1f}")
+                elif sentiment_score < -warn_threshold:
+                    reasoning = f"⚠️ ВНИМАНИЕ: Леко негативни новини (Sentiment: {sentiment_score:.0f}). Бъди предпазлив с LONG."
+                    logger.warning(f"⚠️ Warning for BUY signal - mild negative sentiment: {sentiment_score:.1f}")
+                else:
+                    reasoning = f"✅ Новините поддържат LONG позиция (Sentiment: {sentiment_score:.0f})"
+                    logger.info(f"✅ News supports BUY signal: {sentiment_score:.1f}")
+            
+            elif signal_type in ['SELL', 'STRONG_SELL']:
+                if sentiment_score > block_positive:
+                    allow_signal = False
+                    reasoning = f"⛔ СИГНАЛ БЛОКИРАН: Силно позитивни новини (Sentiment: {sentiment_score:.0f}). SHORT позиция е рискова."
+                    logger.warning(f"❌ Blocking SELL signal - positive sentiment: {sentiment_score:.1f}")
+                elif sentiment_score > warn_threshold:
+                    reasoning = f"⚠️ ВНИМАНИЕ: Леко позитивни новини (Sentiment: {sentiment_score:.0f}). Бъди предпазлив с SHORT."
+                    logger.warning(f"⚠️ Warning for SELL signal - mild positive sentiment: {sentiment_score:.1f}")
+                else:
+                    reasoning = f"✅ Новините поддържат SHORT позиция (Sentiment: {sentiment_score:.0f})"
+                    logger.info(f"✅ News supports SELL signal: {sentiment_score:.1f}")
+            
+            return {
+                'allow_signal': allow_signal,
+                'sentiment_score': sentiment_score,
+                'critical_news': critical_news[:3],  # Top 3 critical news
+                'reasoning': reasoning
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ News sentiment check error: {e}")
+            # On error, allow signal (don't block trading on news system failure)
+            return {
+                'allow_signal': True,
+                'sentiment_score': 0,
+                'critical_news': [],
+                'reasoning': f'News check error: {str(e)}'
+            }
     
     def record_signal_outcome(
         self,
