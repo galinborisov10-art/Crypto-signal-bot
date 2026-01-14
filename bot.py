@@ -9919,14 +9919,14 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         if ict_signal.confidence >= 65:
             try:
                 analysis_data = {
-                    'market_bias': ict_signal.market_bias.value,
-                    'htf_bias': ict_signal.htf_bias.value if ict_signal.htf_bias else None,
+                    'market_bias': ict_signal.bias.value,  # Fixed: bias instead of market_bias
+                    'htf_bias': ict_signal.htf_bias if isinstance(ict_signal.htf_bias, str) else (ict_signal.htf_bias.value if ict_signal.htf_bias else None),
                     'structure_broken': ict_signal.structure_broken,
                     'displacement_detected': ict_signal.displacement_detected,
                     'order_blocks_count': len(ict_signal.order_blocks),
                     'liquidity_zones_count': len(ict_signal.liquidity_zones),
                     'fvg_count': len(ict_signal.fair_value_gaps),
-                    'mtf_confluence': ict_signal.mtf_confluence_score,
+                    'mtf_confluence': ict_signal.mtf_confluence,  # Fixed: mtf_confluence instead of mtf_confluence_score
                     'whale_blocks': len(ict_signal.whale_blocks) if ict_signal.whale_blocks else 0
                 }
                 
@@ -10117,14 +10117,14 @@ async def auto_signal_job(timeframe: str, bot_instance):
             if ict_signal.confidence >= 65:
                 try:
                     analysis_data = {
-                        'market_bias': ict_signal.market_bias.value,
-                        'htf_bias': ict_signal.htf_bias.value if ict_signal.htf_bias else None,
+                        'market_bias': ict_signal.bias.value,  # Fixed: bias instead of market_bias
+                        'htf_bias': ict_signal.htf_bias if isinstance(ict_signal.htf_bias, str) else (ict_signal.htf_bias.value if ict_signal.htf_bias else None),
                         'structure_broken': ict_signal.structure_broken,
                         'displacement_detected': ict_signal.displacement_detected,
                         'order_blocks_count': len(ict_signal.order_blocks),
                         'liquidity_zones_count': len(ict_signal.liquidity_zones),
                         'fvg_count': len(ict_signal.fair_value_gaps),
-                        'mtf_confluence': ict_signal.mtf_confluence_score,
+                        'mtf_confluence': ict_signal.mtf_confluence,  # Fixed: mtf_confluence instead of mtf_confluence_score
                         'whale_blocks': len(ict_signal.whale_blocks) if ict_signal.whale_blocks else 0
                     }
                     
@@ -15927,9 +15927,40 @@ def main():
                     send_daily_auto_report,
                     'cron',
                     hour=8,
-                    minute=0
+                    minute=0,
+                    misfire_grace_time=3600,  # Allow 1 hour window for missed reports
+                    coalesce=True,            # Combine multiple missed runs into one
+                    max_instances=1           # Only one instance at a time
                 )
                 logger.info("✅ Daily reports scheduled at 08:00 BG time (Europe/Sofia timezone)")
+                
+                # Add startup check for missed daily report
+                async def check_missed_daily_report():
+                    """Check if daily report was missed today and send it"""
+                    try:
+                        bg_tz = pytz.timezone('Europe/Sofia')
+                        now = datetime.now(bg_tz)
+                        
+                        # If after 08:00 and before 23:59, check if report needs to be sent
+                        if now.hour > 8:
+                            logger.info("⚠️ Bot started after 08:00 - checking for missed daily report...")
+                            # Send the report now if we're within the grace period
+                            if now.hour <= 9:  # Within 1 hour of scheduled time
+                                logger.warning("⚠️ Daily report was missed - sending now...")
+                                await send_daily_auto_report()
+                            else:
+                                logger.info("ℹ️ Outside grace period - daily report will send tomorrow")
+                    except Exception as e:
+                        logger.error(f"Error in missed report check: {e}")
+                
+                # Schedule the check to run shortly after bot startup
+                scheduler.add_job(
+                    check_missed_daily_report,
+                    'date',
+                    run_date=datetime.now(bg_tz) + timedelta(seconds=10),
+                    id='missed_report_check',
+                    name='Missed Report Check'
+                )
             
             # СЕДМИЧЕН ОТЧЕТ - Всеки понеделник в 08:00 българско време
             if REPORTS_AVAILABLE:
@@ -16451,8 +16482,16 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             # ================= PR #7: POSITION MONITORING JOB =================
             # Position monitoring - Every 1 minute
             if POSITION_MANAGER_AVAILABLE and CHECKPOINT_MONITORING_ENABLED:
+                # Create proper async wrapper to avoid lambda/asyncio scoping issues
+                async def position_monitor_wrapper():
+                    """Wrapper for position monitoring job"""
+                    try:
+                        await monitor_positions_job(application.bot)
+                    except Exception as e:
+                        logger.error(f"❌ Position monitor error: {e}")
+                
                 scheduler.add_job(
-                    lambda: asyncio.create_task(monitor_positions_job(application.bot)),
+                    position_monitor_wrapper,  # Use wrapper instead of lambda
                     'cron',
                     minute='*',  # Every minute
                     id='position_monitor',
