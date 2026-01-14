@@ -287,7 +287,11 @@ OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '7003238836'))
 
 # ================= USER ACCESS CONTROL =================
 # Списък с разрешени потребители (Owner винаги е разрешен)
-ALLOWED_USERS = {OWNER_CHAT_ID}  # Само owner по подразбиране
+# PR #113: Defensive fallback to ensure access even if env var issues
+ALLOWED_USERS = {
+    7003238836,  # Hardcoded owner ID as fallback
+    int(os.getenv('OWNER_CHAT_ID', '7003238836'))
+}  # Само owner по подразбиране
 
 # Файл за съхранение на разрешените потребители
 ALLOWED_USERS_FILE = f"{BASE_PATH}/allowed_users.json"
@@ -1060,9 +1064,9 @@ def get_main_keyboard():
         [KeyboardButton("📊 Пазар"), KeyboardButton("📈 Сигнал")],
         [KeyboardButton("📰 Новини"), KeyboardButton("📋 Отчети")],
         [KeyboardButton("📚 ML Анализ"), KeyboardButton("⚙️ Настройки")],
-        [KeyboardButton("🔔 Alerts"), KeyboardButton("ℹ️ Помощ")],
+        [KeyboardButton("🔔 Alerts"), KeyboardButton("🏥 Health")],  # PR #113: Added Health button
         [KeyboardButton("🔄 Рестарт"), KeyboardButton("💻 Workspace")],
-        [KeyboardButton("🏠 Меню")]
+        [KeyboardButton("🏠 Меню"), KeyboardButton("ℹ️ Помощ")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -6978,21 +6982,144 @@ async def market_quick_overview(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Professional swing trading analysis"""
+    """
+    Professional swing trading analysis for ALL watched pairs
+    PR #113: Extended to analyze all symbols in SYMBOLS dict
+    """
     query = update.callback_query
-    await query.edit_message_text("🎯 Генерирам swing trading анализ...")
+    await query.edit_message_text("🎯 Генерирам swing trading анализ за всички валути...")
     
     user_id = update.effective_user.id
     user_language = context.bot_data.get(f'user_{user_id}_language', 'bg')
     
-    # Generate swing analysis for BTC (primary symbol)
-    analysis_message = await generate_swing_trading_analysis('BTCUSDT', user_language)
+    # Get all symbols to analyze
+    symbols_to_analyze = list(SYMBOLS.values())  # ['BTCUSDT', 'ETHUSDT', ...]
     
+    # Initialize message
+    message = "📊 <b>SWING TRADING АНАЛИЗ</b>\n"
+    message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    message += f"<i>Анализирам {len(symbols_to_analyze)} валути от watchlist</i>\n\n"
+    
+    analyzed_count = 0
+    errors = []
+    
+    # Analyze each symbol
+    for symbol in symbols_to_analyze:
+        try:
+            # Fetch current price and 24h data
+            ticker = await fetch_json(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}")
+            if not ticker:
+                errors.append(f"{symbol}: Failed to fetch data")
+                continue
+            
+            current_price = float(ticker['lastPrice'])
+            price_change_pct = float(ticker['priceChangePercent'])
+            
+            # Detect swing state using helper function
+            swing_state = await detect_market_swing_state(symbol, timeframe='4h')
+            
+            # Format coin name (remove USDT suffix)
+            coin_name = symbol.replace('USDT', '')
+            
+            # Visual indicators based on swing state
+            if swing_state == 'BULLISH':
+                state_emoji = '🟢'
+                trend_icon = '📈'
+            elif swing_state == 'BEARISH':
+                state_emoji = '🔴'
+                trend_icon = '📉'
+            else:
+                state_emoji = '⚪'
+                trend_icon = '➡️'
+            
+            # 24h change indicator
+            change_emoji = '🟢' if price_change_pct > 0 else '🔴' if price_change_pct < 0 else '⚪'
+            
+            # Format price (more decimals for low-price coins)
+            if current_price < 1:
+                price_str = f"${current_price:.6f}"
+            elif current_price < 100:
+                price_str = f"${current_price:.4f}"
+            else:
+                price_str = f"${current_price:,.2f}"
+            
+            message += f"{state_emoji} <b>{coin_name}</b> {trend_icon}\n"
+            message += f"   💰 {price_str}\n"
+            message += f"   24h: {change_emoji} {price_change_pct:+.2f}%\n"
+            message += f"   Swing: {swing_state}\n\n"
+            
+            analyzed_count += 1
+            
+        except Exception as e:
+            logger.error(f"Error analyzing {symbol}: {e}")
+            errors.append(f"{symbol}: {str(e)[:50]}")
+            continue
+    
+    message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    message += f"<i>✅ Успешно анализирани {analyzed_count}/{len(symbols_to_analyze)} валути</i>\n"
+    
+    if errors:
+        message += f"<i>⚠️ {len(errors)} грешки (вижте логовете)</i>\n"
+    
+    message += f"<i>⏱️ Обновено: {datetime.now().strftime('%H:%M:%S')}</i>"
+    
+    # Send results
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=analysis_message,
+        text=message,
         parse_mode='HTML'
     )
+    
+    logger.info(f"✅ Market swing analysis completed: {analyzed_count}/{len(symbols_to_analyze)} pairs")
+    if errors:
+        logger.warning(f"Market swing analysis errors: {errors}")
+
+
+async def detect_market_swing_state(symbol: str, timeframe: str = '4h') -> str:
+    """
+    Detect swing state for a symbol
+    
+    PR #113: Helper function for multi-pair market analysis
+    
+    Args:
+        symbol: Trading pair (e.g., 'BTCUSDT')
+        timeframe: Timeframe for analysis (default '4h')
+    
+    Returns:
+        'BULLISH', 'BEARISH', or 'NEUTRAL'
+    """
+    try:
+        # Fetch historical data using existing fetch_binance_data function
+        from utils.market_data_fetcher import fetch_binance_data
+        
+        df = await fetch_binance_data(symbol, timeframe, limit=100)
+        
+        if df is None or len(df) < 20:
+            return 'UNKNOWN'
+        
+        # Calculate swing based on recent price structure
+        recent_high = df['high'].tail(20).max()
+        recent_low = df['low'].tail(20).min()
+        current_price = df['close'].iloc[-1]
+        
+        # Simple swing detection (divide range into thirds)
+        price_range = recent_high - recent_low
+        if price_range == 0:
+            return 'NEUTRAL'
+        
+        upper_third = recent_low + (price_range * 0.66)
+        lower_third = recent_low + (price_range * 0.33)
+        
+        if current_price > upper_third:
+            return 'BULLISH'
+        elif current_price < lower_third:
+            return 'BEARISH'
+        else:
+            return 'NEUTRAL'
+            
+    except Exception as e:
+        logger.error(f"Swing detection error for {symbol}: {e}")
+        return 'UNKNOWN'
 
 
 async def market_full_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -11647,6 +11774,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await settings_cmd(update, context)
     elif text == "🔔 Alerts":
         await alerts_cmd(update, context)
+    elif text == "🏥 Health":  # PR #113: Health button handler
+        await health_cmd(update, context)
     elif text == "ℹ️ Помощ":
         await help_cmd(update, context)
     elif text == "🏠 Меню":
