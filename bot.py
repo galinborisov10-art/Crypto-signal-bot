@@ -17288,7 +17288,12 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             # ============================================================================
             
             scheduler.start()
-            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC) + 🧹 CACHE CLEANUP (10 min) + 🤖 ML AUTO-TRAINING (weekly) + 🤖 AUTO SIGNALS (1H, 2H, 4H, 1D) + 📊 POSITION MONITORING (PR #7) + 🏥 HEALTH MONITORING (PR #10)")
+            logger.info("✅ APScheduler started successfully")
+            logger.info("📅 Scheduled services: Reports, Diagnostics, News, Real-time Monitoring")
+            logger.info("📝 Active features: Journal 24/7, Signal Tracking, Weekly Backtest")
+            logger.info("🔄 Daily tasks: Backtest Update (02:00 UTC), Cache Cleanup (10 min)")
+            logger.info("🤖 ML: Auto-training (weekly), Auto Signals (1H, 2H, 4H, 1D)")
+            logger.info("📊 Position Monitoring (PR #7) + 🏥 Health Monitoring (PR #10)")
             
             # 🎯 INITIALIZE AND START REAL-TIME POSITION MONITOR (v2.1.0)
             global real_time_monitor_global

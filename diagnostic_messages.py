@@ -44,7 +44,7 @@ def format_issue_alert(component_name: str, issue: Dict[str, Any]) -> str:
 {issue.get('root_cause', 'Unknown cause')}
 
 📋 <b>EVIDENCE:</b>
-<code>{issue.get('evidence', 'No evidence available')[:500]}</code>"""
+<code>{issue.get('evidence', 'No evidence available')[:500]}{"..." if len(issue.get('evidence', '')) > 500 else ''}</code>"""
     
     # Add code location if available
     if 'code_location' in issue:

@@ -262,9 +262,9 @@ async def diagnose_journal_issue(base_path: str = None) -> List[Dict[str, Any]]:
                     'problem': f'Metadata mismatch: {metadata_count} expected, {actual_count} actual',
                     'root_cause': 'Journal was manually edited or corrupted',
                     'evidence': f'Difference: {abs(metadata_count - actual_count)} trades',
-                    'fix': 'Update metadata: journal["metadata"]["total_trades"] = len(journal["trades"])',
+                    'fix': 'Auto-repair: Run /health again to trigger automatic metadata sync',
                     'commands': [
-                        f'python3 -c "import json; d=json.load(open(\'{journal_file}\')); print(f\'Meta: {{d[\\\"metadata\\\"][\\\"total_trades\\\"]}}, Actual: {{len(d[\\\"trades\\\"])}}\')"'
+                        'python3 -c "import json; j=json.load(open(\'trading_journal.json\')); print(f\'Metadata: {j[\\\"metadata\\\"][\\\"total_trades\\\"]}, Actual: {len(j[\\\"trades\\\"])}\')"'
                     ]
                 })
         except Exception as e:
@@ -642,34 +642,34 @@ async def run_full_health_check(base_path: str = None) -> Dict[str, Any]:
     scheduler_issues = await diagnose_scheduler_issue(base_path)
     disk_issues = await diagnose_disk_space_issue(base_path)
     
-    # Compile results
+    # Compile results with explicit severity
     health_report['components']['trading_journal'] = {
-        'status': 'CRITICAL' if any('CRITICAL' in str(i) for i in journal_issues) else 'WARNING' if journal_issues else 'HEALTHY',
+        'status': 'CRITICAL' if any('missing' in str(i.get('problem', '')) for i in journal_issues) else 'WARNING' if journal_issues else 'HEALTHY',
         'issues': journal_issues
     }
     
     health_report['components']['ml_model'] = {
-        'status': 'CRITICAL' if any('CRITICAL' in str(i) for i in ml_issues) else 'WARNING' if ml_issues else 'HEALTHY',
+        'status': 'CRITICAL' if any('missing' in str(i.get('problem', '')) for i in ml_issues) else 'WARNING' if ml_issues else 'HEALTHY',
         'issues': ml_issues
     }
     
     health_report['components']['daily_reports'] = {
-        'status': 'CRITICAL' if any('CRITICAL' in str(i) for i in daily_report_issues) else 'WARNING' if daily_report_issues else 'HEALTHY',
+        'status': 'WARNING' if daily_report_issues else 'HEALTHY',
         'issues': daily_report_issues
     }
     
     health_report['components']['position_monitor'] = {
-        'status': 'CRITICAL' if any('CRITICAL' in str(i) for i in position_issues) else 'WARNING' if position_issues else 'HEALTHY',
+        'status': 'CRITICAL' if len(position_issues) > 5 else 'WARNING' if position_issues else 'HEALTHY',
         'issues': position_issues
     }
     
     health_report['components']['scheduler'] = {
-        'status': 'CRITICAL' if any('CRITICAL' in str(i) for i in scheduler_issues) else 'WARNING' if scheduler_issues else 'HEALTHY',
+        'status': 'CRITICAL' if len(scheduler_issues) > 3 else 'WARNING' if scheduler_issues else 'HEALTHY',
         'issues': scheduler_issues
     }
     
     health_report['components']['disk_space'] = {
-        'status': 'CRITICAL' if any('critically low' in str(i) for i in disk_issues) else 'WARNING' if disk_issues else 'HEALTHY',
+        'status': 'CRITICAL' if any('critically low' in str(i.get('problem', '')) for i in disk_issues) else 'WARNING' if disk_issues else 'HEALTHY',
         'issues': disk_issues
     }
     
