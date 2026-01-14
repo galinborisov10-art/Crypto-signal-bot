@@ -3,5 +3,10 @@
     "timestamp": "2026-01-14T16:37:43.121268",
     "entry_price": 50000.0,
     "confidence": 85
+  },
+  "ETHUSDT_SELL_1h": {
+    "timestamp": "2026-01-14T16:41:40.666362",
+    "entry_price": 3500.0,
+    "confidence": 90
   }
 }
