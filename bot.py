@@ -10404,16 +10404,34 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             if hasattr(ict_signal, 'signal_type') and ict_signal.signal_type.value == 'HOLD':
                 return None
             
-            # ✅ DEDUPLICATION with entry_price
-            if is_signal_already_sent(
-                symbol=symbol,
-                signal_type=ict_signal.signal_type.value,
-                timeframe=timeframe,
-                confidence=ict_signal.confidence,
-                entry_price=ict_signal.entry_price,
-                cooldown_minutes=60
-            ):
-                return None
+            # ✅ PERSISTENT DEDUPLICATION (PR #111 + PR #112)
+            if SIGNAL_CACHE_AVAILABLE:
+                is_dup, reason = is_signal_duplicate(
+                    symbol=symbol,
+                    signal_type=ict_signal.signal_type.value,
+                    timeframe=timeframe,
+                    entry_price=ict_signal.entry_price,
+                    confidence=ict_signal.confidence,
+                    cooldown_minutes=60,
+                    base_path=BASE_PATH
+                )
+                
+                if is_dup:
+                    logger.info(f"🛑 Signal deduplication: {reason} - skipping")
+                    return None
+                
+                logger.info(f"✅ Signal deduplication: {reason} - sending signal")
+            else:
+                # Fallback to in-memory deduplication
+                if is_signal_already_sent(
+                    symbol=symbol,
+                    signal_type=ict_signal.signal_type.value,
+                    timeframe=timeframe,
+                    confidence=ict_signal.confidence,
+                    entry_price=ict_signal.entry_price,
+                    cooldown_minutes=60
+                ):
+                    return None
             
             # Return ICT signal data (NOT legacy analysis!)
             return {
@@ -10550,6 +10568,27 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     plt.close('all')
     gc.collect()
     logger.info(f"✅ Auto signal cycle complete. Sent {len(signals_to_send)} signals.")
+
+
+# ✅ PR #112: STARTUP MODE TIMER - Guarantees startup mode ends after grace period
+async def end_startup_mode_timer(context):
+    """
+    End startup mode after grace period (5 minutes)
+    
+    This runs independently of auto-signal jobs to ensure
+    startup suppression always ends after the grace period,
+    even if no auto-signal jobs execute.
+    
+    PR #112: Fix for Bug #2 - Startup mode never ends
+    """
+    global STARTUP_MODE
+    
+    if STARTUP_MODE:
+        STARTUP_MODE = False
+        logger.info("✅ Startup mode ended (timer) - auto-signals now ACTIVE")
+        logger.info(f"   Grace period: {STARTUP_GRACE_PERIOD_SECONDS}s elapsed")
+    else:
+        logger.info("ℹ️ Startup mode timer triggered but mode already ended")
 
 
 # ✅ PR #6: AUTO SIGNAL SCHEDULER JOB - для конкретного timeframe
@@ -17563,6 +17602,14 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
         app.job_queue.run_once(schedule_reports_task, 5)
         app.job_queue.run_once(enable_auto_alerts_task, 10)
         app.job_queue.run_once(send_startup_notification_task, 0.5)  # ВЕДНАГА - след 0.5 сек
+        
+        # ✅ PR #112: Schedule startup mode end timer (ends in 5 minutes)
+        app.job_queue.run_once(
+            end_startup_mode_timer,
+            when=STARTUP_GRACE_PERIOD_SECONDS,  # 300 seconds = 5 minutes
+            name="end_startup_mode_timer"
+        )
+        logger.info(f"⏰ Startup mode timer scheduled (ends in {STARTUP_GRACE_PERIOD_SECONDS}s)")
         
         # Keepalive ping на всеки 30 минути (1800 секунди)
         app.job_queue.run_repeating(keepalive_ping, interval=1800, first=1800)
