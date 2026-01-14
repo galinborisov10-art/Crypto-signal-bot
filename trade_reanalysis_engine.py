@@ -319,9 +319,10 @@ class TradeReanalysisEngine:
         checkpoint: str
     ) -> Tuple[RecommendationType, str]:
         """
-        Determine trade recommendation based on decision matrix
+        Determine trade recommendation based on decision matrix (PR #8 Enhanced)
         
-        Decision Matrix:
+        Decision Matrix (Enhanced with news sentiment):
+        0. NEWS CHECK: Critical news → CLOSE_NOW or PARTIAL_CLOSE (NEW in PR #8)
         1. HTF bias changed → CLOSE_NOW
         2. Structure broken → CLOSE_NOW
         3. Confidence delta < -30% → CLOSE_NOW
@@ -336,6 +337,42 @@ class TradeReanalysisEngine:
         Returns:
             Tuple of (RecommendationType, reasoning string)
         """
+        # ═══════════════════════════════════════════════════════════
+        # RULE 0: NEWS SENTIMENT CHECK (PR #8 NEW)
+        # ═══════════════════════════════════════════════════════════
+        try:
+            if analysis.original_signal and hasattr(analysis.original_signal, 'symbol'):
+                symbol = analysis.original_signal.symbol
+                signal_type_value = analysis.original_signal.signal_type.value if hasattr(analysis.original_signal.signal_type, 'value') else str(analysis.original_signal.signal_type)
+                
+                news_impact = self._check_news_sentiment_at_checkpoint(
+                    symbol=symbol,
+                    signal_type=signal_type_value,
+                    checkpoint_level=checkpoint
+                )
+                
+                # Add news impact to analysis for later use
+                if hasattr(analysis, 'news_impact'):
+                    analysis.news_impact = news_impact
+                
+                # Act on news recommendation
+                if news_impact['recommendation'] == 'CLOSE_NOW':
+                    return (
+                        RecommendationType.CLOSE_NOW,
+                        f"{news_impact['reasoning']}\n\nНовини превъзхождат техническия анализ."
+                    )
+                elif news_impact['recommendation'] == 'PARTIAL_CLOSE':
+                    # News suggests partial close - may override technical analysis
+                    return (
+                        RecommendationType.PARTIAL_CLOSE,
+                        f"{news_impact['reasoning']}\n\nПремести SL на breakeven след частично затваряне."
+                    )
+                # If CONTINUE, proceed to technical analysis below
+                
+        except Exception as e:
+            logger.warning(f"⚠️ News check at checkpoint failed: {e}")
+            # Continue to technical analysis
+        
         # RULE 1: HTF bias changed
         if analysis.htf_bias_changed:
             return (
@@ -383,6 +420,222 @@ class TradeReanalysisEngine:
             RecommendationType.HOLD,
             f"All conditions favorable. Confidence delta: {analysis.confidence_delta:+.1f}%. Continue holding."
         )
+    
+    def _check_news_sentiment_at_checkpoint(
+        self,
+        symbol: str,
+        signal_type: str,  # 'BUY' or 'SELL'
+        checkpoint_level: str
+    ) -> Dict:
+        """
+        Check if news sentiment changed since signal generation (PR #8 Layer 3)
+        
+        Args:
+            symbol: Trading pair
+            signal_type: Original signal type ('BUY' or 'SELL')
+            checkpoint_level: Checkpoint level (e.g., "50%", "75%")
+            
+        Returns:
+            {
+                'sentiment_turned_negative': True/False,
+                'critical_news_appeared': True/False,
+                'recommendation': 'CLOSE_NOW' | 'PARTIAL_CLOSE' | 'CONTINUE',
+                'reasoning': 'Explanation in Bulgarian'
+            }
+        """
+        try:
+            # Check if news filter is enabled
+            try:
+                from config.trading_config import get_trading_config
+                config = get_trading_config()
+                
+                if not config.get('use_news_filter', True):
+                    logger.info("📰 News filter disabled at checkpoint")
+                    return {
+                        'sentiment_turned_negative': False,
+                        'critical_news_appeared': False,
+                        'recommendation': 'CONTINUE',
+                        'reasoning': 'News filter disabled'
+                    }
+            except Exception as e:
+                logger.warning(f"Could not load config: {e}")
+                return {
+                    'sentiment_turned_negative': False,
+                    'critical_news_appeared': False,
+                    'recommendation': 'CONTINUE',
+                    'reasoning': 'Config unavailable'
+                }
+            
+            # Try to get fundamental helper
+            try:
+                from utils.fundamental_helper import FundamentalHelper
+                fundamental_helper = FundamentalHelper()
+                
+                if not fundamental_helper.is_enabled():
+                    logger.info("📰 Fundamental analysis disabled at checkpoint")
+                    return {
+                        'sentiment_turned_negative': False,
+                        'critical_news_appeared': False,
+                        'recommendation': 'CONTINUE',
+                        'reasoning': 'Fundamental analysis disabled'
+                    }
+            except Exception as e:
+                logger.warning(f"⚠️ Could not initialize FundamentalHelper at checkpoint: {e}")
+                return {
+                    'sentiment_turned_negative': False,
+                    'critical_news_appeared': False,
+                    'recommendation': 'CONTINUE',
+                    'reasoning': 'News system unavailable'
+                }
+            
+            # Get recent news
+            from utils.news_cache import NewsCache
+            from datetime import datetime, timedelta
+            
+            news_cache = NewsCache(cache_dir='cache', ttl_minutes=60)
+            news_articles = news_cache.get_cached_news(symbol)
+            
+            if not news_articles:
+                logger.info(f"📰 No news available for {symbol} at checkpoint")
+                return {
+                    'sentiment_turned_negative': False,
+                    'critical_news_appeared': False,
+                    'recommendation': 'CONTINUE',
+                    'reasoning': 'No recent news'
+                }
+            
+            # Filter news from last N hours (shorter window for checkpoints)
+            lookback_hours = 6  # Shorter window - only very recent news matters
+            cutoff = datetime.now() - timedelta(hours=lookback_hours)
+            
+            recent_news = []
+            critical_news = []
+            
+            for article in news_articles:
+                try:
+                    time_str = article.get('time', '')
+                    if time_str:
+                        article_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                        if article_time >= cutoff:
+                            recent_news.append(article)
+                            # Check if critical
+                            if article.get('importance', '').upper() == 'CRITICAL':
+                                critical_news.append(article)
+                    else:
+                        recent_news.append(article)
+                except:
+                    recent_news.append(article)
+            
+            if not recent_news:
+                logger.info(f"📰 No fresh news (last {lookback_hours}h) at checkpoint")
+                return {
+                    'sentiment_turned_negative': False,
+                    'critical_news_appeared': False,
+                    'recommendation': 'CONTINUE',
+                    'reasoning': f'No fresh news in last {lookback_hours}h'
+                }
+            
+            # Analyze sentiment
+            from fundamental.sentiment_analyzer import SentimentAnalyzer
+            sentiment_analyzer = SentimentAnalyzer()
+            
+            # Calculate weighted sentiment (-100 to +100)
+            news_weight_critical = config.get('news_weight_critical', 3.0)
+            news_weight_important = config.get('news_weight_important', 2.0)
+            news_weight_normal = config.get('news_weight_normal', 1.0)
+            
+            total_sentiment = 0.0
+            total_weight = 0.0
+            
+            for article in recent_news:
+                title = article.get('title', '')
+                single_sentiment = sentiment_analyzer._analyze_text(title)
+                
+                importance = article.get('importance', 'NORMAL').upper()
+                if importance == 'CRITICAL':
+                    weight = news_weight_critical
+                elif importance == 'IMPORTANT':
+                    weight = news_weight_important
+                else:
+                    weight = news_weight_normal
+                
+                normalized_sentiment = (single_sentiment - 50) * 2
+                total_sentiment += normalized_sentiment * weight
+                total_weight += weight
+            
+            sentiment_score = total_sentiment / total_weight if total_weight > 0 else 0
+            
+            logger.info(f"📰 Checkpoint news sentiment: {sentiment_score:.1f} (from {len(recent_news)} fresh articles)")
+            
+            # Decision logic
+            sentiment_turned_negative = False
+            critical_appeared = len(critical_news) > 0
+            recommendation = 'CONTINUE'
+            reasoning = ""
+            
+            # Get thresholds
+            block_negative = config.get('news_block_threshold_negative', -30)
+            block_positive = config.get('news_block_threshold_positive', 30)
+            
+            if signal_type in ['BUY', 'STRONG_BUY']:
+                if sentiment_score < block_negative and critical_appeared:
+                    # Critical negative news for LONG position
+                    sentiment_turned_negative = True
+                    recommendation = 'CLOSE_NOW'
+                    reasoning = f"🚨 КРИТИЧНИ НЕГАТИВНИ НОВИНИ (Sentiment: {sentiment_score:.0f}). Затвори LONG СЕГА!"
+                    logger.warning(f"❌ Critical negative news at checkpoint - recommend CLOSE_NOW")
+                elif sentiment_score < block_negative:
+                    # Strong negative sentiment
+                    sentiment_turned_negative = True
+                    recommendation = 'PARTIAL_CLOSE'
+                    reasoning = f"⚠️ Силно негативни новини (Sentiment: {sentiment_score:.0f}). Частично затваряне на LONG."
+                    logger.warning(f"⚠️ Strong negative news at checkpoint - recommend PARTIAL_CLOSE")
+                elif sentiment_score < -10 and critical_appeared:
+                    # Mild negative with critical news
+                    recommendation = 'PARTIAL_CLOSE'
+                    reasoning = f"⚠️ Критични новини се появиха. Обмисли частично затваряне."
+                    logger.warning(f"⚠️ Critical news appeared at checkpoint")
+                else:
+                    reasoning = f"✅ Новините остават подкрепящи ({sentiment_score:.0f})"
+            
+            elif signal_type in ['SELL', 'STRONG_SELL']:
+                if sentiment_score > block_positive and critical_appeared:
+                    # Critical positive news for SHORT position
+                    sentiment_turned_negative = True
+                    recommendation = 'CLOSE_NOW'
+                    reasoning = f"🚨 КРИТИЧНИ ПОЗИТИВНИ НОВИНИ (Sentiment: {sentiment_score:.0f}). Затвори SHORT СЕГА!"
+                    logger.warning(f"❌ Critical positive news at checkpoint - recommend CLOSE_NOW")
+                elif sentiment_score > block_positive:
+                    # Strong positive sentiment
+                    sentiment_turned_negative = True
+                    recommendation = 'PARTIAL_CLOSE'
+                    reasoning = f"⚠️ Силно позитивни новини (Sentiment: {sentiment_score:.0f}). Частично затваряне на SHORT."
+                    logger.warning(f"⚠️ Strong positive news at checkpoint - recommend PARTIAL_CLOSE")
+                elif sentiment_score > 10 and critical_appeared:
+                    # Mild positive with critical news
+                    recommendation = 'PARTIAL_CLOSE'
+                    reasoning = f"⚠️ Критични новини се появиха. Обмисли частично затваряне."
+                    logger.warning(f"⚠️ Critical news appeared at checkpoint")
+                else:
+                    reasoning = f"✅ Новините остават подкрепящи ({sentiment_score:.0f})"
+            
+            return {
+                'sentiment_turned_negative': sentiment_turned_negative,
+                'critical_news_appeared': critical_appeared,
+                'recommendation': recommendation,
+                'reasoning': reasoning,
+                'sentiment_score': sentiment_score
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ News sentiment check error at checkpoint: {e}")
+            # On error, continue (don't force close on system failure)
+            return {
+                'sentiment_turned_negative': False,
+                'critical_news_appeared': False,
+                'recommendation': 'CONTINUE',
+                'reasoning': f'News check error: {str(e)}'
+            }
     
     def _create_close_recommendation(
         self,
