@@ -55,6 +55,16 @@ else:
     BASE_PATH = os.path.dirname(os.path.abspath(__file__))
     logger.info(f"📂 BASE_PATH fallback (current dir): {BASE_PATH}")
 
+# Add file handler for logging (PR #10 - Health Monitoring)
+try:
+    file_handler = logging.FileHandler(f'{BASE_PATH}/bot.log', encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logging.getLogger().addHandler(file_handler)
+    logger.info(f"📝 Logging to file: {BASE_PATH}/bot.log")
+except Exception as e:
+    logger.warning(f"⚠️ Could not setup file logging: {e}")
+
+
 # Админ модул
 import sys
 # test deploy
@@ -15905,6 +15915,52 @@ async def debug_mode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================================
+# PR #10: SYSTEM HEALTH MONITORING COMMANDS
+# ============================================================================
+
+@require_access()
+@rate_limited(calls=10, period=60)
+async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    🏥 Run comprehensive system health diagnostic
+    
+    Usage: /health
+    
+    Checks:
+    - Trading Journal health
+    - ML model training status
+    - Daily report execution
+    - Position monitor health
+    - Scheduler health
+    - Disk space
+    """
+    try:
+        # Import diagnostic modules
+        from system_diagnostics import run_full_health_check
+        from diagnostic_messages import format_health_summary
+        
+        await update.message.reply_text("🏥 Running system health diagnostic...\n\nPlease wait...")
+        
+        # Run full health check
+        health_report = await run_full_health_check(BASE_PATH)
+        
+        # Format and send report
+        message = format_health_summary(health_report)
+        
+        await update.message.reply_text(message, parse_mode='HTML')
+        
+        logger.info(f"✅ Health diagnostic completed - {health_report['summary']}")
+        
+    except Exception as e:
+        logger.error(f"❌ Health diagnostic error: {e}", exc_info=True)
+        await update.message.reply_text(
+            f"❌ <b>Health Diagnostic Error</b>\n\n"
+            f"Failed to run health check:\n<code>{str(e)}</code>",
+            parse_mode='HTML'
+        )
+
+
+# ============================================================================
 # PR #7: POSITION MANAGEMENT COMMANDS
 # ============================================================================
 
@@ -16252,6 +16308,7 @@ def main():
     app.add_handler(CommandHandler("performance", performance_cmd))  # 📊 Performance metrics (admin)
     app.add_handler(CommandHandler("clear_cache", clear_cache_cmd))  # 🗑️ Clear cache (admin)
     app.add_handler(CommandHandler("debug", debug_mode_cmd))  # 🔍 Toggle debug mode (admin)
+    app.add_handler(CommandHandler("health", health_cmd))  # 🏥 System health diagnostic (PR #10)
     
     # Active Trades Management Commands
     app.add_handler(CommandHandler("close_trade", close_trade_cmd))  # 🔒 Manually close a trade
@@ -16999,8 +17056,239 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                 )
                 logger.info("✅ Position monitor scheduled (every 1 minute)")
             
+            # ============================================================================
+            # PR #10: INTELLIGENT HEALTH MONITORING JOBS
+            # ============================================================================
+            
+            # 1. Trading Journal Health Monitor (every 6 hours)
+            @safe_job("journal_health_monitor", max_retries=2, retry_delay=30)
+            async def journal_health_monitor_job():
+                """Monitor trading journal health every 6 hours"""
+                try:
+                    from system_diagnostics import diagnose_journal_issue
+                    from diagnostic_messages import format_issue_alert
+                    
+                    logger.info("🏥 Running journal health check...")
+                    issues = await diagnose_journal_issue(BASE_PATH)
+                    
+                    if issues:
+                        # Send alert for each critical issue
+                        for issue in issues:
+                            message = format_issue_alert("TRADING JOURNAL", issue)
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=message,
+                                parse_mode='HTML',
+                                disable_notification=False  # With sound
+                            )
+                        logger.warning(f"⚠️ Journal health check found {len(issues)} issues")
+                    else:
+                        logger.info("✅ Journal health check passed")
+                except Exception as e:
+                    logger.error(f"❌ Journal health monitor error: {e}")
+            
+            scheduler.add_job(
+                journal_health_monitor_job,
+                'cron',
+                hour='*/6',  # Every 6 hours
+                minute=15,
+                id='journal_health_monitor',
+                name='Journal Health Monitor',
+                replace_existing=True
+            )
+            logger.info("✅ Journal health monitor scheduled (every 6 hours)")
+            
+            # 2. ML Training Health Monitor (daily at 10:00)
+            @safe_job("ml_health_monitor", max_retries=2, retry_delay=30)
+            async def ml_health_monitor_job():
+                """Monitor ML training health daily"""
+                try:
+                    from system_diagnostics import diagnose_ml_issue
+                    from diagnostic_messages import format_issue_alert
+                    
+                    logger.info("🏥 Running ML health check...")
+                    issues = await diagnose_ml_issue(BASE_PATH)
+                    
+                    if issues:
+                        for issue in issues:
+                            message = format_issue_alert("ML MODEL", issue)
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=message,
+                                parse_mode='HTML',
+                                disable_notification=False  # With sound
+                            )
+                        logger.warning(f"⚠️ ML health check found {len(issues)} issues")
+                    else:
+                        logger.info("✅ ML health check passed")
+                except Exception as e:
+                    logger.error(f"❌ ML health monitor error: {e}")
+            
+            scheduler.add_job(
+                ml_health_monitor_job,
+                'cron',
+                hour=10,
+                minute=0,
+                id='ml_health_monitor',
+                name='ML Health Monitor',
+                replace_existing=True
+            )
+            logger.info("✅ ML health monitor scheduled (daily at 10:00)")
+            
+            # 3. Daily Report Execution Monitor (daily at 09:00)
+            @safe_job("daily_report_health_monitor", max_retries=2, retry_delay=30)
+            async def daily_report_health_monitor_job():
+                """Check if yesterday's daily report was sent"""
+                try:
+                    from system_diagnostics import diagnose_daily_report_issue
+                    from diagnostic_messages import format_issue_alert
+                    
+                    logger.info("🏥 Running daily report health check...")
+                    issues = await diagnose_daily_report_issue(BASE_PATH)
+                    
+                    if issues:
+                        for issue in issues:
+                            message = format_issue_alert("DAILY REPORTS", issue)
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=message,
+                                parse_mode='HTML',
+                                disable_notification=False
+                            )
+                        logger.warning(f"⚠️ Daily report health check found {len(issues)} issues")
+                    else:
+                        logger.info("✅ Daily report health check passed")
+                except Exception as e:
+                    logger.error(f"❌ Daily report health monitor error: {e}")
+            
+            scheduler.add_job(
+                daily_report_health_monitor_job,
+                'cron',
+                hour=9,
+                minute=0,
+                id='daily_report_health_monitor',
+                name='Daily Report Health Monitor',
+                replace_existing=True
+            )
+            logger.info("✅ Daily report health monitor scheduled (daily at 09:00)")
+            
+            # 4. Position Monitor Health (every hour)
+            @safe_job("position_monitor_health", max_retries=2, retry_delay=30)
+            async def position_monitor_health_job():
+                """Check for position monitor errors"""
+                try:
+                    from system_diagnostics import diagnose_position_monitor_issue
+                    from diagnostic_messages import format_issue_alert
+                    
+                    logger.info("🏥 Running position monitor health check...")
+                    issues = await diagnose_position_monitor_issue(BASE_PATH)
+                    
+                    if issues:
+                        for issue in issues:
+                            message = format_issue_alert("POSITION MONITOR", issue)
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=message,
+                                parse_mode='HTML',
+                                disable_notification=False
+                            )
+                        logger.warning(f"⚠️ Position monitor health check found {len(issues)} issues")
+                    else:
+                        logger.info("✅ Position monitor health check passed")
+                except Exception as e:
+                    logger.error(f"❌ Position monitor health check error: {e}")
+            
+            scheduler.add_job(
+                position_monitor_health_job,
+                'cron',
+                hour='*',  # Every hour
+                minute=30,
+                id='position_monitor_health',
+                name='Position Monitor Health',
+                replace_existing=True
+            )
+            logger.info("✅ Position monitor health check scheduled (every hour)")
+            
+            # 5. Scheduler Health Monitor (every 12 hours)
+            @safe_job("scheduler_health_monitor", max_retries=2, retry_delay=30)
+            async def scheduler_health_monitor_job():
+                """Monitor scheduler health"""
+                try:
+                    from system_diagnostics import diagnose_scheduler_issue
+                    from diagnostic_messages import format_issue_alert
+                    
+                    logger.info("🏥 Running scheduler health check...")
+                    issues = await diagnose_scheduler_issue(BASE_PATH)
+                    
+                    if issues:
+                        for issue in issues:
+                            message = format_issue_alert("SCHEDULER", issue)
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=message,
+                                parse_mode='HTML',
+                                disable_notification=False
+                            )
+                        logger.warning(f"⚠️ Scheduler health check found {len(issues)} issues")
+                    else:
+                        logger.info("✅ Scheduler health check passed")
+                except Exception as e:
+                    logger.error(f"❌ Scheduler health monitor error: {e}")
+            
+            scheduler.add_job(
+                scheduler_health_monitor_job,
+                'cron',
+                hour='*/12',  # Every 12 hours
+                minute=45,
+                id='scheduler_health_monitor',
+                name='Scheduler Health Monitor',
+                replace_existing=True
+            )
+            logger.info("✅ Scheduler health monitor scheduled (every 12 hours)")
+            
+            # 6. Disk Space Monitor (daily at 02:00)
+            @safe_job("disk_space_monitor", max_retries=2, retry_delay=30)
+            async def disk_space_monitor_job():
+                """Monitor disk space daily"""
+                try:
+                    from system_diagnostics import diagnose_disk_space_issue
+                    from diagnostic_messages import format_issue_alert
+                    
+                    logger.info("🏥 Running disk space check...")
+                    issues = await diagnose_disk_space_issue(BASE_PATH)
+                    
+                    if issues:
+                        for issue in issues:
+                            message = format_issue_alert("DISK SPACE", issue)
+                            await application.bot.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=message,
+                                parse_mode='HTML',
+                                disable_notification=False
+                            )
+                        logger.warning(f"⚠️ Disk space check found {len(issues)} issues")
+                    else:
+                        logger.info("✅ Disk space check passed")
+                except Exception as e:
+                    logger.error(f"❌ Disk space monitor error: {e}")
+            
+            scheduler.add_job(
+                disk_space_monitor_job,
+                'cron',
+                hour=2,
+                minute=0,
+                id='disk_space_monitor',
+                name='Disk Space Monitor',
+                replace_existing=True
+            )
+            logger.info("✅ Disk space monitor scheduled (daily at 02:00)")
+            
+            # ============================================================================
+            # END PR #10: INTELLIGENT HEALTH MONITORING
+            # ============================================================================
+            
             scheduler.start()
-            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC) + 🧹 CACHE CLEANUP (10 min) + 🤖 ML AUTO-TRAINING (weekly) + 🤖 AUTO SIGNALS (1H, 2H, 4H, 1D) + 📊 POSITION MONITORING (PR #7)")
+            logger.info("✅ APScheduler стартиран: отчети + диагностика + новини + REAL-TIME мониторинг + DAILY REPORTS + 📝 JOURNAL 24/7 + 🎯 SIGNAL TRACKING + 📊 WEEKLY BACKTEST + 🔄 DAILY BACKTEST UPDATE (02:00 UTC) + 🧹 CACHE CLEANUP (10 min) + 🤖 ML AUTO-TRAINING (weekly) + 🤖 AUTO SIGNALS (1H, 2H, 4H, 1D) + 📊 POSITION MONITORING (PR #7) + 🏥 HEALTH MONITORING (PR #10)")
             
             # 🎯 INITIALIZE AND START REAL-TIME POSITION MONITOR (v2.1.0)
             global real_time_monitor_global
