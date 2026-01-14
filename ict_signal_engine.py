@@ -965,17 +965,34 @@ class ICTSignalEngine:
             logger.error("❌ Няма Order Block за SL валидация - сигналът НЕ СЕ ИЗПРАЩА")
             return None
         
-        # ✅ TP с гарантиран RR ≥ 1:3 (with Fibonacci optimization)
+        # ✅ TP calculation (PR #8 Enhanced: Structure-aware vs Mathematical)
+        logger.info("🔍 Step 9b: Take Profit Calculation")
+        
         fibonacci_data = ict_components.get('fibonacci_data', {})
         bias_str = bias.value if hasattr(bias, 'value') else str(bias)
-        tp_prices = self._calculate_tp_with_min_rr(
-            entry_price, sl_price, liquidity_zones, 
-            min_rr=3.0, 
-            fibonacci_data=fibonacci_data,
-            bias=bias_str
-        )
         
-        logger.info(f"   → TP Levels: {[f'${tp:.2f}' for tp in tp_prices]}")
+        # Try to use structure-aware TP placement (PR #8)
+        try:
+            direction = 'LONG' if bias == MarketBias.BULLISH else 'SHORT'
+            tp_prices = self._calculate_smart_tp_with_structure_validation(
+                entry_price=entry_price,
+                sl_price=sl_price,
+                direction=direction,
+                ict_components=ict_components,
+                timeframe=timeframe
+            )
+            logger.info(f"   → Structure-aware TPs: {[f'${tp:.2f}' for tp in tp_prices]}")
+        except Exception as e:
+            logger.warning(f"⚠️ Structure TP calculation failed: {e}")
+            # Fallback to original mathematical TP
+            tp_prices = self._calculate_tp_with_min_rr(
+                entry_price, sl_price, liquidity_zones, 
+                min_rr=3.0, 
+                fibonacci_data=fibonacci_data,
+                bias=bias_str
+            )
+            logger.info(f"   → Mathematical TPs (fallback): {[f'${tp:.2f}' for tp in tp_prices]}")
+        
         logger.info(f"✅ PASSED Step 9: SL/TP calculated and validated")
         
         # СТЪПКА 10: RR CHECK
@@ -4531,6 +4548,674 @@ class ICTSignalEngine:
         except Exception as e:
             logger.warning(f"BTC correlation calculation error: {e}")
             return None, None
+    
+    # ═══════════════════════════════════════════════════════════════════
+    # PR #8 LAYER 2: STRUCTURE-AWARE TP PLACEMENT
+    # ═══════════════════════════════════════════════════════════════════
+    
+    def _find_obstacles_in_path(
+        self,
+        entry_price: float,
+        target_price: float,
+        direction: str,  # 'LONG' or 'SHORT'
+        ict_components: Dict
+    ) -> List[Dict]:
+        """
+        Scan for OPPOSING zones between Entry and Target (PR #8)
+        
+        For LONG: Find BEARISH zones (resistance)
+        - Bearish Order Blocks
+        - Bearish FVGs
+        - Resistance levels (LuxAlgo S/R)
+        - Bearish Whale Blocks
+        
+        For SHORT: Find BULLISH zones (support)
+        - Bullish Order Blocks
+        - Bullish FVGs
+        - Support levels
+        - Bullish Whale Blocks
+        
+        Args:
+            entry_price: Entry price
+            target_price: Target price (TP level)
+            direction: 'LONG' or 'SHORT'
+            ict_components: Dict with all ICT components
+            
+        Returns:
+            List of obstacles sorted by proximity to entry:
+            [
+                {
+                    'type': 'BEARISH_OB' | 'BEARISH_FVG' | 'RESISTANCE' | 'BEARISH_WHALE',
+                    'price': float,
+                    'strength': 0-100,
+                    'description': 'Human-readable Bulgarian text'
+                },
+                ...
+            ]
+        """
+        try:
+            obstacles = []
+            
+            # Determine price range
+            min_price = min(entry_price, target_price)
+            max_price = max(entry_price, target_price)
+            
+            logger.info(f"🔍 Scanning obstacles between ${min_price:.2f} and ${max_price:.2f}")
+            
+            # 1. Check Order Blocks
+            order_blocks = ict_components.get('order_blocks', [])
+            for ob in order_blocks:
+                try:
+                    # Get OB price and type
+                    if hasattr(ob, 'price'):
+                        ob_price = ob.price
+                    elif isinstance(ob, dict):
+                        ob_price = ob.get('price', 0)
+                    else:
+                        continue
+                    
+                    # Check if in range
+                    if min_price <= ob_price <= max_price:
+                        # Get OB type
+                        if hasattr(ob, 'type'):
+                            ob_type_str = str(ob.type.value) if hasattr(ob.type, 'value') else str(ob.type)
+                        elif isinstance(ob, dict):
+                            ob_type_str = ob.get('type', '')
+                        else:
+                            continue
+                        
+                        # Check if opposing
+                        is_obstacle = False
+                        obstacle_type = ''
+                        
+                        if direction == 'LONG' and 'BEARISH' in ob_type_str.upper():
+                            is_obstacle = True
+                            obstacle_type = 'BEARISH_OB'
+                        elif direction == 'SHORT' and 'BULLISH' in ob_type_str.upper():
+                            is_obstacle = True
+                            obstacle_type = 'BULLISH_OB'
+                        
+                        if is_obstacle:
+                            # Get strength from OB
+                            strength = 70  # Default
+                            if hasattr(ob, 'strength'):
+                                strength = ob.strength
+                            elif isinstance(ob, dict):
+                                strength = ob.get('strength', 70)
+                            
+                            obstacles.append({
+                                'type': obstacle_type,
+                                'price': ob_price,
+                                'strength': strength,
+                                'description': 'Институционална зона' if obstacle_type == 'BEARISH_OB' else 'Институционална подкрепа',
+                                'source': 'ORDER_BLOCK'
+                            })
+                            logger.debug(f"   Found obstacle: {obstacle_type} @ ${ob_price:.2f} (strength: {strength})")
+                except Exception as e:
+                    logger.debug(f"Error processing order block: {e}")
+                    continue
+            
+            # 2. Check FVGs
+            fvgs = ict_components.get('fvgs', [])
+            for fvg in fvgs:
+                try:
+                    # Get FVG price (center)
+                    if hasattr(fvg, 'high') and hasattr(fvg, 'low'):
+                        fvg_price = (fvg.high + fvg.low) / 2
+                    elif isinstance(fvg, dict):
+                        fvg_high = fvg.get('high', 0)
+                        fvg_low = fvg.get('low', 0)
+                        fvg_price = (fvg_high + fvg_low) / 2 if fvg_high and fvg_low else 0
+                    else:
+                        continue
+                    
+                    if not fvg_price:
+                        continue
+                    
+                    # Check if in range
+                    if min_price <= fvg_price <= max_price:
+                        # Check if opposing
+                        is_bullish = False
+                        if hasattr(fvg, 'is_bullish'):
+                            is_bullish = fvg.is_bullish
+                        elif isinstance(fvg, dict):
+                            is_bullish = fvg.get('is_bullish', False)
+                        
+                        is_obstacle = False
+                        obstacle_type = ''
+                        
+                        if direction == 'LONG' and not is_bullish:
+                            is_obstacle = True
+                            obstacle_type = 'BEARISH_FVG'
+                        elif direction == 'SHORT' and is_bullish:
+                            is_obstacle = True
+                            obstacle_type = 'BULLISH_FVG'
+                        
+                        if is_obstacle:
+                            # FVG strength based on gap size
+                            strength = 60  # Default
+                            if hasattr(fvg, 'strength'):
+                                strength = fvg.strength
+                            elif isinstance(fvg, dict):
+                                strength = fvg.get('strength', 60)
+                            
+                            obstacles.append({
+                                'type': obstacle_type,
+                                'price': fvg_price,
+                                'strength': strength,
+                                'description': 'Fair Value Gap зона',
+                                'source': 'FVG'
+                            })
+                            logger.debug(f"   Found obstacle: {obstacle_type} @ ${fvg_price:.2f} (strength: {strength})")
+                except Exception as e:
+                    logger.debug(f"Error processing FVG: {e}")
+                    continue
+            
+            # 3. Check Support/Resistance (LuxAlgo)
+            luxalgo_sr = ict_components.get('luxalgo_sr', {})
+            if luxalgo_sr:
+                try:
+                    # For LONG, check resistance zones
+                    if direction == 'LONG':
+                        resistance_zones = luxalgo_sr.get('resistance_zones', [])
+                        for zone in resistance_zones:
+                            zone_price = zone.get('price', 0)
+                            if zone_price and min_price <= zone_price <= max_price:
+                                strength = zone.get('strength', 65)
+                                obstacles.append({
+                                    'type': 'RESISTANCE',
+                                    'price': zone_price,
+                                    'strength': strength,
+                                    'description': 'Съпротива (LuxAlgo)',
+                                    'source': 'LUXALGO_SR'
+                                })
+                                logger.debug(f"   Found obstacle: RESISTANCE @ ${zone_price:.2f} (strength: {strength})")
+                    
+                    # For SHORT, check support zones
+                    elif direction == 'SHORT':
+                        support_zones = luxalgo_sr.get('support_zones', [])
+                        for zone in support_zones:
+                            zone_price = zone.get('price', 0)
+                            if zone_price and min_price <= zone_price <= max_price:
+                                strength = zone.get('strength', 65)
+                                obstacles.append({
+                                    'type': 'SUPPORT',
+                                    'price': zone_price,
+                                    'strength': strength,
+                                    'description': 'Подкрепа (LuxAlgo)',
+                                    'source': 'LUXALGO_SR'
+                                })
+                                logger.debug(f"   Found obstacle: SUPPORT @ ${zone_price:.2f} (strength: {strength})")
+                except Exception as e:
+                    logger.debug(f"Error processing LuxAlgo S/R: {e}")
+            
+            # 4. Check Whale Blocks
+            whale_blocks = ict_components.get('whale_blocks', [])
+            for wb in whale_blocks:
+                try:
+                    # Get whale block price
+                    if hasattr(wb, 'price'):
+                        wb_price = wb.price
+                    elif isinstance(wb, dict):
+                        wb_price = wb.get('price', 0)
+                    else:
+                        continue
+                    
+                    if not wb_price:
+                        continue
+                    
+                    # Check if in range
+                    if min_price <= wb_price <= max_price:
+                        # Get whale block type
+                        if hasattr(wb, 'block_type'):
+                            wb_type_str = str(wb.block_type.value) if hasattr(wb.block_type, 'value') else str(wb.block_type)
+                        elif isinstance(wb, dict):
+                            wb_type_str = wb.get('block_type', '')
+                        else:
+                            continue
+                        
+                        # Check if opposing
+                        is_obstacle = False
+                        obstacle_type = ''
+                        
+                        if direction == 'LONG' and 'BEARISH' in wb_type_str.upper():
+                            is_obstacle = True
+                            obstacle_type = 'BEARISH_WHALE'
+                        elif direction == 'SHORT' and 'BULLISH' in wb_type_str.upper():
+                            is_obstacle = True
+                            obstacle_type = 'BULLISH_WHALE'
+                        
+                        if is_obstacle:
+                            # Whale blocks are typically stronger
+                            strength = 80  # Default high strength
+                            if hasattr(wb, 'strength'):
+                                strength = wb.strength
+                            elif isinstance(wb, dict):
+                                strength = wb.get('strength', 80)
+                            
+                            obstacles.append({
+                                'type': obstacle_type,
+                                'price': wb_price,
+                                'strength': strength,
+                                'description': 'Whale Institution Block',
+                                'source': 'WHALE_BLOCK'
+                            })
+                            logger.debug(f"   Found obstacle: {obstacle_type} @ ${wb_price:.2f} (strength: {strength})")
+                except Exception as e:
+                    logger.debug(f"Error processing whale block: {e}")
+                    continue
+            
+            # Sort obstacles by proximity to entry price
+            obstacles.sort(key=lambda x: abs(x['price'] - entry_price))
+            
+            logger.info(f"   Found {len(obstacles)} obstacles in path")
+            
+            return obstacles
+            
+        except Exception as e:
+            logger.error(f"Error finding obstacles: {e}")
+            return []
+    
+    def _evaluate_obstacle_strength(
+        self,
+        obstacle: Dict,
+        context: Dict  # Contains HTF bias, displacement, etc.
+    ) -> Dict:
+        """
+        Evaluate obstacle and predict market reaction (PR #8)
+        
+        Scoring System (0-100):
+        - Base strength: From detector (volume, candle size, age)
+        - HTF bias alignment: +20 if aligned, -20 if against
+        - Displacement: -15 if strong momentum in our direction
+        - Retest history: +10 if tested 2+ times
+        - Volume profile: +/-10 based on volume strength
+        - Zone age: -5 if > 100 candles old
+        - MTF confirmation: +15 if confirmed on multiple TFs
+        
+        Decision Thresholds:
+        - Strength >= 75: "МНОГО ВЕРОЯТНО ОТБЛЪСКВАНЕ" (85% confidence)
+        - Strength 60-74: "ВЕРОЯТНО ОТБЛЪСКВАНЕ" (70% confidence)
+        - Strength 45-59: "НЕСИГУРНО" (50% confidence)
+        - Strength < 45: "ВЕРОЯТНО ПРОБИВАНЕ" (70% confidence)
+        
+        Args:
+            obstacle: Obstacle dict with type, price, strength, description
+            context: Context dict with HTF bias, displacement, direction
+            
+        Returns:
+            {
+                'strength': 0-100,
+                'will_likely_reject': True/False,
+                'confidence': 0-100,
+                'decision': 'Bulgarian text',
+                'reasoning': 'Detailed explanation in Bulgarian'
+            }
+        """
+        try:
+            # Start with base strength from detector
+            base_strength = obstacle.get('strength', 50)
+            adjusted_strength = float(base_strength)
+            
+            reasoning_parts = []
+            
+            # 1. HTF bias alignment
+            htf_bias = context.get('htf_bias', 'NEUTRAL')
+            direction = context.get('direction', 'LONG')
+            obstacle_type = obstacle.get('type', '')
+            
+            if htf_bias != 'NEUTRAL':
+                if (direction == 'LONG' and 'BEARISH' in obstacle_type and htf_bias == 'BEARISH') or \
+                   (direction == 'SHORT' and 'BULLISH' in obstacle_type and htf_bias == 'BULLISH'):
+                    # HTF supports obstacle (stronger)
+                    adjusted_strength += 20
+                    reasoning_parts.append("HTF bias подкрепя зоната ⚠️")
+                else:
+                    # HTF against obstacle (weaker)
+                    adjusted_strength -= 20
+                    reasoning_parts.append("HTF bias е срещу зоната ✅")
+            
+            # 2. Displacement check
+            displacement_detected = context.get('displacement_detected', False)
+            if displacement_detected:
+                adjusted_strength -= 15
+                reasoning_parts.append("Силен momentum в нашата посока ✅")
+            
+            # 3. Volume (if available from obstacle)
+            if obstacle.get('volume_strength', 0) > 1.5:
+                adjusted_strength += 10
+                reasoning_parts.append("Висок volume в зоната ⚠️")
+            elif obstacle.get('volume_strength', 0) < 0.7:
+                adjusted_strength -= 10
+                reasoning_parts.append("Нисък volume в зоната ✅")
+            
+            # 4. MTF confirmation (simplified - check if obstacle source is multi-TF)
+            if 'mtf_confluence' in context and context['mtf_confluence'] > 2:
+                adjusted_strength += 15
+                reasoning_parts.append("MTF потвърждение (4H+1D) ⚠️")
+            
+            # Clamp to 0-100
+            adjusted_strength = max(0, min(100, adjusted_strength))
+            
+            # Determine decision and confidence
+            from config.trading_config import get_trading_config
+            config = get_trading_config()
+            
+            very_strong_threshold = config.get('very_strong_obstacle', 75)
+            strong_threshold = config.get('strong_obstacle', 60)
+            moderate_threshold = config.get('moderate_obstacle', 45)
+            
+            will_reject = False
+            confidence = 50
+            decision = ""
+            
+            if adjusted_strength >= very_strong_threshold:
+                will_reject = True
+                confidence = 85
+                decision = "МНОГО ВЕРОЯТНО ОТБЛЪСКВАНЕ"
+                reasoning_parts.append("Заключение: Силна съпротива, ще отблъсне")
+            elif adjusted_strength >= strong_threshold:
+                will_reject = True
+                confidence = 70
+                decision = "ВЕРОЯТНО ОТБЛЪСКВАНЕ"
+                reasoning_parts.append("Заключение: Вероятна съпротива")
+            elif adjusted_strength >= moderate_threshold:
+                will_reject = False
+                confidence = 50
+                decision = "НЕСИГУРНО"
+                reasoning_parts.append("Заключение: Несигурна зона")
+            else:
+                will_reject = False
+                confidence = 70
+                decision = "ВЕРОЯТНО ПРОБИВАНЕ"
+                reasoning_parts.append("Заключение: Слаба зона, вероятно ще пробие")
+            
+            reasoning = '\n'.join(reasoning_parts)
+            
+            return {
+                'strength': adjusted_strength,
+                'will_likely_reject': will_reject,
+                'confidence': confidence,
+                'decision': decision,
+                'reasoning': reasoning
+            }
+            
+        except Exception as e:
+            logger.error(f"Error evaluating obstacle: {e}")
+            # Return neutral evaluation on error
+            return {
+                'strength': 50,
+                'will_likely_reject': False,
+                'confidence': 50,
+                'decision': 'НЕСИГУРНО',
+                'reasoning': 'Грешка при оценка'
+            }
+    
+    def _calculate_smart_tp_with_structure_validation(
+        self,
+        entry_price: float,
+        sl_price: float,  # NEVER modified
+        direction: str,  # 'LONG' or 'SHORT'
+        ict_components: Dict,
+        timeframe: str
+    ) -> List[float]:
+        """
+        Calculate structure-aware TPs (PR #8 Layer 2)
+        
+        CRITICAL RULES:
+        - SL is NEVER modified ✅
+        - Entry is NEVER modified ✅
+        - Only TP is adjusted based on obstacles
+        - Min RR must still be met (2.5:1 minimum)
+        
+        Process:
+        1. Calculate mathematical TPs (Risk × 3, × 5, × 8)
+        2. Scan obstacles between Entry and TP3
+        3. Evaluate each obstacle strength
+        4. For each TP level:
+           a. Check if obstacle in path
+           b. If obstacle weak (< 45): Place TP AFTER obstacle
+           c. If obstacle strong (>= 75): Place TP BEFORE obstacle (0.3% buffer)
+           d. Validate RR still meets minimum
+           e. If RR fails: Keep mathematical TP + add warning
+        5. Return adjusted TPs
+        
+        Args:
+            entry_price: Entry price (fixed)
+            sl_price: Stop loss price (fixed)
+            direction: 'LONG' or 'SHORT'
+            ict_components: ICT components dict
+            timeframe: Timeframe
+            
+        Returns:
+            [tp1, tp2, tp3] with smart positioning
+        """
+        try:
+            # Load config
+            from config.trading_config import get_trading_config
+            config = get_trading_config()
+            
+            # Check if structure TP is enabled
+            if not config.get('use_structure_tp', True):
+                logger.info("📊 Structure TP disabled - using mathematical TPs")
+                # Fallback to mathematical TPs
+                risk = abs(entry_price - sl_price)
+                tp1_mult = config.get('math_tp1_multiplier', 3.0)
+                tp2_mult = config.get('math_tp2_multiplier', 5.0)
+                tp3_mult = config.get('math_tp3_multiplier', 8.0)
+                
+                if direction == 'LONG':
+                    return [
+                        entry_price + (risk * tp1_mult),
+                        entry_price + (risk * tp2_mult),
+                        entry_price + (risk * tp3_mult)
+                    ]
+                else:
+                    return [
+                        entry_price - (risk * tp1_mult),
+                        entry_price - (risk * tp2_mult),
+                        entry_price - (risk * tp3_mult)
+                    ]
+            
+            # Step 1: Calculate mathematical TPs
+            risk = abs(entry_price - sl_price)
+            tp1_mult = config.get('math_tp1_multiplier', 3.0)
+            tp2_mult = config.get('math_tp2_multiplier', 5.0)
+            tp3_mult = config.get('math_tp3_multiplier', 8.0)
+            
+            if direction == 'LONG':
+                math_tp1 = entry_price + (risk * tp1_mult)
+                math_tp2 = entry_price + (risk * tp2_mult)
+                math_tp3 = entry_price + (risk * tp3_mult)
+            else:
+                math_tp1 = entry_price - (risk * tp1_mult)
+                math_tp2 = entry_price - (risk * tp2_mult)
+                math_tp3 = entry_price - (risk * tp3_mult)
+            
+            logger.info(f"📊 Mathematical TPs: TP1=${math_tp1:.2f}, TP2=${math_tp2:.2f}, TP3=${math_tp3:.2f}")
+            
+            # Step 2: Scan obstacles between Entry and TP3
+            max_tp = max(math_tp1, math_tp2, math_tp3) if direction == 'LONG' else min(math_tp1, math_tp2, math_tp3)
+            obstacles = self._find_obstacles_in_path(
+                entry_price=entry_price,
+                target_price=max_tp,
+                direction=direction,
+                ict_components=ict_components
+            )
+            
+            if not obstacles:
+                logger.info("✅ No obstacles found - using mathematical TPs")
+                return [math_tp1, math_tp2, math_tp3]
+            
+            # Step 3 & 4: Evaluate obstacles and adjust TPs
+            logger.info(f"🔍 Evaluating {len(obstacles)} obstacles for TP adjustment")
+            
+            # Build context for obstacle evaluation
+            context = {
+                'direction': direction,
+                'htf_bias': ict_components.get('htf_bias', 'NEUTRAL'),
+                'displacement_detected': ict_components.get('displacement_detected', False),
+                'mtf_confluence': ict_components.get('mtf_confluence', 0)
+            }
+            
+            # Adjust each TP level
+            min_rr_tp1 = config.get('min_rr_tp1', 2.5)
+            min_rr_tp2 = config.get('min_rr_tp2', 3.5)
+            min_rr_tp3 = config.get('min_rr_tp3', 5.0)
+            
+            adjusted_tp1 = self._adjust_tp_before_obstacle(
+                math_tp=math_tp1,
+                obstacles=obstacles,
+                entry_price=entry_price,
+                direction=direction,
+                risk=risk,
+                min_rr=min_rr_tp1
+            )
+            
+            adjusted_tp2 = self._adjust_tp_before_obstacle(
+                math_tp=math_tp2,
+                obstacles=obstacles,
+                entry_price=entry_price,
+                direction=direction,
+                risk=risk,
+                min_rr=min_rr_tp2
+            )
+            
+            adjusted_tp3 = self._adjust_tp_before_obstacle(
+                math_tp=math_tp3,
+                obstacles=obstacles,
+                entry_price=entry_price,
+                direction=direction,
+                risk=risk,
+                min_rr=min_rr_tp3
+            )
+            
+            logger.info(f"✅ Structure-aware TPs: TP1=${adjusted_tp1:.2f}, TP2=${adjusted_tp2:.2f}, TP3=${adjusted_tp3:.2f}")
+            
+            return [adjusted_tp1, adjusted_tp2, adjusted_tp3]
+            
+        except Exception as e:
+            logger.error(f"Error calculating smart TPs: {e}")
+            # Fallback to mathematical TPs
+            risk = abs(entry_price - sl_price)
+            if direction == 'LONG':
+                return [
+                    entry_price + (risk * 3.0),
+                    entry_price + (risk * 5.0),
+                    entry_price + (risk * 8.0)
+                ]
+            else:
+                return [
+                    entry_price - (risk * 3.0),
+                    entry_price - (risk * 5.0),
+                    entry_price - (risk * 8.0)
+                ]
+    
+    def _adjust_tp_before_obstacle(
+        self,
+        math_tp: float,
+        obstacles: List[Dict],
+        entry_price: float,
+        direction: str,
+        risk: float,  # Fixed from SL distance
+        min_rr: float = 2.5
+    ) -> float:
+        """
+        Adjust single TP level considering obstacles (PR #8 Helper)
+        
+        Logic:
+        1. Find obstacles between Entry and math_tp
+        2. Filter by strength (>= 60 = significant)
+        3. If no significant obstacles: Return math_tp unchanged
+        4. If obstacle found:
+           a. Calculate safe TP (0.3% before obstacle)
+           b. Check if safe TP meets min RR
+           c. If YES: Use safe TP
+           d. If NO: Keep math_tp + log warning for user
+        
+        Args:
+            math_tp: Mathematical TP (Risk × multiplier)
+            obstacles: List of obstacles
+            entry_price: Entry price
+            direction: 'LONG' or 'SHORT'
+            risk: Risk amount (|entry - sl|)
+            min_rr: Minimum RR ratio required
+            
+        Returns:
+            Adjusted TP (or original if RR fails)
+        """
+        try:
+            from config.trading_config import get_trading_config
+            config = get_trading_config()
+            
+            min_obstacle_strength = config.get('min_obstacle_strength', 60)
+            obstacle_buffer = config.get('obstacle_buffer_pct', 0.003)
+            
+            # Find obstacles in path
+            min_price = min(entry_price, math_tp)
+            max_price = max(entry_price, math_tp)
+            
+            obstacles_in_path = []
+            for obs in obstacles:
+                obs_price = obs.get('price', 0)
+                obs_strength = obs.get('strength', 0)
+                
+                # Check if in path and significant
+                if min_price < obs_price < max_price and obs_strength >= min_obstacle_strength:
+                    # Evaluate obstacle
+                    context = {
+                        'direction': direction,
+                        'htf_bias': 'NEUTRAL',  # Simplified for helper
+                        'displacement_detected': False,
+                        'mtf_confluence': 0
+                    }
+                    evaluation = self._evaluate_obstacle_strength(obs, context)
+                    
+                    if evaluation['will_likely_reject']:
+                        obstacles_in_path.append({
+                            'obstacle': obs,
+                            'evaluation': evaluation,
+                            'price': obs_price
+                        })
+            
+            # No significant obstacles - use mathematical TP
+            if not obstacles_in_path:
+                return math_tp
+            
+            # Find nearest strong obstacle
+            if direction == 'LONG':
+                # For LONG, find lowest obstacle price
+                obstacles_in_path.sort(key=lambda x: x['price'])
+                nearest_obstacle = obstacles_in_path[0]
+            else:
+                # For SHORT, find highest obstacle price
+                obstacles_in_path.sort(key=lambda x: x['price'], reverse=True)
+                nearest_obstacle = obstacles_in_path[0]
+            
+            # Calculate safe TP (before obstacle with buffer)
+            obstacle_price = nearest_obstacle['price']
+            if direction == 'LONG':
+                safe_tp = obstacle_price * (1 - obstacle_buffer)  # 0.3% before
+            else:
+                safe_tp = obstacle_price * (1 + obstacle_buffer)  # 0.3% before
+            
+            # Validate RR
+            reward = abs(safe_tp - entry_price)
+            actual_rr = reward / risk if risk > 0 else 0
+            
+            if actual_rr >= min_rr:
+                # Safe TP meets minimum RR - use it
+                logger.info(f"   ✅ TP adjusted to ${safe_tp:.2f} (before obstacle @ ${obstacle_price:.2f}, RR: {actual_rr:.2f})")
+                return safe_tp
+            else:
+                # Safe TP doesn't meet minimum RR - keep mathematical TP and warn
+                logger.warning(f"   ⚠️ Obstacle @ ${obstacle_price:.2f} but safe TP has RR {actual_rr:.2f} < {min_rr:.2f}")
+                logger.warning(f"   → Keeping mathematical TP ${math_tp:.2f} (RR: {abs(math_tp - entry_price) / risk:.2f})")
+                return math_tp
+            
+        except Exception as e:
+            logger.error(f"Error adjusting TP: {e}")
+            return math_tp  # Return original on error
     
     def _check_news_sentiment_before_signal(
         self,
