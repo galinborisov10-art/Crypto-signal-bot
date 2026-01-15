@@ -5368,7 +5368,7 @@ The owner can approve you with: <code>/approve {}</code>
 
 ⚙️ <b>Настройки:</b>
 /settings - Конфигурация на TP/SL и RR
-/timeframe - Избор на таймфрейм (1h, 4h, 1d)
+/timeframe - Избор на таймфрейм (1h, 2h, 4h, 1d)
 /alerts - Вкл/Изкл автоматични сигнали
 
 💡 <b>Поддържани валути:</b>
@@ -11019,8 +11019,8 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     
     logger.info("🔍 Започвам ASYNC проверка на всички монети и timeframes...")
     
-    # Основни timeframes за проверка - 1h, 4h, 1d
-    timeframes_to_check = ['1h', '4h', '1d']
+    # Основни timeframes за проверка - 1h, 2h, 4h, 1d
+    timeframes_to_check = ['1h', '2h', '4h', '1d']
     
     # 🚀 ASYNC ПАРАЛЕЛЕН АНАЛИЗ - всички монети/timeframes наведнъж
     async def analyze_single_pair(symbol, timeframe):
@@ -15274,7 +15274,7 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Parse arguments
             symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT']
-            timeframes = ['1h', '4h', '1d']
+            timeframes = ['1h', '2h', '4h', '1d']
             days = 30
             
             if context.args:
@@ -17867,7 +17867,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                         symbols_to_test = list(SYMBOLS.values())  # BTCUSDT, ETHUSDT, XRPUSDT, SOLUSDT, BNBUSDT, ADAUSDT
                         
                         # ВСИЧКИ основни таймфрейми
-                        timeframes_to_test = ['1h', '4h', '1d']
+                        timeframes_to_test = ['1h', '2h', '4h', '1d']
                         
                         # Събиране на резултати за общ отчет
                         all_results = []
@@ -17904,7 +17904,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
 
 🎯 <b>ТЕСТВАНИ:</b>
    • Монети: {len(symbols_to_test)} ({', '.join([s.replace('USDT', '') for s in symbols_to_test])})
-   • Таймфрейми: {len(timeframes_to_test)} (1h, 4h, 1d)
+   • Таймфрейми: {len(timeframes_to_test)} (1h, 2h, 4h, 1d)
    • Общо комбинации: {len(all_results)}
    • Общо симулирани trades: {total_trades}
 
