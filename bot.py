@@ -6862,6 +6862,525 @@ def format_swing_analysis_en(symbol, price, change_24h, change_7d,
     return msg
 
 
+# ============================================================
+# PR #115: Enhanced Multi-Pair Swing Analysis
+# ============================================================
+
+async def generate_comprehensive_swing_analysis(symbol: str, display_name: str, language: str = 'bg') -> dict:
+    """
+    Generate comprehensive professional swing trading analysis with real-time data
+    
+    PR #115: Enhanced Multi-Pair Swing Analysis
+    
+    Args:
+        symbol: Trading pair (e.g., 'BTCUSDT')
+        display_name: Display name (e.g., '🪙 BITCOIN')
+        language: 'bg' or 'en'
+    
+    Returns:
+        dict with 'symbol', 'rating', 'message', 'recommendation', 'priority'
+    """
+    try:
+        # Fetch real-time data from Binance
+        price_data = await fetch_json(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}")
+        if not price_data:
+            raise Exception("Failed to fetch price data")
+        
+        current_price = float(price_data['lastPrice'])
+        change_24h = float(price_data['priceChangePercent'])
+        volume = float(price_data['volume'])
+        quote_volume = float(price_data['quoteVolume'])
+        
+        # Fetch 7d data for trend
+        klines_7d = await fetch_json(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1d&limit=7")
+        change_7d = 0
+        if klines_7d and len(klines_7d) > 0:
+            price_7d_ago = float(klines_7d[0][1])  # Open price 7 days ago
+            change_7d = ((current_price - price_7d_ago) / price_7d_ago) * 100
+        
+        # Fetch 4H and 1D candles for structure analysis
+        klines_4h = await fetch_json(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=4h&limit=50")
+        klines_1d = await fetch_json(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1d&limit=20")
+        
+        # Analyze market structure
+        structure_4h = "NEUTRAL"
+        structure_1d = "NEUTRAL"
+        alignment = "MIXED"
+        
+        if ICT_SIGNAL_ENGINE_AVAILABLE:
+            try:
+                ict_4h = await ict_engine_global.analyze(symbol.replace('USDT', ''), '4h')
+                ict_1d = await ict_engine_global.analyze(symbol.replace('USDT', ''), '1d')
+                
+                if ict_4h and ict_1d:
+                    bias_4h_val = ict_4h.bias.value if hasattr(ict_4h.bias, 'value') else str(ict_4h.bias)
+                    bias_1d_val = ict_1d.bias.value if hasattr(ict_1d.bias, 'value') else str(ict_1d.bias)
+                    
+                    if bias_4h_val in ['BULLISH', 'STRONG_BULLISH']:
+                        structure_4h = "BULLISH"
+                    elif bias_4h_val in ['BEARISH', 'STRONG_BEARISH']:
+                        structure_4h = "BEARISH"
+                    
+                    if bias_1d_val in ['BULLISH', 'STRONG_BULLISH']:
+                        structure_1d = "BULLISH"
+                    elif bias_1d_val in ['BEARISH', 'STRONG_BEARISH']:
+                        structure_1d = "BEARISH"
+                    
+                    # Determine alignment
+                    if structure_4h == structure_1d and structure_4h != "NEUTRAL":
+                        alignment = structure_4h
+                    elif structure_4h == "NEUTRAL" or structure_1d == "NEUTRAL":
+                        alignment = "RANGING"
+                    else:
+                        alignment = "MIXED"
+            except Exception as e:
+                logger.warning(f"ICT analysis failed for {symbol}: {e}")
+        
+        # Calculate support/resistance from recent price action
+        if klines_1d and len(klines_1d) >= 10:
+            recent_highs = [float(k[2]) for k in klines_1d[-10:]]  # Last 10 days high
+            recent_lows = [float(k[3]) for k in klines_1d[-10:]]   # Last 10 days low
+            resistance_level = max(recent_highs)
+            support_level = min(recent_lows)
+        else:
+            resistance_level = current_price * 1.03
+            support_level = current_price * 0.97
+        
+        resistance_dist = ((resistance_level - current_price) / current_price) * 100
+        support_dist = ((current_price - support_level) / current_price) * 100
+        
+        # Calculate volume analysis
+        avg_volume = quote_volume / 24  # Simplified average
+        volume_ratio = 1.0
+        volume_trend = "NORMAL"
+        
+        if change_24h > 5:
+            volume_trend = "INCREASING"
+            volume_ratio = 1.2
+        elif change_24h < -5:
+            volume_trend = "DECREASING"
+            volume_ratio = 0.8
+        
+        # Fetch Fear & Greed Index (cached)
+        fear_greed = await fetch_fear_greed_index()
+        
+        # Generate swing setup
+        if alignment == "BULLISH":
+            setup_type = "BULLISH"
+            entry_price = current_price
+            tp1 = entry_price * 1.038
+            tp2 = entry_price * 1.062
+            sl = entry_price * 0.97
+            rr_ratio = ((tp1 - entry_price) / (entry_price - sl)) if (entry_price - sl) > 0 else 3.0
+            recommendation = "BUY"
+            rating = 4.0 if volume_trend == "INCREASING" else 3.5
+        elif alignment == "BEARISH":
+            setup_type = "BEARISH"
+            entry_price = current_price
+            tp1 = entry_price * 0.962
+            tp2 = entry_price * 0.938
+            sl = entry_price * 1.03
+            rr_ratio = ((entry_price - tp1) / (sl - entry_price)) if (sl - entry_price) > 0 else 3.0
+            recommendation = "SHORT"
+            rating = 2.0
+        else:  # RANGING or MIXED
+            setup_type = "RANGING"
+            entry_price = resistance_level
+            tp1 = entry_price * 1.038
+            tp2 = entry_price * 1.062
+            sl = entry_price * 0.997
+            rr_ratio = DEFAULT_SWING_RR_RATIO
+            recommendation = "WAIT"
+            rating = 3.0
+        
+        # Adjust rating based on various factors
+        if alignment == "BULLISH" and change_24h > 3 and change_7d > 5:
+            rating = min(5.0, rating + 0.5)  # Strong uptrend
+        elif alignment == "BEARISH":
+            rating = max(1.5, rating - 0.5)  # Bearish is riskier
+        
+        # Format message with professional analysis
+        message = format_comprehensive_swing_message(
+            symbol=symbol,
+            display_name=display_name,
+            price=current_price,
+            change_24h=change_24h,
+            change_7d=change_7d,
+            structure_4h=structure_4h,
+            structure_1d=structure_1d,
+            alignment=alignment,
+            resistance=resistance_level,
+            res_dist=resistance_dist,
+            support=support_level,
+            sup_dist=support_dist,
+            volume_ratio=volume_ratio,
+            volume_trend=volume_trend,
+            fear_greed=fear_greed,
+            setup_type=setup_type,
+            entry=entry_price,
+            tp1=tp1,
+            tp2=tp2,
+            sl=sl,
+            rr=rr_ratio,
+            rating=rating,
+            language=language
+        )
+        
+        return {
+            'symbol': symbol,
+            'rating': rating,
+            'message': message,
+            'recommendation': recommendation,
+            'priority': int(rating)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in comprehensive swing analysis for {symbol}: {e}", exc_info=True)
+        return {
+            'symbol': symbol,
+            'rating': 0,
+            'message': f"❌ Грешка при анализ на {symbol}: {str(e)}" if language == 'bg' else f"❌ Error analyzing {symbol}: {str(e)}",
+            'recommendation': 'ERROR',
+            'priority': 0
+        }
+
+
+def format_comprehensive_swing_message(symbol, display_name, price, change_24h, change_7d,
+                                       structure_4h, structure_1d, alignment,
+                                       resistance, res_dist, support, sup_dist,
+                                       volume_ratio, volume_trend, fear_greed,
+                                       setup_type, entry, tp1, tp2, sl, rr, rating, language='bg'):
+    """
+    Format comprehensive swing analysis message in Bulgarian/English mix
+    
+    PR #115: Professional swing trader perspective with detailed narrative
+    """
+    
+    # Bulgarian translations for structure
+    struct_bg = {
+        'BULLISH': 'БИЧА',
+        'BEARISH': 'МЕЧA',
+        'NEUTRAL': 'НЕУТРАЛНА',
+        'RANGING': 'КОНСОЛИДАЦИЯ',
+        'MIXED': 'СМЕСЕНО'
+    }
+    
+    struct_4h_label = struct_bg.get(structure_4h, structure_4h)
+    struct_1d_label = struct_bg.get(structure_1d, structure_1d)
+    align_label = struct_bg.get(alignment, alignment)
+    
+    msg = f"{display_name} ({symbol})\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Price section
+    msg += f"💰 Цена: ${price:,.2f} ({change_24h:+.1f}% 24h, {change_7d:+.1f}% 7d)\n\n"
+    
+    # Structure section
+    msg += "📊 СТРУКТУРА:\n"
+    msg += f"  • 4H: {struct_4h_label}\n"
+    msg += f"  • 1D: {struct_1d_label}\n"
+    alignment_emoji = "✅" if alignment in ["BULLISH", "BEARISH"] else "⚠️"
+    msg += f"  • Подравняване: {alignment_emoji} {align_label}\n\n"
+    
+    # Key levels
+    msg += "🔍 КЛЮЧОВИ НИВА:\n"
+    msg += f"  🔴 Съпротива: ${resistance:,.2f} ({res_dist:+.1f}% от цена)\n"
+    msg += f"  🟢 Подкрепа: ${support:,.2f} ({sup_dist:+.1f}% под цена)\n\n"
+    
+    # Volume & Momentum
+    msg += "📊 ОБЕМ & MOMENTUM:\n"
+    msg += f"  • Обем: {volume_ratio:.2f}x среден\n"
+    msg += f"  • Тренд: {volume_trend}\n"
+    
+    if fear_greed:
+        fg_emoji = "😱" if fear_greed['value'] < 25 else "😰" if fear_greed['value'] < 45 else "😐" if fear_greed['value'] < 55 else "😊" if fear_greed['value'] < 75 else "🤑"
+        msg += f"\n{fg_emoji} Fear & Greed: {fear_greed['value']}/100 ({fear_greed['classification']})\n"
+    
+    msg += "\n━━━━ SWING SETUP ━━━━\n\n"
+    
+    # Setup strategy based on type
+    if setup_type == "RANGING":
+        msg += "⚠️ КОНСОЛИДАЦИЯ - Чакай Breakout\n\n"
+        msg += "💡 СТРАТЕГИЯ:\n"
+        msg += f"  ✅ БИЧИ Сценарий:\n"
+        msg += f"     • Вход: Breakout над ${entry:,.2f}\n"
+        msg += f"     • TP1: ${tp1:,.2f} ({((tp1-entry)/entry*100):+.1f}%)\n"
+        msg += f"     • TP2: ${tp2:,.2f} ({((tp2-entry)/entry*100):+.1f}%)\n"
+        msg += f"     • SL: ${sl:,.2f} ({((sl-entry)/entry*100):+.1f}%)\n"
+        msg += f"     • R:R = {rr:.1f}:1\n\n"
+        msg += f"  ❌ МЕЧИ Сценарий:\n"
+        msg += f"     • Breakdown под ${support:,.2f} = ИЗБЯГВАЙ LONGS\n\n"
+        msg += "⏰ ВРЕМЕВА РАМКА:\n"
+        msg += "  Очакван breakout в рамките на 12-24 часа\n\n"
+    elif setup_type == "BULLISH":
+        msg += "✅ БИЧИ ALIGNMENT - Long Setup\n\n"
+        msg += "💡 СТРАТЕГИЯ:\n"
+        msg += f"  ✅ Вход: Pullback към ${entry:,.2f}\n"
+        msg += f"  🎯 TP1: ${tp1:,.2f} ({((tp1-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🎯 TP2: ${tp2:,.2f} ({((tp2-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🛑 SL: ${sl:,.2f} ({((sl-entry)/entry*100):+.1f}%)\n"
+        msg += f"  📊 R:R = {rr:.1f}:1\n\n"
+    else:  # BEARISH
+        msg += "❌ МЕЧИ ALIGNMENT - Short Setup\n\n"
+        msg += "💡 СТРАТЕГИЯ:\n"
+        msg += f"  ❌ Вход: Rally към ${entry:,.2f}\n"
+        msg += f"  🎯 TP1: ${tp1:,.2f} ({((tp1-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🎯 TP2: ${tp2:,.2f} ({((tp2-entry)/entry*100):+.1f}%)\n"
+        msg += f"  🛑 SL: ${sl:,.2f} ({((sl-entry)/entry*100):+.1f}%)\n"
+        msg += f"  📊 R:R = {rr:.1f}:1\n\n"
+    
+    msg += "━━━━ ПРОФЕСИОНАЛЕН SWING АНАЛИЗ ━━━━\n\n"
+    
+    # Professional narrative - context specific to each setup
+    msg += "📈 ПАЗАРЕН КОНТЕКСТ:\n"
+    
+    if setup_type == "RANGING":
+        msg += f"{symbol} в момента се търгува в консолидация между "
+        msg += f"${support:,.2f} подкрепа и ${resistance:,.2f} съпротива. "
+        msg += f"4-часовата и дневната времеви рамки показват {align_label.lower()} сигнали, "
+        msg += f"създавайки неясна посока преди значително движение.\n\n"
+        
+        msg += f"Анализът на обема показва {volume_trend.lower()} активност ({volume_ratio:.2f}x), "
+        msg += f"което е типично по време на консолидация. "
+        if fear_greed:
+            msg += f"Fear & Greed на {fear_greed['value']} потвърждава пазарната нерешителност.\n\n"
+        else:
+            msg += "\n\n"
+        
+        msg += "🎯 SWING TRADER ПЕРСПЕКТИВА:\n\n"
+        msg += "Настоящата конфигурация представлява класическа range-bound среда. "
+        msg += "Като опитен swing trader наблюдавам решителен пробив с потвърждение чрез обем.\n\n"
+        
+        if change_24h > 0 and change_7d > 0:
+            msg += f"БИЧИ СЛУЧАЙ (Предпочитан):\n"
+            msg += f"Покачването с {change_24h:+.1f}% дневно и {change_7d:+.1f}% седмично показва основен бичи momentum. "
+            msg += f"Пробив над ${resistance:,.2f} би потвърдил продължение на uptrend. "
+            msg += f"R:R от {rr:.1f}:1 предлага добро съотношение.\n\n"
+        else:
+            msg += f"Чакай ясна посока преди вход. Пробив над ${resistance:,.2f} или под ${support:,.2f} "
+            msg += f"ще покаже следващото движение.\n\n"
+        
+        msg += "⚠️ КЛЮЧОВИ РИСКОВЕ:\n"
+        msg += "1. Пробиви с нисък обем са склонни към провал (фалшиви пробиви)\n"
+        msg += "2. Уикенд търговията може да произведе gap-ове\n"
+        msg += "3. Макро новини могат да заобиколят техническия анализ\n\n"
+        
+    elif setup_type == "BULLISH":
+        msg += f"{symbol} показва силна бича структура с подравнени 4H и 1D таймфреймове. "
+        msg += f"Цената е {change_24h:+.1f}% за 24ч и {change_7d:+.1f}% за 7д, "
+        msg += f"демонстрирайки устойчив uptrend momentum.\n\n"
+        
+        msg += f"Обемът е {volume_ratio:.2f}x средния с {volume_trend.lower()} тренд, "
+        msg += f"което подкрепя бичия сценарий. "
+        msg += f"Подкрепата на ${support:,.2f} ({sup_dist:.1f}% под цената) "
+        msg += f"предлага силна база за pullback вход.\n\n"
+        
+        msg += "🎯 SWING TRADER ПЕРСПЕКТИВА:\n\n"
+        msg += "Отличен long setup с ясна бича структура. Препоръчвам pullback вход "
+        msg += f"към зоната ${entry * 0.98:,.2f}-${entry:,.2f} вместо chase на текущата цена.\n\n"
+        
+        msg += "СТРАТЕГИЯ ЗА ВХОД:\n"
+        msg += f"Изчакай retracement към ${support:,.2f} зона. Влез на потвърждение "
+        msg += f"(4H свещ със силно затваряне). Мащабирай позицията: 50% при pullback, "
+        msg += f"30% при momentum продължение, 20% при retest на support като resistance.\n\n"
+        
+        msg += "⚠️ КЛЮЧОВИ РИСКОВЕ:\n"
+        msg += "1. Спазвай стоп лоса строго - НЕ премествай по-ниско\n"
+        msg += "2. Обемът трябва да потвърди - избягвай вход при слаб обем\n"
+        msg += "3. Глобални пазари могат да повлияят на криптo sentiment\n\n"
+        
+    else:  # BEARISH
+        msg += f"{symbol} показва мечa структура с подравнени bearish сигнали. "
+        msg += f"Цената е {change_24h:+.1f}% за 24ч, демонстрирайки слабост.\n\n"
+        
+        msg += "🎯 SWING TRADER ПЕРСПЕКТИВА:\n\n"
+        msg += "Мечата структура предполага внимание. За swing traders, "
+        msg += "ИЗБЯГВАЙ long позиции в този момент. Shorts са високо рискови "
+        msg += "в крипто поради възможни бързи reversal-и.\n\n"
+        
+        msg += "ПРЕПОРЪКА:\n"
+        msg += f"Чакай стабилизация и промяна на структура преди нови long-ове. "
+        msg += f"Breakdown под ${support:,.2f} би потвърдил по-нататъшна слабост.\n\n"
+        
+        msg += "⚠️ КЛЮЧОВИ РИСКОВЕ:\n"
+        msg += "1. Мечи пазар - висока волатилност и непредсказуемост\n"
+        msg += "2. Shorts в крипто са рискови - възможни резки pump-ове\n"
+        msg += "3. По-добре да седиш встрани отколкото да губиш пари\n\n"
+    
+    msg += "💼 УПРАВЛЕНИЕ НА ПОЗИЦИЯТА:\n"
+    if setup_type == "RANGING":
+        msg += "- Изчакай ясна посока преди вход\n"
+        msg += "- Използвай максимум 1-2% риск от капитала\n"
+        msg += "- Задай alerts на ключови нива вместо пазарни поръчки\n"
+        msg += "- Бъди готов да излезеш бързо ако обемът не потвърди пробива\n\n"
+    elif setup_type == "BULLISH":
+        msg += "- Влез на pullback, НЕ chase цената\n"
+        msg += "- Използвай 2-3% риск от капитала максимум\n"
+        msg += "- Премести SL на breakeven след TP1 удар\n"
+        msg += "- Вземи 50% печалба на TP1, остави остатъка с trailing SL\n\n"
+    else:
+        msg += "- ИЗБЯГВАЙ нови позиции в мечи структура\n"
+        msg += "- Ако вече си в long, обмисли exit или стегни SL\n"
+        msg += "- Чакай промяна на структура преди реентри\n\n"
+    
+    msg += "⏰ ВРЕМЕВА ЛИНИЯ:\n"
+    if setup_type == "RANGING":
+        msg += "Консолидацията обикновено се разрешава в рамките на 12-48 часа. "
+        msg += "Ако няма пробив в рамките на 48ч, преоцени за range-trading.\n\n"
+    elif setup_type == "BULLISH":
+        msg += "Swing hold период: 3-7 дни за TP1, 7-14 дни за TP2. "
+        msg += "Бъди гъвкав ако пазарът се движи по-бързо.\n\n"
+    else:
+        msg += "Изчакай поне 2-3 дни за ясна промяна на структура преди реоценка.\n\n"
+    
+    msg += "━━━━ ПРЕПОРЪКА ━━━━\n\n"
+    
+    # Rating stars
+    stars = "⭐" * int(rating) + "☆" * (5 - int(rating))
+    msg += f"✅ РЕЙТИНГ: {rating:.1f}/5 {stars}\n\n"
+    
+    msg += "ПЛАН ЗА ДЕЙСТВИЕ:\n"
+    if setup_type == "RANGING":
+        msg += f"1. Задай ценови alerts: ${resistance:,.2f} (пробив) & ${support:,.2f} (breakdown)\n"
+        msg += "2. НЕ влизай в текущия range - риск/награда е неблагоприятна\n"
+        msg += "3. При бичи пробив: Потвърди обем, влез с 40% позиция\n"
+        msg += f"4. Изчакай retest на ${resistance:,.2f} като подкрепа за още 30%\n"
+        msg += "5. Премести stop loss на breakeven след TP1 удар\n\n"
+    elif setup_type == "BULLISH":
+        msg += f"1. Изчакай pullback към ${entry * 0.98:,.2f}-${entry:,.2f} зона\n"
+        msg += "2. Влез с 50% позиция при силно 4H затваряне в зоната\n"
+        msg += "3. Добави 30% при momentum продължение над предишен high\n"
+        msg += "4. Премести SL на breakeven при +2% profit\n"
+        msg += "5. Вземи 50% печалба на TP1, остави остатъка с trailing SL\n\n"
+    else:
+        msg += "1. ИЗБЯГВАЙ нови long позиции\n"
+        msg += f"2. Задай alert на ${support:,.2f} за breakdown потвърждение\n"
+        msg += "3. Изчакай промяна на 1D структура към bullish\n"
+        msg += "4. Реоценка след 3-5 дни или при значимa промяна\n\n"
+    
+    msg += "ИЗБЯГВАЙ АКО:\n"
+    if setup_type == "RANGING":
+        msg += "- Пробивът настъпи при нисък обем (<0.8x среден)\n"
+        msg += "- Уикенд пробив без последващо потвърждение\n"
+        msg += "- Основна съпротива се формира веднага след пробив\n\n"
+    elif setup_type == "BULLISH":
+        msg += "- Обемът е под 0.8x среден (слаб bullish интерес)\n"
+        msg += f"- Breakdown под ${support:,.2f} (структура се обърна)\n"
+        msg += "- Глобални пазари показват силна слабост\n\n"
+    else:
+        msg += "- Структурата остава bearish\n"
+        msg += "- Обемът продължава да намалява\n"
+        msg += "- Няма ясни сигнали за reversal\n\n"
+    
+    msg += "⚠️ Това не е финансов съвет. DYOR!\n\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    return msg
+
+
+def generate_swing_summary(all_analyses: list) -> str:
+    """
+    Generate summary of all swing analyses with ranked opportunities
+    
+    PR #115: Summary with best opportunities ranking
+    
+    Args:
+        all_analyses: List of analysis dicts
+    
+    Returns:
+        Formatted summary message
+    """
+    # Filter out errors
+    valid_analyses = [a for a in all_analyses if a['rating'] > 0]
+    
+    # Sort by rating (highest first)
+    sorted_analyses = sorted(valid_analyses, key=lambda x: x['rating'], reverse=True)
+    
+    # Group by rating
+    best = [a for a in sorted_analyses if a['rating'] >= 3.5]
+    caution = [a for a in sorted_analyses if 2.5 <= a['rating'] < 3.5]
+    avoid = [a for a in sorted_analyses if a['rating'] < 2.5]
+    
+    msg = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    msg += "📊 SWING ANALYSIS SUMMARY\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    msg += f"Analyzed {len(valid_analyses)} pairs | "
+    msg += f"Generated at {datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC\n\n"
+    
+    if best:
+        msg += "🏆 BEST OPPORTUNITIES (Ranked):\n\n"
+        
+        medals = ["🥇", "🥈", "🥉"]
+        for i, analysis in enumerate(best[:3]):
+            medal = medals[i] if i < 3 else "  "
+            coin_name = analysis['symbol'].replace('USDT', '')
+            stars = "⭐" * int(analysis['rating'])
+            msg += f"{i+1}. {medal} {coin_name} - {analysis['rating']:.1f}/5 {stars}\n"
+            
+            # Add brief recommendation
+            if analysis['recommendation'] == 'BUY':
+                msg += f"   Силна бича структура, добър R:R\n"
+                msg += f"   Действие: BUY на pullback\n\n"
+            elif analysis['recommendation'] == 'WAIT':
+                msg += f"   Консолидация breakout setup\n"
+                msg += f"   Действие: ИЗЧАКАЙ breakout\n\n"
+            else:
+                msg += f"   {analysis['recommendation']} setup\n\n"
+    
+    if caution:
+        msg += "⚠️ ВНИМАНИЕ / ИЗЧАКАЙ:\n\n"
+        for i, analysis in enumerate(caution, 1):
+            coin_name = analysis['symbol'].replace('USDT', '')
+            stars = "⭐" * int(analysis['rating'])
+            msg += f"{i + len(best)}. {coin_name} - {analysis['rating']:.1f}/5 {stars}\n"
+            msg += f"   Range-bound или смесени сигнали\n"
+            msg += f"   Действие: ИЗЧАКАЙ по-добър setup\n\n"
+    
+    if avoid:
+        msg += "❌ ИЗБЯГВАЙ / НИСКА УВЕРЕНОСТ:\n\n"
+        for i, analysis in enumerate(avoid, 1):
+            coin_name = analysis['symbol'].replace('USDT', '')
+            stars = "⭐" * int(analysis['rating'])
+            msg += f"{i + len(best) + len(caution)}. {coin_name} - {analysis['rating']:.1f}/5 {stars}\n"
+            
+            if analysis['recommendation'] == 'SHORT':
+                msg += f"   Мечa структура\n"
+                msg += f"   Действие: ИЗБЯГВАЙ longs / Short само\n\n"
+            else:
+                msg += f"   Слаб setup, ниска увереност\n"
+                msg += f"   Действие: СЕДНИ ВСТРАНИ\n\n"
+    
+    msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Market overview
+    msg += "💡 ПАЗАРЕН ПРЕГЛЕД:\n"
+    
+    bullish_count = sum(1 for a in valid_analyses if a['recommendation'] == 'BUY')
+    bearish_count = sum(1 for a in valid_analyses if a['recommendation'] == 'SHORT')
+    
+    if bullish_count >= len(valid_analyses) * 0.5:
+        msg += "Предимно бичи условия в пазара. "
+    elif bearish_count >= len(valid_analyses) * 0.5:
+        msg += "Предимно мечи условия - внимание при long позиции. "
+    else:
+        msg += "Смесени условия в пазара. "
+    
+    if best:
+        top_coin = best[0]['symbol'].replace('USDT', '')
+        msg += f"{top_coin} показва най-силен setup. "
+    
+    msg += "Бъдете селективни с вашите позиции.\n\n"
+    
+    msg += f"⏰ Данни актуални към: {datetime.now(timezone.utc).strftime('%d %b %Y, %H:%M:%S')} UTC\n"
+    msg += "⚠️ Пазарните условия се променят - проверявай редовно!\n\n"
+    
+    msg += "Използвай /start за още анализи\n\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    return msg
+
+
 @require_access()
 @rate_limited(calls=10, period=60)
 async def market_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6991,96 +7510,94 @@ async def market_quick_overview(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Professional swing trading analysis for ALL watched pairs
-    PR #113: Extended to analyze all symbols in SYMBOLS dict
+    Enhanced multi-pair swing trading analysis with professional insights
+    
+    PR #115: Comprehensive analysis for all 6 trading pairs with real-time data
+    Generates individual detailed analysis for each pair plus summary ranking
     """
     query = update.callback_query
-    await query.edit_message_text("🎯 Генерирам swing trading анализ за всички валути...")
+    await query.answer()
     
     user_id = update.effective_user.id
     user_language = context.bot_data.get(f'user_{user_id}_language', 'bg')
     
-    # Get all symbols to analyze
-    symbols_to_analyze = list(SYMBOLS.values())  # ['BTCUSDT', 'ETHUSDT', ...]
-    
-    # Initialize message
-    message = "📊 <b>SWING TRADING АНАЛИЗ</b>\n"
-    message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    message += f"<i>Анализирам {len(symbols_to_analyze)} валути от watchlist</i>\n\n"
-    
-    analyzed_count = 0
-    errors = []
-    
-    # Analyze each symbol
-    for symbol in symbols_to_analyze:
-        try:
-            # Fetch current price and 24h data
-            ticker = await fetch_json(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}")
-            if not ticker:
-                errors.append(f"{symbol}: Failed to fetch data")
-                continue
-            
-            current_price = float(ticker['lastPrice'])
-            price_change_pct = float(ticker['priceChangePercent'])
-            
-            # Detect swing state using helper function
-            swing_state = await detect_market_swing_state(symbol, timeframe='4h')
-            
-            # Format coin name (remove USDT suffix)
-            coin_name = symbol.replace('USDT', '')
-            
-            # Visual indicators based on swing state
-            if swing_state == 'BULLISH':
-                state_emoji = '🟢'
-                trend_icon = '📈'
-            elif swing_state == 'BEARISH':
-                state_emoji = '🔴'
-                trend_icon = '📉'
-            else:
-                state_emoji = '⚪'
-                trend_icon = '➡️'
-            
-            # 24h change indicator
-            change_emoji = '🟢' if price_change_pct > 0 else '🔴' if price_change_pct < 0 else '⚪'
-            
-            # Format price (more decimals for low-price coins)
-            if current_price < 1:
-                price_str = f"${current_price:.6f}"
-            elif current_price < 100:
-                price_str = f"${current_price:.4f}"
-            else:
-                price_str = f"${current_price:,.2f}"
-            
-            message += f"{state_emoji} <b>{coin_name}</b> {trend_icon}\n"
-            message += f"   💰 {price_str}\n"
-            message += f"   24h: {change_emoji} {price_change_pct:+.2f}%\n"
-            message += f"   Swing: {swing_state}\n\n"
-            
-            analyzed_count += 1
-            
-        except Exception as e:
-            logger.error(f"Error analyzing {symbol}: {e}")
-            errors.append(f"{symbol}: {str(e)[:50]}")
-            continue
-    
-    message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    message += f"<i>✅ Успешно анализирани {analyzed_count}/{len(symbols_to_analyze)} валути</i>\n"
-    
-    if errors:
-        message += f"<i>⚠️ {len(errors)} грешки (вижте логовете)</i>\n"
-    
-    message += f"<i>⏱️ Обновено: {datetime.now().strftime('%H:%M:%S')}</i>"
-    
-    # Send results
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=message,
+    # Show progress message
+    await query.edit_message_text(
+        "📊 <b>SWING TRADING ANALYSIS</b>\n\n"
+        "Генерирам детайлен swing анализ за 6 валути...\n"
+        "⏳ Това може да отнеме 30-60 секунди.\n\n"
+        "<i>Моля изчакайте...</i>",
         parse_mode='HTML'
     )
     
-    logger.info(f"✅ Market swing analysis completed: {analyzed_count}/{len(symbols_to_analyze)} pairs")
-    if errors:
-        logger.warning(f"Market swing analysis errors: {errors}")
+    # Trading pairs with display names
+    symbols = [
+        ('BTCUSDT', '🪙 BITCOIN'),
+        ('ETHUSDT', '💎 ETHEREUM'),
+        ('BNBUSDT', '⚡ BINANCE COIN'),
+        ('SOLUSDT', '🌐 SOLANA'),
+        ('XRPUSDT', '💰 RIPPLE'),
+        ('ADAUSDT', '🎯 CARDANO')
+    ]
+    
+    all_analyses = []
+    
+    # Loop through each pair
+    for symbol, display_name in symbols:
+        try:
+            # Generate comprehensive swing analysis with timeout protection
+            analysis = await asyncio.wait_for(
+                generate_comprehensive_swing_analysis(
+                    symbol=symbol,
+                    display_name=display_name,
+                    language=user_language
+                ),
+                timeout=15.0  # 15 seconds per pair
+            )
+            
+            all_analyses.append(analysis)
+            
+            # Send analysis for this pair
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=analysis['message'],
+                parse_mode='HTML'
+            )
+            
+            # Anti-spam delay
+            await asyncio.sleep(1)
+            
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout analyzing {symbol}")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"⚠️ Timeout при анализ на {symbol} - прескачам",
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logger.error(f"Error analyzing {symbol}: {e}", exc_info=True)
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"❌ Грешка при анализ на {symbol}: {str(e)}",
+                parse_mode='HTML'
+            )
+    
+    # Generate and send summary
+    try:
+        summary = generate_swing_summary(all_analyses)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=summary,
+            parse_mode='HTML'
+        )
+        logger.info(f"✅ Swing analysis completed for {len(all_analyses)} pairs")
+    except Exception as e:
+        logger.error(f"Error generating summary: {e}", exc_info=True)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Грешка при генериране на обобщение",
+            parse_mode='HTML'
+        )
 
 
 async def detect_market_swing_state(symbol: str, timeframe: str = '4h') -> str:
