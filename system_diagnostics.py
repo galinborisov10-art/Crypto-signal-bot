@@ -640,10 +640,10 @@ async def diagnose_real_time_monitor_issue(base_path: str = None) -> List[Dict[s
             'problem': 'Real-time monitor fails to start - AsyncIO scope error',
             'root_cause': 'asyncio not accessible in nested function scope (3 levels deep)',
             'evidence': latest_error,
-            'location': 'File: bot.py\nLine: ~17620\nFunction: enable_auto_alerts() → schedule_reports() → main()',
+            'location': 'File: bot.py\nFunction: enable_auto_alerts() → schedule_reports() → main()\nSearch: "asyncio.create_task.*real_time_monitor"',
             'impact': '• 80% TP alerts НЕ работят\n• Position monitoring delayed\n• WIN/LOSS notifications not sent',
             'fix': 'Use: loop = asyncio.get_running_loop()\n      loop.create_task(...)',
-            'copilot': 'Fix asyncio scope issue in bot.py line 17620 by replacing asyncio.create_task() with loop.create_task() where loop = asyncio.get_running_loop()',
+            'copilot': 'Fix asyncio scope issue by replacing asyncio.create_task() with loop.create_task() where loop = asyncio.get_running_loop()',
             'commands': [
                 f'grep -n "asyncio.create_task.*real_time_monitor" {base_path}/bot.py',
                 f'grep "cannot access free variable" {base_path}/bot.log | tail -n 5'
@@ -772,8 +772,10 @@ async def run_full_health_check(base_path: str = None) -> Dict[str, Any]:
         'issues': realtime_issues
     }
     
-    # Add placeholder entries for components not yet implemented
-    # (These would be added in future enhancements)
+    # PLACEHOLDER COMPONENTS - Not yet implemented with full diagnostics
+    # These components exist in the system but don't have dedicated health checks yet.
+    # They are marked as HEALTHY by default to complete the 12-component analysis.
+    # TODO: Implement actual health checks for these components in future PRs
     health_report['components']['Trading Signals'] = {
         'status': 'HEALTHY',
         'issues': []

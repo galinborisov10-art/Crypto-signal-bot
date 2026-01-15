@@ -16264,17 +16264,20 @@ async def quick_health_check() -> str:
     # 2. Disk space check
     try:
         disk = shutil.disk_usage(BASE_PATH)
-        disk_pct = (disk.used / disk.total) * 100
-        disk_free_gb = disk.free / (1024**3)
-        
-        if disk_pct < 85:
-            status = '✅'
-        elif disk_pct < 95:
-            status = '⚠️'
+        if disk.total > 0:
+            disk_pct = (disk.used / disk.total) * 100
+            disk_free_gb = disk.free / (1024**3)
+            
+            if disk_pct < 85:
+                status = '✅'
+            elif disk_pct < 95:
+                status = '⚠️'
+            else:
+                status = '❌'
+            
+            checks.append(f"{status} Disk: {disk_pct:.1f}% used ({disk_free_gb:.1f}GB free)")
         else:
-            status = '❌'
-        
-        checks.append(f"{status} Disk: {disk_pct:.1f}% used ({disk_free_gb:.1f}GB free)")
+            checks.append("⚠️ Disk: Cannot determine usage")
     except Exception as e:
         checks.append(f"⚠️ Disk: Could not check ({e})")
     
