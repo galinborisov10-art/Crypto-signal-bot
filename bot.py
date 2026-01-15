@@ -7560,8 +7560,8 @@ async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             # Send analysis for this pair
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=analysis['message'],
-                parse_mode='HTML'
+                text=analysis['message']
+                # No parse_mode - plain text (safe for < > characters)
             )
             
             # Anti-spam delay
@@ -7571,15 +7571,13 @@ async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             logger.error(f"Timeout analyzing {symbol}")
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"⚠️ Timeout при анализ на {symbol} - прескачам",
-                parse_mode='HTML'
+                text=f"⚠️ Timeout при анализ на {symbol} - прескачам"
             )
         except Exception as e:
             logger.error(f"Error analyzing {symbol}: {e}", exc_info=True)
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ Грешка при анализ на {symbol}: {str(e)}",
-                parse_mode='HTML'
+                text=f"❌ Грешка при анализ на {symbol}: {str(e)}"
             )
     
     # Generate and send summary
@@ -7587,16 +7585,15 @@ async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         summary = generate_swing_summary(all_analyses)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=summary,
-            parse_mode='HTML'
+            text=summary
+            # No parse_mode - plain text (safe for < > characters)
         )
         logger.info(f"✅ Swing analysis completed for {len(all_analyses)} pairs")
     except Exception as e:
         logger.error(f"Error generating summary: {e}", exc_info=True)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="❌ Грешка при генериране на обобщение",
-            parse_mode='HTML'
+            text="❌ Грешка при генериране на обобщение"
         )
 
 
