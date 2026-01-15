@@ -16227,44 +16227,203 @@ async def debug_mode_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # PR #10: SYSTEM HEALTH MONITORING COMMANDS
 # ============================================================================
 
+async def quick_health_check() -> str:
+    """
+    Fast health check without heavy I/O operations
+    Completes in <5 seconds
+    
+    Returns:
+        Formatted health status message (mixed BG/EN)
+    """
+    import shutil
+    from datetime import datetime
+    
+    checks = []
+    
+    # 1. Critical file existence checks
+    files_to_check = {
+        'Trading Journal': 'trading_journal.json',
+        'Signal Cache': 'sent_signals_cache.json',
+        'ML Model': 'models/ict_model.pkl',
+    }
+    
+    for name, path in files_to_check.items():
+        full_path = os.path.join(BASE_PATH, path)
+        exists = os.path.exists(full_path)
+        
+        if exists:
+            try:
+                size = os.path.getsize(full_path)
+                size_str = f" ({size / 1024:.1f}KB)" if size < 1024*1024 else f" ({size / (1024*1024):.1f}MB)"
+            except:
+                size_str = ""
+            checks.append(f"✅ {name}{size_str}")
+        else:
+            checks.append(f"❌ {name} - FILE MISSING!")
+    
+    # 2. Disk space check
+    try:
+        disk = shutil.disk_usage(BASE_PATH)
+        if disk.total > 0:
+            disk_pct = (disk.used / disk.total) * 100
+            disk_free_gb = disk.free / (1024**3)
+            
+            if disk_pct < 85:
+                status = '✅'
+            elif disk_pct < 95:
+                status = '⚠️'
+            else:
+                status = '❌'
+            
+            checks.append(f"{status} Disk: {disk_pct:.1f}% used ({disk_free_gb:.1f}GB free)")
+        else:
+            checks.append("⚠️ Disk: Cannot determine usage")
+    except Exception as e:
+        checks.append(f"⚠️ Disk: Could not check ({e})")
+    
+    # 3. Log file size
+    try:
+        log_file = os.path.join(BASE_PATH, 'bot.log')
+        if os.path.exists(log_file):
+            log_size_mb = os.path.getsize(log_file) / (1024**2)
+            if log_size_mb > 500:
+                status = '⚠️'
+            else:
+                status = 'ℹ️'
+            checks.append(f"{status} Log: {log_size_mb:.1f}MB")
+    except:
+        pass
+    
+    # 4. Bot uptime (from process start time if available)
+    try:
+        import psutil
+        process = psutil.Process(os.getpid())
+        uptime_seconds = datetime.now().timestamp() - process.create_time()
+        hours = int(uptime_seconds // 3600)
+        minutes = int((uptime_seconds % 3600) // 60)
+        checks.append(f"ℹ️ Bot uptime: {hours}h {minutes}m")
+    except:
+        pass
+    
+    # Build message
+    message = "🏥 <b>БЪРЗА ПРОВЕРКА</b>\n"
+    message += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    message += "\n".join(checks)
+    message += "\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    # Summary
+    if all('✅' in check or 'ℹ️' in check for check in checks):
+        message += "✅ <b>Основни системи работят</b>\n"
+    else:
+        message += "⚠️ <b>Открити проблеми - виж горе</b>\n"
+    
+    message += f"\n<i>За пълна диагностика: /health</i>\n"
+    message += f"<i>Завършено в {datetime.now().strftime('%H:%M:%S')}</i>"
+    
+    return message
+
+
 @require_access()
 @rate_limited(calls=10, period=60)
-async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def quick_health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    🏥 Run comprehensive system health diagnostic
+    Quick health check command (5s)
     
-    Usage: /health
-    
-    Checks:
-    - Trading Journal health
-    - ML model training status
-    - Daily report execution
-    - Position monitor health
-    - Scheduler health
-    - Disk space
+    Usage: /quick_health
     """
     try:
-        # Import diagnostic modules
-        from system_diagnostics import run_full_health_check
-        from diagnostic_messages import format_health_summary
+        report = await quick_health_check()
+        await update.message.reply_text(report, parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"Quick health check error: {e}", exc_info=True)
+        await update.message.reply_text(
+            f"❌ <b>Грешка</b>\n\n<code>{str(e)}</code>",
+            parse_mode='HTML'
+        )
+
+
+@require_access()
+@rate_limited(calls=5, period=60)  # Reduced from 10 to 5 (heavy operation)
+async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Comprehensive system diagnostic (90s timeout)
+    
+    Analyzes 12 components:
+    - Trading Signals, Backtests, ML Model, Daily Reports
+    - Message Sending, Trading Journal, Scheduler, Position Monitor
+    - Breaking News, Disk/System, Access Control, Real-Time Monitor
+    
+    Usage: /health or 🏥 Health button
+    """
+    try:
+        progress = await update.message.reply_text(
+            "🏥 <b>СИСТЕМНА ДИАГНОСТИКА</b>\n\n"
+            "Сканирам 12 компонента...\n"
+            "⏳ Това може да отнeme до 90 секунди.\n\n"
+            "<i>Моля изчакайте...</i>",
+            parse_mode='HTML'
+        )
         
-        await update.message.reply_text("🏥 Running system health diagnostic...\n\nPlease wait...")
-        
-        # Run full health check
-        health_report = await run_full_health_check(BASE_PATH)
-        
-        # Format and send report
-        message = format_health_summary(health_report)
-        
-        await update.message.reply_text(message, parse_mode='HTML')
-        
-        logger.info(f"✅ Health diagnostic completed - {health_report['summary']}")
-        
+        try:
+            # Import diagnostic modules
+            from system_diagnostics import run_full_health_check
+            from diagnostic_messages import format_health_summary
+            
+            # Run with 90-second timeout
+            health_report = await asyncio.wait_for(
+                run_full_health_check(BASE_PATH),
+                timeout=90.0
+            )
+            
+            # Format comprehensive report
+            message = format_health_summary(health_report)
+            
+            # Delete progress message
+            await progress.delete()
+            
+            # Send full diagnostic report (may be multiple messages if >4096 chars)
+            if len(message) > 4000:
+                # Split into chunks
+                chunks = []
+                current_chunk = ""
+                for line in message.split('\n'):
+                    if len(current_chunk) + len(line) + 1 > 4000:
+                        chunks.append(current_chunk)
+                        current_chunk = line + '\n'
+                    else:
+                        current_chunk += line + '\n'
+                if current_chunk:
+                    chunks.append(current_chunk)
+                
+                for i, chunk in enumerate(chunks):
+                    await update.message.reply_text(
+                        chunk,
+                        parse_mode='HTML'
+                    )
+                    if i < len(chunks) - 1:
+                        await asyncio.sleep(0.5)  # Avoid rate limits
+            else:
+                await update.message.reply_text(message, parse_mode='HTML')
+            
+        except asyncio.TimeoutError:
+            # Fallback to quick health check
+            await progress.edit_text(
+                "⚠️ <b>Пълната диагностика отне повече от 90 секунди</b>\n\n"
+                "Показвам бърза проверка...",
+                parse_mode='HTML'
+            )
+            
+            quick_report = await quick_health_check()
+            await update.message.reply_text(quick_report, parse_mode='HTML')
+            
+            logger.warning("Health diagnostic timeout after 90s, used quick check fallback")
+            
     except Exception as e:
         logger.error(f"❌ Health diagnostic error: {e}", exc_info=True)
         await update.message.reply_text(
-            f"❌ <b>Health Diagnostic Error</b>\n\n"
-            f"Failed to run health check:\n<code>{str(e)}</code>",
+            f"❌ <b>Грешка в диагностиката</b>\n\n"
+            f"<code>{str(e)}</code>\n\n"
+            f"<i>Опитай /quick_health за бърза проверка</i>",
             parse_mode='HTML'
         )
 
@@ -16618,6 +16777,7 @@ def main():
     app.add_handler(CommandHandler("clear_cache", clear_cache_cmd))  # 🗑️ Clear cache (admin)
     app.add_handler(CommandHandler("debug", debug_mode_cmd))  # 🔍 Toggle debug mode (admin)
     app.add_handler(CommandHandler("health", health_cmd))  # 🏥 System health diagnostic (PR #10)
+    app.add_handler(CommandHandler("quick_health", quick_health_cmd))  # 🏥 Quick health check (5s)
     
     # Active Trades Management Commands
     app.add_handler(CommandHandler("close_trade", close_trade_cmd))  # 🔒 Manually close a trade
@@ -17617,7 +17777,9 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                     )
                     
                     # Start monitoring as a background task and store reference
-                    monitor_task = asyncio.create_task(real_time_monitor_global.start_monitoring())
+                    # Fix: Use get_running_loop() for nested scope compatibility
+                    loop = asyncio.get_running_loop()
+                    monitor_task = loop.create_task(real_time_monitor_global.start_monitoring())
                     monitor_task.set_name("real_time_position_monitor")
                     
                     logger.info("🎯 Real-time Position Monitor STARTED (30s interval)")
