@@ -76,119 +76,102 @@ def format_issue_alert(component_name: str, issue: Dict[str, Any]) -> str:
 
 def format_health_summary(health_report: Dict[str, Any]) -> str:
     """
-    Format comprehensive health report for /health command
+    Format comprehensive health report
+    Mixed language: Bulgarian structure + English technical terms
     
     Args:
-        health_report: Full health check report
-    
+        health_data: Dict with component health info
+        
     Returns:
-        Formatted Telegram message
+        Formatted HTML message (mixed BG/EN)
     """
+    from datetime import datetime
+    
+    message = "🏥 <b>СИСТЕМНА ДИАГНОСТИКА</b>\n"
+    message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"Завършено: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+    
+    if 'duration' in health_report:
+        message += f"Продължителност: {health_report['duration']:.1f}s\n"
+    
+    message += "\n"
+    
     components = health_report.get('components', {})
+    
+    # Count OK vs problems
+    total = len(components)
+    ok_count = sum(1 for c in components.values() if c.get('status') == 'HEALTHY')
+    problem_count = total - ok_count
+    
+    if problem_count == 0:
+        message += f"✅ <b>ВСИЧКИ СИСТЕМИ РАБОТЯТ ({total}/{total})</b>\n\n"
+    else:
+        message += f"⚠️ <b>ОТКРИТИ {problem_count} ПРОБЛЕМА ({ok_count}/{total} OK)</b>\n\n"
+    
+    message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Separate problems from healthy components
+    problems = []
+    healthy = []
+    
+    for comp_name, comp_data in components.items():
+        if comp_data.get('status') != 'HEALTHY':
+            problems.append((comp_name, comp_data))
+        else:
+            healthy.append((comp_name, comp_data))
+    
+    # Format problems with full details
+    if problems:
+        for i, (name, data) in enumerate(problems, 1):
+            message += f"❌ <b>ПРОБЛЕМ #{i}: {name.upper()}</b>\n"
+            message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            if 'status' in data:
+                message += f"Статус: {data['status']}\n"
+            
+            # Show issues if available
+            if 'issues' in data and data['issues']:
+                for issue in data['issues'][:2]:  # Show top 2 issues
+                    if 'problem' in issue:
+                        message += f"\n<b>Проблем:</b> {issue['problem']}\n"
+                    
+                    if 'root_cause' in issue:
+                        message += f"<b>Причина:</b> {issue['root_cause']}\n"
+                    
+                    if 'fix' in issue:
+                        message += f"<b>Решение:</b> {issue['fix']}\n"
+                    
+                    if 'evidence' in issue:
+                        evidence = issue['evidence'][:200]
+                        if len(issue['evidence']) > 200:
+                            evidence += "..."
+                        message += f"\n<code>{evidence}</code>\n"
+            
+            message += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Show healthy components (summary)
+    if healthy:
+        message += f"✅ <b>ЗДРАВИ КОМПОНЕНТИ ({len(healthy)}/{total}):</b>\n\n"
+        for name, data in healthy:
+            status_emoji = get_status_emoji(data.get('status', 'HEALTHY'))
+            message += f"{status_emoji} <b>{name}</b>\n"
+        message += "\n"
+    
+    # Summary
+    message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"📊 <b>ОБОБЩЕНИЕ:</b>\n"
+    
     summary = health_report.get('summary', {})
+    critical_count = summary.get('critical', 0)
+    warning_count = summary.get('warning', 0)
+    healthy_count = summary.get('healthy', 0)
     
-    message = """🏥 <b>SYSTEM HEALTH DIAGNOSTIC</b>
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-"""
+    message += f"  • Критични: {critical_count}\n"
+    message += f"  • Предупреждения: {warning_count}\n"
+    message += f"  • Здрави: {healthy_count}\n"
     
-    # Trading Journal
-    journal = components.get('trading_journal', {})
-    journal_status = journal.get('status', 'UNKNOWN')
-    journal_emoji = get_status_emoji(journal_status)
-    
-    message += f"📝 <b>TRADING JOURNAL:</b> {journal_emoji} {journal_status}\n"
-    
-    if journal.get('issues'):
-        for issue in journal['issues'][:1]:  # Show first issue only
-            message += f"   Issue: {issue.get('problem', 'Unknown')[:60]}...\n"
-    else:
-        # Get journal stats
-        message += "   Status: Updating correctly\n"
-    
-    # ML Model
-    ml = components.get('ml_model', {})
-    ml_status = ml.get('status', 'UNKNOWN')
-    ml_emoji = get_status_emoji(ml_status)
-    
-    message += f"\n🤖 <b>ML MODEL:</b> {ml_emoji} {ml_status}\n"
-    
-    if ml.get('issues'):
-        for issue in ml['issues'][:1]:
-            message += f"   Issue: {issue.get('problem', 'Unknown')[:60]}...\n"
-    else:
-        message += "   Status: Up to date\n"
-    
-    # Daily Reports
-    reports = components.get('daily_reports', {})
-    reports_status = reports.get('status', 'UNKNOWN')
-    reports_emoji = get_status_emoji(reports_status)
-    
-    message += f"\n📊 <b>DAILY REPORTS:</b> {reports_emoji} {reports_status}\n"
-    
-    if reports.get('issues'):
-        for issue in reports['issues'][:1]:
-            message += f"   Issue: {issue.get('problem', 'Unknown')[:60]}...\n"
-    else:
-        message += "   Status: Executing on schedule\n"
-    
-    # Position Monitor
-    position = components.get('position_monitor', {})
-    position_status = position.get('status', 'UNKNOWN')
-    position_emoji = get_status_emoji(position_status)
-    
-    message += f"\n⚙️ <b>POSITION MONITOR:</b> {position_emoji} {position_status}\n"
-    
-    if position.get('issues'):
-        for issue in position['issues'][:1]:
-            message += f"   Issue: {issue.get('problem', 'Unknown')[:60]}...\n"
-    else:
-        message += "   Status: Monitoring active trades\n"
-    
-    # Scheduler
-    scheduler = components.get('scheduler', {})
-    scheduler_status = scheduler.get('status', 'UNKNOWN')
-    scheduler_emoji = get_status_emoji(scheduler_status)
-    
-    message += f"\n⏰ <b>SCHEDULER:</b> {scheduler_emoji} {scheduler_status}\n"
-    
-    if scheduler.get('issues'):
-        for issue in scheduler['issues'][:1]:
-            message += f"   Issue: {issue.get('problem', 'Unknown')[:60]}...\n"
-    else:
-        message += "   Status: All jobs running\n"
-    
-    # Disk Space
-    disk = components.get('disk_space', {})
-    disk_status = disk.get('status', 'UNKNOWN')
-    disk_emoji = get_status_emoji(disk_status)
-    
-    message += f"\n💾 <b>DISK SPACE:</b> {disk_emoji} {disk_status}\n"
-    
-    if disk.get('issues'):
-        for issue in disk['issues'][:1]:
-            # Extract evidence for disk info
-            evidence = issue.get('evidence', '')
-            if evidence:
-                message += f"   {evidence}\n"
-            else:
-                message += f"   Issue: {issue.get('problem', 'Unknown')[:60]}...\n"
-    else:
-        message += "   Status: Sufficient space available\n"
-    
-    # Overall summary
-    message += f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-<b>Overall:</b>  ✅ {summary.get('healthy', 0)} OK, ⚠️ {summary.get('warning', 0)} WARNING, ❌ {summary.get('critical', 0)} CRITICAL
-
-Last full scan: {datetime.now().strftime('%d.%m.%Y %H:%M')}
-"""
-    
-    # If there are warnings or critical issues, add note
-    if summary.get('warning', 0) > 0 or summary.get('critical', 0) > 0:
-        message += "\n💡 <b>Action Required:</b> Check individual alerts for details and fixes"
+    if problem_count > 0:
+        message += f"\n<i>За бърза проверка: /quick_health</i>\n"
     
     return message
 

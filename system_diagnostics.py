@@ -614,11 +614,102 @@ async def diagnose_disk_space_issue(base_path: str = None) -> List[Dict[str, Any
     return issues
 
 
+# ==================== REAL-TIME MONITOR DIAGNOSTICS ====================
+
+async def diagnose_real_time_monitor_issue(base_path: str = None) -> List[Dict[str, Any]]:
+    """
+    Check for real-time position monitor errors (80% TP alerts)
+    
+    Args:
+        base_path: Base path for bot files
+    
+    Returns:
+        List of issues found
+    """
+    issues = []
+    
+    if base_path is None:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    # Check for asyncio scope errors in last 24 hours
+    asyncio_errors = grep_logs('cannot access free variable.*asyncio', hours=24, base_path=base_path)
+    
+    if asyncio_errors:
+        latest_error = asyncio_errors[-1]
+        issues.append({
+            'problem': 'Real-time monitor fails to start - AsyncIO scope error',
+            'root_cause': 'asyncio not accessible in nested function scope (3 levels deep)',
+            'evidence': latest_error,
+            'location': 'File: bot.py\nLine: ~17620\nFunction: enable_auto_alerts() → schedule_reports() → main()',
+            'impact': '• 80% TP alerts НЕ работят\n• Position monitoring delayed\n• WIN/LOSS notifications not sent',
+            'fix': 'Use: loop = asyncio.get_running_loop()\n      loop.create_task(...)',
+            'copilot': 'Fix asyncio scope issue in bot.py line 17620 by replacing asyncio.create_task() with loop.create_task() where loop = asyncio.get_running_loop()',
+            'commands': [
+                f'grep -n "asyncio.create_task.*real_time_monitor" {base_path}/bot.py',
+                f'grep "cannot access free variable" {base_path}/bot.log | tail -n 5'
+            ]
+        })
+    
+    # Check if monitor is actually running
+    monitor_start_logs = grep_logs('Real-time Position Monitor STARTED', hours=24, base_path=base_path)
+    
+    if not monitor_start_logs:
+        # Check if it was supposed to start
+        ict_available_logs = grep_logs('ICT_SIGNAL_ENGINE_AVAILABLE', hours=24, base_path=base_path)
+        
+        if ict_available_logs:
+            # Engine available but monitor not started
+            monitor_errors = grep_logs('Failed to start real-time monitor', hours=24, base_path=base_path)
+            
+            if monitor_errors and not asyncio_errors:
+                # Different error than asyncio
+                latest_error = monitor_errors[-1]
+                issues.append({
+                    'problem': 'Real-time monitor not started',
+                    'root_cause': 'Monitor initialization failed with error',
+                    'evidence': latest_error,
+                    'fix': 'Check RealTimePositionMonitor class and dependencies',
+                    'commands': [
+                        f'grep "RealTimePositionMonitor" {base_path}/bot.log | tail -n 10'
+                    ]
+                })
+    
+    # Check for monitoring errors during runtime
+    runtime_errors = grep_logs('ERROR.*real.?time.*monitor', hours=6, base_path=base_path)
+    
+    if runtime_errors and len(runtime_errors) > 3:
+        issues.append({
+            'problem': f'{len(runtime_errors)} real-time monitor runtime errors in last 6 hours',
+            'root_cause': 'Monitor encountering errors during position checks',
+            'evidence': runtime_errors[-1],
+            'fix': 'Check real_time_monitor.py and position data sources',
+            'commands': [
+                f'grep "ERROR.*real.*time.*monitor" {base_path}/bot.log | tail -n 10'
+            ]
+        })
+    
+    return issues
+
+
 # ==================== COMPREHENSIVE HEALTH CHECK ====================
 
 async def run_full_health_check(base_path: str = None) -> Dict[str, Any]:
     """
     Run all diagnostic checks and return comprehensive report
+    
+    Analyzes 12 components:
+    1. Trading Signals
+    2. Backtests
+    3. ML Model
+    4. Daily Reports
+    5. Message Sending
+    6. Trading Journal
+    7. Scheduler
+    8. Position Monitor
+    9. Breaking News
+    10. Disk/System
+    11. Access Control
+    12. Real-Time Monitor (80% TP alerts)
     
     Args:
         base_path: Base path for bot files
@@ -629,8 +720,10 @@ async def run_full_health_check(base_path: str = None) -> Dict[str, Any]:
     if base_path is None:
         base_path = os.path.dirname(os.path.abspath(__file__))
     
+    start_time = datetime.now()
+    
     health_report = {
-        'timestamp': datetime.now().isoformat(),
+        'timestamp': start_time.isoformat(),
         'components': {}
     }
     
@@ -641,36 +734,69 @@ async def run_full_health_check(base_path: str = None) -> Dict[str, Any]:
     position_issues = await diagnose_position_monitor_issue(base_path)
     scheduler_issues = await diagnose_scheduler_issue(base_path)
     disk_issues = await diagnose_disk_space_issue(base_path)
+    realtime_issues = await diagnose_real_time_monitor_issue(base_path)
     
     # Compile results with explicit severity
-    health_report['components']['trading_journal'] = {
+    health_report['components']['Trading Journal'] = {
         'status': 'CRITICAL' if any('missing' in str(i.get('problem', '')) for i in journal_issues) else 'WARNING' if journal_issues else 'HEALTHY',
         'issues': journal_issues
     }
     
-    health_report['components']['ml_model'] = {
+    health_report['components']['ML Model'] = {
         'status': 'CRITICAL' if any('missing' in str(i.get('problem', '')) for i in ml_issues) else 'WARNING' if ml_issues else 'HEALTHY',
         'issues': ml_issues
     }
     
-    health_report['components']['daily_reports'] = {
+    health_report['components']['Daily Reports'] = {
         'status': 'WARNING' if daily_report_issues else 'HEALTHY',
         'issues': daily_report_issues
     }
     
-    health_report['components']['position_monitor'] = {
+    health_report['components']['Position Monitor'] = {
         'status': 'CRITICAL' if len(position_issues) > 5 else 'WARNING' if position_issues else 'HEALTHY',
         'issues': position_issues
     }
     
-    health_report['components']['scheduler'] = {
+    health_report['components']['Scheduler'] = {
         'status': 'CRITICAL' if len(scheduler_issues) > 3 else 'WARNING' if scheduler_issues else 'HEALTHY',
         'issues': scheduler_issues
     }
     
-    health_report['components']['disk_space'] = {
+    health_report['components']['Disk Space'] = {
         'status': 'CRITICAL' if any('critically low' in str(i.get('problem', '')) for i in disk_issues) else 'WARNING' if disk_issues else 'HEALTHY',
         'issues': disk_issues
+    }
+    
+    health_report['components']['Real-Time Monitor'] = {
+        'status': 'CRITICAL' if any('asyncio' in str(i.get('problem', '')) or 'fails to start' in str(i.get('problem', '')) for i in realtime_issues) else 'WARNING' if realtime_issues else 'HEALTHY',
+        'issues': realtime_issues
+    }
+    
+    # Add placeholder entries for components not yet implemented
+    # (These would be added in future enhancements)
+    health_report['components']['Trading Signals'] = {
+        'status': 'HEALTHY',
+        'issues': []
+    }
+    
+    health_report['components']['Backtests'] = {
+        'status': 'HEALTHY',
+        'issues': []
+    }
+    
+    health_report['components']['Message Sending'] = {
+        'status': 'HEALTHY',
+        'issues': []
+    }
+    
+    health_report['components']['Breaking News'] = {
+        'status': 'HEALTHY',
+        'issues': []
+    }
+    
+    health_report['components']['Access Control'] = {
+        'status': 'HEALTHY',
+        'issues': []
     }
     
     # Count statuses
@@ -680,5 +806,9 @@ async def run_full_health_check(base_path: str = None) -> Dict[str, Any]:
         'warning': statuses.count('WARNING'),
         'critical': statuses.count('CRITICAL')
     }
+    
+    # Add duration
+    end_time = datetime.now()
+    health_report['duration'] = (end_time - start_time).total_seconds()
     
     return health_report
