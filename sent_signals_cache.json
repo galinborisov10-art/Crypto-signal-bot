@@ -14,5 +14,16 @@
     "last_checked": "2026-01-15T15:04:58.665026",
     "entry_price": 100,
     "confidence": 85
+  },
+  "FINAL_TEST_BUY_4h": {
+    "timestamp": "2026-01-15T15:11:23.492737",
+    "last_checked": "2026-01-15T15:11:24.493380",
+    "entry_price": 100.0,
+    "confidence": 85
+  },
+  "OLD_FORMAT_BUY_4h": {
+    "timestamp": "2026-01-15T10:00:00",
+    "entry_price": 200.0,
+    "confidence": 80
   }
 }
