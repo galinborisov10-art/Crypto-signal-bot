@@ -5,7 +5,6 @@ Tests the simplified is_signal_duplicate() function with 1.5% entry threshold
 """
 
 import os
-import sys
 import tempfile
 from signal_cache import is_signal_duplicate, ENTRY_THRESHOLD_PCT
 
@@ -64,8 +63,9 @@ def test_significant_entry_diff_allowed():
         # Second signal with +1.60% difference (94000 -> 95504)
         is_dup2, msg2 = is_signal_duplicate("BTCUSDT", "BUY", "4h", 95504, 85, base_path=tmpdir)
         assert is_dup2 == False, f"Entry diff >=1.5% should be allowed, got: {msg2}"
-        # Allow for slight floating point variations
-        assert ("1.60%" in msg2 or "1.59%" in msg2), f"Message should show ~1.60% difference, got: {msg2}"
+        # Verify percentage is in expected range (allow for floating point precision)
+        assert any(pct in msg2 for pct in ["1.60%", "1.59%", "1.61%"]), \
+            f"Message should show ~1.60% difference, got: {msg2}"
         print(f"   ✅ PASS: 1.60% difference allowed")
 
 
@@ -187,6 +187,31 @@ def test_cooldown_parameter_ignored():
         print(f"   ✅ PASS: Cooldown parameter correctly ignored")
 
 
+def test_zero_entry_price_handling():
+    """Test that zero entry price is handled gracefully"""
+    print("\n🧪 TEST 12: Zero entry price handling")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from signal_cache import save_sent_signals
+        
+        # Manually create a cache entry with zero entry price (corrupted data)
+        cache = {
+            "BADUSDT_BUY_4h": {
+                'timestamp': '2026-01-15T12:00:00',
+                'entry_price': 0,  # Invalid!
+                'confidence': 85
+            }
+        }
+        save_sent_signals(cache, tmpdir)
+        
+        # Try to send a signal - should treat as new signal due to invalid cached price
+        is_dup, msg = is_signal_duplicate("BADUSDT", "BUY", "4h", 100, 85, base_path=tmpdir)
+        assert is_dup == False, f"Should allow signal when cached entry is 0, got: {msg}"
+        assert "Invalid cached entry" in msg, f"Message should mention invalid entry, got: {msg}"
+        
+        print(f"   ✅ PASS: Zero entry price handled gracefully")
+
+
 def run_all_tests():
     """Run all test cases"""
     print("=" * 70)
@@ -206,6 +231,7 @@ def run_all_tests():
         test_negative_price_change,
         test_multiple_symbols,
         test_cooldown_parameter_ignored,
+        test_zero_entry_price_handling,
     ]
     
     passed = 0
@@ -244,4 +270,5 @@ def run_all_tests():
 
 
 if __name__ == "__main__":
+    import sys
     sys.exit(run_all_tests())

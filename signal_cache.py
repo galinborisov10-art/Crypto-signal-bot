@@ -129,6 +129,18 @@ def is_signal_duplicate(symbol, signal_type, timeframe, entry_price,
     
     # Compare entry prices
     last_entry = cache[signal_key]['entry_price']
+    
+    # Validate entry prices to prevent division by zero
+    if last_entry == 0:
+        print(f"⚠️ WARNING: Invalid last_entry (0) for {signal_key}, treating as first signal")
+        cache[signal_key] = {
+            'timestamp': datetime.now().isoformat(),
+            'entry_price': entry_price,
+            'confidence': confidence
+        }
+        save_sent_signals(cache, base_path)
+        return False, "Invalid cached entry price, treating as new signal"
+    
     entry_diff_pct = abs((entry_price - last_entry) / last_entry) * 100
     
     if entry_diff_pct >= ENTRY_THRESHOLD_PCT:
