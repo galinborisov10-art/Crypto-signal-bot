@@ -16862,6 +16862,8 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Comprehensive system diagnostic (90s timeout)
     
+    PR #116: Enhanced with better logging and timeout handling
+    
     Analyzes 12 components:
     - Trading Signals, Backtests, ML Model, Daily Reports
     - Message Sending, Trading Journal, Scheduler, Position Monitor
@@ -16870,6 +16872,8 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Usage: /health or 🏥 Health button
     """
     try:
+        logger.info("🏥 Health command initiated")
+        
         progress = await update.message.reply_text(
             "🏥 <b>СИСТЕМНА ДИАГНОСТИКА</b>\n\n"
             "Сканирам 12 компонента...\n"
@@ -16883,11 +16887,15 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from system_diagnostics import run_full_health_check
             from diagnostic_messages import format_health_summary
             
+            logger.info("Running full health check with 90s timeout...")
+            
             # Run with 90-second timeout
             health_report = await asyncio.wait_for(
                 run_full_health_check(BASE_PATH),
                 timeout=90.0
             )
+            
+            logger.info(f"Health check completed in {health_report.get('duration', 0):.2f}s")
             
             # Format comprehensive report
             message = format_health_summary(health_report)
