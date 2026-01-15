@@ -11019,8 +11019,8 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     
     logger.info("🔍 Започвам ASYNC проверка на всички монети и timeframes...")
     
-    # Основни timeframes за проверка - 1h, 4h, 1d
-    timeframes_to_check = ['1h', '4h', '1d']
+    # Основни timeframes за проверка - 1h, 2h, 4h, 1d
+    timeframes_to_check = ['1h', '2h', '4h', '1d']
     
     # 🚀 ASYNC ПАРАЛЕЛЕН АНАЛИЗ - всички монети/timeframes наведнъж
     async def analyze_single_pair(symbol, timeframe):
@@ -15274,7 +15274,7 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Parse arguments
             symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT']
-            timeframes = ['1h', '4h', '1d']
+            timeframes = ['1h', '2h', '4h', '1d']
             days = 30
             
             if context.args:
@@ -17867,7 +17867,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                         symbols_to_test = list(SYMBOLS.values())  # BTCUSDT, ETHUSDT, XRPUSDT, SOLUSDT, BNBUSDT, ADAUSDT
                         
                         # ВСИЧКИ основни таймфрейми
-                        timeframes_to_test = ['1h', '4h', '1d']
+                        timeframes_to_test = ['1h', '2h', '4h', '1d']
                         
                         # Събиране на резултати за общ отчет
                         all_results = []
