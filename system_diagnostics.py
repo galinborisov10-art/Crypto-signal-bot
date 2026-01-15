@@ -17,10 +17,16 @@ from typing import List, Dict, Optional, Any
 
 logger = logging.getLogger(__name__)
 
+# ==================== CONFIGURATION ====================
+# File size limits to prevent blocking I/O on large files
+MAX_LOG_FILE_SIZE_MB = 50  # Skip log files larger than 50MB
+MAX_JOURNAL_FILE_SIZE_MB = 10  # Skip journal files larger than 10MB
+DEFAULT_MAX_LOG_LINES = 1000  # Maximum lines to read from log file
+
 
 # ==================== LOG PARSING UTILITIES ====================
 
-def grep_logs(pattern: str, hours: int = 6, base_path: str = None, max_lines: int = 1000) -> List[str]:
+def grep_logs(pattern: str, hours: int = 6, base_path: str = None, max_lines: int = DEFAULT_MAX_LOG_LINES) -> List[str]:
     """
     Grep logs for pattern in last N hours (LIGHTWEIGHT - max 1000 lines)
     
@@ -44,9 +50,10 @@ def grep_logs(pattern: str, hours: int = 6, base_path: str = None, max_lines: in
         if not os.path.exists(log_file):
             return []
         
-        # Check file size first - if over 50MB, skip content reading
+        # Check file size first - skip if over limit
         file_size = os.path.getsize(log_file)
-        if file_size > 50 * 1024 * 1024:  # 50MB
+        max_size_bytes = MAX_LOG_FILE_SIZE_MB * 1024 * 1024
+        if file_size > max_size_bytes:
             logger.warning(f"Log file too large ({file_size / 1024 / 1024:.1f}MB), skipping grep")
             return []
         
@@ -100,9 +107,10 @@ def load_journal_safe(base_path: str = None) -> Optional[Dict]:
         if not os.path.exists(journal_file):
             return None
         
-        # Check file size first - if over 10MB, skip content reading
+        # Check file size first - skip if over limit
         file_size = os.path.getsize(journal_file)
-        if file_size > 10 * 1024 * 1024:  # 10MB
+        max_size_bytes = MAX_JOURNAL_FILE_SIZE_MB * 1024 * 1024
+        if file_size > max_size_bytes:
             logger.warning(f"Journal file too large ({file_size / 1024 / 1024:.1f}MB), skipping parse")
             return None
         
