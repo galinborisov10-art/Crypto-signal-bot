@@ -145,9 +145,17 @@ except ImportError as e:
 
 # Signal Cache for Persistent Deduplication (PR #111)
 try:
-    from signal_cache import is_signal_duplicate
+    from signal_cache import is_signal_duplicate, validate_cache
     SIGNAL_CACHE_AVAILABLE = True
     logger.info("✅ Signal Cache (persistent deduplication) loaded")
+    
+    # Validate cache integrity on startup
+    is_valid, msg = validate_cache()
+    if is_valid:
+        logger.info(f"✅ Signal cache validated: {msg}")
+    else:
+        logger.error(f"❌ Signal cache validation failed: {msg}")
+        logger.warning("⚠️ Cache will be reset on first use")
 except ImportError as e:
     SIGNAL_CACHE_AVAILABLE = False
     logger.warning(f"⚠️ Signal Cache not available: {e}")
