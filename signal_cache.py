@@ -52,7 +52,8 @@ def load_sent_signals(base_path=None):
                 cutoff = datetime.now().timestamp() - timedelta(hours=CACHE_CLEANUP_HOURS).total_seconds()
                 cache = {
                     k: v for k, v in cache.items() 
-                    if datetime.fromisoformat(v['timestamp']).timestamp() > cutoff
+                    # Use last_checked for cleanup (backward compatible with old cache entries)
+                    if datetime.fromisoformat(v.get('last_checked', v['timestamp'])).timestamp() > cutoff
                 }
                 
                 cleaned = before_cleanup - len(cache)
@@ -118,7 +119,8 @@ def is_signal_duplicate(symbol, signal_type, timeframe, entry_price,
     if signal_key not in cache:
         # First signal for this combination
         cache[signal_key] = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now().isoformat(),      # When SENT
+            'last_checked': datetime.now().isoformat(),   # When CHECKED
             'entry_price': entry_price,
             'confidence': confidence
         }
@@ -135,6 +137,7 @@ def is_signal_duplicate(symbol, signal_type, timeframe, entry_price,
         print(f"⚠️ WARNING: Invalid last_entry (0) for {signal_key}, treating as first signal")
         cache[signal_key] = {
             'timestamp': datetime.now().isoformat(),
+            'last_checked': datetime.now().isoformat(),
             'entry_price': entry_price,
             'confidence': confidence
         }
@@ -147,7 +150,8 @@ def is_signal_duplicate(symbol, signal_type, timeframe, entry_price,
         # Significant difference → NEW unique setup
         old_entry = cache[signal_key]['entry_price']
         cache[signal_key] = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now().isoformat(),      # New SENT time
+            'last_checked': datetime.now().isoformat(),   # New CHECK time
             'entry_price': entry_price,
             'confidence': confidence
         }
@@ -159,6 +163,11 @@ def is_signal_duplicate(symbol, signal_type, timeframe, entry_price,
     else:
         # Too similar → DUPLICATE
         last_time = cache[signal_key]['timestamp']
+        
+        # ✅ FIX: Update last_checked to prevent cleanup
+        cache[signal_key]['last_checked'] = datetime.now().isoformat()
+        save_sent_signals(cache, base_path)  # ✅ SAVE cache
+        
         print(f"🔴 DUPLICATE blocked: {signal_key}")
         print(f"   Entry: ${entry_price} vs ${last_entry} (Δ{entry_diff_pct:.2f}% < {ENTRY_THRESHOLD_PCT}%)")
         print(f"   Last sent: {last_time}")
