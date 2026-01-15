@@ -7557,11 +7557,10 @@ async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             
             all_analyses.append(analysis)
             
-            # Send analysis for this pair
+            # Send analysis for this pair (plain text, no HTML parsing)
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=analysis['message']
-                # No parse_mode - plain text (safe for < > characters)
             )
             
             # Anti-spam delay
@@ -7580,13 +7579,12 @@ async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 text=f"❌ Грешка при анализ на {symbol}: {str(e)}"
             )
     
-    # Generate and send summary
+    # Generate and send summary (plain text, no HTML parsing)
     try:
         summary = generate_swing_summary(all_analyses)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=summary
-            # No parse_mode - plain text (safe for < > characters)
         )
         logger.info(f"✅ Swing analysis completed for {len(all_analyses)} pairs")
     except Exception as e:
