@@ -7557,11 +7557,10 @@ async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             
             all_analyses.append(analysis)
             
-            # Send analysis for this pair
+            # Send analysis for this pair (plain text, no HTML parsing)
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=analysis['message'],
-                parse_mode='HTML'
+                text=analysis['message']
             )
             
             # Anti-spam delay
@@ -7571,32 +7570,28 @@ async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             logger.error(f"Timeout analyzing {symbol}")
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"⚠️ Timeout при анализ на {symbol} - прескачам",
-                parse_mode='HTML'
+                text=f"⚠️ Timeout при анализ на {symbol} - прескачам"
             )
         except Exception as e:
             logger.error(f"Error analyzing {symbol}: {e}", exc_info=True)
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ Грешка при анализ на {symbol}: {str(e)}",
-                parse_mode='HTML'
+                text=f"❌ Грешка при анализ на {symbol}: {str(e)}"
             )
     
-    # Generate and send summary
+    # Generate and send summary (plain text, no HTML parsing)
     try:
         summary = generate_swing_summary(all_analyses)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=summary,
-            parse_mode='HTML'
+            text=summary
         )
         logger.info(f"✅ Swing analysis completed for {len(all_analyses)} pairs")
     except Exception as e:
         logger.error(f"Error generating summary: {e}", exc_info=True)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="❌ Грешка при генериране на обобщение",
-            parse_mode='HTML'
+            text="❌ Грешка при генериране на обобщение"
         )
 
 
@@ -16865,6 +16860,8 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Comprehensive system diagnostic (90s timeout)
     
+    PR #116: Enhanced with better logging and timeout handling
+    
     Analyzes 12 components:
     - Trading Signals, Backtests, ML Model, Daily Reports
     - Message Sending, Trading Journal, Scheduler, Position Monitor
@@ -16873,6 +16870,8 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Usage: /health or 🏥 Health button
     """
     try:
+        logger.info("🏥 Health command initiated")
+        
         progress = await update.message.reply_text(
             "🏥 <b>СИСТЕМНА ДИАГНОСТИКА</b>\n\n"
             "Сканирам 12 компонента...\n"
@@ -16886,11 +16885,15 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from system_diagnostics import run_full_health_check
             from diagnostic_messages import format_health_summary
             
+            logger.info("Running full health check with 90s timeout...")
+            
             # Run with 90-second timeout
             health_report = await asyncio.wait_for(
                 run_full_health_check(BASE_PATH),
                 timeout=90.0
             )
+            
+            logger.info(f"Health check completed in {health_report.get('duration', 0):.2f}s")
             
             # Format comprehensive report
             message = format_health_summary(health_report)
