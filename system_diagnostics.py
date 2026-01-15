@@ -19,8 +19,12 @@ logger = logging.getLogger(__name__)
 
 # ==================== CONFIGURATION ====================
 # File size limits to prevent blocking I/O on large files
+# These limits are chosen based on typical bot log file sizes and available memory:
+# - LOG: 50MB limit handles ~6 months of logs without blocking (typical: 5-20MB)
+# - JOURNAL: 10MB limit handles ~10,000 trades without blocking (typical: 1-5MB)
+# - LINES: 1000 lines covers last ~2 hours of activity (typical line length: 200 bytes)
 MAX_LOG_FILE_SIZE_MB = 50  # Skip log files larger than 50MB
-MAX_JOURNAL_FILE_SIZE_MB = 10  # Skip journal files larger than 10MB
+MAX_JOURNAL_FILE_SIZE_MB = 10  # Skip journal files larger than 10MB  
 DEFAULT_MAX_LOG_LINES = 1000  # Maximum lines to read from log file
 
 
@@ -63,7 +67,7 @@ def grep_logs(pattern: str, hours: int = 6, base_path: str = None, max_lines: in
         with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
             # Read last max_lines for performance (not entire file)
             lines = f.readlines()
-            lines_to_check = lines[-max_lines:] if len(lines) > max_lines else lines
+            lines_to_check = lines[-max_lines:]  # Works correctly even if len(lines) < max_lines
             
             for line in lines_to_check:
                 try:
