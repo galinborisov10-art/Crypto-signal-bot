@@ -161,8 +161,20 @@ class PositionManager:
         Returns:
             position_id: Database ID of opened position
         """
+        # DEBUG: Log method entry
+        logger.info(f"🔍 DEBUG: open_position() called for {symbol} {timeframe}")
+        logger.info(f"   signal type: {type(signal)}")
+        logger.info(f"   signal has entry_price: {hasattr(signal, 'entry_price')}")
+        
         try:
+            # DEBUG: Log before database connection
+            logger.info(f"🔍 DEBUG: Getting database connection...")
+            
             conn = self._get_connection()
+            
+            # DEBUG: Log after successful connection
+            logger.info(f"✅ DEBUG: Database connection successful")
+            
             cursor = conn.cursor()
             
             # Extract signal data

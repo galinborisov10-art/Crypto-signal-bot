@@ -11477,7 +11477,17 @@ async def auto_signal_job(timeframe: str, bot_instance):
                     logger.error(f"❌ Journal logging error in auto-signal: {e}")
             
             # ✅ PR #7: AUTO-OPEN POSITION FOR TRACKING
+            # DEBUG: Log eligibility check
+            logger.info(f"🔍 DEBUG: Checking position tracking eligibility for {symbol}")
+            logger.info(f"   AUTO_POSITION_TRACKING_ENABLED: {AUTO_POSITION_TRACKING_ENABLED}")
+            logger.info(f"   POSITION_MANAGER_AVAILABLE: {POSITION_MANAGER_AVAILABLE}")
+            logger.info(f"   position_manager_global: {position_manager_global}")
+            logger.info(f"   position_manager_global type: {type(position_manager_global)}")
+            
             if AUTO_POSITION_TRACKING_ENABLED and POSITION_MANAGER_AVAILABLE and position_manager_global:
+                # DEBUG: Entered position tracking block
+                logger.info(f"✅ DEBUG: INSIDE position tracking block - calling open_position()")
+                
                 try:
                     position_id = position_manager_global.open_position(
                         signal=ict_signal,
@@ -11485,6 +11495,9 @@ async def auto_signal_job(timeframe: str, bot_instance):
                         timeframe=timeframe,
                         source='AUTO'
                     )
+                    
+                    # DEBUG: Log return value
+                    logger.info(f"🔍 DEBUG: open_position() returned: {position_id} (type: {type(position_id)})")
                     
                     if position_id > 0:
                         logger.info(f"✅ Position auto-opened for tracking (ID: {position_id})")
@@ -11495,9 +11508,18 @@ async def auto_signal_job(timeframe: str, bot_instance):
                             text=f"📊 Position tracking started for {symbol} (ID: {position_id})",
                             parse_mode='HTML'
                         )
+                    else:
+                        logger.warning(f"⚠️ DEBUG: position_id was {position_id} (not > 0)")
                     
                 except Exception as e:
                     logger.error(f"❌ Auto position open error: {e}")
+                    # DEBUG: Full traceback
+                    import traceback
+                    logger.error(f"❌ DEBUG: Full traceback:\n{traceback.format_exc()}")
+            else:
+                # DEBUG: Position tracking skipped
+                logger.warning(f"⚠️ DEBUG: Position tracking SKIPPED")
+                logger.warning(f"   Reason: AUTO={AUTO_POSITION_TRACKING_ENABLED}, MANAGER={POSITION_MANAGER_AVAILABLE}, global={position_manager_global is not None}")
         
         # 🧹 MEMORY CLEANUP
         plt.close('all')
