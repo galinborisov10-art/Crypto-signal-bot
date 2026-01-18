@@ -11413,7 +11413,7 @@ async def auto_signal_job(timeframe: str, bot_instance):
                 logger.info(f"✅ Auto signal sent for {symbol} ({timeframe.upper()})")
             except Exception as e:
                 logger.error(f"❌ Failed to send auto signal message for {symbol}: {e}")
-                continue
+                # Don't skip - allow chart/stats/journal/position tracking to execute
             
             # Send chart if available
             if CHART_VISUALIZATION_AVAILABLE:
@@ -11499,12 +11499,16 @@ async def auto_signal_job(timeframe: str, bot_instance):
                     if position_id > 0:
                         logger.info(f"✅ Position auto-opened for tracking (ID: {position_id})")
                         
-                        # Send confirmation
-                        await bot_instance.send_message(
-                            chat_id=OWNER_CHAT_ID,
-                            text=f"📊 Position tracking started for {symbol} (ID: {position_id})",
-                            parse_mode='HTML'
-                        )
+                        # Send confirmation to owner
+                        try:
+                            await bot_instance.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=f"📊 Position tracking started for {symbol} (ID: {position_id})",
+                                parse_mode='HTML'
+                            )
+                        except Exception as e:
+                            # Non-critical - position already opened successfully
+                            logger.warning(f"⚠️ Failed to send position confirmation message: {e}")
                     else:
                         logger.warning(f"⚠️ DIAGNOSTIC: Invalid position ID returned: {position_id}")
                 
