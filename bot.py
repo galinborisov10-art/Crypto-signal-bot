@@ -124,6 +124,7 @@ try:
     from real_time_monitor import RealTimePositionMonitor
     ICT_SIGNAL_ENGINE_AVAILABLE = True
     logger.info("✅ ICT Signal Engine loaded")
+    # Note: Global engine uses default config; strict_sl_validation will be set per-usage
     ict_engine_global = ICTSignalEngine()  # Global initialization for logs
     ict_80_handler_global = ICT80AlertHandler(ict_engine_global)  # 80% alert handler
     real_time_monitor_global = None  # Will be initialized in main() with bot instance
@@ -170,6 +171,15 @@ try:
     position_manager_global = PositionManager()
     logger.info(f"✅ Position Manager initialized: {position_manager_global}")
     logger.info(f"🔍 DIAGNOSTIC: Database path: {position_manager_global.db_path if hasattr(position_manager_global, 'db_path') else 'UNKNOWN'}")
+    
+    # 🎯 VERIFICATION MODE STATUS
+    logger.info("🎯 VERIFICATION MODE STATUS:")
+    logger.info(f"   ICT_STRICT_SL_VALIDATION = {ICT_STRICT_SL_VALIDATION}")
+    if not ICT_STRICT_SL_VALIDATION:
+        logger.warning("⚠️ SL validation in FALLBACK mode - signals may have non-ICT SL")
+        logger.warning("   → Purpose: Verify position tracking (PR #130)")
+        logger.warning("   → Restore strict mode after 24-48h of data collection")
+        logger.warning("   → Set ICT_STRICT_SL_VALIDATION = True to re-enable")
 except ImportError as e:
     POSITION_MANAGER_AVAILABLE = False
     logger.warning(f"⚠️ Position Manager not available: {e}")
@@ -395,6 +405,19 @@ SENT_SIGNALS_CACHE = {}
 STARTUP_MODE = True
 STARTUP_TIME = None  # Will be set on bot start
 STARTUP_GRACE_PERIOD_SECONDS = 300  # 5 minutes
+
+# ============================================
+# ICT VALIDATION STRICTNESS (VERIFICATION)
+# ============================================
+# 🔧 TEMPORARY: Relaxed for position tracking verification
+# Default: True (strict ICT compliance required)
+# Set to False: Allow fallback SL validation (logs warning)
+# 
+# Purpose: Enable signal flow for PR #130 verification
+# Restore to True after collecting 24-48h of position data
+ICT_STRICT_SL_VALIDATION = False  # ← TEMPORARILY DISABLED for verification
+
+logger.info(f"⚙️ ICT SL Validation Mode: {'STRICT' if ICT_STRICT_SL_VALIDATION else 'FALLBACK (verification mode)'}")
 
 # ================= PR #7: POSITION MONITORING CONFIG =================
 AUTO_POSITION_TRACKING_ENABLED = True  # Auto-open positions from auto signals
@@ -7932,7 +7955,7 @@ async def market_full_report(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     mtf_data = fetch_mtf_data(symbol, timeframe, df)
                     
                     # Generate ICT signal
-                    ict_engine = ICTSignalEngine()
+                    ict_engine = ICTSignalEngine(strict_sl_validation=ICT_STRICT_SL_VALIDATION)
                     ict_signal = ict_engine.generate_signal(
                         df=df,
                         symbol=symbol,
@@ -8272,7 +8295,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mtf_data = fetch_mtf_data(symbol, timeframe, df)
             
             # Generate ICT signal WITH MTF DATA
-            ict_engine = ICTSignalEngine()
+            ict_engine = ICTSignalEngine(strict_sl_validation=ICT_STRICT_SL_VALIDATION)
             ict_signal = ict_engine.generate_signal(
                 df=df,
                 symbol=symbol,
@@ -8600,7 +8623,7 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         # Initialize ICT engine
-        ict_engine = ICTSignalEngine()
+        ict_engine = ICTSignalEngine(strict_sl_validation=ICT_STRICT_SL_VALIDATION)
         
         # Fetch OHLCV data
         klines = requests.get(
@@ -11052,7 +11075,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             mtf_data = fetch_mtf_data(symbol, timeframe, df)
             
             # ✅ USE ICT ENGINE (NOT legacy analyze_signal!)
-            ict_engine = ICTSignalEngine()
+            ict_engine = ICTSignalEngine(strict_sl_validation=ICT_STRICT_SL_VALIDATION)
             ict_signal = ict_engine.generate_signal(
                 df=df,
                 symbol=symbol,
@@ -12845,7 +12868,7 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Generate ICT signal WITH MTF DATA
                 logger.info(f"🔧 Initializing ICTSignalEngine...")
-                ict_engine = ICTSignalEngine()
+                ict_engine = ICTSignalEngine(strict_sl_validation=ICT_STRICT_SL_VALIDATION)
                 logger.info(f"🚀 Generating ICT signal with MTF data...")
                 ict_signal = ict_engine.generate_signal(
                     df=df,
