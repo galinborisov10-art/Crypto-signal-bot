@@ -677,6 +677,9 @@ class ICTSignalEngine:
         
         df = self._prepare_dataframe(df)
         
+        # Initialize SL fallback tracking flag
+        sl_fallback_used = False
+        
         # ═══════ УНИФИЦИРАНА ПОСЛЕДОВАТЕЛНОСТ (12 СТЪПКИ) ═══════
         
         # СТЪПКА 1: HTF BIAS (1D → 4H fallback)
@@ -1474,10 +1477,6 @@ class ICTSignalEngine:
             except Exception as e:
                 logger.error(f"Zone explanations error: {e}")
         
-        # Initialize fallback flag if not set
-        if 'sl_fallback_used' not in locals():
-            sl_fallback_used = False
-
         # Log fallback status
         if sl_fallback_used:
             logger.warning(f"⚠️ SIGNAL CREATED WITH SL FALLBACK (non-ICT compliant SL used)")
