@@ -182,7 +182,7 @@ except Exception as e:
 **Purpose:** Determine why position tracking code never executes.
 
 **File:** `bot.py`  
-**Location:** Line 11479 (position tracking conditional)
+**Location:** Line 11482 (position tracking inside for loop - FIXED in PR #130)
 
 **Changes:**
 
@@ -301,8 +301,8 @@ else:
 **Strategy:** Relocate `open_position()` call to execute **immediately after** Telegram send, within the same symbol processing iteration.
 
 **File:** `bot.py`  
-**Current Location:** Line 11479 (unreachable)  
-**New Location:** ~Line 11430 (after Telegram send)
+**Current Location:** Line 11482 (inside for loop)
+**Status:** ✅ FIXED (PR #130 - 2026-01-18)
 
 ### Implementation
 
