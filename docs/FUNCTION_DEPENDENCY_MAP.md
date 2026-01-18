@@ -886,7 +886,7 @@ The system has clean separation:
 |----------|------|-----------|------------|
 | `auto_signal_job()` | bot.py:11258 | APScheduler | 4x/day per TF |
 | `generate_signal()` | ict_signal_engine.py:642 | auto_signal_job | ~6x per job |
-| `open_position()` | position_manager.py | ❌ Never called | 0 |
+| `open_position()` | position_manager.py | ✅ auto_signal_job() | ~3-6x/job |
 | `monitor_positions_job()` | bot.py:11877 | APScheduler | 1440x/day |
 | `get_open_positions()` | position_manager.py | monitor_positions_job | 1440x/day |
 | `log_trade_to_journal()` | bot.py:3309 | auto_signal_job | ~8x/day |
