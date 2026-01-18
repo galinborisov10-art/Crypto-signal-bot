@@ -168,6 +168,8 @@ try:
     POSITION_MANAGER_AVAILABLE = True
     logger.info("✅ Position Manager loaded")
     position_manager_global = PositionManager()
+    logger.info(f"✅ Position Manager initialized: {position_manager_global}")
+    logger.info(f"🔍 DIAGNOSTIC: Database path: {position_manager_global.db_path if hasattr(position_manager_global, 'db_path') else 'UNKNOWN'}")
 except ImportError as e:
     POSITION_MANAGER_AVAILABLE = False
     logger.warning(f"⚠️ Position Manager not available: {e}")
@@ -11446,7 +11448,7 @@ async def auto_signal_job(timeframe: str, bot_instance):
                 logger.error(f"❌ Stats recording error in auto-signal: {e}")
             
             # Log to ML journal for high confidence signals
-            if ict_signal.confidence >= 65:
+            if ict_signal.confidence >= 60:  # FIX: Aligned with Telegram send threshold (was 65)
                 try:
                     analysis_data = {
                         'market_bias': ict_signal.bias.value,  # Fixed: bias instead of market_bias
@@ -11476,15 +11478,23 @@ async def auto_signal_job(timeframe: str, bot_instance):
                 except Exception as e:
                     logger.error(f"❌ Journal logging error in auto-signal: {e}")
             
-            # ✅ PR #7: AUTO-OPEN POSITION FOR TRACKING
+            # ✅ PR #7: AUTO-OPEN POSITION FOR TRACKING (Enhanced diagnostics)
             if AUTO_POSITION_TRACKING_ENABLED and POSITION_MANAGER_AVAILABLE and position_manager_global:
                 try:
+                    logger.info(f"🔍 DIAGNOSTIC: Attempting position tracking for {symbol}")
+                    logger.info(f"   - AUTO_POSITION_TRACKING_ENABLED: {AUTO_POSITION_TRACKING_ENABLED}")
+                    logger.info(f"   - POSITION_MANAGER_AVAILABLE: {POSITION_MANAGER_AVAILABLE}")
+                    logger.info(f"   - position_manager_global: {position_manager_global}")
+                    logger.info(f"   - Signal confidence: {ict_signal.confidence}%")
+                    
                     position_id = position_manager_global.open_position(
                         signal=ict_signal,
                         symbol=symbol,
                         timeframe=timeframe,
                         source='AUTO'
                     )
+                    
+                    logger.info(f"🔍 DIAGNOSTIC: open_position() returned ID: {position_id}")
                     
                     if position_id > 0:
                         logger.info(f"✅ Position auto-opened for tracking (ID: {position_id})")
@@ -11495,9 +11505,19 @@ async def auto_signal_job(timeframe: str, bot_instance):
                             text=f"📊 Position tracking started for {symbol} (ID: {position_id})",
                             parse_mode='HTML'
                         )
-                    
+                    else:
+                        logger.warning(f"⚠️ DIAGNOSTIC: Invalid position ID returned: {position_id}")
+                
                 except Exception as e:
                     logger.error(f"❌ Auto position open error: {e}")
+                    import traceback
+                    logger.error(f"🔍 DIAGNOSTIC: Full traceback:\n{traceback.format_exc()}")
+            else:
+                # Log WHY position tracking was skipped
+                logger.warning(f"⚠️ DIAGNOSTIC: Position tracking skipped for {symbol}")
+                logger.warning(f"   - AUTO_POSITION_TRACKING_ENABLED: {AUTO_POSITION_TRACKING_ENABLED}")
+                logger.warning(f"   - POSITION_MANAGER_AVAILABLE: {POSITION_MANAGER_AVAILABLE}")
+                logger.warning(f"   - position_manager_global is None: {position_manager_global is None}")
         
         # 🧹 MEMORY CLEANUP
         plt.close('all')

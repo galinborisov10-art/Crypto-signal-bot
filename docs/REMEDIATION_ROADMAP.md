@@ -49,9 +49,14 @@ This roadmap provides **safe, incremental fixes** for all identified issues in t
 
 ### P0 - CRITICAL (Fix Immediately)
 
-| Issue | Impact | Data Loss | Fix Time | Complexity |
-|-------|--------|-----------|----------|------------|
-| **#1:** Position tracking non-functional | CRITICAL | Permanent | 2-3 days | Medium |
+| Issue | Impact | Data Loss | Fix Time | Status |
+|-------|--------|-----------|----------|--------|
+| **#1:** Position tracking non-functional | CRITICAL | Permanent | 2-3 days | 🔍 **INVESTIGATING (PR #XXX)** |
+
+**Investigation Status:**
+- Added comprehensive diagnostic logging
+- Monitoring next auto-signal cycle for failure point
+- Expected root cause identification within 24 hours
 
 **Rationale:** Core feature completely broken, users expect checkpoint alerts, historical data permanently lost.
 
