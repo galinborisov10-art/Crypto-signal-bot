@@ -11507,7 +11507,8 @@ async def auto_signal_job(timeframe: str, bot_instance):
                                 parse_mode='HTML'
                             )
                         except Exception as e:
-                            logger.warning(f"⚠️ Failed to send position confirmation message: {e}")  # Non-critical - position already opened
+                            # Non-critical - position already opened successfully
+                            logger.warning(f"⚠️ Failed to send position confirmation message: {e}")
                     else:
                         logger.warning(f"⚠️ DIAGNOSTIC: Invalid position ID returned: {position_id}")
                 
