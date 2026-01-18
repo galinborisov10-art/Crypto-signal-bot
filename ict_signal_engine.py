@@ -299,14 +299,22 @@ class ICTSignalEngine:
     # Altcoins that use independent analysis mode (bypass BTC HTF bias early exit)
     ALT_INDEPENDENT_SYMBOLS = ["ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT"]
     
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Optional[Dict] = None, strict_sl_validation: bool = True):
         """
         Initialize ICT Signal Engine
         
         Args:
             config: Configuration parameters
+            strict_sl_validation (bool): If True, block signals with non-ICT SL
+                                          If False, allow fallback SL validation
         """
         self.config = config or self._get_default_config()
+        self.strict_sl_validation = strict_sl_validation
+        
+        # Log mode
+        if not strict_sl_validation:
+            logger.warning("⚠️ ICT SL Validation: FALLBACK MODE (verification)")
+            logger.warning("   → Signals with non-compliant SL will be ALLOWED with warning")
         
         # Load feature flags
         if FEATURE_FLAGS_AVAILABLE:
@@ -669,6 +677,9 @@ class ICTSignalEngine:
         
         df = self._prepare_dataframe(df)
         
+        # Initialize SL fallback tracking flag
+        sl_fallback_used = False
+        
         # ═══════ УНИФИЦИРАНА ПОСЛЕДОВАТЕЛНОСТ (12 СТЪПКИ) ═══════
         
         # СТЪПКА 1: HTF BIAS (1D → 4H fallback)
@@ -954,16 +965,54 @@ class ICTSignalEngine:
             sl_price, sl_valid = self._validate_sl_position(sl_price, order_block, bias, entry_price)
             
             if not sl_valid or sl_price is None:
-                logger.info(f"❌ BLOCKED at Step 9: SL cannot be ICT-compliant")
-                logger.info(f"   → SL validation failed - signal rejected")
-                logger.error("❌ SL не може да бъде ICT-compliant - сигналът НЕ СЕ ИЗПРАЩА")
-                return None
-            
-            logger.info(f"   → SL validated: ${sl_price:.2f}")
+                # 🔧 VERIFICATION MODE: Check if fallback is enabled
+                if not self.strict_sl_validation:
+                    # FALLBACK: Allow signal but log warning
+                    logger.warning("⚠️ ICT SL VALIDATION FAILED - Using FALLBACK mode")
+                    logger.warning(f"   → Signal WILL BE SENT with fallback SL")
+                    
+                    # Calculate fallback SL (simple ATR-based)
+                    atr = df['atr'].iloc[-1]
+                    if bias == MarketBias.BULLISH:
+                        sl_price = entry_price - (atr * 1.5)
+                        logger.warning(f"   → Fallback SL (BULLISH): ${sl_price:.2f} (entry - 1.5 ATR)")
+                    else:  # BEARISH
+                        sl_price = entry_price + (atr * 1.5)
+                        logger.warning(f"   → Fallback SL (BEARISH): ${sl_price:.2f} (entry + 1.5 ATR)")
+                    
+                    sl_fallback_used = True
+                    
+                else:
+                    # STRICT MODE: Block signal (original behavior)
+                    logger.info(f"❌ BLOCKED at Step 9: SL cannot be ICT-compliant")
+                    logger.info(f"   → SL validation failed - signal rejected")
+                    logger.error("❌ SL не може да бъде ICT-compliant - сигналът НЕ СЕ ИЗПРАЩА")
+                    return None
+            else:
+                # SL validation passed
+                logger.info(f"   → SL validated: ${sl_price:.2f} (ICT-compliant)")
+                sl_fallback_used = False
         else:
-            logger.info(f"❌ BLOCKED at Step 9: No Order Block for SL validation")
-            logger.error("❌ Няма Order Block за SL валидация - сигналът НЕ СЕ ИЗПРАЩА")
-            return None
+            # No Order Block for validation
+            if not self.strict_sl_validation:
+                # FALLBACK: Allow signal with ATR-based SL
+                logger.warning("⚠️ NO ORDER BLOCK for SL validation - Using FALLBACK")
+                
+                atr = df['atr'].iloc[-1]
+                if bias == MarketBias.BULLISH:
+                    sl_price = entry_price - (atr * 1.5)
+                    logger.warning(f"   → Fallback SL (BULLISH): ${sl_price:.2f}")
+                else:
+                    sl_price = entry_price + (atr * 1.5)
+                    logger.warning(f"   → Fallback SL (BEARISH): ${sl_price:.2f}")
+                
+                sl_fallback_used = True
+                
+            else:
+                # STRICT MODE: Block signal
+                logger.info(f"❌ BLOCKED at Step 9: No Order Block for SL validation")
+                logger.error("❌ Няма Order Block за SL валидация - сигналът НЕ СЕ ИЗПРАЩА")
+                return None
         
         # ✅ TP calculation (PR #8 Enhanced: Structure-aware vs Mathematical)
         logger.info("🔍 Step 9b: Take Profit Calculation")
@@ -1427,6 +1476,14 @@ class ICTSignalEngine:
                 zone_explanations = self.zone_explainer.generate_all_explanations(ict_components, bias_str)
             except Exception as e:
                 logger.error(f"Zone explanations error: {e}")
+        
+        # Log fallback status
+        if sl_fallback_used:
+            logger.warning(f"⚠️ SIGNAL CREATED WITH SL FALLBACK (non-ICT compliant SL used)")
+            logger.warning(f"   → This signal would be BLOCKED in strict mode")
+            logger.warning(f"   → Verification mode allows it for position tracking test")
+        else:
+            logger.info(f"✅ Signal uses ICT-compliant SL")
         
         # CREATE SIGNAL
         signal = ICTSignal(
