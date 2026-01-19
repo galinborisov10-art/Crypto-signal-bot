@@ -164,6 +164,7 @@ except ImportError as e:
 
 # Position Manager (PR #7)
 # Initialize with defaults to ensure variables always exist
+# This prevents NameError if try block fails or variables accessed before initialization
 POSITION_MANAGER_AVAILABLE = False
 position_manager_global = None
 

@@ -71,7 +71,7 @@ tail -f bot.log | grep "Position auto-opened"
 **Verification:**
 ```bash
 # Check positions database
-sqlite3 positions.db "SELECT COUNT(*) FROM positions WHERE source='AUTO';"
+sqlite3 positions.db "SELECT COUNT(*) FROM open_positions WHERE source='AUTO';"
 # Expected: 1+ (increases with each auto signal)
 
 # Monitor logs
