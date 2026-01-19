@@ -163,12 +163,19 @@ except ImportError as e:
 
 
 # Position Manager (PR #7)
+# Initialize with defaults to ensure variables always exist
+# This prevents NameError if try block fails or variables accessed before initialization
+POSITION_MANAGER_AVAILABLE = False
+position_manager_global = None
+
 try:
     from position_manager import PositionManager
     from init_positions_db import create_positions_database
-    POSITION_MANAGER_AVAILABLE = True
-    logger.info("✅ Position Manager loaded")
+    
+    logger.info("✅ Position Manager module loaded")
     position_manager_global = PositionManager()
+    POSITION_MANAGER_AVAILABLE = True  # Only set to True after successful initialization
+    
     logger.info(f"✅ Position Manager initialized: {position_manager_global}")
     logger.info(f"🔍 DIAGNOSTIC: Database path: {position_manager_global.db_path if hasattr(position_manager_global, 'db_path') else 'UNKNOWN'}")
     
@@ -180,10 +187,14 @@ try:
         logger.warning("   → Purpose: Verify position tracking (PR #130)")
         logger.warning("   → Restore strict mode after 24-48h of data collection")
         logger.warning("   → Set ICT_STRICT_SL_VALIDATION = True to re-enable")
-except ImportError as e:
+except Exception as e:
+    # Catch ALL exceptions, not just ImportError
     POSITION_MANAGER_AVAILABLE = False
-    logger.warning(f"⚠️ Position Manager not available: {e}")
     position_manager_global = None
+    logger.error(f"❌ Position Manager initialization failed: {e}")
+    logger.error(f"   Exception type: {type(e).__name__}")
+    import traceback
+    logger.error(f"   Traceback:\n{traceback.format_exc()}")
 
 # Chart Visualization System
 try:
