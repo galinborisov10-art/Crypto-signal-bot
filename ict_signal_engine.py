@@ -436,6 +436,7 @@ class ICTSignalEngine:
             'ob_weight': 0.15,             # Weight for order blocks
             'fvg_weight': 0.1,             # Weight for FVGs
             'mtf_weight': 0.1,             # Weight for MTF confluence
+            'breaker_block_weight': 0.08,  # Weight for breaker blocks (ESB v1.0 §4)
             'structure_break_threshold': 1.0,  # 1% threshold for structure break
             'entry_adjustment_pct': 0.5,   # 0.5% entry price adjustment
             
@@ -3026,11 +3027,11 @@ class ICTSignalEngine:
             mtf_score = min(10, confluence_count * 3)
             confidence += mtf_score * self.config['mtf_weight'] / 0.1
         
-        # Breaker blocks (5%)
+        # Breaker blocks (8%) - Implements ESB v1.0 §4 – optional breaker block confluence boost
         breaker_blocks = ict_components.get('breaker_blocks', [])
         if breaker_blocks:
-            breaker_score = min(5, len(breaker_blocks) * 2)
-            confidence += breaker_score
+            breaker_score = min(8, len(breaker_blocks) * 3)
+            confidence += breaker_score * self.config['breaker_block_weight'] / 0.08
         
         # Mitigation blocks (5%)
         mitigation_blocks = ict_components.get('mitigation_blocks', [])
