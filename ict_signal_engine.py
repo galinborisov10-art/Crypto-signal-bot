@@ -26,6 +26,21 @@ from enum import Enum
 import logging
 import json
 
+# Import Entry Gating and Confidence Threshold evaluators (ESB v1.0 §2.1-2.2)
+try:
+    from entry_gating_evaluator import evaluate_entry_gating
+    ENTRY_GATING_AVAILABLE = True
+except ImportError:
+    ENTRY_GATING_AVAILABLE = False
+    logging.warning("Entry Gating Evaluator not available")
+
+try:
+    from confidence_threshold_evaluator import evaluate_confidence_threshold
+    CONFIDENCE_THRESHOLD_AVAILABLE = True
+except ImportError:
+    CONFIDENCE_THRESHOLD_AVAILABLE = False
+    logging.warning("Confidence Threshold Evaluator not available")
+
 # Import ICT modules
 try:
     from order_block_detector import OrderBlockDetector, OrderBlock, OrderBlockType, MitigationBlock
@@ -1397,6 +1412,74 @@ class ICTSignalEngine:
         logger.info(f"   → Signal Type: {signal_type.value}")
         logger.info(f"   → Signal Strength: {signal_strength.value}")
         logger.info(f"   → Confidence: {confidence:.1f}%")
+        
+        # =========================================================================
+        # ✅ ESB v1.0 §2.1-2.2: ENTRY GATING & CONFIDENCE THRESHOLD EVALUATION
+        # =========================================================================
+        logger.info("=" * 60)
+        logger.info("STEP 12.1: ENTRY GATING EVALUATION (ESB §2.1)")
+        logger.info("=" * 60)
+        
+        if ENTRY_GATING_AVAILABLE:
+            # Build signal context for Entry Gating evaluation
+            signal_context = {
+                'symbol': symbol,
+                'timeframe': timeframe,
+                'direction': signal_type.value if hasattr(signal_type, 'value') else str(signal_type),
+                'raw_confidence': confidence,
+                
+                # Entry Gating fields
+                'system_state': self._get_system_state(),
+                'breaker_block_active': self._check_breaker_block_active(ict_components, signal_type),
+                'active_signal_exists': self._check_active_signal(symbol, timeframe),
+                'cooldown_active': self._check_cooldown(symbol, timeframe),
+                'market_state': self._get_market_state(symbol),
+                'signature_already_seen': self._check_signature(symbol, timeframe, signal_type, datetime.now())
+            }
+            
+            # Evaluate Entry Gating (ESB §2.1)
+            entry_allowed = evaluate_entry_gating(signal_context.copy())  # Use copy to ensure immutability
+            
+            if not entry_allowed:
+                logger.info(f"⛔ Entry Gating BLOCKED: {symbol} {timeframe}")
+                logger.debug(f"Entry Gating context: {signal_context}")
+                return None  # HARD BLOCK
+            
+            logger.info(f"✅ PASSED Entry Gating: {symbol} {timeframe}")
+        else:
+            logger.warning("⚠️ Entry Gating evaluator not available - skipping check")
+        
+        # =========================================================================
+        logger.info("=" * 60)
+        logger.info("STEP 12.2: CONFIDENCE THRESHOLD EVALUATION (ESB §2.2)")
+        logger.info("=" * 60)
+        
+        if CONFIDENCE_THRESHOLD_AVAILABLE:
+            # Build signal context for Confidence Threshold evaluation
+            # Reuse same context from Entry Gating (only direction and raw_confidence are required)
+            confidence_context = {
+                'direction': signal_type.value if hasattr(signal_type, 'value') else str(signal_type),
+                'raw_confidence': confidence
+            }
+            
+            # Evaluate Confidence Threshold (ESB §2.2)
+            threshold_passed = evaluate_confidence_threshold(confidence_context.copy())  # Use copy to ensure immutability
+            
+            if not threshold_passed:
+                logger.info(f"⛔ Confidence Threshold BLOCKED: {symbol} {timeframe} (confidence: {confidence:.2f})")
+                return None  # HARD BLOCK
+            
+            logger.info(f"✅ PASSED Confidence Threshold: {symbol} {timeframe} (confidence: {confidence:.2f})")
+        else:
+            logger.warning("⚠️ Confidence Threshold evaluator not available - skipping check")
+        
+        logger.info("=" * 60)
+        logger.info("✅ ALL EVALUATIONS PASSED - PROCEEDING TO SIGNAL CREATION")
+        logger.info("=" * 60)
+        
+        # =========================================================================
+        # END ENTRY GATING & CONFIDENCE THRESHOLD
+        # =========================================================================
         
         # ✅ FIX 3: STEP 12a - Entry Timing Validation
         logger.info("🔍 Step 12a: Entry Timing Validation")
@@ -5438,6 +5521,118 @@ class ICTSignalEngine:
                 'critical_news': [],
                 'reasoning': f'News check error: {str(e)}'
             }
+    
+    # ============================================================================
+    # ENTRY GATING & CONFIDENCE THRESHOLD HELPER METHODS (ESB v1.0 §2.1-2.2)
+    # ============================================================================
+    
+    def _get_system_state(self) -> str:
+        """
+        Get current system state (OPERATIONAL, DEGRADED, MAINTENANCE, EMERGENCY)
+        
+        Returns:
+            str: System state
+        """
+        # TODO: Implement system state check (can be enhanced in follow-up PR)
+        # For now, always return OPERATIONAL
+        return 'OPERATIONAL'
+    
+    def _check_breaker_block_active(self, ict_components: Dict, signal_type) -> bool:
+        """
+        Check if an active breaker block exists in signal direction
+        
+        Args:
+            ict_components: Dictionary of ICT components
+            signal_type: Signal type (BUY, SELL, STRONG_BUY, STRONG_SELL)
+            
+        Returns:
+            bool: True if breaker block is active in signal direction
+        """
+        try:
+            breaker_blocks = ict_components.get('breaker_blocks', [])
+            
+            # Get signal direction
+            signal_direction = signal_type.value if hasattr(signal_type, 'value') else str(signal_type)
+            
+            for bb in breaker_blocks:
+                # Check if breaker block aligns with signal direction
+                bb_type = bb.get('type', '') if isinstance(bb, dict) else getattr(bb, 'type', '')
+                bb_type_str = bb_type.value if hasattr(bb_type, 'value') else str(bb_type)
+                
+                if 'BUY' in signal_direction and 'BULLISH' in bb_type_str:
+                    return True
+                if 'SELL' in signal_direction and 'BEARISH' in bb_type_str:
+                    return True
+            
+            return False
+        except Exception as e:
+            logger.warning(f"Error checking breaker block: {e}")
+            return False
+    
+    def _check_active_signal(self, symbol: str, timeframe: str) -> bool:
+        """
+        Check if an active signal already exists for this symbol+timeframe
+        
+        Args:
+            symbol: Trading symbol
+            timeframe: Timeframe
+            
+        Returns:
+            bool: True if active signal exists
+        """
+        # TODO: Implement signal collision check (can be enhanced in follow-up PR)
+        # For now, return False (no collision)
+        return False
+    
+    def _check_cooldown(self, symbol: str, timeframe: str) -> bool:
+        """
+        Check if cooldown is active for this symbol+timeframe
+        
+        Args:
+            symbol: Trading symbol
+            timeframe: Timeframe
+            
+        Returns:
+            bool: True if cooldown is active
+        """
+        # TODO: Implement cooldown check (can be enhanced in follow-up PR)
+        # For now, return False (no cooldown)
+        return False
+    
+    def _get_market_state(self, symbol: str) -> str:
+        """
+        Get market state for symbol (OPEN, CLOSED, HALTED, INVALID)
+        
+        Args:
+            symbol: Trading symbol
+            
+        Returns:
+            str: Market state
+        """
+        # TODO: Implement market state check (can be enhanced in follow-up PR)
+        # For now, assume market is open (crypto markets are 24/7)
+        return 'OPEN'
+    
+    def _check_signature(self, symbol: str, timeframe: str, signal_type, timestamp) -> bool:
+        """
+        Check if signal signature has been seen before (deduplication)
+        
+        Args:
+            symbol: Trading symbol
+            timeframe: Timeframe
+            signal_type: Signal type
+            timestamp: Signal timestamp
+            
+        Returns:
+            bool: True if signature has been seen before
+        """
+        # TODO: Implement signature deduplication (can be enhanced in follow-up PR)
+        # For now, return False (not seen)
+        return False
+    
+    # ============================================================================
+    # END ENTRY GATING HELPER METHODS
+    # ============================================================================
     
     def record_signal_outcome(
         self,
