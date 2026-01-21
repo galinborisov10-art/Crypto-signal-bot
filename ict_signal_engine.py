@@ -41,6 +41,13 @@ except ImportError:
     CONFIDENCE_THRESHOLD_AVAILABLE = False
     logging.warning("Confidence Threshold Evaluator not available")
 
+try:
+    from execution_eligibility_evaluator import evaluate_execution_eligibility
+    EXECUTION_ELIGIBILITY_AVAILABLE = True
+except ImportError:
+    EXECUTION_ELIGIBILITY_AVAILABLE = False
+    logging.warning("Execution Eligibility Evaluator not available")
+
 # Import ICT modules
 try:
     from order_block_detector import OrderBlockDetector, OrderBlock, OrderBlockType, MitigationBlock
@@ -1473,12 +1480,40 @@ class ICTSignalEngine:
         else:
             logger.warning("⚠️ Confidence Threshold evaluator not available - skipping check")
         
+        # =========================================================================
+        logger.info("=" * 60)
+        logger.info("STEP 12.3: EXECUTION ELIGIBILITY EVALUATION (ESB §2.3)")
+        logger.info("=" * 60)
+        
+        if EXECUTION_ELIGIBILITY_AVAILABLE:
+            # Build execution context for Execution Eligibility evaluation
+            execution_context = {
+                'symbol': symbol,
+                'execution_state': self._get_execution_state(),
+                'execution_layer_available': self._check_execution_layer_available(),
+                'symbol_execution_locked': self._check_symbol_execution_lock(symbol),
+                'position_capacity_available': self._check_position_capacity(symbol, signal_type.value if hasattr(signal_type, 'value') else str(signal_type)),
+                'emergency_halt_active': self._check_emergency_halt()
+            }
+            
+            # Evaluate Execution Eligibility (ESB §2.3)
+            execution_allowed = evaluate_execution_eligibility(execution_context.copy())  # Use copy to ensure immutability
+            
+            if not execution_allowed:
+                logger.info(f"⛔ §2.3 Execution Eligibility BLOCKED: {symbol} {timeframe}")
+                logger.debug(f"Execution Eligibility context: {execution_context}")
+                return None  # HARD BLOCK
+            
+            logger.info(f"✅ PASSED Execution Eligibility: {symbol} {timeframe}")
+        else:
+            logger.warning("⚠️ Execution Eligibility evaluator not available - skipping check")
+        
         logger.info("=" * 60)
         logger.info("✅ ALL EVALUATIONS PASSED - PROCEEDING TO SIGNAL CREATION")
         logger.info("=" * 60)
         
         # =========================================================================
-        # END ENTRY GATING & CONFIDENCE THRESHOLD
+        # END ENTRY GATING, CONFIDENCE THRESHOLD & EXECUTION ELIGIBILITY
         # =========================================================================
         
         # ✅ FIX 3: STEP 12a - Entry Timing Validation
@@ -5632,6 +5667,96 @@ class ICTSignalEngine:
     
     # ============================================================================
     # END ENTRY GATING HELPER METHODS
+    # ============================================================================
+    
+    # ============================================================================
+    # EXECUTION ELIGIBILITY HELPER METHODS (ESB v1.0 §2.3)
+    # ============================================================================
+    
+    def _get_execution_state(self) -> str:
+        """
+        Get current execution system state
+        
+        Returns:
+            str: "READY" / "PAUSED" / "DISABLED"
+        
+        Default: "READY" (allows execution)
+        
+        Future implementation: Check system state from config or monitoring system
+        """
+        # TODO: Implement dynamic execution state check
+        # For now, return safe default
+        return 'READY'
+    
+    def _check_execution_layer_available(self) -> bool:
+        """
+        Check if execution layer is available
+        
+        Returns:
+            bool: True if available, False otherwise
+        
+        Default: True (allows execution)
+        
+        Future implementation: Health check on execution layer
+        """
+        # TODO: Implement execution layer health check
+        # For now, return safe default
+        return True
+    
+    def _check_symbol_execution_lock(self, symbol: str) -> bool:
+        """
+        Check if symbol has execution lock
+        
+        Args:
+            symbol: Trading symbol (e.g., "BTCUSDT")
+        
+        Returns:
+            bool: True if locked, False otherwise
+        
+        Default: False (allows execution)
+        
+        Future implementation: Check symbol-specific locks from config/database
+        """
+        # TODO: Implement symbol lock check
+        # For now, return safe default (not locked)
+        return False
+    
+    def _check_position_capacity(self, symbol: str, direction: str) -> bool:
+        """
+        Check if position capacity is available for symbol/direction
+        
+        Args:
+            symbol: Trading symbol
+            direction: Signal direction (e.g., "BUY", "SELL")
+        
+        Returns:
+            bool: True if capacity available, False otherwise
+        
+        Default: True (allows execution)
+        
+        Future implementation: Check max positions limit, per-symbol limits
+        """
+        # TODO: Implement position capacity check
+        # For now, return safe default
+        return True
+    
+    def _check_emergency_halt(self) -> bool:
+        """
+        Check if emergency execution halt is active
+        
+        Returns:
+            bool: True if halt active, False otherwise
+        
+        Default: False (allows execution)
+        
+        Future implementation: Check emergency halt flag from monitoring system
+        """
+        # TODO: Implement emergency halt check
+        # For now, return safe default (not active)
+        return False
+    
+    # ============================================================================
+    # END EXECUTION ELIGIBILITY HELPER METHODS
     # ============================================================================
     
     def record_signal_outcome(

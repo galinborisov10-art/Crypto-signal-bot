@@ -217,6 +217,81 @@ class TestMainFlowIntegration:
         if received_context:
             assert 'direction' in received_context
             assert 'raw_confidence' in received_context
+    
+    def test_signal_blocked_by_execution_eligibility(self, engine, sample_df, monkeypatch):
+        """Signals failing execution eligibility should be blocked after §2.2"""
+        
+        # Mock §2.1 and §2.2 to pass
+        def mock_entry_gating(context):
+            return True
+        
+        def mock_confidence_threshold(context):
+            return True
+        
+        # Mock §2.3 to fail
+        def mock_execution_eligibility(context):
+            return False
+        
+        monkeypatch.setattr('ict_signal_engine.evaluate_entry_gating', mock_entry_gating)
+        monkeypatch.setattr('ict_signal_engine.evaluate_confidence_threshold', mock_confidence_threshold)
+        monkeypatch.setattr('ict_signal_engine.evaluate_execution_eligibility', mock_execution_eligibility)
+        
+        # Generate signal
+        signal = engine.generate_signal(sample_df, 'BTCUSDT', '1h')
+        
+        # Signal should be None (blocked by §2.3)
+        assert signal is None, "Signal should be blocked by Execution Eligibility"
+    
+    def test_evaluation_order_2_3(self, engine, sample_df, monkeypatch):
+        """§2.3 should NOT be called if §2.2 fails"""
+        
+        execution_eligibility_called = {'called': False}
+        
+        def mock_entry_gating(context):
+            return True
+        
+        def mock_confidence_threshold(context):
+            return False  # FAIL §2.2
+        
+        def mock_execution_eligibility(context):
+            execution_eligibility_called['called'] = True
+            return True
+        
+        monkeypatch.setattr('ict_signal_engine.evaluate_entry_gating', mock_entry_gating)
+        monkeypatch.setattr('ict_signal_engine.evaluate_confidence_threshold', mock_confidence_threshold)
+        monkeypatch.setattr('ict_signal_engine.evaluate_execution_eligibility', mock_execution_eligibility)
+        
+        # Generate signal
+        engine.generate_signal(sample_df, 'BTCUSDT', '1h')
+        
+        # §2.3 should NOT have been called
+        assert execution_eligibility_called['called'] == False, "Execution Eligibility should not be called if Confidence Threshold fails"
+    
+    def test_execution_eligibility_context_structure(self, engine, sample_df, monkeypatch):
+        """Execution Eligibility should receive properly structured context"""
+        
+        received_context = {}
+        
+        def mock_execution_eligibility(context):
+            nonlocal received_context
+            received_context = context.copy()
+            return True
+        
+        monkeypatch.setattr('ict_signal_engine.evaluate_entry_gating', lambda c: True)
+        monkeypatch.setattr('ict_signal_engine.evaluate_confidence_threshold', lambda c: True)
+        monkeypatch.setattr('ict_signal_engine.evaluate_execution_eligibility', mock_execution_eligibility)
+        
+        # Generate signal
+        engine.generate_signal(sample_df, 'BTCUSDT', '1h')
+        
+        # Verify required fields are present
+        if received_context:
+            assert 'symbol' in received_context
+            assert 'execution_state' in received_context
+            assert 'execution_layer_available' in received_context
+            assert 'symbol_execution_locked' in received_context
+            assert 'position_capacity_available' in received_context
+            assert 'emergency_halt_active' in received_context
 
 
 class TestHelperMethods:
@@ -286,6 +361,33 @@ class TestHelperMethods:
         signal_type.value = 'BUY'
         
         result = engine._check_signature('BTCUSDT', '1h', signal_type, datetime.now())
+        assert result == False
+    
+    def test_get_execution_state(self, engine):
+        """Test _get_execution_state returns valid state"""
+        state = engine._get_execution_state()
+        
+        assert state in ['READY', 'PAUSED', 'DISABLED']
+        assert state == 'READY'  # Default implementation (allows execution)
+    
+    def test_check_execution_layer_available(self, engine):
+        """Test _check_execution_layer_available returns True (default implementation)"""
+        result = engine._check_execution_layer_available()
+        assert result == True
+    
+    def test_check_symbol_execution_lock(self, engine):
+        """Test _check_symbol_execution_lock returns False (default implementation)"""
+        result = engine._check_symbol_execution_lock('BTCUSDT')
+        assert result == False
+    
+    def test_check_position_capacity(self, engine):
+        """Test _check_position_capacity returns True (default implementation)"""
+        result = engine._check_position_capacity('BTCUSDT', 'BUY')
+        assert result == True
+    
+    def test_check_emergency_halt(self, engine):
+        """Test _check_emergency_halt returns False (default implementation)"""
+        result = engine._check_emergency_halt()
         assert result == False
 
 
