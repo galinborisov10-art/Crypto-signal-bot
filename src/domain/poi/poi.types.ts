@@ -9,6 +9,10 @@
 
 /**
  * Valid timeframes for POI analysis
+ * 
+ * NOTE:
+ * Timeframe hierarchy and ordering are intentionally NOT modeled here.
+ * HTF/LTF semantics are introduced in Phase 4.2 (Liquidity Context Layer).
  */
 export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
 

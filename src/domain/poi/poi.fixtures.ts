@@ -8,6 +8,13 @@
 import { POI, POIInput, POIType } from './poi.types';
 
 /**
+ * Fixed reference timestamp for deterministic testing.
+ * This ensures POI fixtures are replay-safe and audit-safe.
+ * Value: November 14, 2023 22:13:20 GMT
+ */
+const T0 = 1700000000000;
+
+/**
  * Valid bullish POI - Order Block
  */
 export const validBullishPOI: POI = {
@@ -19,8 +26,8 @@ export const validBullishPOI: POI = {
     high: 42500
   },
   directionBias: 'bullish',
-  validFrom: Date.now(),
-  validUntil: Date.now() + 86400000, // +24 hours
+  validFrom: T0,
+  validUntil: T0 + 86400000, // +24 hours
   mitigated: false
 };
 
@@ -36,8 +43,8 @@ export const validBearishPOI: POI = {
     high: 41800
   },
   directionBias: 'bearish',
-  validFrom: Date.now(),
-  validUntil: Date.now() + 43200000, // +12 hours
+  validFrom: T0,
+  validUntil: T0 + 43200000, // +12 hours
   mitigated: false
 };
 
@@ -53,8 +60,8 @@ export const validNeutralPOI: POI = {
     high: 40500
   },
   directionBias: 'neutral',
-  validFrom: Date.now(),
-  validUntil: Date.now() + 604800000, // +7 days
+  validFrom: T0,
+  validUntil: T0 + 604800000, // +7 days
   mitigated: false
 };
 
@@ -70,10 +77,10 @@ export const mitigatedPOI: POI = {
     high: 42300
   },
   directionBias: 'bullish',
-  validFrom: Date.now() - 7200000, // -2 hours
-  validUntil: Date.now() + 3600000, // +1 hour
+  validFrom: T0 - 7200000, // -2 hours
+  validUntil: T0 + 3600000, // +1 hour
   mitigated: true,
-  mitigationTimestamp: Date.now() - 1800000 // -30 minutes
+  mitigationTimestamp: T0 - 1800000 // -30 minutes
 };
 
 /**
@@ -88,8 +95,8 @@ export const validBuySideLiquidityPOI: POI = {
     high: 43100
   },
   directionBias: 'bullish',
-  validFrom: Date.now(),
-  validUntil: Date.now() + 21600000, // +6 hours
+  validFrom: T0,
+  validUntil: T0 + 21600000, // +6 hours
   mitigated: false
 };
 
@@ -105,8 +112,8 @@ export const validSellSideLiquidityPOI: POI = {
     high: 41200
   },
   directionBias: 'bearish',
-  validFrom: Date.now(),
-  validUntil: Date.now() + 86400000, // +24 hours
+  validFrom: T0,
+  validUntil: T0 + 86400000, // +24 hours
   mitigated: false
 };
 
@@ -122,8 +129,8 @@ export const invalidPOI_MissingTimeframe: Partial<POI> = {
     high: 42500
   },
   directionBias: 'bullish',
-  validFrom: Date.now(),
-  validUntil: Date.now() + 86400000,
+  validFrom: T0,
+  validUntil: T0 + 86400000,
   mitigated: false
 };
 
@@ -139,8 +146,8 @@ export const invalidPOI_InvalidTimeWindow: POIInput = {
     high: 42500
   },
   directionBias: 'bullish',
-  validFrom: Date.now(),
-  validUntil: Date.now() - 3600000, // Invalid: before validFrom
+  validFrom: T0,
+  validUntil: T0 - 3600000, // Invalid: before validFrom
   mitigated: false
 };
 
@@ -156,8 +163,8 @@ export const invalidPOI_InvalidPriceRange: POIInput = {
     high: 42000 // Invalid: low > high
   },
   directionBias: 'bearish',
-  validFrom: Date.now(),
-  validUntil: Date.now() + 43200000,
+  validFrom: T0,
+  validUntil: T0 + 43200000,
   mitigated: false
 };
 
@@ -173,8 +180,8 @@ export const invalidPOI_MissingDirectionBias: Partial<POI> = {
     high: 42500
   },
   // directionBias is missing
-  validFrom: Date.now(),
-  validUntil: Date.now() + 86400000,
+  validFrom: T0,
+  validUntil: T0 + 86400000,
   mitigated: false
 };
 
@@ -190,8 +197,8 @@ export const invalidPOI_MitigatedWithoutTimestamp: POIInput = {
     high: 42300
   },
   directionBias: 'bullish',
-  validFrom: Date.now() - 7200000,
-  validUntil: Date.now() + 3600000,
+  validFrom: T0 - 7200000,
+  validUntil: T0 + 3600000,
   mitigated: true
   // mitigationTimestamp is missing but mitigated is true
 };
@@ -208,8 +215,8 @@ export const invalidPOI_InvalidTimeframe: POIInput = {
     high: 42500
   },
   directionBias: 'bullish',
-  validFrom: Date.now(),
-  validUntil: Date.now() + 86400000,
+  validFrom: T0,
+  validUntil: T0 + 86400000,
   mitigated: false
 };
 
@@ -225,8 +232,8 @@ export const invalidPOI_InvalidDirectionBias: POIInput = {
     high: 42500
   },
   directionBias: 'sideways' as any, // Invalid direction bias
-  validFrom: Date.now(),
-  validUntil: Date.now() + 86400000,
+  validFrom: T0,
+  validUntil: T0 + 86400000,
   mitigated: false
 };
 
@@ -242,8 +249,8 @@ export const invalidPOI_EmptyID: POIInput = {
     high: 42500
   },
   directionBias: 'bullish',
-  validFrom: Date.now(),
-  validUntil: Date.now() + 86400000,
+  validFrom: T0,
+  validUntil: T0 + 86400000,
   mitigated: false
 };
 
@@ -259,8 +266,8 @@ export const invalidPOI_NegativePrice: POIInput = {
     high: 42500
   },
   directionBias: 'bullish',
-  validFrom: Date.now(),
-  validUntil: Date.now() + 86400000,
+  validFrom: T0,
+  validUntil: T0 + 86400000,
   mitigated: false
 };
 
