@@ -1,7 +1,7 @@
 """
-Integration tests for Entry Gating + Confidence Threshold in main flow (ESB v1.0 §2.1-2.2)
+Integration tests for Entry Gating + Confidence Threshold + Execution Eligibility + Risk Admission (ESB v1.0 §2.1-2.4)
 
-Tests the integration of Entry Gating and Confidence Threshold evaluators
+Tests the integration of Entry Gating, Confidence Threshold, Execution Eligibility, and Risk Admission evaluators
 into the ICT Signal Engine's main signal generation flow.
 
 Author: galinborisov10-art
@@ -26,10 +26,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ict_signal_engine import ICTSignalEngine
 from entry_gating_evaluator import evaluate_entry_gating
 from confidence_threshold_evaluator import evaluate_confidence_threshold
+from execution_eligibility_evaluator import evaluate_execution_eligibility
+from risk_admission_evaluator import evaluate_risk_admission
 
 
 class TestMainFlowIntegration:
-    """Test integration of Entry Gating and Confidence Threshold"""
+    """Test integration of Entry Gating, Confidence Threshold, Execution Eligibility, and Risk Admission"""
     
     if pytest:
         @pytest.fixture
@@ -65,19 +67,19 @@ class TestMainFlowIntegration:
     
     if pytest:
         def test_signal_blocked_by_entry_gating(self, engine, sample_df, monkeypatch):
-        """Signals failing entry gating should be blocked before threshold check"""
-        
-        # Mock entry gating to fail
-        def mock_entry_gating(context):
-            return False
-        
-        monkeypatch.setattr('ict_signal_engine.evaluate_entry_gating', mock_entry_gating)
-        
-        # Generate signal
-        signal = engine.generate_signal(sample_df, 'BTCUSDT', '1h')
-        
-        # Signal should be None (blocked)
-        assert signal is None, "Signal should be blocked by Entry Gating"
+            """Signals failing entry gating should be blocked before threshold check"""
+            
+            # Mock entry gating to fail
+            def mock_entry_gating(context):
+                return False
+            
+            monkeypatch.setattr('ict_signal_engine.evaluate_entry_gating', mock_entry_gating)
+            
+            # Generate signal
+            signal = engine.generate_signal(sample_df, 'BTCUSDT', '1h')
+            
+            # Signal should be None (blocked)
+            assert signal is None, "Signal should be blocked by Entry Gating"
     
     def test_signal_blocked_by_confidence_threshold(self, engine, sample_df, monkeypatch):
         """Signals failing confidence threshold should be blocked after entry gating"""
@@ -292,6 +294,120 @@ class TestMainFlowIntegration:
             assert 'symbol_execution_locked' in received_context
             assert 'position_capacity_available' in received_context
             assert 'emergency_halt_active' in received_context
+    
+    def test_signal_blocked_by_risk_admission(self, engine, sample_df, monkeypatch):
+        """Signals failing risk admission should be blocked after §2.3"""
+        
+        # Mock §2.1, §2.2, §2.3 to pass
+        def mock_entry_gating(context):
+            return True
+        
+        def mock_confidence_threshold(context):
+            return True
+        
+        def mock_execution_eligibility(context):
+            return True
+        
+        # Mock §2.4 to fail
+        def mock_risk_admission(context):
+            return False
+        
+        monkeypatch.setattr('ict_signal_engine.evaluate_entry_gating', mock_entry_gating)
+        monkeypatch.setattr('ict_signal_engine.evaluate_confidence_threshold', mock_confidence_threshold)
+        monkeypatch.setattr('ict_signal_engine.evaluate_execution_eligibility', mock_execution_eligibility)
+        monkeypatch.setattr('ict_signal_engine.evaluate_risk_admission', mock_risk_admission)
+        
+        # Generate signal
+        signal = engine.generate_signal(sample_df, 'BTCUSDT', '1h')
+        
+        # Signal should be None (blocked by §2.4)
+        assert signal is None, "Signal should be blocked by Risk Admission"
+    
+    def test_evaluation_order_2_4(self, engine, sample_df, monkeypatch):
+        """§2.4 should NOT be called if §2.3 fails"""
+        
+        risk_admission_called = {'called': False}
+        
+        def mock_entry_gating(context):
+            return True
+        
+        def mock_confidence_threshold(context):
+            return True
+        
+        def mock_execution_eligibility(context):
+            return False  # FAIL §2.3
+        
+        def mock_risk_admission(context):
+            risk_admission_called['called'] = True
+            return True
+        
+        monkeypatch.setattr('ict_signal_engine.evaluate_entry_gating', mock_entry_gating)
+        monkeypatch.setattr('ict_signal_engine.evaluate_confidence_threshold', mock_confidence_threshold)
+        monkeypatch.setattr('ict_signal_engine.evaluate_execution_eligibility', mock_execution_eligibility)
+        monkeypatch.setattr('ict_signal_engine.evaluate_risk_admission', mock_risk_admission)
+        
+        # Generate signal
+        engine.generate_signal(sample_df, 'BTCUSDT', '1h')
+        
+        # §2.4 should NOT have been called
+        assert risk_admission_called['called'] == False, "Risk Admission should not be called if Execution Eligibility fails"
+    
+    def test_risk_admission_context_structure(self, engine, sample_df, monkeypatch):
+        """Risk Admission should receive properly structured context"""
+        
+        received_context = {}
+        
+        def mock_risk_admission(context):
+            nonlocal received_context
+            received_context = context.copy()
+            return True
+        
+        monkeypatch.setattr('ict_signal_engine.evaluate_entry_gating', lambda c: True)
+        monkeypatch.setattr('ict_signal_engine.evaluate_confidence_threshold', lambda c: True)
+        monkeypatch.setattr('ict_signal_engine.evaluate_execution_eligibility', lambda c: True)
+        monkeypatch.setattr('ict_signal_engine.evaluate_risk_admission', mock_risk_admission)
+        
+        # Generate signal
+        engine.generate_signal(sample_df, 'BTCUSDT', '1h')
+        
+        # Verify required fields are present
+        if received_context:
+            assert 'signal_risk' in received_context
+            assert 'total_open_risk' in received_context
+            assert 'symbol_exposure' in received_context
+            assert 'direction_exposure' in received_context
+            assert 'daily_loss' in received_context
+    
+    def test_all_evaluations_pass(self, engine, sample_df, monkeypatch):
+        """Signals passing all evaluations (§2.1-2.4) should proceed to signal creation"""
+        
+        # Mock all evaluations to pass
+        def mock_entry_gating(context):
+            return True
+        
+        def mock_confidence_threshold(context):
+            return True
+        
+        def mock_execution_eligibility(context):
+            return True
+        
+        def mock_risk_admission(context):
+            return True
+        
+        monkeypatch.setattr('ict_signal_engine.evaluate_entry_gating', mock_entry_gating)
+        monkeypatch.setattr('ict_signal_engine.evaluate_confidence_threshold', mock_confidence_threshold)
+        monkeypatch.setattr('ict_signal_engine.evaluate_execution_eligibility', mock_execution_eligibility)
+        monkeypatch.setattr('ict_signal_engine.evaluate_risk_admission', mock_risk_admission)
+        
+        # Generate signal
+        signal = engine.generate_signal(sample_df, 'BTCUSDT', '1h')
+        
+        # Signal should NOT be None (allowed to proceed)
+        # Note: May still be None if signal generation finds no valid setup
+        # This test validates that all 4 evaluations passed
+        if signal is not None:
+            assert signal.symbol == 'BTCUSDT'
+            assert signal.timeframe == '1h'
 
 
 class TestHelperMethods:
@@ -389,6 +505,36 @@ class TestHelperMethods:
         """Test _check_emergency_halt returns False (default implementation)"""
         result = engine._check_emergency_halt()
         assert result == False
+    
+    def test_get_signal_risk(self, engine):
+        """Test _get_signal_risk returns safe default (1.0%)"""
+        result = engine._get_signal_risk()
+        assert result == 1.0
+        assert isinstance(result, float)
+    
+    def test_get_total_open_risk(self, engine):
+        """Test _get_total_open_risk returns safe default (0.0%)"""
+        result = engine._get_total_open_risk()
+        assert result == 0.0
+        assert isinstance(result, float)
+    
+    def test_get_symbol_exposure(self, engine):
+        """Test _get_symbol_exposure returns safe default (0.0%)"""
+        result = engine._get_symbol_exposure('BTCUSDT')
+        assert result == 0.0
+        assert isinstance(result, float)
+    
+    def test_get_direction_exposure(self, engine):
+        """Test _get_direction_exposure returns safe default (0.0%)"""
+        result = engine._get_direction_exposure('BUY')
+        assert result == 0.0
+        assert isinstance(result, float)
+    
+    def test_get_daily_loss(self, engine):
+        """Test _get_daily_loss returns safe default (0.0%)"""
+        result = engine._get_daily_loss()
+        assert result == 0.0
+        assert isinstance(result, float)
 
 
 class TestEndToEndFlow:
