@@ -24,6 +24,11 @@ export {
   isVirtualPositionInvalidated
 } from './virtualPosition.contracts';
 
+// Phase 5.2: Progress Engine
+export {
+  updateVirtualPositionProgress
+} from './virtualPosition.progress';
+
 // Test fixtures (for testing only)
 export {
   T0,
@@ -46,5 +51,18 @@ export {
   minimalValidScore,
   minimalValidRisk,
   boundaryTimestamp,
-  largeTimestamp
+  largeTimestamp,
+  // Phase 5.2 POI fixtures
+  bullishSLPOI,
+  bullishTP1POI,
+  bullishTP2POI,
+  bullishTP3POI,
+  bearishSLPOI,
+  bearishTP1POI,
+  bearishTP2POI,
+  bearishTP3POI,
+  bullishPOIMap,
+  bearishPOIMap,
+  openBullishPosition,
+  progressingBullishPosition
 } from './virtualPosition.fixtures';
