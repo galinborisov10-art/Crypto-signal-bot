@@ -96,9 +96,8 @@ export function buildRiskContract(
   evaluatedAt: number
 ): RiskContract {
   // Step 1: Validate scenario status
-  // If scenario is not valid, we still need to return a contract (invalid)
-  // However, the spec says this should only work for valid scenarios
-  // So we'll return an invalid contract if scenario is not valid
+  // Phase 4.5 is designed to be invoked ONLY for scenario.status === 'valid'
+  // However, if a non-valid scenario is passed (edge case), return explicit invalidation
   if (!isScenarioValid(scenario)) {
     return {
       scenarioId: scenario.id,
@@ -110,7 +109,7 @@ export function buildRiskContract(
       takeProfits: [],
       rr: 0,
       status: 'invalid',
-      invalidationReason: 'NO_VALID_STOP', // Default reason for invalid scenario
+      invalidationReason: 'SCENARIO_NOT_VALID',
       evaluatedAt
     };
   }

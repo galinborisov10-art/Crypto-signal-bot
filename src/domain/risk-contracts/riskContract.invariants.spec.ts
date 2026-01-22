@@ -459,9 +459,17 @@ describe('Risk Contract Invariant Tests - Phase 4.5', () => {
         T0
       );
 
+      const scenarioNotValidResult = buildRiskContract(
+        formingScenario,
+        validConfluenceScore,
+        validBullishRiskPOIs,
+        T0
+      );
+
       expect(noStopResult.invalidationReason).toBe('NO_VALID_STOP');
       expect(noTargetsResult.invalidationReason).toBe('NO_VALID_TARGETS');
       expect(lowRRResult.invalidationReason).toBe('RR_TOO_LOW');
+      expect(scenarioNotValidResult.invalidationReason).toBe('SCENARIO_NOT_VALID');
     });
 
     test('no invalidation reason for valid contracts', () => {
@@ -476,7 +484,7 @@ describe('Risk Contract Invariant Tests - Phase 4.5', () => {
       expect(result.invalidationReason).toBeUndefined();
     });
 
-    test('forming scenario produces invalid contract', () => {
+    test('SCENARIO_NOT_VALID when scenario is not valid (edge case)', () => {
       const result = buildRiskContract(
         formingScenario,
         validConfluenceScore,
@@ -485,7 +493,7 @@ describe('Risk Contract Invariant Tests - Phase 4.5', () => {
       );
 
       expect(result.status).toBe('invalid');
-      expect(result.invalidationReason).toBeDefined();
+      expect(result.invalidationReason).toBe('SCENARIO_NOT_VALID');
     });
   });
 

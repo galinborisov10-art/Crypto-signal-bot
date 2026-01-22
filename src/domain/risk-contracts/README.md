@@ -347,8 +347,10 @@ interface StopLossContract {
 
 **beyondStructure:**
 - Computed: SL POI is beyond last structural boundary
-- Currently simplified: `true` for valid SL POIs
-- Can be refined with structural boundary analysis
+- Currently simplified: `true` for valid SL POIs (ESB v1.0)
+- Does NOT participate in RR calculation, gating, or execution
+- Serves as a placeholder for future structural boundary analysis (ESB v1.1+)
+- Can be refined with more precise structural boundary analysis in future versions
 
 ### TakeProfitContract
 
@@ -391,6 +393,7 @@ interface RiskContract {
 - `'RR_TOO_LOW'`: RR < 3
 - `'NO_VALID_STOP'`: No valid SL POI found
 - `'NO_VALID_TARGETS'`: No valid TP POI found
+- `'SCENARIO_NOT_VALID'`: Entry scenario status is not 'valid' (edge case)
 
 ### RiskPOIs
 
@@ -423,13 +426,14 @@ function buildRiskContract(
 ```
 
 **Behavior:**
-- Works ONLY for `scenario.status === 'valid'`
+- Designed to work ONLY for `scenario.status === 'valid'`
+- Edge case: If non-valid scenario passed, returns invalid contract with `SCENARIO_NOT_VALID` reason
 - Deterministic: same inputs → same output
 - Immutable: no mutation of inputs
 - No exceptions: returns invalid contract on failure
 
 **Implementation Flow:**
-1. Validate scenario status
+1. Validate scenario status (edge case: non-valid → return invalid with SCENARIO_NOT_VALID)
 2. Extract entry POI
 3. Select Stop Loss (filter + validate + select best)
 4. Select Take Profits (filter + sort + assign)

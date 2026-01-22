@@ -83,7 +83,8 @@ export interface TakeProfitContract {
 export type RiskInvalidationReason =
   | 'RR_TOO_LOW'           // Risk/Reward ratio < 3
   | 'NO_VALID_STOP'        // No valid SL POI found
-  | 'NO_VALID_TARGETS';    // No valid TP POI found
+  | 'NO_VALID_TARGETS'     // No valid TP POI found
+  | 'SCENARIO_NOT_VALID';  // Entry scenario status is not 'valid' (edge case)
 
 /**
  * Risk Contract

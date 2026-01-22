@@ -464,3 +464,20 @@ export const invalidRiskContract_LowRR: RiskContract = {
   invalidationReason: 'RR_TOO_LOW',
   evaluatedAt: T0
 };
+
+/**
+ * Invalid Risk Contract (Scenario Not Valid - Edge Case)
+ */
+export const invalidRiskContract_ScenarioNotValid: RiskContract = {
+  scenarioId: 'scenario-forming-001',
+  stopLoss: {
+    type: 'structure',
+    referencePoiId: '',
+    beyondStructure: false
+  },
+  takeProfits: [],
+  rr: 0,
+  status: 'invalid',
+  invalidationReason: 'SCENARIO_NOT_VALID',
+  evaluatedAt: T0
+};

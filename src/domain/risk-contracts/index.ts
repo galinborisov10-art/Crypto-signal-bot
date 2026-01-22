@@ -54,5 +54,6 @@ export {
   validBullishRiskContract,
   invalidRiskContract_NoStop,
   invalidRiskContract_NoTargets,
-  invalidRiskContract_LowRR
+  invalidRiskContract_LowRR,
+  invalidRiskContract_ScenarioNotValid
 } from './riskContract.fixtures';
