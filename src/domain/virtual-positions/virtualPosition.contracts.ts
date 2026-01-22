@@ -121,12 +121,22 @@ export function createVirtualPosition(
     id,
     scenarioId: scenario.id,
     scenarioType: scenario.type,
-    score: { ...score }, // Defensive copy (self-contained snapshot)
+    // Deep defensive copy of score (including nested breakdown)
+    score: {
+      ...score,
+      breakdown: {
+        present: [...score.breakdown.present],
+        missing: [...score.breakdown.missing],
+        contributions: { ...score.breakdown.contributions },
+        dampenersApplied: score.breakdown.dampenersApplied.map(d => ({ ...d }))
+      }
+    },
+    // Deep defensive copy of risk (including nested objects)
     risk: {
       ...risk,
       stopLoss: { ...risk.stopLoss },
       takeProfits: risk.takeProfits.map(tp => ({ ...tp }))
-    }, // Deep defensive copy
+    },
     status: 'open',
     progressPercent: 0,
     reachedTargets: [],
