@@ -3,6 +3,11 @@
  * 
  * Reusable test data for Liquidity Context testing.
  * Provides various context scenarios for comprehensive testing.
+ * 
+ * @remarks
+ * - `status` is the single source of truth
+ * - `isWithinValidityWindow` is derived from status
+ * - `htfRelation` is only defined for active contexts
  */
 
 import { LiquidityContext } from './liquidityContext.types';
@@ -17,8 +22,7 @@ const T0 = 1700000000000;
 /**
  * Active Liquidity Context
  * - Status: active
- * - Within validity window
- * - Unmitigated
+ * - Within validity window (derived from status)
  * - No HTF relation (undefined)
  */
 export const activeLiquidityContext: LiquidityContext = {
@@ -26,7 +30,6 @@ export const activeLiquidityContext: LiquidityContext = {
   timeframe: '4h',
   status: 'active',
   isWithinValidityWindow: true,
-  mitigationState: 'unmitigated',
   htfRelation: 'undefined',
   evaluatedAt: T0
 };
@@ -34,16 +37,14 @@ export const activeLiquidityContext: LiquidityContext = {
 /**
  * Expired Liquidity Context
  * - Status: expired
- * - Outside validity window (after validUntil)
- * - Unmitigated
- * - No HTF relation
+ * - Outside validity window (derived from status)
+ * - HTF relation: undefined (non-active)
  */
 export const expiredLiquidityContext: LiquidityContext = {
   poiId: 'poi-bullish-ob-002',
   timeframe: '1h',
   status: 'expired',
   isWithinValidityWindow: false,
-  mitigationState: 'unmitigated',
   htfRelation: 'undefined',
   evaluatedAt: T0 + 86400000 // +24 hours
 };
@@ -51,16 +52,14 @@ export const expiredLiquidityContext: LiquidityContext = {
 /**
  * Mitigated Liquidity Context
  * - Status: mitigated
- * - Within validity window
- * - Mitigated
- * - No HTF relation
+ * - Within validity window (derived from status)
+ * - HTF relation: undefined (non-active)
  */
 export const mitigatedLiquidityContext: LiquidityContext = {
   poiId: 'poi-mitigated-bb-001',
   timeframe: '15m',
   status: 'mitigated',
   isWithinValidityWindow: true,
-  mitigationState: 'mitigated',
   htfRelation: 'undefined',
   evaluatedAt: T0
 };
@@ -68,16 +67,14 @@ export const mitigatedLiquidityContext: LiquidityContext = {
 /**
  * Invalid Liquidity Context
  * - Status: invalid
- * - Outside validity window (before validFrom)
- * - Unmitigated
- * - No HTF relation
+ * - Outside validity window (derived from status)
+ * - HTF relation: undefined (non-active)
  */
 export const invalidLiquidityContext: LiquidityContext = {
   poiId: 'poi-bullish-ob-003',
   timeframe: '4h',
   status: 'invalid',
   isWithinValidityWindow: false,
-  mitigationState: 'unmitigated',
   htfRelation: 'undefined',
   evaluatedAt: T0 - 3600000 // -1 hour before validFrom
 };
@@ -93,7 +90,6 @@ export const htfAlignedContext: LiquidityContext = {
   timeframe: '1h',
   status: 'active',
   isWithinValidityWindow: true,
-  mitigationState: 'unmitigated',
   htfRelation: 'aligned',
   evaluatedAt: T0
 };
@@ -109,7 +105,6 @@ export const htfCounterContext: LiquidityContext = {
   timeframe: '15m',
   status: 'active',
   isWithinValidityWindow: true,
-  mitigationState: 'unmitigated',
   htfRelation: 'counter',
   evaluatedAt: T0
 };
@@ -125,7 +120,6 @@ export const htfNeutralContext: LiquidityContext = {
   timeframe: '1d',
   status: 'active',
   isWithinValidityWindow: true,
-  mitigationState: 'unmitigated',
   htfRelation: 'neutral',
   evaluatedAt: T0
 };
@@ -141,7 +135,6 @@ export const noHTFContext: LiquidityContext = {
   timeframe: '5m',
   status: 'active',
   isWithinValidityWindow: true,
-  mitigationState: 'unmitigated',
   htfRelation: 'undefined',
   evaluatedAt: T0
 };
@@ -157,7 +150,6 @@ export const tradableAlignedContext: LiquidityContext = {
   timeframe: '4h',
   status: 'active',
   isWithinValidityWindow: true,
-  mitigationState: 'unmitigated',
   htfRelation: 'aligned',
   evaluatedAt: T0
 };
@@ -173,7 +165,6 @@ export const tradableNeutralContext: LiquidityContext = {
   timeframe: '1h',
   status: 'active',
   isWithinValidityWindow: true,
-  mitigationState: 'unmitigated',
   htfRelation: 'neutral',
   evaluatedAt: T0
 };
@@ -189,7 +180,6 @@ export const nonTradableCounterContext: LiquidityContext = {
   timeframe: '15m',
   status: 'active',
   isWithinValidityWindow: true,
-  mitigationState: 'unmitigated',
   htfRelation: 'counter',
   evaluatedAt: T0
 };
@@ -197,7 +187,7 @@ export const nonTradableCounterContext: LiquidityContext = {
 /**
  * Non-Tradable Context (Expired)
  * - Status: expired
- * - HTF relation: aligned
+ * - HTF relation: undefined (non-active)
  * - Should NOT be tradable (not active)
  */
 export const nonTradableExpiredContext: LiquidityContext = {
@@ -205,8 +195,7 @@ export const nonTradableExpiredContext: LiquidityContext = {
   timeframe: '1h',
   status: 'expired',
   isWithinValidityWindow: false,
-  mitigationState: 'unmitigated',
-  htfRelation: 'aligned',
+  htfRelation: 'undefined',
   evaluatedAt: T0 + 86400000
 };
 

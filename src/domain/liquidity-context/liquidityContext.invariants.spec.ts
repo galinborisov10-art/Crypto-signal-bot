@@ -51,7 +51,6 @@ describe('Liquidity Context - Invariant Tests', () => {
       // Assert
       expect(context.status).toBe('active');
       expect(context.isWithinValidityWindow).toBe(true);
-      expect(context.mitigationState).toBe('unmitigated');
     });
 
     test('POI evaluated before validFrom → status = invalid', () => {
@@ -117,7 +116,6 @@ describe('Liquidity Context - Invariant Tests', () => {
 
       // Assert
       expect(context.status).toBe('mitigated');
-      expect(context.mitigationState).toBe('mitigated');
       expect(context.isWithinValidityWindow).toBe(true);
     });
 
@@ -435,6 +433,106 @@ describe('Liquidity Context - Invariant Tests', () => {
 
       // Assert
       expect(context.htfRelation).toBe('undefined');
+    });
+
+    test('Non-active contexts have undefined HTF relation (expired)', () => {
+      // Arrange: Expired LTF POI
+      const ltfPOI = createPOI({
+        id: 'poi-ltf-009',
+        type: POIType.OrderBlock,
+        timeframe: '1h',
+        priceRange: { low: 42000, high: 42500 },
+        directionBias: 'bullish',
+        validFrom: T0,
+        validUntil: T0 + 3600000, // +1 hour
+        mitigated: false
+      });
+
+      // Arrange: HTF POI with same direction (would be aligned if active)
+      const htfPOI = createPOI({
+        id: 'poi-htf-009',
+        type: POIType.OrderBlock,
+        timeframe: '4h',
+        priceRange: { low: 41500, high: 42000 },
+        directionBias: 'bullish',
+        validFrom: T0,
+        validUntil: T0 + 172800000,
+        mitigated: false
+      });
+
+      // Act: Evaluate after LTF POI expires
+      const context = buildLiquidityContext(ltfPOI, T0 + 86400000, htfPOI);
+
+      // Assert
+      expect(context.status).toBe('expired');
+      expect(context.htfRelation).toBe('undefined'); // HTF relation undefined for non-active
+    });
+
+    test('Non-active contexts have undefined HTF relation (mitigated)', () => {
+      // Arrange: Mitigated LTF POI
+      const ltfPOI = createPOI({
+        id: 'poi-ltf-010',
+        type: POIType.OrderBlock,
+        timeframe: '15m',
+        priceRange: { low: 42000, high: 42500 },
+        directionBias: 'bullish',
+        validFrom: T0 - 7200000,
+        validUntil: T0 + 3600000,
+        mitigated: true,
+        mitigationTimestamp: T0 - 1800000
+      });
+
+      // Arrange: HTF POI with same direction (would be aligned if active)
+      const htfPOI = createPOI({
+        id: 'poi-htf-010',
+        type: POIType.OrderBlock,
+        timeframe: '4h',
+        priceRange: { low: 41500, high: 42000 },
+        directionBias: 'bullish',
+        validFrom: T0,
+        validUntil: T0 + 172800000,
+        mitigated: false
+      });
+
+      // Act
+      const context = buildLiquidityContext(ltfPOI, T0, htfPOI);
+
+      // Assert
+      expect(context.status).toBe('mitigated');
+      expect(context.htfRelation).toBe('undefined'); // HTF relation undefined for non-active
+    });
+
+    test('Non-active contexts have undefined HTF relation (invalid)', () => {
+      // Arrange: Invalid LTF POI (evaluated before validFrom)
+      const ltfPOI = createPOI({
+        id: 'poi-ltf-011',
+        type: POIType.OrderBlock,
+        timeframe: '1h',
+        priceRange: { low: 42000, high: 42500 },
+        directionBias: 'bullish',
+        validFrom: T0,
+        validUntil: T0 + 86400000,
+        mitigated: false
+      });
+
+      // Arrange: HTF POI with same direction (would be aligned if active)
+      const htfPOI = createPOI({
+        id: 'poi-htf-011',
+        type: POIType.OrderBlock,
+        timeframe: '4h',
+        priceRange: { low: 41500, high: 42000 },
+        directionBias: 'bullish',
+        validFrom: T0,
+        validUntil: T0 + 172800000,
+        mitigated: false
+      });
+
+      // Act: Evaluate before LTF POI becomes valid
+      const context = buildLiquidityContext(ltfPOI, T0 - 3600000, htfPOI);
+
+      // Assert
+      expect(context.status).toBe('invalid');
+      expect(context.htfRelation).toBe('undefined'); // HTF relation undefined for non-active
     });
   });
 

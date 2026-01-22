@@ -51,6 +51,11 @@ export type HTFRelation =
  * - Immutable: Does not mutate input POIs
  * - Time-aware: Evaluated at a fixed timestamp
  * - HTF-aware: Can model relationship with higher timeframe context
+ * 
+ * @remarks
+ * - `status` is the single source of truth for context state
+ * - `isWithinValidityWindow` is derived from status (active or mitigated)
+ * - `htfRelation` is only meaningful for active contexts
  */
 export interface LiquidityContext {
   /** Reference to the POI being interpreted */
@@ -59,16 +64,13 @@ export interface LiquidityContext {
   /** Timeframe of the POI being interpreted */
   timeframe: Timeframe;
   
-  /** Current status of the context */
+  /** Current status of the context (single source of truth) */
   status: LiquidityContextStatus;
   
-  /** Whether the POI is within its validity time window */
+  /** Whether the POI is within its validity time window (derived from status) */
   isWithinValidityWindow: boolean;
   
-  /** Mitigation state of the POI */
-  mitigationState: 'unmitigated' | 'mitigated';
-  
-  /** Relationship to higher timeframe POI, if provided */
+  /** Relationship to higher timeframe POI (undefined for non-active contexts) */
   htfRelation: HTFRelation;
   
   /** Fixed timestamp at which this context was evaluated (Unix milliseconds) */

@@ -46,18 +46,7 @@ export function buildLiquidityContext(
   evaluatedAt: number,
   htfPOI?: POI
 ): LiquidityContext {
-  // Validate inputs are not mutated by creating a read-only reference
-  // This ensures contract compliance
-
-  // Determine if within validity window
-  const isWithinValidityWindow =
-    evaluatedAt >= poi.validFrom &&
-    evaluatedAt <= poi.validUntil;
-
-  // Determine mitigation state
-  const mitigationState = poi.mitigated ? 'mitigated' : 'unmitigated';
-
-  // Determine status based on contract rules
+  // Determine status based on contract rules (single source of truth)
   let status: LiquidityContextStatus;
   
   if (evaluatedAt < poi.validFrom) {
@@ -74,8 +63,17 @@ export function buildLiquidityContext(
     status = 'active';
   }
 
-  // Determine HTF relation
-  const htfRelation = calculateHTFRelation(poi, htfPOI);
+  // Derive isWithinValidityWindow from status (not from timestamps)
+  // A context is within validity window if it's active or mitigated
+  const isWithinValidityWindow =
+    status === 'active' || status === 'mitigated';
+
+  // Determine HTF relation only for active contexts
+  // Non-active contexts have undefined HTF relation
+  const htfRelation =
+    status === 'active'
+      ? calculateHTFRelation(poi, htfPOI)
+      : 'undefined';
 
   // Build and return the context
   const context: LiquidityContext = {
@@ -83,7 +81,6 @@ export function buildLiquidityContext(
     timeframe: poi.timeframe,
     status,
     isWithinValidityWindow,
-    mitigationState,
     htfRelation,
     evaluatedAt
   };
