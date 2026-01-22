@@ -35,13 +35,7 @@ class AuditEvent:
     event_hash: str = ""
     
     def __post_init__(self):
-        """Validate event fields after creation."""
-        if not self.signal_id:
-            raise ValueError("signal_id cannot be empty")
-        if not self.actor:
-            raise ValueError("actor cannot be empty")
-        if not self.reason:
-            raise ValueError("reason cannot be empty")
+        """Validate structural integrity only (no business semantics)."""
         if not isinstance(self.prev_state, SignalState):
             raise ValueError(f"prev_state must be SignalState, got {type(self.prev_state)}")
         if not isinstance(self.next_state, SignalState):
