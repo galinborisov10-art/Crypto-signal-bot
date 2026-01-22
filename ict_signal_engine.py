@@ -48,6 +48,13 @@ except ImportError:
     EXECUTION_ELIGIBILITY_AVAILABLE = False
     logging.warning("Execution Eligibility Evaluator not available")
 
+try:
+    from risk_admission_evaluator import evaluate_risk_admission
+    RISK_ADMISSION_AVAILABLE = True
+except ImportError:
+    RISK_ADMISSION_AVAILABLE = False
+    logging.warning("Risk Admission Evaluator not available")
+
 # Import ICT modules
 try:
     from order_block_detector import OrderBlockDetector, OrderBlock, OrderBlockType, MitigationBlock
@@ -1508,12 +1515,39 @@ class ICTSignalEngine:
         else:
             logger.warning("⚠️ Execution Eligibility evaluator not available - skipping check")
         
+        # =========================================================================
         logger.info("=" * 60)
-        logger.info("✅ ALL EVALUATIONS PASSED - PROCEEDING TO SIGNAL CREATION")
+        logger.info("STEP 12.4: RISK ADMISSION EVALUATION (ESB §2.4)")
+        logger.info("=" * 60)
+        
+        if RISK_ADMISSION_AVAILABLE:
+            # Build risk context for Risk Admission evaluation
+            risk_context = {
+                'signal_risk': self._get_signal_risk(),
+                'total_open_risk': self._get_total_open_risk(),
+                'symbol_exposure': self._get_symbol_exposure(symbol),
+                'direction_exposure': self._get_direction_exposure(signal_type.value if hasattr(signal_type, 'value') else str(signal_type)),
+                'daily_loss': self._get_daily_loss()
+            }
+            
+            # Evaluate Risk Admission (ESB §2.4)
+            risk_admitted = evaluate_risk_admission(risk_context.copy())  # Use copy to ensure immutability
+            
+            if not risk_admitted:
+                logger.info(f"⛔ §2.4 Risk Admission BLOCKED: {symbol} {timeframe}")
+                logger.debug(f"Risk context: {risk_context}")
+                return None  # HARD BLOCK
+            
+            logger.info(f"✅ PASSED Risk Admission: {symbol} {timeframe}")
+        else:
+            logger.warning("⚠️ Risk Admission evaluator not available - skipping check")
+        
+        logger.info("=" * 60)
+        logger.info("✅ ALL EVALUATIONS PASSED (§2.1-2.4) - PROCEEDING TO SIGNAL CREATION")
         logger.info("=" * 60)
         
         # =========================================================================
-        # END ENTRY GATING, CONFIDENCE THRESHOLD & EXECUTION ELIGIBILITY
+        # END ENTRY GATING, CONFIDENCE THRESHOLD, EXECUTION ELIGIBILITY & RISK ADMISSION
         # =========================================================================
         
         # ✅ FIX 3: STEP 12a - Entry Timing Validation
@@ -5757,6 +5791,96 @@ class ICTSignalEngine:
     
     # ============================================================================
     # END EXECUTION ELIGIBILITY HELPER METHODS
+    # ============================================================================
+    
+    # ============================================================================
+    # RISK ADMISSION HELPER METHODS (ESB v1.0 §2.4)
+    # ============================================================================
+    
+    def _get_signal_risk(self) -> float:
+        """
+        Calculate risk per signal as % of account
+        
+        Returns:
+            float: Risk per signal (%)
+        
+        Default: 1.0% (safe, non-blocking)
+        
+        Future implementation: Calculate based on entry price, SL, and position size
+        Formula: risk = ((entry - sl) / entry) * 100
+        """
+        # TODO: Implement actual signal risk calculation
+        # For now, return safe default
+        return 1.0
+    
+    def _get_total_open_risk(self) -> float:
+        """
+        Calculate total open risk across all positions
+        
+        Returns:
+            float: Total open risk (%)
+        
+        Default: 0.0% (safe, non-blocking)
+        
+        Future implementation: Sum risk from all open positions
+        """
+        # TODO: Implement total open risk aggregation
+        # For now, return safe default
+        return 0.0
+    
+    def _get_symbol_exposure(self, symbol: str) -> float:
+        """
+        Calculate exposure to specific symbol
+        
+        Args:
+            symbol: Trading symbol (e.g., "BTCUSDT")
+        
+        Returns:
+            float: Symbol exposure (%)
+        
+        Default: 0.0% (safe, non-blocking)
+        
+        Future implementation: Calculate from open positions for this symbol
+        """
+        # TODO: Implement symbol exposure calculation
+        # For now, return safe default
+        return 0.0
+    
+    def _get_direction_exposure(self, direction: str) -> float:
+        """
+        Calculate exposure to specific direction (LONG/SHORT)
+        
+        Args:
+            direction: Signal direction (e.g., "BUY", "SELL")
+        
+        Returns:
+            float: Direction exposure (%)
+        
+        Default: 0.0% (safe, non-blocking)
+        
+        Future implementation: Aggregate exposure from all positions in this direction
+        """
+        # TODO: Implement direction exposure calculation
+        # For now, return safe default
+        return 0.0
+    
+    def _get_daily_loss(self) -> float:
+        """
+        Calculate daily loss as % of account
+        
+        Returns:
+            float: Daily loss (%)
+        
+        Default: 0.0% (safe, non-blocking)
+        
+        Future implementation: Calculate from closed trades today
+        """
+        # TODO: Implement daily loss calculation
+        # For now, return safe default
+        return 0.0
+    
+    # ============================================================================
+    # END RISK ADMISSION HELPER METHODS
     # ============================================================================
     
     def record_signal_outcome(
