@@ -433,6 +433,11 @@ npm test -- virtualPosition.invariants.spec.ts
 
 2. **Progress calculation:** Linear, structural, clamped [0, 100]
    - Entry reference: Midpoint between SL and TP1 boundaries
+   - **Entry Reference Clarification (ESB v1.0 Semantic Lock):**
+     * Entry reference is defined as the **structural midpoint** between the Stop Loss POI boundary and the nearest Take Profit (TP1) boundary
+     * This is a **deterministic structural approximation**, NOT an execution price
+     * NOT stored state, NOT derived from `openedAt`
+     * This definition is **frozen for ESB v1.0** to ensure replay safety and deterministic behavior
    - Furthest TP: TP3 if exists, else TP2, else TP1
    - Formula (Bullish): `((currentPrice - entryRef) / (furthestTP - entryRef)) * 100`
    - Formula (Bearish): `((entryRef - currentPrice) / (entryRef - furthestTP)) * 100`
