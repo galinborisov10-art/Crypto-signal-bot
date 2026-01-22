@@ -28,7 +28,8 @@ import { POI } from '../poi';
  * Stalling detection threshold (1 hour)
  * Hard-coded as per Phase 5.2 spec
  */
-const STALL_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
+const HOUR_IN_MS = 60 * 60 * 1000;
+const STALL_THRESHOLD_MS = HOUR_IN_MS; // 1 hour
 
 /**
  * Update Virtual Position Progress
@@ -116,8 +117,9 @@ function inferDirection(
   const tp1POI = tp1Contract ? pois.get(tp1Contract.targetPoiId) : undefined;
   
   if (!slPOI || !tp1POI) {
-    // Defensive: should not happen if RiskContract was valid
-    // Default to bullish if POIs are missing
+    // Defensive fallback: should not happen if RiskContract was valid
+    // This represents a configuration error - missing POIs referenced by risk contract
+    // Default to bullish to avoid crashes, but this indicates upstream validation failure
     return 'bullish';
   }
   
@@ -129,8 +131,10 @@ function inferDirection(
     // SL above TP1 → bearish
     return 'bearish';
   } else {
-    // Invalid structure - should not happen if RiskContract was valid
-    // Default to bullish
+    // Defensive fallback: Invalid structure (overlapping SL and TP1 ranges)
+    // This should not happen if RiskContract validation was correct
+    // Overlapping ranges indicate a structural problem in the risk contract
+    // Default to bullish to avoid crashes, but this indicates upstream validation failure
     return 'bullish';
   }
 }
