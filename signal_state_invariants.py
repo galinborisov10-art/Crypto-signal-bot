@@ -31,10 +31,13 @@ class SignalStateInvariantChecker:
     All checks are pure functions with no side effects.
     
     This checker enforces:
-    - Global invariants (apply to all states)
-    - State-specific invariants (apply to specific target states)
-    - Monotonic progression (no backward transitions)
-    - Terminal state finality (no transitions from terminal states)
+    - Type validation (states must be SignalState enums)
+    - Terminal state finality (terminal states cannot transition)
+    - Context-based contracts (phase2_passed, execution_allowed, dispatch_timestamp)
+    - Context immutability (signal_id must be string if provided)
+    
+    Note: State transition ordering is enforced by the FSM (PR-3.1).
+    This module only validates business rule contracts.
     """
     
     def validate(
@@ -68,10 +71,9 @@ class SignalStateInvariantChecker:
         if context is None:
             context = {}
         
-        # Global invariants (order matters: check terminal states before monotonic progression)
+        # Global invariants
         self._check_valid_states(current_state, next_state)
         self._check_terminal_state_finality(current_state, context)
-        self._check_monotonic_progression(current_state, next_state)
         self._check_signal_id_immutability(context)
         
         # State-specific invariants
@@ -98,59 +100,7 @@ class SignalStateInvariantChecker:
                 f"Invalid next_state type: {type(next_state)}"
             )
     
-    def _check_monotonic_progression(
-        self,
-        current_state: SignalState,
-        next_state: SignalState
-    ) -> None:
-        """
-        ESB §3.3: No backward transitions allowed.
-        States must progress forward in the lifecycle.
-        
-        Monotonic progression means states can only move forward,
-        with special cases for CANCELLED (from any non-terminal) and
-        FAILED (from EXECUTING or ACTIVE).
-        """
-        # Define state ordering (lower index = earlier in lifecycle)
-        state_order = [
-            SignalState.PENDING,
-            SignalState.VALIDATED,
-            SignalState.ALLOCATED,
-            SignalState.EXECUTING,
-            SignalState.ACTIVE,
-            # Terminal states (no ordering between them)
-            SignalState.COMPLETED,
-            SignalState.FAILED,
-            SignalState.CANCELLED
-        ]
-        
-        # Allow transitions to CANCELLED from any non-terminal state
-        if next_state == SignalState.CANCELLED:
-            return
-        
-        # Allow transitions to FAILED from EXECUTING or ACTIVE
-        if next_state == SignalState.FAILED:
-            if current_state in [SignalState.EXECUTING, SignalState.ACTIVE]:
-                return
-            # FAILED from other states is a backward transition
-            raise StateInvariantError(
-                f"Backward transition not allowed: "
-                f"{current_state.value} -> {next_state.value}"
-            )
-        
-        # For other transitions, enforce monotonic progression
-        try:
-            current_idx = state_order.index(current_state)
-            next_idx = state_order.index(next_state)
-            
-            if next_idx <= current_idx:
-                raise StateInvariantError(
-                    f"Backward transition not allowed: "
-                    f"{current_state.value} -> {next_state.value}"
-                )
-        except ValueError as e:
-            raise StateInvariantError(f"State ordering error: {e}")
-    
+
     def _check_signal_id_immutability(self, context: Dict[str, Any]) -> None:
         """
         ESB §3.3: signal_id must be immutable once set.
