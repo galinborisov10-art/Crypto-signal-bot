@@ -55,7 +55,14 @@ export function inferDirectionFromSLTP(
   
   if (!slPOI || !tp1POI) {
     // Defensive fallback: should not happen if RiskContract was valid
-    // Default to bullish to avoid crashes
+    // This represents a configuration error - missing POIs referenced by risk contract
+    // Default to bullish to avoid crashes, but this indicates upstream validation failure
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[Reanalysis] Invariant violation: missing SL or TP1 POI. Defaulting to bullish. ' +
+      `Position: ${position.id}, SL POI ID: ${position.risk.stopLoss.referencePoiId}, ` +
+      `TP1 POI ID: ${tp1Contract?.targetPoiId || 'N/A'}`
+    );
     return 'bullish';
   }
   
@@ -68,7 +75,15 @@ export function inferDirectionFromSLTP(
     return 'bearish';
   } else {
     // Defensive fallback: Invalid structure (overlapping SL and TP1 ranges)
-    // Default to bullish to avoid crashes
+    // This should not happen if RiskContract validation was correct
+    // Overlapping ranges indicate a structural problem in the risk contract
+    // Default to bullish to avoid crashes, but this indicates upstream validation failure
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[Reanalysis] Invariant violation: overlapping SL and TP1 price ranges. Defaulting to bullish. ' +
+      `Position: ${position.id}, SL range: [${slPOI.priceRange.low}, ${slPOI.priceRange.high}], ` +
+      `TP1 range: [${tp1POI.priceRange.low}, ${tp1POI.priceRange.high}]`
+    );
     return 'bullish';
   }
 }
