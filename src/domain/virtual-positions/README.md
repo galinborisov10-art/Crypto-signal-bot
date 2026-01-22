@@ -409,6 +409,133 @@ npm test -- virtualPosition.invariants.spec.ts
 
 ---
 
+## 🔄 Phase 5.2: Progress Engine
+
+**What it does:**
+- Calculates structural progress toward TP targets (0% → 100%)
+- Detects when TP levels are reached
+- Derives lifecycle status (`open`, `progressing`, `stalled`, `completed`)
+- Returns updated immutable snapshots
+
+**What it does NOT do:**
+- Does NOT invalidate positions (Phase 5.3)
+- Does NOT re-evaluate scenarios (Phase 5.3)
+- Does NOT check structural validity (Phase 5.3)
+- Does NOT execute trades
+- Does NOT use confidence or scoring logic
+
+### Key Design Decisions
+
+1. **Direction inference:** Derived from SL/TP positioning (no EntryScenario dependency)
+   - If SL below TP1 → bullish
+   - If SL above TP1 → bearish
+   - Purely structural, deterministic
+
+2. **Progress calculation:** Linear, structural, clamped [0, 100]
+   - Entry reference: Midpoint between SL and TP1 boundaries
+   - **Entry Reference Clarification (ESB v1.0 Semantic Lock):**
+     * Entry reference is defined as the **structural midpoint** between the Stop Loss POI boundary and the nearest Take Profit (TP1) boundary
+     * This is a **deterministic structural approximation**, NOT an execution price
+     * NOT stored state, NOT derived from `openedAt`
+     * This definition is **frozen for ESB v1.0** to ensure replay safety and deterministic behavior
+   - Furthest TP: TP3 if exists, else TP2, else TP1
+   - Formula (Bullish): `((currentPrice - entryRef) / (furthestTP - entryRef)) * 100`
+   - Formula (Bearish): `((entryRef - currentPrice) / (entryRef - furthestTP)) * 100`
+
+3. **Non-decreasing progress:** `Math.max()` ensures monotonicity
+   - Progress can only increase or stay the same
+   - No new field needed - history = immutable snapshots
+
+4. **TP skipping allowed:** Price can reach TP3 before TP1/TP2
+   - Logical sorting always maintained: `['TP1', 'TP2', 'TP3']`
+   - No duplicates in `reachedTargets`
+
+5. **Stalling threshold:** Hard-coded 1 hour
+   - Progress unchanged AND time elapsed > 1 hour → `stalled`
+   - Uses `lastEvaluatedAt` from existing VirtualPosition
+
+6. **Status priority:** `completed` > `stalled` > `progressing` > `open`
+   - Strict hierarchy ensures predictable transitions
+   - `invalidated` NOT used in Phase 5.2 (reserved for Phase 5.3)
+
+### Function Signature
+
+```typescript
+function updateVirtualPositionProgress(
+  position: VirtualPosition,
+  currentPrice: number,
+  pois: Map<string, POI>,
+  evaluatedAt: number
+): VirtualPosition
+```
+
+### Mental Model
+
+> Phase 5.2 answers: "How is this idea progressing over time if price moves?"
+> 
+> NO decisions. NO execution. NO risk logic.
+
+### Usage Example
+
+```typescript
+// Initial position (from PR-5.1)
+let position = createVirtualPosition(scenario, score, risk, 1000000);
+// status: 'open', progressPercent: 0
+
+// Market moves, price = 125 (toward TP1)
+position = updateVirtualPositionProgress(
+  position,
+  125,
+  poiMap,
+  1000100
+);
+// status: 'progressing', progressPercent: 30 (example)
+
+// Price reaches TP1 (130)
+position = updateVirtualPositionProgress(
+  position,
+  130,
+  poiMap,
+  1000200
+);
+// status: 'progressing', progressPercent: 50, reachedTargets: ['TP1']
+
+// Price stalls for 1 hour
+position = updateVirtualPositionProgress(
+  position,
+  130,
+  poiMap,
+  1000200 + 3700000 // > 1 hour later
+);
+// status: 'stalled', progressPercent: 50 (unchanged)
+
+// Price eventually reaches TP3
+position = updateVirtualPositionProgress(
+  position,
+  180,
+  poiMap,
+  1005000
+);
+// status: 'completed', progressPercent: 100, reachedTargets: ['TP1', 'TP2', 'TP3']
+```
+
+### Testing
+
+Run progress engine tests:
+```bash
+npm test -- virtualPosition.progress.spec.ts
+```
+
+**Test Coverage:**
+- ✅ Progress monotonicity (never decreases)
+- ✅ Correct TP detection (with skipping)
+- ✅ Status transitions
+- ✅ Determinism
+- ✅ Immutability
+- ✅ Boundary cases (31 tests, all passing)
+
+---
+
 ## ⚠️ Constraints
 
 **Absolute Constraints (NEVER violate):**
@@ -421,10 +548,18 @@ npm test -- virtualPosition.invariants.spec.ts
 
 **Phase 5.1 Constraints:**
 
-- ❌ NO progress calculation
-- ❌ NO status transitions
-- ❌ NO target tracking
+- ❌ NO progress calculation (moved to Phase 5.2)
+- ❌ NO status transitions (moved to Phase 5.2)
+- ❌ NO target tracking (moved to Phase 5.2)
 - ❌ NO decision logic
+
+**Phase 5.2 Constraints:**
+
+- ❌ NO invalidation logic (Phase 5.3)
+- ❌ NO re-evaluation logic (Phase 5.3)
+- ❌ NO structural validity checks (Phase 5.3)
+- ❌ NO execution logic
+- ❌ NO confidence or score logic
 
 ---
 
@@ -433,24 +568,23 @@ npm test -- virtualPosition.invariants.spec.ts
 - **Phase 4.3**: Entry Scenarios → Provides `EntryScenario` type
 - **Phase 4.4**: Confluence Scoring → Provides `ConfluenceScore` type
 - **Phase 4.5**: Risk Contracts → Provides `RiskContract` type
-- **Phase 5.2**: Progress Engine → Will consume Virtual Positions (coming next)
+- **Phase 5.1**: Virtual Position Model → Provides `VirtualPosition` type and `createVirtualPosition()` factory
+- **Phase 5.2**: Progress Engine → Provides `updateVirtualPositionProgress()` (CURRENT)
 - **Phase 5.3**: Re-analysis Logic → Will trigger re-evaluation (future)
 
 ---
 
 ## 🔒 Semantic Lock
 
-Once merged, Virtual Position model semantics are **FROZEN for ESB v1.0**.
+Once merged:
+- **Phase 5.1 semantics FROZEN** (VirtualPosition model)
+- **Phase 5.2 semantics FROZEN** (Progress calculation logic)
 
-Changes to:
-- Field names
-- Type definitions
-- Validation rules
-- Error codes
+Changes to field names, type definitions, validation rules, or error codes require major version bump and migration plan.
 
-... require major version bump and migration plan.
+**Reason**: Virtual Positions and progress semantics are the runtime foundation - breaking changes cascade through the entire system.
 
-**Reason**: Virtual Positions are the runtime foundation - breaking changes cascade through the entire system.
+Phase 5.3 MUST NOT modify progress logic.
 
 ---
 
@@ -464,8 +598,10 @@ Changes to:
 - Foundation for paper trading
 - No execution, no capital, no risk
 
-**PR-5.1 = Model + Creation Only**
+**Phase 5.1 = Model + Creation**
 
-**PR-5.2 = Evolution + Progress**
+**Phase 5.2 = Evolution + Progress** ✅
+
+**Phase 5.3 = Re-analysis + Invalidation** (future)
 
 Clean, simple, safe. ✅

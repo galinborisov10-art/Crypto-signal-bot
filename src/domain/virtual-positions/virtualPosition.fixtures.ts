@@ -1,5 +1,5 @@
 /**
- * Virtual Position Test Fixtures - Phase 5.1: Virtual Position Model
+ * Virtual Position Test Fixtures - Phase 5.1 + 5.2: Virtual Position Model + Progress Engine
  * 
  * Reusable test fixtures for Virtual Position testing across all states.
  * These fixtures support deterministic, replay-safe testing.
@@ -9,12 +9,14 @@
  * 2. Invalid inputs (invalid scenario, invalid risk, mismatched relationships)
  * 3. Expected outputs (valid Virtual Positions)
  * 4. Edge cases (boundary timestamps, minimal data)
+ * 5. POI fixtures for progress engine testing (Phase 5.2)
  */
 
 import { EntryScenario, EntryScenarioType } from '../entry-scenarios';
 import { ConfluenceScore } from '../confluence-scoring';
 import { RiskContract } from '../risk-contracts';
 import { VirtualPosition } from './virtualPosition.types';
+import { POI, POIType } from '../poi';
 
 /**
  * Fixed reference timestamp for deterministic testing
@@ -396,4 +398,151 @@ export const minimalValidRisk: RiskContract = {
   rr: 3.0, // Exactly at minimum
   status: 'valid',
   evaluatedAt: T0
+};
+
+// ============================================================
+// POI FIXTURES FOR PHASE 5.2 (PROGRESS ENGINE)
+// ============================================================
+
+/**
+ * Bullish Scenario POI Set
+ * Entry reference around 110, SL at 100-105, TPs at 130, 150, 180
+ */
+
+export const bullishSLPOI: POI = {
+  id: 'poi-sl-001',
+  type: POIType.OrderBlock,
+  timeframe: '4h',
+  priceRange: { low: 100, high: 105 },
+  directionBias: 'bullish',
+  validFrom: T0,
+  validUntil: T0 + 86400000,
+  mitigated: false
+};
+
+export const bullishTP1POI: POI = {
+  id: 'poi-tp1-001',
+  type: POIType.PreviousHigh,
+  timeframe: '4h',
+  priceRange: { low: 130, high: 135 },
+  directionBias: 'bullish',
+  validFrom: T0,
+  validUntil: T0 + 86400000,
+  mitigated: false
+};
+
+export const bullishTP2POI: POI = {
+  id: 'poi-tp2-001',
+  type: POIType.PreviousHigh,
+  timeframe: '4h',
+  priceRange: { low: 150, high: 155 },
+  directionBias: 'bullish',
+  validFrom: T0,
+  validUntil: T0 + 86400000,
+  mitigated: false
+};
+
+export const bullishTP3POI: POI = {
+  id: 'poi-tp3-001',
+  type: POIType.BuySideLiquidity,
+  timeframe: '4h',
+  priceRange: { low: 180, high: 185 },
+  directionBias: 'bullish',
+  validFrom: T0,
+  validUntil: T0 + 86400000,
+  mitigated: false
+};
+
+/**
+ * Bearish Scenario POI Set
+ * Entry reference around 190, SL at 195-200, TPs at 170, 150, 120
+ */
+
+export const bearishSLPOI: POI = {
+  id: 'poi-sl-bearish-001',
+  type: POIType.OrderBlock,
+  timeframe: '4h',
+  priceRange: { low: 195, high: 200 },
+  directionBias: 'bearish',
+  validFrom: T0,
+  validUntil: T0 + 86400000,
+  mitigated: false
+};
+
+export const bearishTP1POI: POI = {
+  id: 'poi-tp1-bearish-001',
+  type: POIType.PreviousLow,
+  timeframe: '4h',
+  priceRange: { low: 165, high: 170 },
+  directionBias: 'bearish',
+  validFrom: T0,
+  validUntil: T0 + 86400000,
+  mitigated: false
+};
+
+export const bearishTP2POI: POI = {
+  id: 'poi-tp2-bearish-001',
+  type: POIType.PreviousLow,
+  timeframe: '4h',
+  priceRange: { low: 145, high: 150 },
+  directionBias: 'bearish',
+  validFrom: T0,
+  validUntil: T0 + 86400000,
+  mitigated: false
+};
+
+export const bearishTP3POI: POI = {
+  id: 'poi-tp3-bearish-001',
+  type: POIType.SellSideLiquidity,
+  timeframe: '4h',
+  priceRange: { low: 120, high: 125 },
+  directionBias: 'bearish',
+  validFrom: T0,
+  validUntil: T0 + 86400000,
+  mitigated: false
+};
+
+/**
+ * POI Map for bullish testing
+ */
+export const bullishPOIMap: Map<string, POI> = new Map([
+  ['poi-sl-001', bullishSLPOI],
+  ['poi-tp1-001', bullishTP1POI],
+  ['poi-tp2-001', bullishTP2POI],
+  ['poi-tp3-001', bullishTP3POI]
+]);
+
+/**
+ * POI Map for bearish testing
+ */
+export const bearishPOIMap: Map<string, POI> = new Map([
+  ['poi-sl-bearish-001', bearishSLPOI],
+  ['poi-tp1-bearish-001', bearishTP1POI],
+  ['poi-tp2-bearish-001', bearishTP2POI],
+  ['poi-tp3-bearish-001', bearishTP3POI]
+]);
+
+/**
+ * Virtual Position fixtures for progress testing
+ */
+
+export const openBullishPosition: VirtualPosition = {
+  id: 'vpos-scen-1-1704067200000',
+  scenarioId: 'scen-1',
+  scenarioType: EntryScenarioType.LiquiditySweepDisplacement,
+  score: validScore,
+  risk: validRisk,
+  status: 'open',
+  progressPercent: 0,
+  reachedTargets: [],
+  openedAt: T0,
+  lastEvaluatedAt: T0
+};
+
+export const progressingBullishPosition: VirtualPosition = {
+  ...openBullishPosition,
+  progressPercent: 45,
+  reachedTargets: ['TP1'],
+  status: 'progressing',
+  lastEvaluatedAt: T0 + 3600000 // 1 hour later
 };
