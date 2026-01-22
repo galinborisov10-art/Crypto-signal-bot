@@ -22,7 +22,7 @@ class SignalState(Enum):
     
     PENDING = "pending"        # ESB §3.1: equivalent to CREATED, initial state
     VALIDATED = "validated"    # ESB §3.1: signal passed validation checks
-    ALLOCATED = "allocated"    # ESB §3.1: capital/resources allocated
+    ALLOCATED = "allocated"    # ESB §3.1: execution resources reserved
     EXECUTING = "executing"    # ESB §3.1: execution in progress
     ACTIVE = "active"          # ESB §3.1: position is active/live
     COMPLETED = "completed"    # ESB §3.1: terminal state - successful completion
