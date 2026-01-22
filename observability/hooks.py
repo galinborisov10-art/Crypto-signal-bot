@@ -40,6 +40,7 @@ class ObservabilityHooks:
         Hook called when a signal is created.
         
         ESB v1.0 §3.5: Passive observation only.
+        ESB v1.0 §3.1: Signals start in PENDING state per FSM spec.
         
         Args:
             signal_id: Unique signal identifier

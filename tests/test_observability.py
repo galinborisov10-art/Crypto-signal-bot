@@ -468,10 +468,10 @@ class TestObservabilityPassivity:
         assert logs1[0] == logs2[0]
     
     def test_hooks_can_be_called_multiple_times(self):
-        """Hooks should be idempotent for the same signal."""
+        """Hooks should accumulate metrics across multiple signals."""
         hooks = ObservabilityHooks()
         
-        # Call same hook multiple times
+        # Call same hook multiple times with different signals
         hooks.on_signal_created("test-123")
         hooks.on_signal_created("test-456")
         
