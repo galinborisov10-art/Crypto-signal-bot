@@ -84,3 +84,11 @@ validate_no_zone_logging.py
 # Audit data (production data - should not be committed)
 audit_data/
 sent_signals_cache.json
+
+# TypeScript / Node.js
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.npm
+.eslintcache
