@@ -1062,7 +1062,7 @@ def get_user_settings(bot_data, chat_id):
             'rr': 3.0,
             'timeframe': '4h',
             'alerts_enabled': False,
-            'alert_interval': 3600,
+            'alert_interval': 1800,  # 30 minutes (ESB v1.0 §12)
             'news_enabled': False,
             'news_interval': 7200,
             'use_fundamental': False,  # Default: fundamental analysis disabled
