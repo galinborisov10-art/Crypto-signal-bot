@@ -29,6 +29,19 @@ export {
   updateVirtualPositionProgress
 } from './virtualPosition.progress';
 
+// Phase 5.3: Re-analysis & Invalidation Engine
+export {
+  MarketState,
+  InvalidationReason,
+  ReanalysisCheck,
+  ReanalysisResult
+} from './reanalysis.types';
+
+export {
+  reanalyzeVirtualPosition,
+  inferDirectionFromSLTP
+} from './reanalysis.contracts';
+
 // Test fixtures (for testing only)
 export {
   T0,
@@ -66,3 +79,32 @@ export {
   openBullishPosition,
   progressingBullishPosition
 } from './virtualPosition.fixtures';
+
+// Phase 5.3 test fixtures (for testing only)
+export {
+  validMarketState,
+  structureBrokenState,
+  poiInvalidatedStateSL,
+  poiInvalidatedStateTP1,
+  poiInvalidatedStateTP3,
+  counterLiquidityState,
+  htfBiasFlippedState,
+  htfBiasNeutralState,
+  validOpenPosition,
+  completedPosition,
+  progressingPosition,
+  stalledPosition,
+  expectedStillValid,
+  expectedStructureBroken,
+  expectedPOIInvalidated,
+  expectedCounterLiquidity,
+  expectedHTFBiasFlipped,
+  expectedTimeDecayExceeded,
+  expectedCompletedSkip,
+  evaluatedAtZero,
+  evaluatedAt1Hour,
+  evaluatedAtAlmost24Hours,
+  evaluatedAtExactly24Hours,
+  evaluatedAtOver24Hours,
+  evaluatedAt48Hours
+} from './reanalysis.fixtures';
