@@ -36,7 +36,6 @@ import {
   onlyStructuralConfirmation,
   allConfluencesPresent,
   noConfluences,
-  mixedConfluences,
   formingScenario,
   validScenario,
   invalidatedScenario,
@@ -778,7 +777,19 @@ describe('Entry Scenario - Invariant Tests', () => {
         mitigated: false
       });
       
-      const context = buildLiquidityContext(poi, T0);
+      // Create HTF POI to make context tradable
+      const htfPOI = createPOI({
+        id: 'poi-htf-invalidation-003',
+        type: POIType.OrderBlock,
+        timeframe: '1d',
+        priceRange: { low: 41500, high: 42000 },
+        directionBias: 'bullish',
+        validFrom: T0,
+        validUntil: T0 + 172800000,
+        mitigated: false
+      });
+      
+      const context = buildLiquidityContext(poi, T0, htfPOI);
       
       const scenario = buildEntryScenario(
         EntryScenarioType.OB_FVG_Discount,
@@ -788,8 +799,8 @@ describe('Entry Scenario - Invariant Tests', () => {
         T0
       );
       
-      // Act: Context at a later time but still active
-      const stillActiveContext = buildLiquidityContext(poi, T0 + 3600000);
+      // Act: Context at a later time but still active and tradable
+      const stillActiveContext = buildLiquidityContext(poi, T0 + 3600000, htfPOI);
       const result = invalidateOnContextChange(scenario, stillActiveContext);
       
       // Assert

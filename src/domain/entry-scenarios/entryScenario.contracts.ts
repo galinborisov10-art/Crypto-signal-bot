@@ -174,6 +174,11 @@ export function invalidateOnContextChange(
   scenario: EntryScenario,
   nextContext: LiquidityContext
 ): InvalidationResult {
+  // NOTE: scenario parameter is currently unused but kept for future extensibility
+  // Future implementations may use scenario.type or scenario.requiredGates for
+  // scenario-specific invalidation logic
+  void scenario; // Acknowledge unused parameter
+  
   // Check if nextContext is tradable using Phase 4.2 contract
   if (!isLiquidityContextTradable(nextContext)) {
     return {
