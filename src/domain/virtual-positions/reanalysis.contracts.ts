@@ -2,7 +2,7 @@
  * Re-analysis Contracts - Phase 5.3: Re-analysis & Invalidation Engine
  * 
  * Pure, deterministic re-analysis for Virtual Positions.
- * Implements structural validity checking only - NO execution, invalidation, or re-analysis.
+ * Implements structural validity checking only - NO execution or trade management.
  * 
  * Contract Rules:
  * 1. Deterministic - same inputs → same output
