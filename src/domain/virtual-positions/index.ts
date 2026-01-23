@@ -52,6 +52,16 @@ export {
   deriveGuidance
 } from './guidance.contracts';
 
+// Phase 5.5: Timeline / Observation History
+export {
+  TimelineEntry,
+  VirtualPositionTimeline
+} from './timeline.types';
+
+export {
+  appendTimelineEntry
+} from './timeline.contracts';
+
 // Test fixtures (for testing only)
 export {
   T0,
@@ -118,3 +128,17 @@ export {
   evaluatedAtOver24Hours,
   evaluatedAt48Hours
 } from './reanalysis.fixtures';
+
+// Phase 5.5 test fixtures (for testing only)
+export {
+  emptyTimeline,
+  earlyEntry,
+  midEntry,
+  lateEntry,
+  invalidatedEntry,
+  sameTimeEntry1,
+  sameTimeEntry2,
+  singleEntryTimeline,
+  multiEntryTimeline,
+  outOfOrderEntry
+} from './timeline.fixtures';

@@ -925,6 +925,156 @@ npm test -- guidance.invariants.spec.ts
 
 ---
 
+## 🔄 Phase 5.5: Timeline / Observation History
+
+**What it does:**
+- Records how Virtual Position analytical state evolves over time
+- Stores ordered snapshots as append-only log
+- Aggregates outputs from Phases 5.2, 5.3, 5.4
+- Fully deterministic and replay-safe
+
+**What it does NOT do:**
+- Does NOT analyze market data
+- Does NOT make decisions
+- Does NOT provide recommendations
+- Does NOT influence progress, re-analysis, or guidance logic
+- Does NOT reorder or reinterpret past data
+
+### Timeline Structure
+
+```typescript
+interface TimelineEntry {
+  evaluatedAt: number;
+  
+  // From Phase 5.2
+  progressPercent: number;
+  status: VirtualPositionStatus;
+  
+  // From Phase 5.3
+  validity: 'still_valid' | 'invalidated';
+  invalidationReason?: InvalidationReason;
+  
+  // From Phase 5.4
+  guidance: GuidanceSignal;
+}
+```
+
+### Key Design Decisions
+
+1. **Append-only log:** Entries can only be added, never removed or modified
+2. **Chronological order:** Entries sorted by `evaluatedAt` (append order if same timestamp)
+3. **Silent no-op on invalid append:** Earlier timestamps ignored (returns original timeline)
+4. **No validation:** Trusts upstream phases (5.2, 5.3, 5.4)
+5. **No query helpers:** Phase 5.5 = memory, Phase 6 = interpretation
+6. **Manual construction:** No factory functions or aggregation helpers
+
+### Invariants
+
+- ✅ Entries ordered by `evaluatedAt`
+- ✅ `entry.evaluatedAt >= lastEntry.evaluatedAt` (or silent no-op)
+- ✅ Timeline immutable (always returns new object)
+- ✅ Deterministic (same inputs → same output)
+
+### Mental Model
+
+> **Phase 5.5 is MEMORY, NOT INTELLIGENCE.**
+> 
+> - No interpretation
+> - No optimization
+> - No inference
+> - Just record
+
+### Function Signature
+
+```typescript
+function appendTimelineEntry(
+  timeline: VirtualPositionTimeline,
+  entry: TimelineEntry
+): VirtualPositionTimeline
+```
+
+### Usage Example
+
+```typescript
+// Create empty timeline
+let timeline: VirtualPositionTimeline = {
+  positionId: 'pos-1',
+  entries: []
+};
+
+// Position evolves (Phase 5.2)
+const position1 = updateVirtualPositionProgress(position, 120, pois, 1000000);
+const reanalysis1 = reanalyzeVirtualPosition(position1, marketState, 1000000);
+const guidance1 = deriveGuidance(position1, reanalysis1);
+
+// Record first observation
+const entry1: TimelineEntry = {
+  evaluatedAt: 1000000,
+  progressPercent: position1.progressPercent,
+  status: position1.status,
+  validity: reanalysis1.status,
+  invalidationReason: reanalysis1.status === 'invalidated' ? reanalysis1.reason : undefined,
+  guidance: guidance1.signal
+};
+
+timeline = appendTimelineEntry(timeline, entry1);
+// timeline.entries.length === 1
+
+// Position evolves again
+const position2 = updateVirtualPositionProgress(position1, 130, pois, 1000100);
+const reanalysis2 = reanalyzeVirtualPosition(position2, marketState, 1000100);
+const guidance2 = deriveGuidance(position2, reanalysis2);
+
+// Record second observation
+const entry2: TimelineEntry = {
+  evaluatedAt: 1000100,
+  progressPercent: position2.progressPercent,
+  status: position2.status,
+  validity: reanalysis2.status,
+  invalidationReason: reanalysis2.status === 'invalidated' ? reanalysis2.reason : undefined,
+  guidance: guidance2.signal
+};
+
+timeline = appendTimelineEntry(timeline, entry2);
+// timeline.entries.length === 2
+
+// Attempt to append out-of-order entry
+const oldEntry: TimelineEntry = {
+  evaluatedAt: 999999, // earlier than entry1
+  // ...
+};
+
+timeline = appendTimelineEntry(timeline, oldEntry);
+// timeline unchanged (silent no-op)
+// timeline.entries.length === 2
+```
+
+### Testing
+
+Run timeline tests:
+```bash
+npm test -- timeline.invariants.spec.ts
+```
+
+**Test Coverage:**
+- ✅ Empty timeline → first append
+- ✅ Sequential appends
+- ✅ Same timestamp handling (insertion order preserved)
+- ✅ Out-of-order rejection (silent no-op)
+- ✅ Immutability (no mutation)
+- ✅ Determinism (same inputs → same output)
+
+### Future Phase 6 (Policy / Interpretation Layer)
+
+Phase 6 MAY interpret timeline history for:
+- Pattern detection
+- Trend analysis
+- Policy decisions
+
+Phase 5.5 does NOT interpret history.
+
+---
+
 ## 📖 Summary
 
 **Virtual Position = State Model for Dry-Run Observation**
@@ -942,6 +1092,8 @@ npm test -- guidance.invariants.spec.ts
 **Phase 5.3 = Re-analysis + Invalidation** ✅
 
 **Phase 5.4 = Guidance Layer / Narrative Signals** ✅
+
+**Phase 5.5 = Timeline / Observation History** ✅
 
 **ESB v1.0 Dry-Run Runtime COMPLETE!** 🎉
 
