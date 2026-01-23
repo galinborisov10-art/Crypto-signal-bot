@@ -54,7 +54,11 @@ function analyzeTrajectory(entries: readonly TimelineEntry[]): TrajectorySignal 
   // Calculate deltas between sequential entries
   const deltas: number[] = [];
   for (let i = 1; i < entries.length; i++) {
-    deltas.push(entries[i].progressPercent - entries[i - 1].progressPercent);
+    const current = entries[i];
+    const previous = entries[i - 1];
+    if (current !== undefined && previous !== undefined) {
+      deltas.push(current.progressPercent - previous.progressPercent);
+    }
   }
 
   // Check for regression (should never happen if Phase 5.2 invariants hold)
@@ -76,7 +80,9 @@ function analyzeTrajectory(entries: readonly TimelineEntry[]): TrajectorySignal 
   if (allPositive) {
     let hasShrinking = false;
     for (let i = 1; i < deltas.length; i++) {
-      if (deltas[i] < deltas[i - 1]) {
+      const current = deltas[i];
+      const previous = deltas[i - 1];
+      if (current !== undefined && previous !== undefined && current < previous) {
         hasShrinking = true;
         break;
       }
@@ -214,7 +220,11 @@ function analyzeGuidanceConsistency(
   // Check for flip-flop (A → B → A pattern)
   let hasFlipFlop = false;
   for (let i = 2; i < signals.length; i++) {
-    if (signals[i] === signals[i - 2] && signals[i] !== signals[i - 1]) {
+    const current = signals[i];
+    const twoBack = signals[i - 2];
+    const oneBack = signals[i - 1];
+    if (current !== undefined && twoBack !== undefined && oneBack !== undefined &&
+        current === twoBack && current !== oneBack) {
       hasFlipFlop = true;
       break;
     }
@@ -231,15 +241,25 @@ function analyzeGuidanceConsistency(
     STRUCTURE_AT_RISK: 1
   };
 
-  const firstStrength = signalStrength[signals[0]];
-  const lastStrength = signalStrength[signals[signals.length - 1]];
+  const firstSignal = signals[0];
+  const lastSignal = signals[signals.length - 1];
+  
+  if (firstSignal === undefined || lastSignal === undefined) {
+    return 'CONSISTENT';
+  }
+
+  const firstStrength = signalStrength[firstSignal];
+  const lastStrength = signalStrength[lastSignal];
 
   // Check if net movement is downward
   if (lastStrength < firstStrength) {
     // Check if there's no recovery (flip-flop back up)
     let hasRecovery = false;
     for (let i = 1; i < signals.length; i++) {
-      if (signalStrength[signals[i]] > signalStrength[signals[i - 1]]) {
+      const current = signals[i];
+      const previous = signals[i - 1];
+      if (current !== undefined && previous !== undefined &&
+          signalStrength[current] > signalStrength[previous]) {
         hasRecovery = true;
         break;
       }

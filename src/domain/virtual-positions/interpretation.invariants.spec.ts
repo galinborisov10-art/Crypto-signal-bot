@@ -40,15 +40,9 @@ import {
   expectedStalledTrajectoryInterpretation,
   expectedRegressingInterpretation,
   expectedCompletedInterpretation,
-  expectedInvalidatedInterpretation,
-  expectedRepeatedInstabilityInterpretation,
-  expectedEarlyWeakeningInterpretation,
   expectedEarlyInvalidationInterpretation,
-  expectedMidInvalidationInterpretation,
-  expectedLateInvalidationInterpretation,
   expectedFlipFlopInterpretation,
-  expectedDegradingInterpretation,
-  expectedConsistentInterpretation
+  expectedDegradingInterpretation
 } from './interpretation.fixtures';
 
 describe('Interpretation - Invariant Tests', () => {

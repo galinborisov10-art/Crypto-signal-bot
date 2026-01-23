@@ -593,7 +593,7 @@ export const expectedStalledTrajectoryInterpretation: TimelineInterpretation = {
   trajectory: 'STALLED_TRAJECTORY',
   stability: 'REPEATED_INSTABILITY',
   invalidationPattern: undefined,
-  guidanceConsistency: 'CONSISTENT'
+  guidanceConsistency: 'DEGRADING' // HOLD → WEAK → WEAK (strength 4 → 2 → 2, no recovery)
 };
 
 export const expectedRegressingInterpretation: TimelineInterpretation = {
@@ -654,14 +654,14 @@ export const expectedLateInvalidationInterpretation: TimelineInterpretation = {
 
 export const expectedFlipFlopInterpretation: TimelineInterpretation = {
   trajectory: 'STABLE_PROGRESS',
-  stability: 'REPEATED_INSTABILITY',
+  stability: 'STRUCTURALLY_STABLE', // Only 1 stalled entry, not ≥ 2
   invalidationPattern: undefined,
   guidanceConsistency: 'FLIP_FLOP'
 };
 
 export const expectedDegradingInterpretation: TimelineInterpretation = {
   trajectory: 'SLOWING_PROGRESS',
-  stability: 'EARLY_WEAKENING',
+  stability: 'STRUCTURALLY_STABLE', // stalled at 25%, which is NOT < 25%
   invalidationPattern: undefined,
   guidanceConsistency: 'DEGRADING'
 };
