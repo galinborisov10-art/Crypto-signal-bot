@@ -166,3 +166,11 @@ export {
   PolicyContext,
   PolicyResult
 } from './policy.types';
+
+// Policy derivation (Phase 6.2.2)
+export {
+  derivePolicy
+} from './policy.contracts';
+
+// Phase 6.2 test fixtures (for testing only)
+export * from './policy.fixtures';
