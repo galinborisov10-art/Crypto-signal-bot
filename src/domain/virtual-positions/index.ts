@@ -189,3 +189,10 @@ export {
 
 // Decision Guardrail test fixtures (for testing only)
 export * from './decisionGuardrail.fixtures';
+
+// Decision types (Phase 6.4.1)
+export {
+  DecisionAction,
+  DecisionReason,
+  DecisionResult
+} from './decision.types';
