@@ -196,3 +196,9 @@ export {
   DecisionReason,
   DecisionResult
 } from './decision.types';
+
+// Decision derivation (Phase 6.4.2)
+export { deriveDecision } from './decision.contracts';
+
+// Decision test fixtures (for testing only)
+export * from './decision.fixtures';
