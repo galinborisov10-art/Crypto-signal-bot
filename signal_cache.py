@@ -48,13 +48,42 @@ def load_sent_signals(base_path=None):
                 print(f"✅ Loaded {len(cache)} signals from cache")
                 
                 # Clean old entries (older than CACHE_CLEANUP_HOURS)
+                # Bug H3 Fix: Check for active positions before cleanup
                 before_cleanup = len(cache)
                 cutoff = datetime.now().timestamp() - timedelta(hours=CACHE_CLEANUP_HOURS).total_seconds()
-                cache = {
-                    k: v for k, v in cache.items() 
-                    # Use last_checked for cleanup (backward compatible with old cache entries)
-                    if datetime.fromisoformat(v.get('last_checked', v['timestamp'])).timestamp() > cutoff
-                }
+                
+                # Import position_manager to check active trades
+                try:
+                    from position_manager import PositionManager
+                    pm = PositionManager()
+                    open_positions = pm.get_open_positions()
+                    
+                    # Build set of active position keys for faster lookup
+                    active_position_keys = set()
+                    for pos in open_positions:
+                        # Match cache key format: {symbol}_{signal_type}_{timeframe}
+                        pos_key = f"{pos['symbol']}_{pos['signal_type']}_{pos['timeframe']}"
+                        active_position_keys.add(pos_key)
+                    
+                    print(f"📊 Found {len(active_position_keys)} active positions to protect from cleanup")
+                except Exception as e:
+                    print(f"⚠️ Could not load active positions for cleanup protection: {e}")
+                    active_position_keys = set()
+                
+                # Clean old entries but preserve active positions
+                cleaned_cache = {}
+                for k, v in cache.items():
+                    timestamp = datetime.fromisoformat(v.get('last_checked', v['timestamp'])).timestamp()
+                    
+                    # Keep entry if:
+                    # 1. It's newer than cutoff, OR
+                    # 2. It matches an active position (Bug H3 fix)
+                    if timestamp > cutoff or k in active_position_keys:
+                        cleaned_cache[k] = v
+                        if k in active_position_keys and timestamp <= cutoff:
+                            print(f"🔒 Preserved active position cache: {k}")
+                
+                cache = cleaned_cache
                 
                 cleaned = before_cleanup - len(cache)
                 if cleaned > 0:

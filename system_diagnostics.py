@@ -465,7 +465,7 @@ async def diagnose_daily_report_issue(base_path: str = None) -> List[Dict[str, A
         base_path = os.path.dirname(os.path.abspath(__file__))
     
     # Check for daily report execution in last 24 hours
-    daily_report_logs = grep_logs('Daily report sent successfully', hours=24, base_path=base_path)
+    daily_report_logs = grep_logs('✅ Daily report sent successfully', hours=24, base_path=base_path)
     
     if not daily_report_logs:
         # Check if scheduled
