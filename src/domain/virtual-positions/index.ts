@@ -174,3 +174,10 @@ export {
 
 // Phase 6.2 test fixtures (for testing only)
 export * from './policy.fixtures';
+
+// Decision Guardrail types (Phase 6.3.1)
+export {
+  DecisionPermission,
+  DecisionGuardrailReason,
+  DecisionGuardrailResult
+} from './decisionGuardrail.types';
