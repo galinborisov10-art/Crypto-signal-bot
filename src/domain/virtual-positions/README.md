@@ -588,6 +588,159 @@ Phase 5.3 MUST NOT modify progress logic.
 
 ---
 
+## 🔄 Phase 5.3: Re-analysis & Invalidation Engine
+
+**What it does:**
+- Re-evaluates structural validity of Virtual Positions
+- Detects invalidation conditions
+- Returns explicit, machine-readable results
+- Fully deterministic and replay-safe
+
+**What it does NOT do:**
+- Does NOT provide guidance or suggestions
+- Does NOT manage positions
+- Does NOT execute trades
+- Does NOT calculate progress (Phase 5.2)
+- Does NOT communicate with users
+
+### Invalidation Reasons
+
+| Reason | Meaning |
+|--------|---------|
+| `STRUCTURE_BROKEN` | Market structure contradicts scenario premise |
+| `POI_INVALIDATED` | Critical POI (SL/TP anchor) is mitigated |
+| `LIQUIDITY_TAKEN_AGAINST` | Opposing-side liquidity taken after entry |
+| `HTF_BIAS_FLIPPED` | Higher-timeframe bias flipped against scenario |
+| `TIME_DECAY_EXCEEDED` | Scenario exceeded 24-hour lifespan without resolution |
+
+### Key Design Decisions
+
+1. **Minimal input:** Upstream provides analysis results (no market analysis in Phase 5.3)
+2. **Short-circuit validation:** Returns on first invalidation detected
+3. **HTF direction inference:** Reuses Phase 5.2 logic (SL/TP positioning)
+4. **Completed positions:** Skipped (terminal state)
+5. **Time decay:** Hard-coded 24 hours (consistency with Phase 5.2)
+
+### Mental Model
+
+> **Phase 5.2:** "How is this idea progressing?"  
+> **Phase 5.3:** "Is this idea still valid?"  
+> 
+> **NOT:** "What should we do?"
+
+### Function Signature
+
+```typescript
+function reanalyzeVirtualPosition(
+  position: VirtualPosition,
+  marketState: MarketState,
+  evaluatedAt: number
+): ReanalysisResult
+```
+
+### Market State
+
+```typescript
+interface MarketState {
+  pois: Map<string, POI>;
+  htfBias: 'bullish' | 'bearish' | 'neutral';
+  structureIntact: boolean;
+  counterLiquidityTaken: boolean;
+  invalidatedPOIs: Set<string>;
+}
+```
+
+**Architecture Decision:** Minimal, observational input. Phase 5.3 does NOT analyze market - it only reads analysis results from upstream.
+
+### Re-analysis Result
+
+```typescript
+type ReanalysisResult =
+  | {
+      status: 'still_valid';
+      checksPassed: ReanalysisCheck[];
+    }
+  | {
+      status: 'invalidated';
+      reason: InvalidationReason;
+    };
+```
+
+**Architecture Decision:** Explicit, machine-readable enums only (NO free-text).
+
+### Validation Checks (Ordered, Short-Circuit)
+
+Execute in this exact order, return immediately on first failure:
+
+1. **Completed Position Check (Pre-filter):** Skip re-analysis for completed positions
+2. **Structure Validity:** Check `marketState.structureIntact`
+3. **POI Validity:** Check if critical POIs (SL + all TPs) are invalidated
+4. **Liquidity Against Position:** Check `marketState.counterLiquidityTaken`
+5. **HTF Bias Alignment:** Check if HTF bias has flipped
+6. **Time Decay:** Check if elapsed time > 24 hours
+7. **All Checks Passed:** Return all passed checks (audit-friendly)
+
+### Usage Example
+
+```typescript
+// Position from Phase 5.1/5.2
+const position = updateVirtualPositionProgress(
+  virtualPosition,
+  currentPrice,
+  pois,
+  1000100
+);
+
+// Market state (provided by upstream analysis)
+const marketState: MarketState = {
+  pois: poiMap,
+  htfBias: 'bullish',
+  structureIntact: true,
+  counterLiquidityTaken: false,
+  invalidatedPOIs: new Set()
+};
+
+// Re-analyze
+const result = reanalyzeVirtualPosition(
+  position,
+  marketState,
+  1000200
+);
+
+if (result.status === 'still_valid') {
+  console.log('Position still valid');
+  console.log('Checks passed:', result.checksPassed);
+  // ['STRUCTURE_INTACT', 'POI_REMAINS_VALID', 'NO_COUNTER_LIQUIDITY', 'HTF_BIAS_ALIGNED']
+} else {
+  console.log('Position invalidated');
+  console.log('Reason:', result.reason);
+  // e.g., 'STRUCTURE_BROKEN'
+}
+```
+
+### Testing
+
+Run re-analysis tests:
+```bash
+npm test -- reanalysis.invariants.spec.ts
+```
+
+**Test Coverage:**
+- ✅ Determinism (same inputs → same output)
+- ✅ No mutation (inputs unchanged)
+- ✅ Each invalidation reason (5 scenarios)
+- ✅ Still-valid path
+- ✅ Boundary cases (24 hours, neutral HTF, completed position)
+- ✅ Isolation from Phase 5.2
+
+### Future Guidance Layer (Phase 5.4+)
+
+Everything like "hold", "move stop", "partial close", "wait" belongs to a future Guidance Layer, NOT Phase 5.3.
+
+**Phase 5.3 ONLY answers: "Is this still valid?"**
+
+---
+
 ## 📖 Summary
 
 **Virtual Position = State Model for Dry-Run Observation**
@@ -598,10 +751,12 @@ Phase 5.3 MUST NOT modify progress logic.
 - Foundation for paper trading
 - No execution, no capital, no risk
 
-**Phase 5.1 = Model + Creation**
+**Phase 5.1 = Model + Creation** ✅
 
 **Phase 5.2 = Evolution + Progress** ✅
 
-**Phase 5.3 = Re-analysis + Invalidation** (future)
+**Phase 5.3 = Re-analysis + Invalidation** ✅
+
+**Dry-Run Runtime Complete!** 🎉
 
 Clean, simple, safe. ✅
