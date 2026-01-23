@@ -760,3 +760,189 @@ Everything like "hold", "move stop", "partial close", "wait" belongs to a future
 **Dry-Run Runtime Complete!** 🎉
 
 Clean, simple, safe. ✅
+
+---
+
+## 🔄 Phase 5.4: Guidance Layer / Narrative Signals
+
+**What it does:**
+- Provides observational context for Virtual Positions
+- Aggregates progress, status, and validity into analytical posture
+- Returns machine-readable guidance signals
+- Fully deterministic and replay-safe
+
+**What it does NOT do:**
+- Does NOT make decisions
+- Does NOT manage positions
+- Does NOT execute trades
+- Does NOT provide trading instructions
+- Does NOT perform market analysis
+
+### Guidance Signals
+
+| Signal | Meaning |
+|--------|---------|
+| `HOLD_THESIS` | Thesis intact, structure & progress healthy |
+| `THESIS_WEAKENING` | Valid, but momentum/progress degraded (stalled) |
+| `STRUCTURE_AT_RISK` | Invalidated (re-analysis flagged failure) |
+| `WAIT_FOR_CONFIRMATION` | Early stage / low progress / neutral state |
+
+### Key Design Decisions
+
+1. **Priority cascade:** `completed` > `invalidated` > `stalled` > progress thresholds
+2. **Progress thresholds:** `< 25%` = wait, `≥ 25%` = hold (if not stalled)
+3. **Stalling dominance:** ANY `stalled` status → `THESIS_WEAKENING`
+4. **Status informs, progress leads:** `open` or `progressing` don't override progress checks
+5. **No invalidation reason:** Phase 5.3 already carries it, no duplication
+
+### Mental Model
+
+> **Phase 5.2:** "How is it progressing?"  
+> **Phase 5.3:** "Is it still valid?"  
+> **Phase 5.4:** "What is the current analytical posture?"
+
+**NOT:**
+> "What should I do?"
+
+### Critical Distinction
+
+Phase 5.4 is **context**, NOT **decision**.
+
+Guidance signals are **observational**, NOT **instructional**.
+
+### Function Signature
+
+```typescript
+function deriveGuidance(
+  position: VirtualPosition,
+  reanalysisResult: ReanalysisResult
+): GuidanceResult
+```
+
+### Guidance Result
+
+```typescript
+interface GuidanceResult {
+  signal: GuidanceSignal;
+  progressPercent: number;
+  status: VirtualPositionStatus;
+  validity: 'still_valid' | 'invalidated';
+}
+```
+
+### Priority Order (EXACT)
+
+Execute in this exact order:
+
+1. **Completed positions (terminal state):** Always return `HOLD_THESIS`
+2. **Invalidated (always dominates):** Return `STRUCTURE_AT_RISK` (unless completed)
+3. **Stalled (always weakening):** Return `THESIS_WEAKENING` (regardless of progress: 30%, 60%, 80%)
+4. **Progress < 25%:** Return `WAIT_FOR_CONFIRMATION`
+5. **Default:** Return `HOLD_THESIS` (healthy thesis)
+
+### Progress Thresholds (Left-Inclusive, Right-Exclusive)
+
+| Progress Range | Condition | Guidance Signal |
+|----------------|-----------|-----------------|
+| `progress < 25` | Early stage | `WAIT_FOR_CONFIRMATION` |
+| `25 ≤ progress < 75` | Healthy progression | `HOLD_THESIS` |
+| `≥ 75` | Near completion | `HOLD_THESIS` |
+
+**Stalling Override:**
+- ANY `stalled` status → `THESIS_WEAKENING` (regardless of progress)
+
+### Status Semantics
+
+| Status | Progress | Result |
+|--------|----------|--------|
+| `open` | `< 25%` | `WAIT_FOR_CONFIRMATION` |
+| `open` | `≥ 25%` | `HOLD_THESIS` |
+| `progressing` | `< 25%` | `WAIT_FOR_CONFIRMATION` |
+| `progressing` | `≥ 25%` | `HOLD_THESIS` |
+| `stalled` | ANY | `THESIS_WEAKENING` |
+| `completed` | ANY | `HOLD_THESIS` |
+| ANY | (invalidated) | `STRUCTURE_AT_RISK` |
+
+**Rules:**
+- Status does NOT block progress semantics
+- `progressing` does NOT override progress thresholds
+- `stalled` ALWAYS means weakening
+
+### Usage Example
+
+```typescript
+// Position from PR-5.2
+const position = updateVirtualPositionProgress(
+  virtualPosition,
+  currentPrice,
+  pois,
+  1000100
+);
+
+// Re-analysis from PR-5.3
+const reanalysisResult = reanalyzeVirtualPosition(
+  position,
+  marketState,
+  1000100
+);
+
+// Derive guidance
+const guidance = deriveGuidance(position, reanalysisResult);
+
+console.log(guidance);
+// {
+//   signal: 'HOLD_THESIS',
+//   progressPercent: 50,
+//   status: 'progressing',
+//   validity: 'still_valid'
+// }
+```
+
+### Testing
+
+Run guidance tests:
+```bash
+npm test -- guidance.invariants.spec.ts
+```
+
+**Test Coverage:**
+- ✅ Determinism (same inputs → same output)
+- ✅ Priority cascade (completed > invalidated > stalled > progress)
+- ✅ Progress thresholds (< 25%, ≥ 25%)
+- ✅ Status interaction (status informs, progress leads)
+- ✅ Invalidation dominance
+- ✅ Immutability (no mutation of inputs)
+- ✅ All four guidance signals reachable
+- ✅ Boundary cases (25%, 24.9%)
+
+### Key Philosophy
+
+> **Phase 5.4 DOES NOT TELL THE USER WHAT TO DO**  
+> It only says "how the idea currently looks."
+
+**Guidance ≠ Advice**  
+**Guidance = Context**
+
+---
+
+## 📖 Summary
+
+**Virtual Position = State Model for Dry-Run Observation**
+
+- Created from validated Phase 4 inputs
+- Immutable snapshots
+- Deterministic behavior
+- Foundation for paper trading
+- No execution, no capital, no risk
+
+**Phase 5.1 = Model + Creation** ✅
+
+**Phase 5.2 = Evolution + Progress** ✅
+
+**Phase 5.3 = Re-analysis + Invalidation** ✅
+
+**Phase 5.4 = Guidance Layer / Narrative Signals** ✅
+
+**ESB v1.0 Dry-Run Runtime COMPLETE!** 🎉
+
+Clean, simple, safe. ✅
