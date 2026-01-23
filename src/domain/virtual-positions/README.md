@@ -1679,3 +1679,258 @@ This includes:
 Guardrail is a foundational gate layer. Breaking changes affect all downstream consumers.
 
 ---
+
+## 🧠 Phase 6.4: Decision Layer (Action Selection)
+
+**Phase 6.4 is COMPLETE and FROZEN for ESB v1.0.**
+
+Decision is the action selection layer.
+
+Decision is the first layer with **WILL** (intent).
+
+Decision selects action intention, NOT execution.
+
+Decision has **will** but NOT **hands**.
+
+Decision answers:
+> "What do I intend to do for this idea?"
+
+NOT:
+> "Execute this action"  
+> "Manage this position"  
+> "Override guardrail"
+
+**Will without hands**  
+**Action selection without effect**  
+**Intent, not operation**
+
+### What Decision IS
+
+Decision is the **action selection layer** that determines the intended action based on guardrail permission.
+
+**Key characteristics:**
+
+- **First layer with will (intent):** Has the capacity to select an action intention
+- **Will without hands:** Can choose intent, but cannot execute or cause effect
+- **Intent selection, not execution:** Chooses what to intend to do, not what to actually do
+- **Guardrail consumer:** Operates strictly after Guardrail (Phase 6.3) and respects permission
+- **Permission-based selection:** Selects action intention based exclusively on permission state
+
+Decision translates permission state (Guardrail) into action intent.
+
+### What Decision IS NOT
+
+Decision is explicitly **NOT** any of the following:
+
+- ❌ NOT execution
+- ❌ NOT recommendation
+- ❌ NOT strategy optimization
+- ❌ NOT position management
+- ❌ NOT market analysis
+- ❌ NOT guardrail bypass
+- ❌ NOT state mutation
+
+**Decision never:**
+
+- Touches price data
+- Touches timeline entries
+- Touches POIs
+- Executes trades
+- Manages positions
+- Overrides guardrail permissions
+- Mutates system state
+
+Decision only selects intent based on guardrail permission.
+
+### Inputs to Decision
+
+Decision consumes **ONLY** `DecisionGuardrailResult` from Phase 6.3.
+
+**Decision has access to:**
+- ✅ `DecisionPermission`
+- ✅ `DecisionGuardrailReason`
+
+**Decision has NO access to:**
+- ❌ Policy logic
+- ❌ Timeline entries
+- ❌ Price data
+- ❌ POIs
+- ❌ Market state
+- ❌ Interpretation logic
+
+#### Input Processing
+
+Decision uses **ONLY** `DecisionGuardrailResult` from Phase 6.3.
+
+Decision operates on **permission**, NOT raw observations or policy.
+
+This prevents Decision from re-implementing guardrail or policy logic.
+
+### Outputs of Decision
+
+Decision produces a `DecisionResult` containing an action intent and reason.
+
+#### DecisionResult
+
+**Action (`DecisionAction`):**
+
+Decision selects from **5 canonical action intentions** (closed set for ESB v1.0):
+
+- `NO_ACTION`
+  - Passive "do nothing"
+  - Idea doesn't require attention right now
+  - NOT the same as MONITOR (which is active observation)
+  - NOT the same as ABORT_IDEA (which is explicit termination)
+  - Used when: not enough reason for activity, idea is not "alive" but not terminated
+  
+- `PREPARE_ENTRY`
+  - Signal readiness for potential entry (NO execution)
+  - Expresses intent: "idea is strong enough to consider entry"
+  - Does NOT calculate entry parameters (price, size, etc.)
+  - Does NOT change internal state
+  - This is planning, NOT configuration
+  - Future execution layer (Phase 7+) may act on this intent
+  - Returned ONLY when guardrail permission is `ALLOWED`
+  
+- `MONITOR`
+  - Continue active observation of this idea
+  - Idea is active and deserves ongoing attention
+  - NOT the same as NO_ACTION (which is passive)
+  - Used when: idea warrants tracking but no immediate action
+  
+- `REQUEST_MANUAL_REVIEW`
+  - Explicit human review is required before proceeding
+  - Automated decision-making stops here
+  - Commonly used when guardrail permission is `MANUAL_REVIEW_ONLY`
+  - Can also be used when permission is `ESCALATION_ONLY`
+  
+- `ABORT_IDEA`
+  - Explicitly abandon this idea
+  - This is a DECISION choice, not a consequence of guardrail blocking
+  - Can be returned even when permission is `ALLOWED` (decision chooses to terminate)
+  - NOT the same as guardrail `BLOCKED` (which prevents decision-making entirely)
+
+**These 5 actions form a closed set for ESB v1.0.**
+
+NO_ACTION ≠ MONITOR ≠ ABORT_IDEA (distinct semantics)
+
+**Action is an intent (will), NOT an instruction.**
+
+**Reason (`DecisionReason`):**
+
+- Direct 1:1 mirror of `DecisionGuardrailReason`
+- ONLY policy-derived reasons
+- NO decision-specific reasoning
+- NO transformation or remapping
+
+### Canonical Permission → Action Mapping
+
+**This mapping is FROZEN for ESB v1.0.**
+
+| Guardrail Permission | Decision Action |
+|---------------------|-----------------|
+| `BLOCKED` | `NO_ACTION` |
+| `MANUAL_REVIEW_ONLY` | `REQUEST_MANUAL_REVIEW` |
+| `ALLOWED` | `PREPARE_ENTRY` |
+| `ESCALATION_ONLY` | `REQUEST_MANUAL_REVIEW` |
+
+**Key rules:**
+
+- `PREPARE_ENTRY` is returned ONLY when guardrail permission is `ALLOWED`
+- `NO_ACTION` is returned when permission is `BLOCKED`
+- `REQUEST_MANUAL_REVIEW` is returned when permission is `MANUAL_REVIEW_ONLY` or `ESCALATION_ONLY`
+- Decision NEVER bypasses guardrail authority
+- Decision respects permission without exception
+
+### DecisionReason Semantics
+
+**`DecisionReason` is a direct 1:1 mirror of policy-derived reason.**
+
+Decision does NOT:
+- Transform reasons
+- Add decision-specific reasoning
+- Invent new explanations
+
+**Reason lineage is preserved:**
+
+```
+Policy (Phase 6.2) → Guardrail (Phase 6.3) → Decision (Phase 6.4)
+```
+
+**Decision explains WHAT intent was selected.**  
+**WHY remains policy-based.**
+
+This design ensures:
+- 🔗 Full traceability from policy to action
+- 🧠 Decision chooses action, NOT explanation
+- 🧱 Reason remains policy-based, NOT "decision-based"
+- 🔒 Prevents future creep ("let's add decision reasons...")
+
+**This is NOT a shortcut, this is DESIGN.**
+
+---
+
+> ⚠️ **ARCHITECTURAL BOUNDARY**
+> 
+> **Decision MUST NOT:**
+> 
+> - ❌ Execute trades
+> - ❌ Contain heuristics
+> - ❌ Perform strategy optimization
+> - ❌ Override guardrail permissions
+> - ❌ Mutate system state
+> - ❌ Access market data, price, timeline, or POIs
+> 
+> **Decision ONLY selects action intent based on guardrail permission.**
+> 
+> **Decision = WILL, not HANDS.**
+> 
+> Violating this boundary requires a MAJOR version bump.
+> 
+> **Decision is intent selection, not execution.**
+
+---
+
+### Mental Model
+
+**Decision chooses intent.**  
+**Execution (future) performs action.**
+
+Or:
+
+```
+Guardrail says: "May I act?"
+Decision says: "What do I intend to do?"
+Execution says: "Do it."
+```
+
+**Layered Architecture:**
+
+```
+Policy → Guardrail → Decision → Execution (future)
+Opinion → Authority → Will → Hands
+```
+
+**Clear roles:**
+
+- **Guardrail (Phase 6.3)** has **authority** (permission)
+- **Decision (Phase 6.4)** has **will** (intent)
+- **Execution (Phase 7+)** has **hands** (effect)
+
+These are distinct architectural concerns and must remain decoupled.
+
+### Versioning & Stability
+
+**Phase 6.4 (Decision Layer) is FROZEN for ESB v1.0.**
+
+This includes:
+- Decision actions (`NO_ACTION`, `PREPARE_ENTRY`, `MONITOR`, `REQUEST_MANUAL_REVIEW`, `ABORT_IDEA`)
+- Canonical mapping from guardrail permission to action
+- Reason pass-through (1:1 mirror, no transformation)
+- Architectural boundaries (no execution, no guardrail bypass)
+
+**Any future change to Decision semantics requires a major version bump.**
+
+Decision is a foundational intent selection layer. Breaking changes affect all downstream consumers.
+
+---
