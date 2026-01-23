@@ -142,3 +142,19 @@ export {
   multiEntryTimeline,
   outOfOrderEntry
 } from './timeline.fixtures';
+
+// Phase 6.1: Timeline Interpretation Engine
+export {
+  TimelineInterpretation,
+  TrajectorySignal,
+  StabilitySignal,
+  InvalidationPattern,
+  GuidanceConsistency
+} from './interpretation.types';
+
+export {
+  interpretTimeline
+} from './interpretation.contracts';
+
+// Phase 6.1 test fixtures (for testing only)
+export * from './interpretation.fixtures';
