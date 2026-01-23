@@ -181,3 +181,11 @@ export {
   DecisionGuardrailReason,
   DecisionGuardrailResult
 } from './decisionGuardrail.types';
+
+// Decision Guardrail derivation (Phase 6.3.2)
+export {
+  deriveDecisionGuardrail
+} from './decisionGuardrail.contracts';
+
+// Decision Guardrail test fixtures (for testing only)
+export * from './decisionGuardrail.fixtures';
