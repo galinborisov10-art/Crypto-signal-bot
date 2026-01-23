@@ -1279,3 +1279,196 @@ npm test -- interpretation.invariants.spec.ts
 Phase 6.1 completes the pattern recognition foundation for ESB v1.0.
 
 ---
+
+## 🧭 Phase 6.2: Policy Layer (Normative Interpretation)
+
+**Phase 6.2 is COMPLETE and FROZEN for ESB v1.0.**
+
+This layer translates pattern recognition (Phase 6.1) into normative stance — opinion without action.
+
+### What Policy IS
+
+Policy is the **normative interpretation** of observed patterns. It translates timeline interpretation outputs into an abstract stance toward an apparent trading idea.
+
+**Key characteristics:**
+
+Policy has **opinion** but NOT **action**.
+
+- **Normative interpretation:** Provides a judgment or stance on pattern quality
+- **Opinion without will:** Can assess and classify, but cannot execute or decide
+- **Abstract stance:** Takes a position on the idea itself, not on what to do about it
+- **Bridge layer:** Sits between observation (Phase 5–6.1) and future decision layers (Phase 6.3+)
+
+Policy translates pattern recognition (Phase 6.1) into a normative stance.
+
+### What Policy IS NOT
+
+Policy is explicitly **NOT** any of the following:
+
+- ❌ NOT a decision
+- ❌ NOT execution
+- ❌ NOT position management
+- ❌ NOT recommendations
+- ❌ NOT trade advice
+- ❌ NOT market analysis
+
+**Policy provides stance. It does not provide instructions.**
+
+### Inputs to Policy
+
+Policy consumes **ONLY** outputs of Phase 6.1 (`TimelineInterpretation`).
+
+**Policy has access to:**
+- ✅ Trajectory signals (STABLE_PROGRESS, SLOWING_PROGRESS, etc.)
+- ✅ Stability signals (STRUCTURALLY_STABLE, EARLY_WEAKENING, etc.)
+- ✅ Invalidation patterns (EARLY, MID, LATE)
+- ✅ Guidance consistency (CONSISTENT, DEGRADING, FLIP_FLOP)
+
+**Policy has NO access to:**
+- ❌ Timeline entries
+- ❌ Price data
+- ❌ POIs (Points of Interest)
+- ❌ Market state
+- ❌ Virtual position details
+
+**Architectural boundary:**
+
+Policy operates on **interpreted patterns**, NOT raw observations.
+
+This prevents policy from re-implementing interpretation logic and ensures clean separation of concerns.
+
+### Outputs of Policy
+
+Policy produces a `PolicyResult` containing a stance and confidence level.
+
+#### PolicyResult
+
+**Stance (`PolicyStance`):**
+
+- `STRONG_THESIS` — All signals aligned, high-stability idea
+- `WEAKENING_THESIS` — Valid but degrading idea
+- `HIGH_RISK_THESIS` — Conflicting/unstable patterns
+- `INVALID_THESIS` — Invalidated idea (derived, not execution)
+- `COMPLETED_THESIS` — Completed idea (terminal state)
+- `INSUFFICIENT_DATA` — Not enough observations to form stance
+
+**Confidence (`PolicyConfidence`):**
+
+- `HIGH` — Strong alignment and stability
+- `MEDIUM` — Moderate alignment or some degradation
+- `LOW` — Conflicts or instability present
+- `UNKNOWN` — Insufficient data
+
+**Stance is a normative position, NOT an instruction.**
+
+Policy tells you what it thinks about the pattern, not what to do about it.
+
+### Confidence Semantics
+
+**Confidence is NOT:**
+
+- ❌ Probability
+- ❌ Expected performance
+- ❌ Win rate
+- ❌ Statistical measure
+
+**Confidence reflects:**
+
+- ✅ Signal alignment (do trajectory, stability, guidance agree?)
+- ✅ Pattern consistency (are signals stable or flip-flopping?)
+- ✅ Observation sufficiency (enough data to form stance?)
+
+**Fixed mapping:**
+
+| Stance | Confidence |
+|--------|-----------|
+| `STRONG_THESIS` | `HIGH` |
+| `WEAKENING_THESIS` | `MEDIUM` |
+| `HIGH_RISK_THESIS` | `LOW` |
+| `INVALID_THESIS` | `HIGH` |
+| `COMPLETED_THESIS` | `HIGH` |
+| `INSUFFICIENT_DATA` | `UNKNOWN` |
+
+Confidence is determined by stance, NOT adjusted dynamically.
+
+### Priority Model
+
+Policy derivation follows strict priority cascade:
+
+**1. TERMINATED (highest priority)**
+   - If invalidated → `INVALID_THESIS`
+   - If completed → `COMPLETED_THESIS`
+
+**2. NO_DATA**
+   - → `INSUFFICIENT_DATA`
+
+**3. STRONG_THESIS**
+   - Requires ALL:
+     - Stable progress
+     - Structurally stable
+     - Consistent guidance (or undefined for short timeline)
+     - No invalidation
+
+**4. WEAKENING_THESIS**
+   - Slowing progress OR degrading guidance
+
+**5. HIGH_RISK_THESIS**
+   - Any of:
+     - Early weakening
+     - Repeated instability
+     - Flip-flop guidance
+     - Stalled trajectory
+     - Regressing progress (defensive)
+
+**6. Fallback**
+   - → `HIGH_RISK_THESIS` (unclassifiable but valid risk)
+
+**This cascade is FROZEN for ESB v1.0.**
+
+---
+
+> ⚠️ **ARCHITECTURAL BOUNDARY**
+> 
+> **Policy is the LAST layer allowed to have opinion.**
+> 
+> All subsequent layers (Phase 6.3+) MUST be **explicit decision layers**
+> and MUST NOT be merged into Policy.
+> 
+> Policy provides stance. Decision provides action.
+> 
+> These are separate architectural concerns and must remain decoupled.
+
+---
+
+### Mental Model
+
+> **"Policy is a brain without hands."**
+
+Policy can:
+- ✅ Form opinions
+- ✅ Assess patterns
+- ✅ Express stance
+
+Policy cannot:
+- ❌ Execute
+- ❌ Manage
+- ❌ Decide
+
+**Policy = Normative interpretation**  
+**Decision = Action selection** (Phase 6.3+, if implemented)
+
+### Versioning & Stability
+
+**Policy semantics are FROZEN for ESB v1.0.**
+
+This includes:
+- Stance definitions
+- Priority cascade order
+- Confidence mapping
+- Input/output contracts
+
+**Any future change to Policy semantics requires a major version bump.**
+
+Policy is a foundational layer. Breaking changes affect all downstream consumers.
+
+---
