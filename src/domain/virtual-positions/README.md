@@ -1095,6 +1095,187 @@ Phase 5.5 does NOT interpret history.
 
 **Phase 5.5 = Timeline / Observation History** ✅
 
+**Phase 6.1 = Timeline Interpretation Engine** ✅
+
 **ESB v1.0 Dry-Run Runtime COMPLETE!** 🎉
 
 Clean, simple, safe. ✅
+
+---
+
+## 🔄 Phase 6.1: Timeline Interpretation Engine
+
+**What it does:**
+- Pure, read-only pattern recognition over timeline
+- Detects trajectory patterns (stable, slowing, stalled, regressing)
+- Analyzes stability (early weakening, repeated instability, termination)
+- Classifies invalidation timing (early, mid, late)
+- Tracks guidance consistency (flip-flop, degrading, consistent)
+- Fully deterministic and replay-safe
+
+**What it does NOT do:**
+- Does NOT make decisions
+- Does NOT provide recommendations
+- Does NOT manage positions
+- Does NOT analyze market data
+- Does NOT mutate timeline or entries
+
+**Key Design Decisions:**
+
+1. **Trajectory:** Majority-based delta analysis (not just last delta)
+   - Calculates sequential deltas between progress measurements
+   - Uses majority voting: if most deltas positive → STABLE_PROGRESS
+   - Detects slowing: all positive but shrinking magnitude
+   - Defensive regressing detection (should never happen with Phase 5.2 invariants)
+
+2. **Slowing:** Positive deltas with shrinking magnitude
+   - All deltas > 0 (positive progress)
+   - At least one consecutive pair where `|delta[i+1]| < |delta[i]|`
+   - Example: deltas [+30, +20, +10] → SLOWING_PROGRESS
+
+3. **Regressing:** Defensive (should never happen with Phase 5.2 invariants)
+   - Any delta < 0 (progress decreased)
+   - Comment in code: "Should never happen if Phase 5.2 invariants hold"
+
+4. **Stability priority:** `TERMINATED` > `REPEATED_INSTABILITY` > `EARLY_WEAKENING` > `STABLE`
+   - Strict cascade ensures predictable results
+   - TERMINATED: ANY completed OR invalidated entry (always dominates)
+   - REPEATED_INSTABILITY: ≥ 2 stalled entries (anywhere, not necessarily consecutive)
+   - EARLY_WEAKENING: Stalled or weakening WHILE progress < 25%
+
+5. **Invalidation:** First invalidation only (most semantically important)
+   - Ignores subsequent invalidations
+   - Classifies based on progress: < 25% (EARLY), < 75% (MID), ≥ 75% (LATE)
+   - Only present if invalidation exists, otherwise undefined
+
+6. **Guidance consistency:** Real flip-flop pattern (A → B → A), not just changes
+   - Detects actual oscillation: signal returns to previous value
+   - Examples: HOLD → WEAK → HOLD, WAIT → HOLD → WAIT
+   - NOT just "many changes" - specific return pattern
+
+7. **Degrading:** Net movement to weaker signals without recovery
+   - Compares first and last signal strength
+   - Checks for any upward movement (recovery)
+   - If lastStrength < firstStrength AND no recovery → DEGRADING
+
+8. **Minimum entries:** Different thresholds
+   - Trajectory: 2 entries (need deltas)
+   - Stability: 2 entries (meaningful stability analysis)
+   - Guidance consistency: 3 entries (need transitions)
+   - Invalidation pattern: 1 invalidation event
+
+**Signal Strength Order:**
+```
+HOLD_THESIS (strongest, value: 4)
+  > WAIT_FOR_CONFIRMATION (value: 3)
+  > THESIS_WEAKENING (value: 2)
+  > STRUCTURE_AT_RISK (weakest, value: 1)
+```
+
+**Mental Model:**
+
+> **"Brain without will"**
+> 
+> Phase 6.1 observes patterns, does NOT act on them.
+
+**This is the last observational layer.**
+
+Phase 6.2+ (if implemented) would add policy, but Phase 6.1 is complete pattern recognition without decisions.
+
+### Function Signature
+
+```typescript
+export function interpretTimeline(
+  timeline: VirtualPositionTimeline
+): TimelineInterpretation
+```
+
+**Function Semantics:**
+- Pure (no side effects)
+- Deterministic (same inputs → same output)
+- Read-only (no mutations)
+- Always succeeds (uses NO_DATA for insufficient data)
+
+### Timeline Interpretation Type
+
+```typescript
+interface TimelineInterpretation {
+  trajectory: TrajectorySignal;
+  stability: StabilitySignal;
+  invalidationPattern?: InvalidationPattern;
+  guidanceConsistency?: GuidanceConsistency;
+}
+```
+
+**All outputs are machine-readable enums (NO free text).**
+
+### Usage Example
+
+```typescript
+// Timeline from Phase 5.5
+const timeline: VirtualPositionTimeline = {
+  positionId: 'pos-1',
+  entries: [
+    {
+      evaluatedAt: 1000,
+      progressPercent: 0,
+      status: 'open',
+      validity: 'still_valid',
+      guidance: 'WAIT_FOR_CONFIRMATION'
+    },
+    {
+      evaluatedAt: 2000,
+      progressPercent: 25,
+      status: 'progressing',
+      validity: 'still_valid',
+      guidance: 'HOLD_THESIS'
+    },
+    {
+      evaluatedAt: 3000,
+      progressPercent: 50,
+      status: 'progressing',
+      validity: 'still_valid',
+      guidance: 'HOLD_THESIS'
+    }
+  ]
+};
+
+// Interpret timeline
+const interpretation = interpretTimeline(timeline);
+
+console.log(interpretation);
+// {
+//   trajectory: 'STABLE_PROGRESS',
+//   stability: 'STRUCTURALLY_STABLE',
+//   invalidationPattern: undefined,
+//   guidanceConsistency: 'CONSISTENT'
+// }
+```
+
+### Testing
+
+Run interpretation tests:
+```bash
+npm test -- interpretation.invariants.spec.ts
+```
+
+**Test Coverage:**
+- ✅ Trajectory patterns (NO_DATA, STABLE, SLOWING, STALLED, REGRESSING)
+- ✅ Stability patterns (TERMINATED, REPEATED_INSTABILITY, EARLY_WEAKENING, STABLE)
+- ✅ Invalidation patterns (EARLY, MID, LATE, undefined)
+- ✅ Guidance consistency (FLIP_FLOP, DEGRADING, CONSISTENT, undefined)
+- ✅ Determinism (same inputs → same output)
+- ✅ Immutability (no mutations)
+- ✅ Edge cases (boundaries, empty timeline, single entry)
+
+### Key Philosophy
+
+> **All signals are observational.**
+> 
+> - No policy
+> - No recommendations
+> - This is the last "brain without will" layer
+
+Phase 6.1 completes the pattern recognition foundation for ESB v1.0.
+
+---
