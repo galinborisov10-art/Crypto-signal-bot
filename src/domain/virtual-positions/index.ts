@@ -42,6 +42,16 @@ export {
   inferDirectionFromSLTP
 } from './reanalysis.contracts';
 
+// Phase 5.4: Guidance Layer / Narrative Signals
+export {
+  GuidanceSignal,
+  GuidanceResult
+} from './guidance.types';
+
+export {
+  deriveGuidance
+} from './guidance.contracts';
+
 // Test fixtures (for testing only)
 export {
   T0,
