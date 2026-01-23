@@ -1472,3 +1472,210 @@ This includes:
 Policy is a foundational layer. Breaking changes affect all downstream consumers.
 
 ---
+
+## 🚪 Phase 6.3: Decision Guardrail (Permission Gate)
+
+**Phase 6.3 is COMPLETE and FROZEN for ESB v1.0.**
+
+Decision Guardrail is the permission gate layer.
+
+Guardrail has **authority** but NOT **will**.
+
+Guardrail answers ONLY:
+> "Is decision-making allowed at all for this idea?"
+
+NOT:
+> "What decision should be made?"
+> "How should we act?"
+> "What trade should be executed?"
+
+**Permission without decision**  
+**Gate, not brain**  
+**Authority without action**
+
+### What Decision Guardrail IS
+
+Decision Guardrail is the **permission gate** that determines whether downstream decision layers are allowed to proceed with automated decision-making.
+
+**Key characteristics:**
+
+- **Permission authority:** Has the power to allow or block decision-making
+- **Authority without will:** Can permit or deny, but cannot choose what action to take
+- **Binary gate:** Either allows, requires review, or blocks — no complex reasoning
+- **Policy consumer:** Operates exclusively on Policy stance (Phase 6.2 output)
+- **Decision precursor:** Sits between policy interpretation (Phase 6.2) and future decision execution (Phase 6.4+)
+
+Guardrail translates normative stance (Policy) into permission state.
+
+### What Decision Guardrail IS NOT
+
+Decision Guardrail is explicitly **NOT** any of the following:
+
+- ❌ NOT a decision
+- ❌ NOT a recommendation
+- ❌ NOT execution
+- ❌ NOT position management
+- ❌ NOT market analysis
+- ❌ Does NOT analyze price, timeline, or POIs
+
+**Guardrail never chooses an action.**
+
+Guardrail only determines whether downstream decision layers are permitted to act.
+
+### Inputs to Decision Guardrail
+
+Decision Guardrail consumes **ONLY** `PolicyResult` from Phase 6.2.
+
+**Guardrail has access to:**
+- ✅ Policy stance (via `PolicyStance`)
+
+**Guardrail has NO access to:**
+- ❌ Timeline entries
+- ❌ Price data
+- ❌ POIs (Points of Interest)
+- ❌ Market state
+- ❌ Interpretation logic
+
+#### Input Processing
+
+Decision Guardrail uses **ONLY** `PolicyStance` from `PolicyResult`.
+
+**`PolicyConfidence` is NOT used in permission derivation.**
+
+Rationale:
+- Phase 6.2 enforces a fixed invariant: `PolicyStance → PolicyConfidence`
+- Confidence is metadata for UI, reporting, and analytics
+- Guardrail is a permission gate, NOT a validator
+- Permission authority derives from stance alone
+
+**Architectural boundary:**
+
+Guardrail operates on **policy stance**, NOT raw observations or interpretations.
+
+This prevents guardrail from re-implementing policy logic.
+
+### Outputs of Decision Guardrail
+
+Decision Guardrail produces a `DecisionGuardrailResult` containing a permission state and reason.
+
+#### DecisionGuardrailResult
+
+**Permission (`DecisionPermission`):**
+
+- `ALLOWED`
+  - Downstream decision layers MAY proceed with automated decision-making
+  - Does NOT mean a decision WILL be made, only that it MAY be considered
+  
+- `MANUAL_REVIEW_ONLY`
+  - Human-in-the-loop is required before any decision
+  - Automated decision-making is blocked
+  
+- `BLOCKED`
+  - Decision-making is forbidden for this idea
+  - Both automated and manual decisions are blocked
+  
+- `ESCALATION_ONLY` (reserved, NOT used in ESB v1.0)
+  - Type exists for future multi-policy or conflict scenarios
+  - NOT used in current implementation
+
+**Reason (`DecisionGuardrailReason`):**
+
+- 1:1 mapping to `PolicyStance`
+- ONLY policy-derived reasons
+- NO system, regulatory, or technical reasons
+
+**Permission is a gate state, NOT an instruction.**
+
+### Canonical Permission Mapping
+
+**This mapping is FROZEN for ESB v1.0.**
+
+| PolicyStance | Permission | Reason |
+|--------------|-----------|--------|
+| `STRONG_THESIS` | `ALLOWED` | `STRONG_POLICY` |
+| `WEAKENING_THESIS` | `MANUAL_REVIEW_ONLY` | `WEAKENING_POLICY` |
+| `HIGH_RISK_THESIS` | `MANUAL_REVIEW_ONLY` | `HIGH_RISK_POLICY` |
+| `INVALID_THESIS` | `BLOCKED` | `INVALID_POLICY` |
+| `COMPLETED_THESIS` | `BLOCKED` | `COMPLETED_POLICY` |
+| `INSUFFICIENT_DATA` | `BLOCKED` | `INSUFFICIENT_DATA` |
+
+**Key rules:**
+
+- `ALLOWED` is returned ONLY for `STRONG_THESIS`
+- `MANUAL_REVIEW_ONLY` is returned for `WEAKENING_THESIS` and `HIGH_RISK_THESIS`
+- `BLOCKED` is returned for `INVALID_THESIS`, `COMPLETED_THESIS`, and `INSUFFICIENT_DATA`
+- `ESCALATION_ONLY` is NOT used in ESB v1.0 (reserved for future)
+
+### Layered Architecture
+
+```
+Observation (Phase 5) → Interpretation (Phase 6.1) → Policy (Phase 6.2) → Guardrail (Phase 6.3) → Decision (Phase 6.4+, future)
+```
+
+**Or:**
+
+```
+Opinion → Permission → Action
+```
+
+**Clear rules:**
+
+- **Policy (Phase 6.2)** is the LAST layer with **opinion**
+- **Guardrail (Phase 6.3)** is the FIRST layer with **authority**
+- **Decision (Phase 6.4+)** is the FIRST layer with **will**
+
+These are distinct architectural concerns and must remain decoupled.
+
+---
+
+> ⚠️ **ARCHITECTURAL BOUNDARY**
+> 
+> **Guardrail MUST NOT contain:**
+> 
+> - ❌ Decision logic
+> - ❌ Heuristics
+> - ❌ Scoring mechanisms
+> - ❌ Market reasoning
+> - ❌ Trade recommendations
+> 
+> **Guardrail ONLY determines permission state based on policy stance.**
+> 
+> Violating this boundary requires a MAJOR version bump.
+> 
+> **Guardrail is a gate, not a brain.**
+
+---
+
+### Mental Model
+
+> **"Gate, not brain."**
+
+Guardrail can:
+- ✅ Grant permission
+- ✅ Require review
+- ✅ Block access
+
+Guardrail cannot:
+- ❌ Make decisions
+- ❌ Recommend actions
+- ❌ Execute trades
+
+**Guardrail = Permission gate**  
+**Decision = Action selection** (Phase 6.4+, if implemented)
+
+### Versioning & Stability
+
+**Phase 6.3 (Decision Guardrail) is FROZEN for ESB v1.0.**
+
+This includes:
+- Permission states (`ALLOWED`, `MANUAL_REVIEW_ONLY`, `BLOCKED`)
+- Canonical mapping from `PolicyStance` to permission
+- Reason derivation (1:1 policy mapping)
+- Input processing (stance-only, confidence ignored)
+- Architectural boundaries
+
+**Any future change to Guardrail semantics requires a major version bump.**
+
+Guardrail is a foundational gate layer. Breaking changes affect all downstream consumers.
+
+---
