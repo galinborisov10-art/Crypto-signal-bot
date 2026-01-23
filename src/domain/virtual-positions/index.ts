@@ -158,3 +158,11 @@ export {
 
 // Phase 6.1 test fixtures (for testing only)
 export * from './interpretation.fixtures';
+
+// Phase 6.2: Policy types (Phase 6.2.1)
+export {
+  PolicyStance,
+  PolicyConfidence,
+  PolicyContext,
+  PolicyResult
+} from './policy.types';
