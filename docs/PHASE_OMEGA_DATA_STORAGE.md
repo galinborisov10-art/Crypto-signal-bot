@@ -738,19 +738,17 @@ import fcntl
 
 # ml_engine.py:177-180 (add locking)
 with open(self.trading_journal_path, 'r') as f:
-    fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # Shared read lock
+    fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # Shared read lock (auto-released on close)
     journal = json.load(f)
-    fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Unlock
 
 # bot.py journal append (add locking)
 with open('trading_journal.json', 'r+') as f:
-    fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive write lock
+    fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive write lock (auto-released on close)
     journal = json.load(f)
     journal['trades'].append(new_trade)
     f.seek(0)
+    f.truncate()  # Truncate first to clear old content
     json.dump(journal, f, indent=2)
-    f.truncate()
-    fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Unlock
 ```
 
 ---
