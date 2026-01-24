@@ -24,6 +24,13 @@ import os
 import json
 from datetime import datetime, timedelta
 
+# H3 bug fix: Import position manager to check active positions
+try:
+    from position_manager import PositionManager
+    POSITION_MANAGER_AVAILABLE = True
+except ImportError:
+    POSITION_MANAGER_AVAILABLE = False
+
 SENT_SIGNALS_FILE = 'sent_signals_cache.json'
 CACHE_CLEANUP_HOURS = 168  # Clean entries older than 7 days (was 24h - too aggressive)
 ENTRY_THRESHOLD_PCT = 1.5  # Entry price difference threshold for uniqueness
@@ -48,13 +55,53 @@ def load_sent_signals(base_path=None):
                 print(f"✅ Loaded {len(cache)} signals from cache")
                 
                 # Clean old entries (older than CACHE_CLEANUP_HOURS)
+                # H3 bug fix: Don't delete cache entries for active positions
                 before_cleanup = len(cache)
                 cutoff = datetime.now().timestamp() - timedelta(hours=CACHE_CLEANUP_HOURS).total_seconds()
-                cache = {
-                    k: v for k, v in cache.items() 
-                    # Use last_checked for cleanup (backward compatible with old cache entries)
-                    if datetime.fromisoformat(v.get('last_checked', v['timestamp'])).timestamp() > cutoff
-                }
+                
+                # Get active positions if available
+                active_positions = set()
+                if POSITION_MANAGER_AVAILABLE:
+                    try:
+                        pm = PositionManager()
+                        positions = pm.get_open_positions()  # Returns list of dicts
+                        # Create set of position keys: symbol_timeframe_type
+                        active_positions = {
+                            f"{p['symbol']}_{p['timeframe']}_{p['signal_type']}" 
+                            for p in positions
+                        }
+                        if active_positions:
+                            print(f"📊 Found {len(active_positions)} active position(s) to protect from cleanup")
+                    except Exception as e:
+                        print(f"⚠️ Could not fetch active positions: {e}")
+                
+                # Filter cache
+                filtered_cache = {}
+                for k, v in cache.items():
+                    is_old = datetime.fromisoformat(v.get('last_checked', v['timestamp'])).timestamp() <= cutoff
+                    
+                    if is_old:
+                        # Check if corresponds to active position
+                        # Cache keys are like: BTCUSDT_BUY_4h_50000.0
+                        parts = k.split('_')
+                        if len(parts) >= 3:
+                            symbol = parts[0]
+                            signal_type = parts[1]
+                            timeframe = parts[2]
+                            position_key = f"{symbol}_{timeframe}_{signal_type}"
+                            
+                            if position_key in active_positions:
+                                print(f"🔒 Keeping old cache entry for active position: {k}")
+                                filtered_cache[k] = v
+                                continue
+                        
+                        # Old and no active position match - skip (delete)
+                        continue
+                    
+                    # Keep if not old
+                    filtered_cache[k] = v
+                
+                cache = filtered_cache
                 
                 cleaned = before_cleanup - len(cache)
                 if cleaned > 0:

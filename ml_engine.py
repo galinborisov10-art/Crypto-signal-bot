@@ -22,6 +22,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import joblib
 import os
 import logging
+import fcntl  # For file locking (C3 bug fix)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -176,8 +177,13 @@ class MLTradingEngine:
                 print("⚠️ No trading journal available")
                 return False
             
+            # Read with file locking (C3 bug fix)
             with open(self.trading_journal_path, 'r') as f:
-                journal = json.load(f)
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # Shared lock
+                    journal = json.load(f)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Release lock
             
             trades = journal.get('trades', [])
             

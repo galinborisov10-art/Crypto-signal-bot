@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 import html
 import pytz
+import fcntl  # For file locking (C3 bug fix)
 
 # ================= ENVIRONMENT VARIABLES =================
 from dotenv import load_dotenv
@@ -3824,13 +3825,6 @@ async def save_trade_to_journal(trade: Dict):
     try:
         journal_path = os.path.join(BASE_PATH, 'trading_journal.json')
         
-        # Load existing journal
-        if os.path.exists(journal_path):
-            with open(journal_path, 'r', encoding='utf-8') as f:
-                journal = json.load(f)
-        else:
-            journal = {'trades': []}
-        
         # Prepare trade data for journal
         journal_entry = {
             'timestamp': trade['timestamp'],
@@ -3851,12 +3845,27 @@ async def save_trade_to_journal(trade: Dict):
             'conditions': trade.get('signal_data', {}).get('conditions', {})
         }
         
-        # Add to journal
-        journal['trades'].append(journal_entry)
-        
-        # Save journal
-        with open(journal_path, 'w', encoding='utf-8') as f:
-            json.dump(journal, f, indent=2, ensure_ascii=False)
+        # Load, modify and save with file locking (C3 bug fix)
+        if os.path.exists(journal_path):
+            with open(journal_path, 'r+', encoding='utf-8') as f:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+                    journal = json.load(f)
+                    journal['trades'].append(journal_entry)
+                    f.seek(0)
+                    f.truncate()
+                    json.dump(journal, f, indent=2, ensure_ascii=False)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Release lock
+        else:
+            # Create new journal with locking
+            with open(journal_path, 'w', encoding='utf-8') as f:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+                    journal = {'trades': [journal_entry]}
+                    json.dump(journal, f, indent=2, ensure_ascii=False)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Release lock
         
         logger.info(f"✅ Trade saved to journal: {trade['symbol']} ({trade['outcome']})")
         
@@ -3875,34 +3884,40 @@ async def update_trade_statistics():
         if not os.path.exists(journal_path):
             return
         
-        with open(journal_path, 'r', encoding='utf-8') as f:
-            journal = json.load(f)
-        
-        trades = journal.get('trades', [])
-        
-        # Calculate stats using outcome constants
-        total_trades = len(trades)
-        wins = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_WIN)
-        losses = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_LOSS)
-        win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
-        
-        # Update journal metadata
-        if 'statistics' not in journal:
-            journal['statistics'] = {}
-        
-        journal['statistics'].update({
-            'total_trades': total_trades,
-            'wins': wins,
-            'losses': losses,
-            'win_rate': round(win_rate, 2),
-            'last_updated': datetime.now(timezone.utc).isoformat()
-        })
-        
-        # Save
-        with open(journal_path, 'w', encoding='utf-8') as f:
-            json.dump(journal, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"✅ Statistics updated: {total_trades} trades, {win_rate:.1f}% win rate")
+        # Read-modify-write with file locking (C3 bug fix)
+        with open(journal_path, 'r+', encoding='utf-8') as f:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+                journal = json.load(f)
+                
+                trades = journal.get('trades', [])
+                
+                # Calculate stats using outcome constants
+                total_trades = len(trades)
+                wins = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_WIN)
+                losses = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_LOSS)
+                win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+                
+                # Update journal metadata
+                if 'statistics' not in journal:
+                    journal['statistics'] = {}
+                
+                journal['statistics'].update({
+                    'total_trades': total_trades,
+                    'wins': wins,
+                    'losses': losses,
+                    'win_rate': round(win_rate, 2),
+                    'last_updated': datetime.now(timezone.utc).isoformat()
+                })
+                
+                # Save
+                f.seek(0)
+                f.truncate()
+                json.dump(journal, f, indent=2, ensure_ascii=False)
+                
+                logger.info(f"✅ Statistics updated: {total_trades} trades, {win_rate:.1f}% win rate")
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Release lock
         
     except Exception as e:
         logger.error(f"Error updating statistics: {e}", exc_info=True)
