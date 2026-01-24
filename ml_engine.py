@@ -28,6 +28,84 @@ import fcntl
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# ML FEATURE SCHEMA - Canonical Definition
+# ============================================================================
+# This schema defines required features for ML training and prediction.
+# Validation ensures feature compatibility between training and prediction.
+# ============================================================================
+
+REQUIRED_ML_FEATURES = [
+    'rsi',
+    'confidence',
+    'volume_ratio',
+    'trend_strength',
+    'volatility',
+    'timeframe',
+    'signal_type'
+]
+
+# Feature type expectations
+FEATURE_TYPES = {
+    'rsi': (int, float),
+    'confidence': (int, float),
+    'volume_ratio': (int, float),
+    'trend_strength': (int, float),
+    'volatility': (int, float),
+    'timeframe': str,
+    'signal_type': str
+}
+
+# Valid categorical values
+VALID_TIMEFRAMES = ['1h', '2h', '4h', '1d']
+VALID_SIGNAL_TYPES = ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']
+
+
+def _validate_ml_features(analysis: dict) -> tuple:
+    """
+    Validate that analysis dict contains all required ML features.
+    
+    This is a sanity gate to prevent training/prediction feature mismatch.
+    
+    Args:
+        analysis: Signal analysis dictionary
+        
+    Returns:
+        Tuple of (is_valid, missing_features)
+        - is_valid: True if all required features present and valid
+        - missing_features: List of missing/invalid feature names
+    """
+    missing = []
+    
+    # Check required features exist
+    for feature in REQUIRED_ML_FEATURES:
+        if feature not in analysis:
+            missing.append(f"{feature} (missing)")
+            continue
+        
+        value = analysis[feature]
+        
+        # Check None values
+        if value is None:
+            missing.append(f"{feature} (None)")
+            continue
+        
+        # Check type validity
+        expected_types = FEATURE_TYPES.get(feature)
+        if expected_types and not isinstance(value, expected_types):
+            missing.append(f"{feature} (wrong type: {type(value).__name__})")
+            continue
+        
+        # Check categorical values
+        if feature == 'timeframe' and value not in VALID_TIMEFRAMES:
+            missing.append(f"timeframe (invalid: {value})")
+        elif feature == 'signal_type' and value not in VALID_SIGNAL_TYPES:
+            missing.append(f"signal_type (invalid: {value})")
+    
+    is_valid = len(missing) == 0
+    return is_valid, missing
+
+
 class MLTradingEngine:
     def __init__(self):
         self.model = None
@@ -61,6 +139,100 @@ class MLTradingEngine:
         # Зареди модел ако съществува
         self.load_model()
         self.load_performance_history()
+    
+    def get_ml_prediction(self, analysis: dict) -> dict:
+        """
+        Get ML prediction for signal.
+        
+        Args:
+            analysis: Signal analysis dictionary
+            
+        Returns:
+            Dict with ML prediction result
+        """
+        try:
+            # SANITY GATE: Validate feature schema
+            is_valid, missing_features = _validate_ml_features(analysis)
+            
+            if not is_valid:
+                logger.warning(f"⚠️ ML schema validation failed: {', '.join(missing_features)}")
+                logger.warning("ML disabled (schema mismatch)")
+                return {
+                    'ml_enabled': False,
+                    'confidence_modifier': 0,
+                    'ml_confidence': 0,
+                    'schema_valid': False,
+                    'schema_errors': missing_features
+                }
+            
+            if self.model is None:
+                return {
+                    'ml_enabled': False,
+                    'confidence_modifier': 0,
+                    'ml_confidence': 0,
+                    'schema_valid': True
+                }
+            
+            # Schema valid - proceed with ML
+            features = self._extract_features(analysis)
+            if features is None:
+                return {
+                    'ml_enabled': False,
+                    'confidence_modifier': 0,
+                    'ml_confidence': 0,
+                    'schema_valid': True,
+                    'error': 'Feature extraction failed'
+                }
+            
+            # Normalize features
+            features_scaled = self.scaler.transform(features)
+            
+            # ML prediction
+            ml_proba = self.model.predict_proba(features_scaled)[0]
+            ml_confidence = max(ml_proba) * 100
+            
+            # Calculate confidence modifier
+            # Positive modifier if ML confidence is high, negative if low
+            base_confidence = 50
+            confidence_modifier = (ml_confidence - base_confidence) / 100.0
+            
+            return {
+                'ml_enabled': True,
+                'confidence_modifier': confidence_modifier,
+                'ml_confidence': ml_confidence,
+                'schema_valid': True
+            }
+            
+        except Exception as e:
+            logger.error(f"ML prediction error: {e}")
+            return {
+                'ml_enabled': False,
+                'confidence_modifier': 0,
+                'ml_confidence': 0,
+                'schema_valid': True,
+                'error': str(e)
+            }
+    
+    def _extract_features(self, analysis):
+        """
+        Internal feature extraction method for get_ml_prediction.
+        Extracts features matching the REQUIRED_ML_FEATURES schema.
+        """
+        try:
+            # Extract features based on the canonical schema
+            features = [
+                analysis.get('rsi', 50),
+                analysis.get('confidence', 50),
+                analysis.get('volume_ratio', 1),
+                analysis.get('trend_strength', 0),
+                analysis.get('volatility', 5),
+                # Note: timeframe and signal_type are categorical, 
+                # need encoding for ML use (not implemented in this PR)
+            ]
+            return np.array(features).reshape(1, -1)
+        except Exception as e:
+            logger.error(f"Feature extraction error: {e}")
+            return None
     
     def extract_features(self, analysis):
         """Извлича features от анализа за ML (6 features - match bot.py)"""
@@ -191,12 +363,25 @@ class MLTradingEngine:
             X = []
             y = []
             
+            valid_trades = 0
+            invalid_trades = 0
+            
             for trade in trades:
                 # Пропусни trades без outcome
                 if not trade.get('outcome'):
                     continue
                 
                 conditions = trade.get('conditions', {})
+                
+                # SANITY GATE: Validate training data schema
+                is_valid, missing_features = _validate_ml_features(conditions)
+                
+                if not is_valid:
+                    invalid_trades += 1
+                    logger.debug(f"⚠️ Skipping trade (invalid schema): {', '.join(missing_features)}")
+                    continue
+                
+                valid_trades += 1
                 
                 # Извлечи features (6 features - matching bot.py)
                 features = [
@@ -216,6 +401,11 @@ class MLTradingEngine:
                     y.append(1)
                 else:
                     y.append(0)
+            
+            if invalid_trades > 0:
+                logger.warning(f"ML training: {invalid_trades} trades skipped due to schema mismatch")
+            
+            logger.info(f"ML training: {valid_trades} valid trades, {invalid_trades} skipped")
             
             if len(X) < self.min_training_samples:
                 print(f"⚠️ Not enough completed trades ({len(X)} / {self.min_training_samples})")
