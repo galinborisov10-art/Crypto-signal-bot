@@ -22,11 +22,50 @@ PROVEN:
 
 import os
 import json
+import logging
 from datetime import datetime, timedelta
+
+try:
+    from position_manager import PositionManager
+    POSITION_MANAGER_AVAILABLE = True
+except ImportError:
+    POSITION_MANAGER_AVAILABLE = False
+    PositionManager = None
+
+logger = logging.getLogger(__name__)
 
 SENT_SIGNALS_FILE = 'sent_signals_cache.json'
 CACHE_CLEANUP_HOURS = 168  # Clean entries older than 7 days (was 24h - too aggressive)
 ENTRY_THRESHOLD_PCT = 1.5  # Entry price difference threshold for uniqueness
+
+
+def _check_if_position_active(position_manager, signal_key):
+    """Check if signal_key has active position using existing API"""
+    try:
+        # Parse signal_key: "BTCUSDT_BUY_4h"
+        parts = signal_key.split('_')
+        if len(parts) < 3:
+            return False
+        
+        timeframe = parts[-1]
+        signal_type = parts[-2]
+        symbol = '_'.join(parts[:-2])
+        
+        # Use EXISTING get_open_positions() method
+        positions = position_manager.get_open_positions()
+        
+        # Check if any position matches
+        for pos in positions:
+            if (pos.get('symbol') == symbol and 
+                pos.get('signal_type') == signal_type and 
+                pos.get('timeframe') == timeframe and
+                pos.get('status') in ['OPEN', 'PARTIAL']):
+                return True
+        
+        return False
+    except:
+        return False
+
 
 def load_sent_signals(base_path=None):
     """
@@ -50,17 +89,61 @@ def load_sent_signals(base_path=None):
                 # Clean old entries (older than CACHE_CLEANUP_HOURS)
                 before_cleanup = len(cache)
                 cutoff = datetime.now().timestamp() - timedelta(hours=CACHE_CLEANUP_HOURS).total_seconds()
-                cache = {
-                    k: v for k, v in cache.items() 
-                    # Use last_checked for cleanup (backward compatible with old cache entries)
-                    if datetime.fromisoformat(v.get('last_checked', v['timestamp'])).timestamp() > cutoff
-                }
                 
-                cleaned = before_cleanup - len(cache)
-                if cleaned > 0:
-                    print(f"🗑️ Cleaned {cleaned} old entries (older than {CACHE_CLEANUP_HOURS}h)")
+                # Initialize PositionManager once (if available)
+                position_manager = None
+                if POSITION_MANAGER_AVAILABLE and PositionManager is not None:
+                    try:
+                        position_manager = PositionManager()
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not initialize PositionManager: {e}")
                 
-                return cache
+                cleaned_cache = {}
+                deleted_count = 0
+                preserved_count = 0
+                cache_modified = False
+                
+                for signal_key, signal_data in cache.items():
+                    timestamp_str = signal_data.get('last_checked', signal_data.get('timestamp'))
+                    
+                    try:
+                        signal_timestamp = datetime.fromisoformat(timestamp_str).timestamp()
+                    except (ValueError, TypeError):
+                        # GUARD: Even with corrupted timestamp, check for active position
+                        if position_manager and _check_if_position_active(position_manager, signal_key):
+                            # Preserve entry with corrupted timestamp if position is active
+                            cleaned_cache[signal_key] = signal_data
+                            preserved_count += 1
+                            logger.warning(f"⚠️ Preserved entry with corrupted timestamp for active position: {signal_key}")
+                        else:
+                            deleted_count += 1
+                            cache_modified = True
+                        continue
+                    
+                    # Check if entry is older than cutoff
+                    if signal_timestamp < cutoff:
+                        # GUARD: Check if there's an active position for this signal
+                        if position_manager and _check_if_position_active(position_manager, signal_key):
+                            # DO NOT DELETE - active position exists
+                            cleaned_cache[signal_key] = signal_data
+                            preserved_count += 1
+                            logger.info(f"🛡️ Preserved cache entry for active position: {signal_key}")
+                        else:
+                            # Safe to delete - no active position
+                            deleted_count += 1
+                            cache_modified = True
+                    else:
+                        # Entry is fresh - keep it
+                        cleaned_cache[signal_key] = signal_data
+                
+                if preserved_count > 0 or deleted_count > 0:
+                    logger.info(f"Cache cleanup: {len(cleaned_cache)} kept, {deleted_count} deleted, {preserved_count} preserved")
+                
+                # Save cleaned cache if changed
+                if cache_modified:
+                    save_sent_signals(cleaned_cache, base_path)
+                
+                return cleaned_cache
         else:
             print(f"⚠️ Cache file not found, creating new cache")
             return {}
