@@ -99,7 +99,8 @@ def normalize_text(text: str) -> str:
     - Letters (Unicode category L)
     - Numbers (Unicode category N)
     - Punctuation (Unicode category P)
-    - Whitespace (Unicode category Z)
+    - Whitespace (Unicode category Z - space characters)
+    - Control characters: tab, newline, carriage return (category Cc)
     
     Args:
         text: Text to normalize
@@ -110,10 +111,11 @@ def normalize_text(text: str) -> str:
     normalized = []
     for char in text:
         category = unicodedata.category(char)
-        # Keep Letters, Numbers, Punctuation, and Whitespace
+        # Keep Letters, Numbers, Punctuation, and Whitespace (space-like)
         if category[0] in ('L', 'N', 'P', 'Z'):
             normalized.append(char)
-        # Also keep basic ASCII whitespace
+        # Also keep ASCII whitespace control characters (Cc category)
+        # Note: \t, \n, \r are NOT in category Z, they are category Cc
         elif char in (' ', '\t', '\n', '\r'):
             normalized.append(char)
     return ''.join(normalized)
