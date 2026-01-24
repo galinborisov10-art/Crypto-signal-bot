@@ -289,12 +289,18 @@ class PositionManager:
             
         Returns:
             True if active position exists, False otherwise
+            
+        Note:
+            Returns False for invalid signal keys. This is conservative behavior
+            that allows cache cleanup to proceed for malformed entries.
         """
         try:
             # Parse signal key: "BTCUSDT_BUY_4h" -> symbol, signal_type, timeframe
             parts = signal_key.split('_')
             if len(parts) < 3:
                 logger.warning(f"⚠️ Invalid signal_key format: {signal_key}")
+                # Conservative: Return False to allow cleanup of malformed entries
+                # Active positions should have valid signal keys
                 return False
             
             # Handle cases where symbol might contain underscore (e.g., "BTC_USDT")

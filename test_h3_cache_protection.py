@@ -351,6 +351,41 @@ def test_6_partial_position_also_protected():
         print("✅ TEST 6 PASSED: Partial position protected")
 
 
+def test_7_corrupted_timestamp_with_active_position():
+    """
+    Test: Corrupted timestamp with active position is preserved
+    """
+    print("\n🧪 TEST 7: Corrupted timestamp with active position")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache_file = os.path.join(tmpdir, 'sent_signals_cache.json')
+        
+        cache = {
+            'BTCUSDT_BUY_4h': {
+                'timestamp': 'CORRUPTED_TIMESTAMP',  # Invalid timestamp
+                'last_checked': 'ALSO_CORRUPTED',
+                'entry_price': 50000.0,
+                'confidence': 85
+            }
+        }
+        
+        with open(cache_file, 'w') as f:
+            json.dump(cache, f)
+        
+        # Mock PositionManager - active position exists
+        with patch('signal_cache.PositionManager') as MockPM:
+            mock_pm_instance = MagicMock()
+            mock_pm_instance.is_position_active.return_value = True
+            MockPM.return_value = mock_pm_instance
+            
+            with patch('signal_cache.POSITION_MANAGER_AVAILABLE', True):
+                loaded_cache = load_sent_signals(tmpdir)
+        
+        # Assertions
+        assert 'BTCUSDT_BUY_4h' in loaded_cache, "Entry with corrupted timestamp preserved for active position"
+        print("✅ TEST 7 PASSED: Corrupted timestamp with active position preserved")
+
+
 def run_all_tests():
     """Run all tests"""
     print("=" * 70)
@@ -363,7 +398,8 @@ def run_all_tests():
         test_3_fallback_without_position_manager,
         test_4_fresh_entries_always_preserved,
         test_5_mixed_scenario,
-        test_6_partial_position_also_protected
+        test_6_partial_position_also_protected,
+        test_7_corrupted_timestamp_with_active_position
     ]
     
     passed = 0

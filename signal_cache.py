@@ -72,6 +72,7 @@ def load_sent_signals(base_path=None):
                 cleaned_cache = {}
                 deleted_count = 0
                 preserved_count = 0
+                cache_modified = False
                 
                 for signal_key, signal_data in cache.items():
                     timestamp_str = signal_data.get('last_checked', signal_data.get('timestamp'))
@@ -79,7 +80,15 @@ def load_sent_signals(base_path=None):
                     try:
                         signal_timestamp = datetime.fromisoformat(timestamp_str).timestamp()
                     except (ValueError, TypeError):
-                        deleted_count += 1
+                        # GUARD: Even with corrupted timestamp, check for active position
+                        if position_manager and position_manager.is_position_active(signal_key):
+                            # Preserve entry with corrupted timestamp if position is active
+                            cleaned_cache[signal_key] = signal_data
+                            preserved_count += 1
+                            logger.warning(f"⚠️ Preserved entry with corrupted timestamp for active position: {signal_key}")
+                        else:
+                            deleted_count += 1
+                            cache_modified = True
                         continue
                     
                     # Check if entry is older than cutoff
@@ -93,6 +102,7 @@ def load_sent_signals(base_path=None):
                         else:
                             # Safe to delete - no active position
                             deleted_count += 1
+                            cache_modified = True
                     else:
                         # Entry is fresh - keep it
                         cleaned_cache[signal_key] = signal_data
@@ -101,7 +111,7 @@ def load_sent_signals(base_path=None):
                     logger.info(f"Cache cleanup: {len(cleaned_cache)} kept, {deleted_count} deleted, {preserved_count} preserved")
                 
                 # Save cleaned cache if changed
-                if cleaned_cache != cache:
+                if cache_modified:
                     save_sent_signals(cleaned_cache, base_path)
                 
                 return cleaned_cache
