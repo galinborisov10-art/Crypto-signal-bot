@@ -219,16 +219,26 @@ class MLTradingEngine:
         Extracts features matching the REQUIRED_ML_FEATURES schema.
         """
         try:
-            # Extract features based on the canonical schema
+            # Extract numerical features
             features = [
                 analysis.get('rsi', 50),
                 analysis.get('confidence', 50),
                 analysis.get('volume_ratio', 1),
                 analysis.get('trend_strength', 0),
                 analysis.get('volatility', 5),
-                # Note: timeframe and signal_type are categorical, 
-                # need encoding for ML use (not implemented in this PR)
             ]
+            
+            # Encode categorical features
+            # timeframe: '1h'=1, '2h'=2, '4h'=4, '1d'=24
+            timeframe_map = {'1h': 1, '2h': 2, '4h': 4, '1d': 24}
+            timeframe_encoded = timeframe_map.get(analysis.get('timeframe', '4h'), 4)
+            features.append(timeframe_encoded)
+            
+            # signal_type: 'BUY'=1, 'STRONG_BUY'=2, 'SELL'=-1, 'STRONG_SELL'=-2
+            signal_map = {'BUY': 1, 'STRONG_BUY': 2, 'SELL': -1, 'STRONG_SELL': -2}
+            signal_encoded = signal_map.get(analysis.get('signal_type', 'BUY'), 1)
+            features.append(signal_encoded)
+            
             return np.array(features).reshape(1, -1)
         except Exception as e:
             logger.error(f"Feature extraction error: {e}")

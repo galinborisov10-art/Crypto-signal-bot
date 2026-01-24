@@ -63,7 +63,7 @@ def test_2_missing_required_feature():
     print(f"Missing features: {missing}")
     
     assert is_valid == False, "Invalid schema should fail validation"
-    assert any('volume_ratio' in m for m in missing), "volume_ratio should be detected as missing"
+    assert 'volume_ratio (missing)' in missing, "volume_ratio should be detected as missing"
     
     print("✅ PASS: Missing feature detected")
 
@@ -91,7 +91,7 @@ def test_3_none_values_rejected():
     print(f"Missing features: {missing}")
     
     assert is_valid == False, "None values should fail validation"
-    assert any('confidence' in m and 'None' in m for m in missing), "None value should be detected"
+    assert 'confidence (None)' in missing, "None value should be detected"
     
     print("✅ PASS: None values rejected")
 
@@ -119,7 +119,7 @@ def test_4_wrong_types_detected():
     print(f"Missing features: {missing}")
     
     assert is_valid == False, "Wrong types should fail validation"
-    assert any('volume_ratio' in m and 'wrong type' in m for m in missing), "Wrong type should be detected"
+    assert 'volume_ratio (wrong type: str)' in missing, "Wrong type should be detected"
     
     print("✅ PASS: Wrong types detected")
 
@@ -148,7 +148,7 @@ def test_5_invalid_categorical_values():
     print(f"Missing features: {missing}")
     
     assert is_valid == False, "Invalid timeframe should fail validation"
-    assert any('timeframe' in m and 'invalid' in m for m in missing), "Invalid timeframe should be detected"
+    assert 'timeframe (invalid: 15m)' in missing, "Invalid timeframe should be detected"
     
     # Test invalid signal_type
     invalid_signal_analysis = {
@@ -168,7 +168,7 @@ def test_5_invalid_categorical_values():
     print(f"Missing features: {missing}")
     
     assert is_valid == False, "Invalid signal_type should fail validation"
-    assert any('signal_type' in m and 'invalid' in m for m in missing), "Invalid signal_type should be detected"
+    assert 'signal_type (invalid: MAYBE_BUY)' in missing, "Invalid signal_type should be detected"
     
     print("✅ PASS: Invalid categorical values rejected")
 
