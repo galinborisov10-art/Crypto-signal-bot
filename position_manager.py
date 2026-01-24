@@ -280,6 +280,49 @@ class PositionManager:
             logger.error(f"❌ Get position by ID error: {e}")
             return None
     
+    def is_position_active(self, signal_key: str) -> bool:
+        """
+        Check if there is an active position for the given signal key
+        
+        Args:
+            signal_key: Signal key in format "{symbol}_{signal_type}_{timeframe}"
+            
+        Returns:
+            True if active position exists, False otherwise
+        """
+        try:
+            # Parse signal key: "BTCUSDT_BUY_4h" -> symbol, signal_type, timeframe
+            parts = signal_key.split('_')
+            if len(parts) < 3:
+                logger.warning(f"⚠️ Invalid signal_key format: {signal_key}")
+                return False
+            
+            # Handle cases where symbol might contain underscore (e.g., "BTC_USDT")
+            # Assume last 2 parts are signal_type and timeframe
+            timeframe = parts[-1]
+            signal_type = parts[-2]
+            symbol = '_'.join(parts[:-2])
+            
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM open_positions
+                WHERE symbol = ? 
+                  AND signal_type = ?
+                  AND timeframe = ?
+                  AND status IN ('OPEN', 'PARTIAL')
+            """, (symbol, signal_type, timeframe))
+            
+            count = cursor.fetchone()[0]
+            conn.close()
+            
+            return count > 0
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking position active status: {e}")
+            return False
+    
     def update_checkpoint_triggered(
         self,
         position_id: int,
