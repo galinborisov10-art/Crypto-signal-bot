@@ -22,6 +22,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import joblib
 import os
 import logging
+import fcntl
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -177,6 +178,7 @@ class MLTradingEngine:
                 return False
             
             with open(self.trading_journal_path, 'r') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                 journal = json.load(f)
             
             trades = journal.get('trades', [])

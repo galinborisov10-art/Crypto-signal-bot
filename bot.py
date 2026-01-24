@@ -8,6 +8,7 @@ import logging
 import hashlib
 import gc
 import uuid
+import fcntl
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
@@ -3824,38 +3825,43 @@ async def save_trade_to_journal(trade: Dict):
     try:
         journal_path = os.path.join(BASE_PATH, 'trading_journal.json')
         
-        # Load existing journal
-        if os.path.exists(journal_path):
-            with open(journal_path, 'r', encoding='utf-8') as f:
+        # Load existing journal with exclusive lock for read-modify-write
+        with open(journal_path, 'r+', encoding='utf-8') if os.path.exists(journal_path) else open(journal_path, 'w+', encoding='utf-8') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            
+            # Read current content
+            if os.path.exists(journal_path) and os.path.getsize(journal_path) > 0:
+                f.seek(0)
                 journal = json.load(f)
-        else:
-            journal = {'trades': []}
-        
-        # Prepare trade data for journal
-        journal_entry = {
-            'timestamp': trade['timestamp'],
-            'symbol': trade['symbol'],
-            'timeframe': trade.get('timeframe', '4h'),
-            'signal_type': trade['type'],
-            'entry': trade['entry'],
-            'tp': trade['tp'],
-            'sl': trade['sl'],
-            'outcome': trade['outcome'],
-            'exit_price': trade.get('exit_price'),
-            'profit_loss_pct': trade.get('profit_loss_pct', 0),
-            'duration_hours': trade['final_alerts'][0]['duration_hours'] if trade.get('final_alerts') else 0,
-            'ml_mode': trade.get('signal_data', {}).get('ml_mode', False),
-            'ml_confidence': trade.get('signal_data', {}).get('ml_confidence', 0),
-            'alerts_80': trade.get('alerts_80', []),
-            'final_alerts': trade.get('final_alerts', []),
-            'conditions': trade.get('signal_data', {}).get('conditions', {})
-        }
-        
-        # Add to journal
-        journal['trades'].append(journal_entry)
-        
-        # Save journal
-        with open(journal_path, 'w', encoding='utf-8') as f:
+            else:
+                journal = {'trades': []}
+            
+            # Prepare trade data for journal
+            journal_entry = {
+                'timestamp': trade['timestamp'],
+                'symbol': trade['symbol'],
+                'timeframe': trade.get('timeframe', '4h'),
+                'signal_type': trade['type'],
+                'entry': trade['entry'],
+                'tp': trade['tp'],
+                'sl': trade['sl'],
+                'outcome': trade['outcome'],
+                'exit_price': trade.get('exit_price'),
+                'profit_loss_pct': trade.get('profit_loss_pct', 0),
+                'duration_hours': trade['final_alerts'][0]['duration_hours'] if trade.get('final_alerts') else 0,
+                'ml_mode': trade.get('signal_data', {}).get('ml_mode', False),
+                'ml_confidence': trade.get('signal_data', {}).get('ml_confidence', 0),
+                'alerts_80': trade.get('alerts_80', []),
+                'final_alerts': trade.get('final_alerts', []),
+                'conditions': trade.get('signal_data', {}).get('conditions', {})
+            }
+            
+            # Add to journal
+            journal['trades'].append(journal_entry)
+            
+            # Write journal (truncate and write)
+            f.seek(0)
+            f.truncate()
             json.dump(journal, f, indent=2, ensure_ascii=False)
         
         logger.info(f"✅ Trade saved to journal: {trade['symbol']} ({trade['outcome']})")
@@ -3876,6 +3882,7 @@ async def update_trade_statistics():
             return
         
         with open(journal_path, 'r', encoding='utf-8') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
             journal = json.load(f)
         
         trades = journal.get('trades', [])
