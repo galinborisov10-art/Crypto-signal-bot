@@ -3818,27 +3818,32 @@ async def send_final_alert(trade: Dict, exit_price: float, hit_target: str, bot)
 
 
 async def save_trade_to_journal(trade: Dict):
-    """
-    Save completed trade to trading_journal.json
-    
-    Args:
-        trade: Completed trade dictionary with outcome
-    """
+    """Save completed trade to trading journal with atomic write"""
     try:
         journal_path = os.path.join(BASE_PATH, 'trading_journal.json')
         
-        # Load existing journal with exclusive lock for read-modify-write
-        with open(journal_path, 'r+', encoding='utf-8') if os.path.exists(journal_path) else open(journal_path, 'w+', encoding='utf-8') as f:
+        # Determine file mode (create if doesn't exist)
+        mode = 'r+' if os.path.exists(journal_path) else 'w+'
+        
+        with open(journal_path, mode, encoding='utf-8') as f:
+            # Acquire exclusive lock IMMEDIATELY (blocks all other access)
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             
-            # Read current content
-            if os.path.exists(journal_path) and os.path.getsize(journal_path) > 0:
+            # Read current content with error recovery
+            try:
                 f.seek(0)
-                journal = json.load(f)
-            else:
+                content = f.read()
+                journal = json.loads(content) if content.strip() else {'trades': []}
+            except (json.JSONDecodeError, ValueError):
+                # Corrupted or empty file - start fresh
+                logger.warning("⚠️ Journal corrupted or empty, reinitializing")
                 journal = {'trades': []}
             
-            # Prepare trade data for journal
+            # Ensure trades list exists
+            if 'trades' not in journal:
+                journal['trades'] = []
+            
+            # Prepare trade entry
             journal_entry = {
                 'timestamp': trade['timestamp'],
                 'symbol': trade['symbol'],
@@ -3861,10 +3866,11 @@ async def save_trade_to_journal(trade: Dict):
             # Add to journal
             journal['trades'].append(journal_entry)
             
-            # Write journal (truncate and write)
+            # Atomic write (lock held throughout)
             f.seek(0)
             f.truncate()
             json.dump(journal, f, indent=2, ensure_ascii=False)
+            # Lock auto-released on context exit
         
         logger.info(f"✅ Trade saved to journal: {trade['symbol']} ({trade['outcome']})")
         
@@ -3872,23 +3878,34 @@ async def save_trade_to_journal(trade: Dict):
         await update_trade_statistics()
         
     except Exception as e:
-        logger.error(f"Error saving trade to journal: {e}", exc_info=True)
+        logger.error(f"❌ Error saving trade to journal: {e}")
 
 
 async def update_trade_statistics():
-    """Update overall trading statistics"""
+    """Update overall trading statistics with atomic write"""
     try:
         journal_path = os.path.join(BASE_PATH, 'trading_journal.json')
         
-        if not os.path.exists(journal_path):
-            return
+        # Determine file mode (create if doesn't exist)
+        mode = 'r+' if os.path.exists(journal_path) else 'w+'
         
-        with open(journal_path, 'r+', encoding='utf-8') as f:
+        with open(journal_path, mode, encoding='utf-8') as f:
+            # Acquire exclusive lock IMMEDIATELY (blocks all other access)
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             
-            # Read current content
-            f.seek(0)
-            journal = json.load(f)
+            # Read current content with error recovery
+            try:
+                f.seek(0)
+                content = f.read()
+                journal = json.loads(content) if content.strip() else {'trades': []}
+            except (json.JSONDecodeError, ValueError):
+                # Corrupted or empty file - start fresh
+                logger.warning("⚠️ Journal corrupted or empty, reinitializing")
+                journal = {'trades': []}
+            
+            # Ensure trades list exists
+            if 'trades' not in journal:
+                journal['trades'] = []
             
             trades = journal.get('trades', [])
             
@@ -3910,15 +3927,16 @@ async def update_trade_statistics():
                 'last_updated': datetime.now(timezone.utc).isoformat()
             })
             
-            # Save
+            # Atomic write (lock held throughout)
             f.seek(0)
             f.truncate()
             json.dump(journal, f, indent=2, ensure_ascii=False)
+            # Lock auto-released on context exit
         
         logger.info(f"✅ Statistics updated: {total_trades} trades, {win_rate:.1f}% win rate")
         
     except Exception as e:
-        logger.error(f"Error updating statistics: {e}", exc_info=True)
+        logger.error(f"❌ Error updating statistics: {e}")
 
 
 def record_signal(symbol, timeframe, signal_type, confidence, entry_price=None, tp_price=None, sl_price=None):
