@@ -3385,21 +3385,17 @@ def log_trade_to_journal(symbol, timeframe, signal_type, confidence, entry_price
                     
                     logger.info(f"📝 Trade #{trade_id} logged: {symbol} {signal_type} @ ${entry_price}")
                     
-                    # 🤖 Auto-train ML модела на всеки 20 trades
-                    if ML_AVAILABLE and journal['metadata']['total_trades'] % 20 == 0:
-                        try:
-                            logger.info(f"🤖 Auto-training ML model (trade #{journal['metadata']['total_trades']})")
-                            # Note: Lock released before training to avoid holding lock during long operation
-                        except Exception as ml_error:
-                            logger.error(f"ML training error: {ml_error}")
+                    # Store total_trades for ML training check after lock release
+                    total_trades = journal['metadata']['total_trades']
                     
                     return trade_id
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
                     
-                # Train ML model after releasing lock (if needed)
-                if ML_AVAILABLE and journal['metadata']['total_trades'] % 20 == 0:
+                # 🤖 Auto-train ML модела на всеки 20 trades (after releasing lock)
+                if ML_AVAILABLE and total_trades % 20 == 0:
                     try:
+                        logger.info(f"🤖 Auto-training ML model (trade #{total_trades})")
                         ml_engine.train_model()
                         logger.info("✅ ML model trained successfully!")
                     except Exception as ml_error:
@@ -3410,13 +3406,6 @@ def log_trade_to_journal(symbol, timeframe, signal_type, confidence, entry_price
             
     except Exception as e:
         logger.error(f"Грешка при логване в journal: {e}")
-        return None
-                logger.error(f"ML training error: {ml_error}")
-        
-        return trade_id
-        
-    except Exception as e:
-        logger.error(f"Грешка при логване на trade: {e}")
         return None
 
 
@@ -3973,7 +3962,13 @@ async def save_trade_to_journal(trade: Dict):
 
 
 async def update_trade_statistics():
-    """Update overall trading statistics"""
+    """
+    Update overall trading statistics
+    
+    DEPRECATED: This function is no longer used. Statistics are now updated
+    atomically within save_trade_to_journal() to eliminate duplicate writes.
+    Kept for backward compatibility only.
+    """
     try:
         journal_path = os.path.join(BASE_PATH, 'trading_journal.json')
         
