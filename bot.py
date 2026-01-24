@@ -8,6 +8,7 @@ import logging
 import hashlib
 import gc
 import uuid
+import fcntl
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
@@ -3267,6 +3268,7 @@ def load_journal():
     try:
         if os.path.exists(JOURNAL_FILE):
             with open(JOURNAL_FILE, 'r') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                 return json.load(f)
         else:
             from datetime import datetime
@@ -3302,6 +3304,7 @@ def save_journal(journal):
         from datetime import datetime
         journal['metadata']['last_updated'] = datetime.now().isoformat()
         with open(JOURNAL_FILE, 'w') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             json.dump(journal, f, indent=2)
         logger.info("✅ Trading journal saved successfully")
     except Exception as e:
@@ -3815,48 +3818,59 @@ async def send_final_alert(trade: Dict, exit_price: float, hit_target: str, bot)
 
 
 async def save_trade_to_journal(trade: Dict):
-    """
-    Save completed trade to trading_journal.json
-    
-    Args:
-        trade: Completed trade dictionary with outcome
-    """
+    """Save completed trade to trading journal with atomic write"""
     try:
         journal_path = os.path.join(BASE_PATH, 'trading_journal.json')
         
-        # Load existing journal
-        if os.path.exists(journal_path):
-            with open(journal_path, 'r', encoding='utf-8') as f:
-                journal = json.load(f)
-        else:
-            journal = {'trades': []}
+        # Determine file mode (create if doesn't exist)
+        mode = 'r+' if os.path.exists(journal_path) else 'w+'
         
-        # Prepare trade data for journal
-        journal_entry = {
-            'timestamp': trade['timestamp'],
-            'symbol': trade['symbol'],
-            'timeframe': trade.get('timeframe', '4h'),
-            'signal_type': trade['type'],
-            'entry': trade['entry'],
-            'tp': trade['tp'],
-            'sl': trade['sl'],
-            'outcome': trade['outcome'],
-            'exit_price': trade.get('exit_price'),
-            'profit_loss_pct': trade.get('profit_loss_pct', 0),
-            'duration_hours': trade['final_alerts'][0]['duration_hours'] if trade.get('final_alerts') else 0,
-            'ml_mode': trade.get('signal_data', {}).get('ml_mode', False),
-            'ml_confidence': trade.get('signal_data', {}).get('ml_confidence', 0),
-            'alerts_80': trade.get('alerts_80', []),
-            'final_alerts': trade.get('final_alerts', []),
-            'conditions': trade.get('signal_data', {}).get('conditions', {})
-        }
-        
-        # Add to journal
-        journal['trades'].append(journal_entry)
-        
-        # Save journal
-        with open(journal_path, 'w', encoding='utf-8') as f:
+        with open(journal_path, mode, encoding='utf-8') as f:
+            # Acquire exclusive lock IMMEDIATELY (blocks all other access)
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            
+            # Read current content with error recovery
+            try:
+                f.seek(0)
+                content = f.read()
+                journal = json.loads(content) if content.strip() else {'trades': []}
+            except (json.JSONDecodeError, ValueError):
+                # Corrupted or empty file - start fresh
+                logger.warning("⚠️ Journal corrupted or empty, reinitializing")
+                journal = {'trades': []}
+            
+            # Ensure trades list exists
+            if 'trades' not in journal:
+                journal['trades'] = []
+            
+            # Prepare trade entry
+            journal_entry = {
+                'timestamp': trade['timestamp'],
+                'symbol': trade['symbol'],
+                'timeframe': trade.get('timeframe', '4h'),
+                'signal_type': trade['type'],
+                'entry': trade['entry'],
+                'tp': trade['tp'],
+                'sl': trade['sl'],
+                'outcome': trade['outcome'],
+                'exit_price': trade.get('exit_price'),
+                'profit_loss_pct': trade.get('profit_loss_pct', 0),
+                'duration_hours': trade['final_alerts'][0]['duration_hours'] if trade.get('final_alerts') else 0,
+                'ml_mode': trade.get('signal_data', {}).get('ml_mode', False),
+                'ml_confidence': trade.get('signal_data', {}).get('ml_confidence', 0),
+                'alerts_80': trade.get('alerts_80', []),
+                'final_alerts': trade.get('final_alerts', []),
+                'conditions': trade.get('signal_data', {}).get('conditions', {})
+            }
+            
+            # Add to journal
+            journal['trades'].append(journal_entry)
+            
+            # Atomic write (lock held throughout)
+            f.seek(0)
+            f.truncate()
             json.dump(journal, f, indent=2, ensure_ascii=False)
+            # Lock auto-released on context exit
         
         logger.info(f"✅ Trade saved to journal: {trade['symbol']} ({trade['outcome']})")
         
@@ -3864,48 +3878,65 @@ async def save_trade_to_journal(trade: Dict):
         await update_trade_statistics()
         
     except Exception as e:
-        logger.error(f"Error saving trade to journal: {e}", exc_info=True)
+        logger.error(f"❌ Error saving trade to journal: {e}")
 
 
 async def update_trade_statistics():
-    """Update overall trading statistics"""
+    """Update overall trading statistics with atomic write"""
     try:
         journal_path = os.path.join(BASE_PATH, 'trading_journal.json')
         
-        if not os.path.exists(journal_path):
-            return
+        # Determine file mode (create if doesn't exist)
+        mode = 'r+' if os.path.exists(journal_path) else 'w+'
         
-        with open(journal_path, 'r', encoding='utf-8') as f:
-            journal = json.load(f)
-        
-        trades = journal.get('trades', [])
-        
-        # Calculate stats using outcome constants
-        total_trades = len(trades)
-        wins = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_WIN)
-        losses = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_LOSS)
-        win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
-        
-        # Update journal metadata
-        if 'statistics' not in journal:
-            journal['statistics'] = {}
-        
-        journal['statistics'].update({
-            'total_trades': total_trades,
-            'wins': wins,
-            'losses': losses,
-            'win_rate': round(win_rate, 2),
-            'last_updated': datetime.now(timezone.utc).isoformat()
-        })
-        
-        # Save
-        with open(journal_path, 'w', encoding='utf-8') as f:
+        with open(journal_path, mode, encoding='utf-8') as f:
+            # Acquire exclusive lock IMMEDIATELY (blocks all other access)
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            
+            # Read current content with error recovery
+            try:
+                f.seek(0)
+                content = f.read()
+                journal = json.loads(content) if content.strip() else {'trades': []}
+            except (json.JSONDecodeError, ValueError):
+                # Corrupted or empty file - start fresh
+                logger.warning("⚠️ Journal corrupted or empty, reinitializing")
+                journal = {'trades': []}
+            
+            # Ensure trades list exists
+            if 'trades' not in journal:
+                journal['trades'] = []
+            
+            trades = journal.get('trades', [])
+            
+            # Calculate stats using outcome constants
+            total_trades = len(trades)
+            wins = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_WIN)
+            losses = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_LOSS)
+            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+            
+            # Update journal metadata
+            if 'statistics' not in journal:
+                journal['statistics'] = {}
+            
+            journal['statistics'].update({
+                'total_trades': total_trades,
+                'wins': wins,
+                'losses': losses,
+                'win_rate': round(win_rate, 2),
+                'last_updated': datetime.now(timezone.utc).isoformat()
+            })
+            
+            # Atomic write (lock held throughout)
+            f.seek(0)
+            f.truncate()
             json.dump(journal, f, indent=2, ensure_ascii=False)
+            # Lock auto-released on context exit
         
         logger.info(f"✅ Statistics updated: {total_trades} trades, {win_rate:.1f}% win rate")
         
     except Exception as e:
-        logger.error(f"Error updating statistics: {e}", exc_info=True)
+        logger.error(f"❌ Error updating statistics: {e}")
 
 
 def record_signal(symbol, timeframe, signal_type, confidence, entry_price=None, tp_price=None, sl_price=None):

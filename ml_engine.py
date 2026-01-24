@@ -22,6 +22,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import joblib
 import os
 import logging
+import fcntl
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -177,6 +178,7 @@ class MLTradingEngine:
                 return False
             
             with open(self.trading_journal_path, 'r') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                 journal = json.load(f)
             
             trades = journal.get('trades', [])
@@ -295,6 +297,7 @@ class MLTradingEngine:
             # Брой trades от trading_journal
             if os.path.exists(self.trading_journal_path):
                 with open(self.trading_journal_path, 'r') as f:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                     journal = json.load(f)
                 num_samples = journal.get('metadata', {}).get('total_trades', 0)
             else:
@@ -366,6 +369,7 @@ class MLTradingEngine:
                 return False
             
             with open(self.trading_journal_path, 'r') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                 journal = json.load(f)
             
             trades = journal.get('trades', [])
@@ -555,6 +559,7 @@ class MLTradingEngine:
                 return {'error': 'No trading journal available'}
             
             with open(self.trading_journal_path, 'r') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
                 journal = json.load(f)
             
             trades = journal.get('trades', [])
