@@ -11,6 +11,7 @@ import json
 import re
 import logging
 import asyncio
+import unicodedata
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional, Any
@@ -88,6 +89,34 @@ def grep_logs(pattern: str, hours: int = 6, base_path: str = None, max_lines: in
     except Exception as e:
         logger.error(f"❌ Error grepping logs: {e}")
         return []
+
+
+def normalize_text(text: str) -> str:
+    """
+    Normalize text by removing emojis and Unicode symbols.
+    
+    Preserves only:
+    - Letters (Unicode category L)
+    - Numbers (Unicode category N)
+    - Punctuation (Unicode category P)
+    - Whitespace (Unicode category Z)
+    
+    Args:
+        text: Text to normalize
+    
+    Returns:
+        Normalized text with emojis/symbols removed
+    """
+    normalized = []
+    for char in text:
+        category = unicodedata.category(char)
+        # Keep Letters, Numbers, Punctuation, and Whitespace
+        if category[0] in ('L', 'N', 'P', 'Z'):
+            normalized.append(char)
+        # Also keep basic ASCII whitespace
+        elif char in (' ', '\t', '\n', '\r'):
+            normalized.append(char)
+    return ''.join(normalized)
 
 
 def load_journal_safe(base_path: str = None) -> Optional[Dict]:
@@ -451,7 +480,9 @@ async def diagnose_ml_issue(base_path: str = None) -> List[Dict[str, Any]]:
 
 async def diagnose_daily_report_issue(base_path: str = None) -> List[Dict[str, Any]]:
     """
-    Check if yesterday's daily report was sent
+    Check if today's daily report was sent
+    
+    Uses PRIMARY check (daily_reports.json) and FALLBACK check (bot.log)
     
     Args:
         base_path: Base path for bot files
@@ -464,48 +495,86 @@ async def diagnose_daily_report_issue(base_path: str = None) -> List[Dict[str, A
     if base_path is None:
         base_path = os.path.dirname(os.path.abspath(__file__))
     
-    # Check for daily report execution in last 24 hours
-    daily_report_logs = grep_logs('Daily report sent successfully', hours=24, base_path=base_path)
+    today = datetime.now().strftime('%Y-%m-%d')
     
-    if not daily_report_logs:
-        # Check if scheduled
-        scheduler_logs = grep_logs('Daily reports scheduled', hours=24*7, base_path=base_path)
-        
-        if not scheduler_logs:
-            issues.append({
-                'problem': 'Daily report not sent in last 24 hours',
-                'root_cause': 'Daily report job is NOT scheduled',
-                'evidence': 'No "Daily reports scheduled" log found',
-                'fix': 'Check scheduler initialization in bot.py',
-                'code_location': 'bot.py - schedule_reports function',
-                'commands': [
-                    f'grep "Daily reports scheduled" {base_path}/bot.log | tail -n 5'
-                ]
-            })
-        else:
-            # Scheduled but not executed - check for errors
-            report_errors = grep_logs('ERROR.*Daily report', hours=24, base_path=base_path)
+    # ==================== PRIMARY CHECK ====================
+    # Check daily_reports.json for today's date (SOURCE OF TRUTH)
+    daily_reports_file = f'{base_path}/daily_reports.json'
+    primary_check_passed = False
+    
+    if os.path.exists(daily_reports_file):
+        try:
+            with open(daily_reports_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                reports = data.get('reports', [])
+                
+                # Check if any report has today's date
+                for report in reports:
+                    if report.get('date') == today:
+                        primary_check_passed = True
+                        break
+        except Exception as e:
+            logger.error(f"Error reading daily_reports.json: {e}")
+    
+    if primary_check_passed:
+        # Daily report found in JSON - all good
+        return issues
+    
+    # ==================== FALLBACK CHECK ====================
+    # Primary failed - check bot.log with emoji normalization
+    log_file = f'{base_path}/bot.log'
+    fallback_check_passed = False
+    
+    if os.path.exists(log_file):
+        try:
+            # Check file size first - skip if too large
+            file_size = os.path.getsize(log_file)
+            max_size_bytes = MAX_LOG_FILE_SIZE_MB * 1024 * 1024
             
-            if report_errors:
-                issues.append({
-                    'problem': 'Daily report not sent in last 24 hours',
-                    'root_cause': 'Daily report job failed with error',
-                    'evidence': report_errors[-1],
-                    'fix': 'Check report generation logic and data availability',
-                    'commands': [
-                        f'grep "Daily report" {base_path}/bot.log | tail -n 20'
+            if file_size <= max_size_bytes:
+                with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    # Read last N lines for performance
+                    lines = f.readlines()
+                    lines_to_check = lines[-DEFAULT_MAX_LOG_LINES:]
+                    
+                    # Patterns to detect (case-insensitive, after normalization)
+                    patterns = [
+                        r'daily\s+report\s+sent',
+                        r'daily\s+report\s+generated',
+                        r'daily\s+report\s+delivered'
                     ]
-                })
-            else:
-                issues.append({
-                    'problem': 'Daily report not sent in last 24 hours',
-                    'root_cause': 'Unknown - job scheduled but not executed',
-                    'evidence': 'No error logs, but no success logs either',
-                    'fix': 'Check APScheduler status and misfire_grace_time setting',
-                    'commands': [
-                        f'grep "APScheduler" {base_path}/bot.log | tail -n 20'
-                    ]
-                })
+                    
+                    for line in lines_to_check:
+                        # Normalize text to remove emojis
+                        normalized = normalize_text(line).lower()
+                        
+                        # Check all patterns
+                        for pattern in patterns:
+                            if re.search(pattern, normalized):
+                                fallback_check_passed = True
+                                break
+                        
+                        if fallback_check_passed:
+                            break
+        except Exception as e:
+            logger.error(f"Error reading bot.log for fallback check: {e}")
+    
+    if fallback_check_passed:
+        # Found in logs but not in JSON - emit warning
+        logger.warning("Daily report detected via log fallback")
+        return issues
+    
+    # ==================== FAILURE CASE ====================
+    # Neither primary nor fallback succeeded
+    issues.append({
+        'problem': 'Daily report not found for today',
+        'root_cause': 'No entry in daily_reports.json and no log evidence',
+        'evidence': f'No report for {today} in JSON, no matching log entries',
+        'fix': 'Check if daily report job is scheduled and executing correctly',
+        'commands': [
+            f'grep "Daily report" {base_path}/bot.log | tail -n 20'
+        ]
+    })
     
     return issues
 
