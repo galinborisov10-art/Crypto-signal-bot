@@ -60,6 +60,16 @@ FEATURE_TYPES = {
 VALID_TIMEFRAMES = ['1h', '2h', '4h', '1d']
 VALID_SIGNAL_TYPES = ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']
 
+# ============================================================================
+# ML CONFIDENCE MODIFIER BOUNDS
+# ============================================================================
+# ML can ONLY adjust confidence within these strict bounds.
+# Bounds are applied INLINE where modifier is used.
+# ============================================================================
+
+ML_MODIFIER_MIN = -0.15  # Maximum penalty: -15%
+ML_MODIFIER_MAX = 0.10   # Maximum boost: +10%
+
 
 def _validate_ml_features(analysis: dict) -> tuple:
     """
@@ -180,14 +190,30 @@ class MLTradingEngine:
             signal_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL'}
             ml_signal = signal_map.get(ml_prediction, 'HOLD')
             
+            # Calculate ML modifier (centered at 50% confidence)
+            # Formula: (ml_confidence - 50) / 100.0
+            # 50% ML confidence → 0 modifier (neutral)
+            # Above 50% → positive modifier (boost)
+            # Below 50% → negative modifier (penalty)
+            ml_modifier = (ml_confidence - 50) / 100.0
+            
+            # BOUNDS ENFORCEMENT - Apply strict limits to ML influence
+            if ml_modifier > ML_MODIFIER_MAX:
+                logger.warning(f"⚠️ ML modifier {ml_modifier:.3f} clamped to {ML_MODIFIER_MAX}")
+                ml_modifier = ML_MODIFIER_MAX
+            elif ml_modifier < ML_MODIFIER_MIN:
+                logger.warning(f"⚠️ ML modifier {ml_modifier:.3f} clamped to {ML_MODIFIER_MIN}")
+                ml_modifier = ML_MODIFIER_MIN
+            
             # HYBRID MODE: Комбинирай ML + Classical
             if self.hybrid_mode:
-                # Ако сигналите съвпадат - boost confidence
+                # Ако сигналите съвпадат - apply modifier to boost/penalize confidence
                 if ml_signal == classical_signal:
-                    final_confidence = (classical_confidence * (1 - self.ml_weight) + 
-                                      ml_confidence * self.ml_weight)
+                    # Apply bounded modifier to classical confidence
+                    # Note: Result may temporarily exceed [0, 100] but is clamped at line 229
+                    final_confidence = classical_confidence * (1 + ml_modifier)
                     final_signal = classical_signal
-                    mode = f"Hybrid ({int((1-self.ml_weight)*100)}% Classical + {int(self.ml_weight*100)}% ML) ✅"
+                    mode = f"Hybrid (Classical + ML modifier {ml_modifier:+.1%}) ✅"
                 else:
                     # Сигналите се различават - използвай weights
                     if ml_confidence * self.ml_weight > classical_confidence * (1 - self.ml_weight):
@@ -203,6 +229,9 @@ class MLTradingEngine:
                 final_signal = ml_signal
                 final_confidence = ml_confidence
                 mode = "Pure ML 🤖"
+            
+            # Ensure confidence stays in valid range [0, 100]
+            final_confidence = max(0, min(100, final_confidence))
             
             return final_signal, final_confidence, mode
             
