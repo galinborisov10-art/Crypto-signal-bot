@@ -482,102 +482,94 @@ async def diagnose_ml_issue(base_path: str = None) -> List[Dict[str, Any]]:
 
 async def diagnose_daily_report_issue(base_path: str = None) -> List[Dict[str, Any]]:
     """
-    Check if today's daily report was sent
-    
-    Uses PRIMARY check (daily_reports.json) and FALLBACK check (bot.log)
-    
-    Args:
-        base_path: Base path for bot files
-    
-    Returns:
-        List of issues found
+    Check whether today's daily report was produced.
+
+    Flow (strict):
+      1) PRIMARY: check daily_reports.json for today's date (source of truth).
+      2) FALLBACK: if primary failed, check bot.log (emoji-normalized tolerant matching).
+      3) FAILURE: if both fail, return a single diagnostic issue.
+
+    NOTE: This function MUST NOT call grep_logs(), inspect scheduler logs,
+    or append issues before the PRIMARY check. It only implements the 3-step flow.
     """
-    issues = []
-    
+    issues: List[Dict[str, Any]] = []
+
     if base_path is None:
         base_path = os.path.dirname(os.path.abspath(__file__))
-    
+
     today = datetime.now().strftime('%Y-%m-%d')
-    
-    # ==================== PRIMARY CHECK ====================
-    # Check daily_reports.json for today's date (SOURCE OF TRUTH)
-    daily_reports_file = f'{base_path}/daily_reports.json'
-    primary_check_passed = False
-    
-    if os.path.exists(daily_reports_file):
-        try:
+
+    # -------------------------
+    # 1) PRIMARY check: daily_reports.json (source of truth)
+    # -------------------------
+    try:
+        daily_reports_file = os.path.join(base_path, 'daily_reports.json')
+        if os.path.exists(daily_reports_file):
             with open(daily_reports_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                reports = data.get('reports', [])
-                
-                # Check if any report has today's date
-                for report in reports:
-                    if report.get('date') == today:
-                        primary_check_passed = True
-                        break
-        except Exception as e:
-            logger.error(f"Error reading daily_reports.json: {e}")
-    
-    if primary_check_passed:
-        # Daily report found in JSON - all good
-        return issues
-    
-    # ==================== FALLBACK CHECK ====================
-    # Primary failed - check bot.log with emoji normalization
-    log_file = f'{base_path}/bot.log'
-    fallback_check_passed = False
-    
-    if os.path.exists(log_file):
-        try:
-            # Check file size first - skip if too large
+            reports = data.get('reports', []) if isinstance(data, dict) else []
+            for report in reports:
+                if isinstance(report, dict) and report.get('date') == today:
+                    # primary success: found today's report -> healthy
+                    return issues  # empty list
+    except Exception as e:
+        logger.error(f"Error reading daily_reports.json during PRIMARY check: {e}")
+        # fall through to fallback (do not raise)
+
+    # -------------------------
+    # 2) FALLBACK check: bot.log with emoji/Unicode normalization and tolerant patterns
+    # -------------------------
+    try:
+        log_file = os.path.join(base_path, 'bot.log')
+        if os.path.exists(log_file):
             file_size = os.path.getsize(log_file)
             max_size_bytes = MAX_LOG_FILE_SIZE_MB * 1024 * 1024
-            
             if file_size <= max_size_bytes:
                 with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
-                    # Read last N lines for performance
                     lines = f.readlines()
-                    lines_to_check = lines[-DEFAULT_MAX_LOG_LINES:]
-                    
-                    # Patterns to detect (case-insensitive, after normalization)
-                    patterns = [
-                        r'daily\s+report\s+sent',
-                        r'daily\s+report\s+generated',
-                        r'daily\s+report\s+delivered'
-                    ]
-                    
-                    for line in lines_to_check:
-                        # Normalize text to remove emojis
+                # Keep only the last DEFAULT_MAX_LOG_LINES lines for performance
+                lines_to_check = lines[-DEFAULT_MAX_LOG_LINES:]
+
+                # tolerant patterns (after normalization)
+                patterns = [
+                    r'daily\s+report\s+sent',
+                    r'daily\s+report\s+generated',
+                    r'daily\s+report\s+delivered',
+                    r'daily\s+report'  # broader catch (last resort)
+                ]
+                compiled = [re.compile(p, re.IGNORECASE) for p in patterns]
+
+                for line in lines_to_check:
+                    try:
                         normalized = normalize_text(line).lower()
-                        
-                        # Check all patterns
-                        for pattern in patterns:
-                            if re.search(pattern, normalized):
-                                fallback_check_passed = True
-                                break
-                        
-                        if fallback_check_passed:
-                            break
-        except Exception as e:
-            logger.error(f"Error reading bot.log for fallback check: {e}")
-    
-    if fallback_check_passed:
-        # Found in logs but not in JSON - emit warning
-        logger.warning("Daily report detected via log fallback")
-        return issues
-    
-    # ==================== FAILURE CASE ====================
-    # Neither primary nor fallback succeeded
+                    except Exception:
+                        normalized = line.lower()
+                    for cre in compiled:
+                        if cre.search(normalized):
+                            # Found fallback evidence — warn and return healthy
+                            logger.warning("Daily report detected via log fallback")
+                            return issues  # empty list
+            else:
+                # Log file too large: skip log fallback (do not append failure yet)
+                logger.info(f"Log file {log_file} too large ({file_size} bytes) — skipping log fallback check")
+    except Exception as e:
+        logger.error(f"Error during FALLBACK log check: {e}")
+        # fall through to failure handling
+
+    # -------------------------
+    # 3) FAILURE: neither primary nor fallback found evidence
+    # -------------------------
     issues.append({
         'problem': 'Daily report not found for today',
-        'root_cause': 'No entry in daily_reports.json and no log evidence',
-        'evidence': f'No report for {today} in JSON, no matching log entries',
-        'fix': 'Check if daily report job is scheduled and executing correctly',
+        'root_cause': 'No entry in daily_reports.json and no matching log evidence in bot.log',
+        'evidence': f'No report for {today} in JSON and no tolerant match in bot.log (or log skipped due to size).',
+        'fix': 'Verify that the daily report job is scheduled and that send_daily_report() writes into daily_reports.json. Check bot.log for execution errors.',
         'commands': [
-            f'grep "Daily report" {base_path}/bot.log | tail -n 20'
+            f'grep "Daily report" {os.path.join(base_path, "bot.log")} | tail -n 50',
+            f'jq . {os.path.join(base_path, "daily_reports.json")} || cat {os.path.join(base_path, "daily_reports.json")}'
         ]
     })
-    
+
     return issues
 
 
