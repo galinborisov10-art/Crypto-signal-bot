@@ -33,10 +33,6 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # This schema defines required features for ML training and prediction.
 # Validation ensures feature compatibility between training and prediction.
-#
-# NOTE: This is the CANONICAL schema for future use. Existing training data
-# may use different features and will be skipped during validation.
-# This is intentional - it prevents training/prediction feature mismatch.
 # ============================================================================
 
 REQUIRED_ML_FEATURES = [
@@ -143,110 +139,6 @@ class MLTradingEngine:
         # Зареди модел ако съществува
         self.load_model()
         self.load_performance_history()
-    
-    def get_ml_prediction(self, analysis: dict) -> dict:
-        """
-        Get ML prediction for signal.
-        
-        Args:
-            analysis: Signal analysis dictionary
-            
-        Returns:
-            Dict with ML prediction result
-        """
-        try:
-            # SANITY GATE: Validate feature schema
-            is_valid, missing_features = _validate_ml_features(analysis)
-            
-            if not is_valid:
-                logger.warning(f"⚠️ ML schema validation failed: {', '.join(missing_features)}")
-                logger.warning("ML disabled (schema mismatch)")
-                return {
-                    'ml_enabled': False,
-                    'confidence_modifier': 0,
-                    'ml_confidence': 0,
-                    'schema_valid': False,
-                    'schema_errors': missing_features
-                }
-            
-            if self.model is None:
-                return {
-                    'ml_enabled': False,
-                    'confidence_modifier': 0,
-                    'ml_confidence': 0,
-                    'schema_valid': True
-                }
-            
-            # Schema valid - proceed with ML
-            features = self._extract_features(analysis)
-            if features is None:
-                return {
-                    'ml_enabled': False,
-                    'confidence_modifier': 0,
-                    'ml_confidence': 0,
-                    'schema_valid': True,
-                    'error': 'Feature extraction failed'
-                }
-            
-            # Normalize features
-            features_scaled = self.scaler.transform(features)
-            
-            # ML prediction
-            ml_proba = self.model.predict_proba(features_scaled)[0]
-            ml_confidence = max(ml_proba) * 100
-            
-            # Calculate confidence modifier
-            # Positive modifier if ML confidence is high, negative if low
-            base_confidence = 50
-            confidence_modifier = (ml_confidence - base_confidence) / 100.0
-            
-            return {
-                'ml_enabled': True,
-                'confidence_modifier': confidence_modifier,
-                'ml_confidence': ml_confidence,
-                'schema_valid': True
-            }
-            
-        except Exception as e:
-            logger.error(f"ML prediction error: {e}")
-            return {
-                'ml_enabled': False,
-                'confidence_modifier': 0,
-                'ml_confidence': 0,
-                'schema_valid': True,
-                'error': str(e)
-            }
-    
-    def _extract_features(self, analysis):
-        """
-        Internal feature extraction method for get_ml_prediction.
-        Extracts features matching the REQUIRED_ML_FEATURES schema.
-        """
-        try:
-            # Extract numerical features
-            features = [
-                analysis.get('rsi', 50),
-                analysis.get('confidence', 50),
-                analysis.get('volume_ratio', 1),
-                analysis.get('trend_strength', 0),
-                analysis.get('volatility', 5),
-            ]
-            
-            # Encode categorical features
-            # timeframe: '1h'=1, '2h'=2, '4h'=4, '1d'=24
-            timeframe_map = {'1h': 1, '2h': 2, '4h': 4, '1d': 24}
-            timeframe_encoded = timeframe_map.get(analysis.get('timeframe', '4h'), 4)
-            features.append(timeframe_encoded)
-            
-            # signal_type: 'BUY'=1, 'STRONG_BUY'=2, 'SELL'=-1, 'STRONG_SELL'=-2
-            signal_map = {'BUY': 1, 'STRONG_BUY': 2, 'SELL': -1, 'STRONG_SELL': -2}
-            signal_encoded = signal_map.get(analysis.get('signal_type', 'BUY'), 1)
-            features.append(signal_encoded)
-            
-            return np.array(features).reshape(1, -1)
-        except Exception as e:
-            logger.error(f"Feature extraction error: {e}")
-            return None
     
     def extract_features(self, analysis):
         """Извлича features от анализа за ML (6 features - match bot.py)"""
@@ -397,24 +289,15 @@ class MLTradingEngine:
                 
                 valid_trades += 1
                 
-                # Извлечи features matching validated schema (7 features)
-                # Using same encoding as _extract_features()
+                # Извлечи features (6 features - matching bot.py)
                 features = [
-                    conditions.get('rsi', 50),
-                    conditions.get('confidence', 50),
-                    conditions.get('volume_ratio', 1),
-                    conditions.get('trend_strength', 0),
-                    conditions.get('volatility', 5),
+                    conditions.get('rsi', 50),                    # 1
+                    conditions.get('price_change_pct', 0),        # 2
+                    conditions.get('volume_ratio', 1),            # 3
+                    conditions.get('volatility', 5),              # 4
+                    conditions.get('bb_position', 0.5),           # 5
+                    conditions.get('ict_confidence', 0.5),        # 6
                 ]
-                
-                # Encode categorical features
-                timeframe_map = {'1h': 1, '2h': 2, '4h': 4, '1d': 24}
-                timeframe_encoded = timeframe_map.get(conditions.get('timeframe', '4h'), 4)
-                features.append(timeframe_encoded)
-                
-                signal_map = {'BUY': 1, 'STRONG_BUY': 2, 'SELL': -1, 'STRONG_SELL': -2}
-                signal_encoded = signal_map.get(conditions.get('signal_type', 'BUY'), 1)
-                features.append(signal_encoded)
                 
                 X.append(features)
                 
