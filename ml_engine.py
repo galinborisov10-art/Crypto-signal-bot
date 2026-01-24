@@ -300,8 +300,13 @@ class MLTradingEngine:
         try:
             # Брой trades от trading_journal
             if os.path.exists(self.trading_journal_path):
+                # C3 bug fix: Use shared lock for reads
                 with open(self.trading_journal_path, 'r') as f:
-                    journal = json.load(f)
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                        journal = json.load(f)
+                    finally:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
                 num_samples = journal.get('metadata', {}).get('total_trades', 0)
             else:
                 num_samples = 0
@@ -371,8 +376,13 @@ class MLTradingEngine:
                 logger.warning("No trading journal available")
                 return False
             
+            # C3 bug fix: Use shared lock for reads
             with open(self.trading_journal_path, 'r') as f:
-                journal = json.load(f)
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                    journal = json.load(f)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             
             trades = journal.get('trades', [])
             
@@ -560,8 +570,13 @@ class MLTradingEngine:
             if not os.path.exists(self.trading_journal_path):
                 return {'error': 'No trading journal available'}
             
+            # C3 bug fix: Use shared lock for reads
             with open(self.trading_journal_path, 'r') as f:
-                journal = json.load(f)
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                    journal = json.load(f)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             
             trades = journal.get('trades', [])
             
