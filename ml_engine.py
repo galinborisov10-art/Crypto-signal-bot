@@ -646,27 +646,13 @@ class MLTradingEngine:
             signal_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL'}
             ml_signal = signal_map.get(ensemble_pred, 'HOLD')
             
-            # Calculate ML modifier from ensemble confidence (centered at 50%)
-            # Formula: (ensemble_confidence - 50) / 100.0
-            # 50% → 0 modifier, >50% → positive, <50% → negative
-            ml_modifier = (ensemble_confidence - 50) / 100.0
-            
-            # BOUNDS ENFORCEMENT - Apply strict limits to ML influence
-            if ml_modifier > ML_MODIFIER_MAX:
-                logger.warning(f"⚠️ Ensemble modifier {ml_modifier:.3f} clamped to {ML_MODIFIER_MAX}")
-                ml_modifier = ML_MODIFIER_MAX
-            elif ml_modifier < ML_MODIFIER_MIN:
-                logger.warning(f"⚠️ Ensemble modifier {ml_modifier:.3f} clamped to {ML_MODIFIER_MIN}")
-                ml_modifier = ML_MODIFIER_MIN
-            
             # Hybrid mode
             if self.hybrid_mode:
                 if ml_signal == classical_signal:
-                    # Apply bounded modifier to classical confidence
-                    # Note: Result may temporarily exceed [0, 100] but is clamped at line 682
-                    final_confidence = classical_confidence * (1 + ml_modifier)
+                    final_confidence = (classical_confidence * (1 - self.ml_weight) + 
+                                      ensemble_confidence * self.ml_weight)
                     final_signal = classical_signal
-                    mode = f"Hybrid Ensemble (Classical + ML modifier {ml_modifier:+.1%}) ✅"
+                    mode = f"Hybrid Ensemble ({int((1-self.ml_weight)*100)}%/{int(self.ml_weight*100)}%) ✅"
                 else:
                     if ensemble_confidence * self.ml_weight > classical_confidence * (1 - self.ml_weight):
                         final_signal = ml_signal
@@ -680,9 +666,6 @@ class MLTradingEngine:
                 final_signal = ml_signal
                 final_confidence = ensemble_confidence
                 mode = "Pure Ensemble ML 🤖"
-            
-            # Ensure confidence stays in valid range [0, 100]
-            final_confidence = max(0, min(100, final_confidence))
             
             return final_signal, final_confidence, mode
             
