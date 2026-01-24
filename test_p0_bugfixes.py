@@ -38,7 +38,7 @@ class TestC1LogStringMatching(unittest.TestCase):
         with open(bot_py_path, 'r', encoding='utf-8') as f:
             bot_content = f.read()
         
-        # Find the actual log message in bot.py (around line 17469)
+        # Find the actual log message in bot.py
         # Looking for: logger.info("✅ Daily report sent successfully")
         bot_log_string = None
         for line in bot_content.split('\n'):
@@ -57,7 +57,7 @@ class TestC1LogStringMatching(unittest.TestCase):
         with open(diag_py_path, 'r', encoding='utf-8') as f:
             diag_content = f.read()
         
-        # Find the grep_logs call (around line 468)
+        # Find the grep_logs call that searches for daily reports
         diag_search_string = None
         for line in diag_content.split('\n'):
             if 'grep_logs' in line and 'Daily report' in line:
@@ -243,7 +243,8 @@ class TestH3ActivePositionProtection(unittest.TestCase):
         # Mock PositionManager
         class MockPositionManager:
             def __init__(self, db_path=None):
-                self.db_path = db_path or self.db_path
+                if db_path:
+                    self.db_path = db_path
             
             def get_open_positions(self):
                 conn = sqlite3.connect(self.db_path)

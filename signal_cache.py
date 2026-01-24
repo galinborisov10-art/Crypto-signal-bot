@@ -63,6 +63,7 @@ def load_sent_signals(base_path=None):
                 active_positions = set()
                 if POSITION_MANAGER_AVAILABLE:
                     try:
+                        # PositionManager auto-detects database path from environment
                         pm = PositionManager()
                         positions = pm.get_open_positions()  # Returns list of dicts
                         # Create set of position keys: symbol_timeframe_type
