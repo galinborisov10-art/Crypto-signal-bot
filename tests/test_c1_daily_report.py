@@ -88,8 +88,8 @@ class TestDailyReportPrimaryCheck:
             # Run diagnostic
             issues = await diagnose_daily_report_issue(base_path=tmpdir)
             
-            # Should have NO issues
-            assert len(issues) == 0
+            # Should have NO issues (primary success guarantees empty list)
+            assert issues == []
     
     @pytest.mark.asyncio
     async def test_primary_check_fails_no_today_entry(self):
