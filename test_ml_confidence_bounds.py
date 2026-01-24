@@ -81,12 +81,12 @@ def test_inline_clamp_simulation():
     test_cases = [
         # (ml_confidence, expected_modifier, description)
         (50, 0.0, "ML confidence = 50% → modifier = 0 (neutral)"),
-        (60, 0.10, "ML confidence = 60% → modifier = +10% (clamped to MAX)"),
-        (70, 0.10, "ML confidence = 70% → modifier = +10% (clamped to MAX)"),
-        (100, 0.10, "ML confidence = 100% → modifier = +10% (clamped to MAX)"),
-        (40, -0.10, "ML confidence = 40% → modifier = -10% (no clamp)"),
-        (35, -0.15, "ML confidence = 35% → modifier = -15% (clamped to MIN)"),
-        (0, -0.15, "ML confidence = 0% → modifier = -15% (clamped to MIN)"),
+        (60, 0.10, "ML confidence = 60% → modifier = +10% (at MAX, no clamp)"),
+        (70, 0.10, "ML confidence = 70% → modifier = +20% → clamped to +10%"),
+        (100, 0.10, "ML confidence = 100% → modifier = +50% → clamped to +10%"),
+        (40, -0.10, "ML confidence = 40% → modifier = -10% (within bounds)"),
+        (35, -0.15, "ML confidence = 35% → modifier = -15% (at MIN, no clamp)"),
+        (0, -0.15, "ML confidence = 0% → modifier = -50% → clamped to -15%"),
     ]
     
     all_passed = True

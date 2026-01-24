@@ -191,6 +191,10 @@ class MLTradingEngine:
             ml_signal = signal_map.get(ml_prediction, 'HOLD')
             
             # Calculate ML modifier (centered at 50% confidence)
+            # Formula: (ml_confidence - 50) / 100.0
+            # 50% ML confidence → 0 modifier (neutral)
+            # Above 50% → positive modifier (boost)
+            # Below 50% → negative modifier (penalty)
             ml_modifier = (ml_confidence - 50) / 100.0
             
             # BOUNDS ENFORCEMENT - Apply strict limits to ML influence
@@ -206,6 +210,7 @@ class MLTradingEngine:
                 # Ако сигналите съвпадат - apply modifier to boost/penalize confidence
                 if ml_signal == classical_signal:
                     # Apply bounded modifier to classical confidence
+                    # Note: Result may temporarily exceed [0, 100] but is clamped at line 229
                     final_confidence = classical_confidence * (1 + ml_modifier)
                     final_signal = classical_signal
                     mode = f"Hybrid (Classical + ML modifier {ml_modifier:+.1%}) ✅"
@@ -642,6 +647,8 @@ class MLTradingEngine:
             ml_signal = signal_map.get(ensemble_pred, 'HOLD')
             
             # Calculate ML modifier from ensemble confidence (centered at 50%)
+            # Formula: (ensemble_confidence - 50) / 100.0
+            # 50% → 0 modifier, >50% → positive, <50% → negative
             ml_modifier = (ensemble_confidence - 50) / 100.0
             
             # BOUNDS ENFORCEMENT - Apply strict limits to ML influence
@@ -656,6 +663,7 @@ class MLTradingEngine:
             if self.hybrid_mode:
                 if ml_signal == classical_signal:
                     # Apply bounded modifier to classical confidence
+                    # Note: Result may temporarily exceed [0, 100] but is clamped at line 682
                     final_confidence = classical_confidence * (1 + ml_modifier)
                     final_signal = classical_signal
                     mode = f"Hybrid Ensemble (Classical + ML modifier {ml_modifier:+.1%}) ✅"
