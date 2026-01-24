@@ -208,7 +208,7 @@ class MLTradingEngine:
                     # Apply bounded modifier to classical confidence
                     final_confidence = classical_confidence * (1 + ml_modifier)
                     final_signal = classical_signal
-                    mode = f"Hybrid ({int((1-self.ml_weight)*100)}% Classical + {int(self.ml_weight*100)}% ML) ✅"
+                    mode = f"Hybrid (Classical + ML modifier {ml_modifier:+.1%}) ✅"
                 else:
                     # Сигналите се различават - използвай weights
                     if ml_confidence * self.ml_weight > classical_confidence * (1 - self.ml_weight):
@@ -658,7 +658,7 @@ class MLTradingEngine:
                     # Apply bounded modifier to classical confidence
                     final_confidence = classical_confidence * (1 + ml_modifier)
                     final_signal = classical_signal
-                    mode = f"Hybrid Ensemble ({int((1-self.ml_weight)*100)}%/{int(self.ml_weight*100)}%) ✅"
+                    mode = f"Hybrid Ensemble (Classical + ML modifier {ml_modifier:+.1%}) ✅"
                 else:
                     if ensemble_confidence * self.ml_weight > classical_confidence * (1 - self.ml_weight):
                         final_signal = ml_signal
