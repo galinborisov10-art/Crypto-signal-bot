@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # This schema defines required features for ML training and prediction.
 # Validation ensures feature compatibility between training and prediction.
+#
+# NOTE: This is the CANONICAL schema for future use. Existing training data
+# may use different features and will be skipped during validation.
+# This is intentional - it prevents training/prediction feature mismatch.
 # ============================================================================
 
 REQUIRED_ML_FEATURES = [
@@ -393,15 +397,24 @@ class MLTradingEngine:
                 
                 valid_trades += 1
                 
-                # Извлечи features (6 features - matching bot.py)
+                # Извлечи features matching validated schema (7 features)
+                # Using same encoding as _extract_features()
                 features = [
-                    conditions.get('rsi', 50),                    # 1
-                    conditions.get('price_change_pct', 0),        # 2
-                    conditions.get('volume_ratio', 1),            # 3
-                    conditions.get('volatility', 5),              # 4
-                    conditions.get('bb_position', 0.5),           # 5
-                    conditions.get('ict_confidence', 0.5),        # 6
+                    conditions.get('rsi', 50),
+                    conditions.get('confidence', 50),
+                    conditions.get('volume_ratio', 1),
+                    conditions.get('trend_strength', 0),
+                    conditions.get('volatility', 5),
                 ]
+                
+                # Encode categorical features
+                timeframe_map = {'1h': 1, '2h': 2, '4h': 4, '1d': 24}
+                timeframe_encoded = timeframe_map.get(conditions.get('timeframe', '4h'), 4)
+                features.append(timeframe_encoded)
+                
+                signal_map = {'BUY': 1, 'STRONG_BUY': 2, 'SELL': -1, 'STRONG_SELL': -2}
+                signal_encoded = signal_map.get(conditions.get('signal_type', 'BUY'), 1)
+                features.append(signal_encoded)
                 
                 X.append(features)
                 
