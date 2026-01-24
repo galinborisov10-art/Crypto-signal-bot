@@ -14,6 +14,8 @@ New Features:
 
 import json
 import numpy as np
+import fcntl
+import time
 from datetime import datetime, timedelta
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
@@ -26,6 +28,52 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# ================= FILE LOCKING UTILITIES (PR #1 - C3) =================
+
+def acquire_shared_lock(file_handle, timeout=5.0):
+    """
+    Acquire shared (read) lock with timeout
+    
+    PR #1 (C3): Safe concurrent reading of trading_journal.json
+    
+    Args:
+        file_handle: Open file handle
+        timeout: Maximum seconds to wait for lock
+        
+    Returns:
+        True if lock acquired
+        
+    Raises:
+        TimeoutError: If lock cannot be acquired within timeout
+    """
+    start_time = time.time()
+    
+    while True:
+        try:
+            fcntl.flock(file_handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.time() - start_time >= timeout:
+                raise TimeoutError(f"Failed to acquire shared lock within {timeout}s")
+            time.sleep(0.1)
+
+
+def release_lock(file_handle):
+    """
+    Release file lock
+    
+    PR #1 (C3): Release lock on trading_journal.json
+    
+    Args:
+        file_handle: Open file handle
+    """
+    try:
+        fcntl.flock(file_handle, fcntl.LOCK_UN)
+    except Exception as e:
+        logger.error(f"Error releasing file lock: {e}")
+
 
 class MLTradingEngine:
     def __init__(self):
@@ -169,15 +217,38 @@ class MLTradingEngine:
             print(f"❌ Record outcome error: {e}")
     
     def train_model(self):
-        """Обучава ML модела с данни от trading_journal.json"""
+        """
+        Обучава ML модела с данни от trading_journal.json
+        
+        PR #1 (C3): Enhanced with shared lock for safe concurrent reading
+        """
+        file_handle = None
         try:
-            # Зареди trading journal
+            # Check if trading journal exists
             if not os.path.exists(self.trading_journal_path):
                 print("⚠️ No trading journal available")
                 return False
             
-            with open(self.trading_journal_path, 'r') as f:
-                journal = json.load(f)
+            # SHARED LOCK for reading (C3)
+            try:
+                file_handle = open(self.trading_journal_path, 'r', encoding='utf-8')
+                acquire_shared_lock(file_handle, timeout=5.0)
+            except TimeoutError as e:
+                logger.error(f"❌ Failed to acquire lock for reading journal: {e}")
+                logger.info("ℹ️ Skipping ML training - journal locked")
+                return False
+            except Exception as e:
+                logger.error(f"❌ Error opening journal for reading: {e}")
+                return False
+            
+            # Load journal with lock held
+            journal = json.load(file_handle)
+            
+            # Release lock after reading
+            if file_handle:
+                release_lock(file_handle)
+                file_handle.close()
+                file_handle = None
             
             trades = journal.get('trades', [])
             
@@ -255,6 +326,14 @@ class MLTradingEngine:
         except Exception as e:
             print(f"❌ Training error: {e}")
             return False
+        finally:
+            # Ensure lock is released if still held
+            if file_handle:
+                try:
+                    release_lock(file_handle)
+                    file_handle.close()
+                except:
+                    pass
     
     def adjust_ml_weight(self, num_samples, accuracy):
         """Адаптивно регулиране на ML тежестта"""
@@ -290,15 +369,31 @@ class MLTradingEngine:
             return False
     
     def get_status(self):
-        """Връща статус на ML системата"""
+        """
+        Връща статус на ML системата
+        
+        PR #1 (C3): Enhanced with shared lock for safe reading
+        """
+        file_handle = None
         try:
             # Брой trades от trading_journal
+            num_samples = 0
             if os.path.exists(self.trading_journal_path):
-                with open(self.trading_journal_path, 'r') as f:
-                    journal = json.load(f)
-                num_samples = journal.get('metadata', {}).get('total_trades', 0)
-            else:
-                num_samples = 0
+                try:
+                    file_handle = open(self.trading_journal_path, 'r', encoding='utf-8')
+                    acquire_shared_lock(file_handle, timeout=5.0)
+                    journal = json.load(file_handle)
+                    num_samples = journal.get('metadata', {}).get('total_trades', 0)
+                except TimeoutError:
+                    logger.warning("⚠️ Failed to acquire lock for journal status check - using 0")
+                    num_samples = 0
+                except Exception as e:
+                    logger.error(f"Error reading journal for status: {e}")
+                    num_samples = 0
+                finally:
+                    if file_handle:
+                        release_lock(file_handle)
+                        file_handle.close()
             
             return {
                 'model_trained': self.model is not None,
@@ -311,8 +406,8 @@ class MLTradingEngine:
                 'last_training': self.last_training_time,
                 'use_ensemble': self.use_ensemble
             }
-        except:
-            return {'error': 'Failed to get status'}
+        except Exception as e:
+            return {'error': f'Failed to get status: {e}'}
     
     def extract_extended_features(self, analysis):
         """
@@ -359,14 +454,27 @@ class MLTradingEngine:
         
         Uses voting/averaging between multiple models for better predictions
         """
+        file_handle = None
         try:
-            # Зареди trading journal
+            # Check if trading journal exists
             if not os.path.exists(self.trading_journal_path):
                 logger.warning("No trading journal available")
                 return False
             
-            with open(self.trading_journal_path, 'r') as f:
-                journal = json.load(f)
+            # SHARED LOCK for reading (C3)
+            try:
+                file_handle = open(self.trading_journal_path, 'r', encoding='utf-8')
+                acquire_shared_lock(file_handle, timeout=5.0)
+                journal = json.load(file_handle)
+            except TimeoutError:
+                logger.error("Failed to acquire lock for ensemble training")
+                logger.info("Skipping ensemble training - journal locked")
+                return False
+            finally:
+                if file_handle:
+                    release_lock(file_handle)
+                    file_handle.close()
+                    file_handle = None
             
             trades = journal.get('trades', [])
             
@@ -550,12 +658,24 @@ class MLTradingEngine:
         
         Returns performance metrics
         """
+        file_handle = None
         try:
             if not os.path.exists(self.trading_journal_path):
                 return {'error': 'No trading journal available'}
             
-            with open(self.trading_journal_path, 'r') as f:
-                journal = json.load(f)
+            # SHARED LOCK for reading (C3)
+            try:
+                file_handle = open(self.trading_journal_path, 'r', encoding='utf-8')
+                acquire_shared_lock(file_handle, timeout=5.0)
+                journal = json.load(file_handle)
+            except TimeoutError:
+                logger.error("Failed to acquire lock for backtesting")
+                return {'error': 'Journal locked - skipping backtest'}
+            finally:
+                if file_handle:
+                    release_lock(file_handle)
+                    file_handle.close()
+                    file_handle = None
             
             trades = journal.get('trades', [])
             

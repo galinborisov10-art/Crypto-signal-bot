@@ -8,6 +8,8 @@ import logging
 import hashlib
 import gc
 import uuid
+import fcntl
+import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
@@ -3257,6 +3259,78 @@ def save_stats(stats):
         logger.error(f"Грешка при записване на статистика: {e}")
 
 
+# ================= FILE LOCKING UTILITIES (PR #1 - C3) =================
+
+def acquire_file_lock(file_handle, exclusive=True, timeout=5.0):
+    """
+    Acquire file lock with timeout retry
+    
+    PR #1 (C3): Prevents race conditions on trading_journal.json
+    
+    Args:
+        file_handle: Open file handle
+        exclusive: True for exclusive lock (writers), False for shared lock (readers)
+        timeout: Maximum seconds to wait for lock
+        
+    Returns:
+        True if lock acquired, False if timeout
+        
+    Raises:
+        TimeoutError: If lock cannot be acquired within timeout
+    """
+    lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+    start_time = time.time()
+    
+    while True:
+        try:
+            fcntl.flock(file_handle, lock_type | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.time() - start_time >= timeout:
+                raise TimeoutError(f"Failed to acquire {'exclusive' if exclusive else 'shared'} lock within {timeout}s")
+            time.sleep(0.1)
+
+
+def release_file_lock(file_handle):
+    """
+    Release file lock
+    
+    PR #1 (C3): Release lock on trading_journal.json
+    
+    Args:
+        file_handle: Open file handle
+    """
+    try:
+        fcntl.flock(file_handle, fcntl.LOCK_UN)
+    except Exception as e:
+        logger.error(f"Error releasing file lock: {e}")
+
+
+def get_trade_unique_id(trade):
+    """
+    Generate unique identifier for a trade entry
+    
+    PR #1 (C3): Used for idempotent journal append
+    
+    Args:
+        trade: Trade dictionary
+        
+    Returns:
+        Unique identifier string
+    """
+    # Use existing 'id' if present
+    if 'id' in trade:
+        return str(trade['id'])
+    
+    # Otherwise derive composite key
+    symbol = trade.get('symbol', '')
+    timeframe = trade.get('timeframe', '')
+    signal_type = trade.get('type', trade.get('signal_type', ''))
+    timestamp = trade.get('timestamp', '')
+    
+    return f"{symbol}_{timeframe}_{signal_type}_{timestamp}"
+
+
 # ================= TRADING JOURNAL (ML SELF-LEARNING) =================
 
 # Trading Journal file - използва BASE_PATH
@@ -3818,21 +3892,20 @@ async def save_trade_to_journal(trade: Dict):
     """
     Save completed trade to trading_journal.json
     
+    PR #1 (C3): Enhanced with file locking and idempotent append
+    
     Args:
         trade: Completed trade dictionary with outcome
     """
     try:
         journal_path = os.path.join(BASE_PATH, 'trading_journal.json')
         
-        # Load existing journal
-        if os.path.exists(journal_path):
-            with open(journal_path, 'r', encoding='utf-8') as f:
-                journal = json.load(f)
-        else:
-            journal = {'trades': []}
+        # Get unique ID for this trade
+        trade_id = get_trade_unique_id(trade)
         
         # Prepare trade data for journal
         journal_entry = {
+            'id': trade_id,  # Add unique ID for deduplication
             'timestamp': trade['timestamp'],
             'symbol': trade['symbol'],
             'timeframe': trade.get('timeframe', '4h'),
@@ -3851,14 +3924,47 @@ async def save_trade_to_journal(trade: Dict):
             'conditions': trade.get('signal_data', {}).get('conditions', {})
         }
         
-        # Add to journal
-        journal['trades'].append(journal_entry)
-        
-        # Save journal
-        with open(journal_path, 'w', encoding='utf-8') as f:
-            json.dump(journal, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"✅ Trade saved to journal: {trade['symbol']} ({trade['outcome']})")
+        # EXCLUSIVE LOCK for writing (C3)
+        file_handle = None
+        try:
+            # Open file for read+write, create if doesn't exist
+            if not os.path.exists(journal_path):
+                with open(journal_path, 'w', encoding='utf-8') as f:
+                    json.dump({'trades': []}, f)
+            
+            file_handle = open(journal_path, 'r+', encoding='utf-8')
+            
+            # Acquire exclusive lock with timeout
+            try:
+                acquire_file_lock(file_handle, exclusive=True, timeout=5.0)
+            except TimeoutError as e:
+                logger.error(f"❌ Failed to acquire lock for trading journal: {e}")
+                raise
+            
+            # Load existing journal
+            file_handle.seek(0)
+            journal = json.load(file_handle)
+            
+            # Idempotent check: prevent duplicate entries (C3)
+            existing_ids = {t.get('id') for t in journal.get('trades', []) if t.get('id')}
+            if trade_id in existing_ids:
+                logger.info(f"ℹ️ Trade {trade_id} already exists in journal - skipping duplicate")
+                return
+            
+            # Append new trade
+            journal['trades'].append(journal_entry)
+            
+            # Atomic write: truncate and rewrite file
+            file_handle.seek(0)
+            file_handle.truncate()
+            json.dump(journal, file_handle, indent=2, ensure_ascii=False)
+            
+            logger.info(f"✅ Trade saved to journal: {trade['symbol']} ({trade['outcome']}) [ID: {trade_id}]")
+            
+        finally:
+            if file_handle:
+                release_file_lock(file_handle)
+                file_handle.close()
         
         # Update statistics
         await update_trade_statistics()
