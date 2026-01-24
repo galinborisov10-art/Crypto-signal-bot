@@ -465,9 +465,10 @@ def normalize_text_for_matching(text: str) -> str:
     
     # Filter characters by Unicode category
     # Keep: Letters (L), Numbers (N), Punctuation (P), Whitespace (Z)
+    # Remove: Symbols (S), including emojis
     normalized = ''.join(
         char for char in text
-        if unicodedata.category(char)[0] in ('L', 'N', 'P', 'Z', 'S') or char.isspace()
+        if unicodedata.category(char)[0] in ('L', 'N', 'P', 'Z') or char.isspace()
     )
     return normalized.strip()
 
