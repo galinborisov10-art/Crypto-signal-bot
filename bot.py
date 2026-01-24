@@ -3273,7 +3273,7 @@ def acquire_file_lock(file_handle, exclusive=True, timeout=5.0):
         timeout: Maximum seconds to wait for lock
         
     Returns:
-        True if lock acquired, False if timeout
+        True if lock acquired
         
     Raises:
         TimeoutError: If lock cannot be acquired within timeout
