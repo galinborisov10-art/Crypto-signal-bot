@@ -69,7 +69,7 @@ def test_1_cache_preserves_active_position():
     """
     Test: Cache preserves active position
     - Create a 10-day-old cache entry
-    - Mock PositionManager to return True (active position exists)
+    - Mock PositionManager to return active position
     - Assert: Entry is preserved, not deleted
     """
     print("\n🧪 TEST 1: Cache preserves active position")
@@ -91,21 +91,18 @@ def test_1_cache_preserves_active_position():
         with open(cache_file, 'w') as f:
             json.dump(cache, f)
         
-        # Create test database with active position
-        db_path = os.path.join(tmpdir, 'positions.db')
-        create_test_position_db(db_path, [
-            {
-                'symbol': 'BTCUSDT',
-                'signal_type': 'BUY',
-                'timeframe': '4h',
-                'status': 'OPEN'
-            }
-        ])
-        
-        # Mock PositionManager to use test database
+        # Mock PositionManager with get_open_positions
         with patch('signal_cache.PositionManager') as MockPM:
             mock_pm_instance = MagicMock()
-            mock_pm_instance.is_position_active.return_value = True
+            # Return list with matching position
+            mock_pm_instance.get_open_positions.return_value = [
+                {
+                    'symbol': 'BTCUSDT',
+                    'signal_type': 'BUY',
+                    'timeframe': '4h',
+                    'status': 'OPEN'
+                }
+            ]
             MockPM.return_value = mock_pm_instance
             
             # Patch POSITION_MANAGER_AVAILABLE
@@ -123,7 +120,7 @@ def test_2_cache_deletes_inactive_stale_entry():
     """
     Test: Cache deletes inactive stale entry
     - Create a 10-day-old cache entry
-    - Mock PositionManager to return False (no active position)
+    - Mock PositionManager to return no positions
     - Assert: Entry is deleted
     """
     print("\n🧪 TEST 2: Cache deletes inactive stale entry")
@@ -148,7 +145,7 @@ def test_2_cache_deletes_inactive_stale_entry():
         # Mock PositionManager - no active position
         with patch('signal_cache.PositionManager') as MockPM:
             mock_pm_instance = MagicMock()
-            mock_pm_instance.is_position_active.return_value = False
+            mock_pm_instance.get_open_positions.return_value = []  # No positions
             MockPM.return_value = mock_pm_instance
             
             # Patch POSITION_MANAGER_AVAILABLE
@@ -232,7 +229,7 @@ def test_4_fresh_entries_always_preserved():
         # Mock PositionManager - no positions
         with patch('signal_cache.PositionManager') as MockPM:
             mock_pm_instance = MagicMock()
-            mock_pm_instance.is_position_active.return_value = False
+            mock_pm_instance.get_open_positions.return_value = []  # No positions
             MockPM.return_value = mock_pm_instance
             
             # Patch POSITION_MANAGER_AVAILABLE
@@ -287,10 +284,17 @@ def test_5_mixed_scenario():
             mock_pm_instance = MagicMock()
             
             # Only BTCUSDT_BUY_4h has active position
-            def mock_is_active(signal_key):
-                return signal_key == 'BTCUSDT_BUY_4h'
+            def mock_get_positions():
+                return [
+                    {
+                        'symbol': 'BTCUSDT',
+                        'signal_type': 'BUY',
+                        'timeframe': '4h',
+                        'status': 'OPEN'
+                    }
+                ]
             
-            mock_pm_instance.is_position_active.side_effect = mock_is_active
+            mock_pm_instance.get_open_positions.side_effect = mock_get_positions
             MockPM.return_value = mock_pm_instance
             
             with patch('signal_cache.POSITION_MANAGER_AVAILABLE', True):
@@ -340,7 +344,14 @@ def test_6_partial_position_also_protected():
         # Mock PositionManager
         with patch('signal_cache.PositionManager') as MockPM:
             mock_pm_instance = MagicMock()
-            mock_pm_instance.is_position_active.return_value = True
+            mock_pm_instance.get_open_positions.return_value = [
+                {
+                    'symbol': 'BTCUSDT',
+                    'signal_type': 'BUY',
+                    'timeframe': '4h',
+                    'status': 'PARTIAL'
+                }
+            ]
             MockPM.return_value = mock_pm_instance
             
             with patch('signal_cache.POSITION_MANAGER_AVAILABLE', True):
@@ -375,7 +386,14 @@ def test_7_corrupted_timestamp_with_active_position():
         # Mock PositionManager - active position exists
         with patch('signal_cache.PositionManager') as MockPM:
             mock_pm_instance = MagicMock()
-            mock_pm_instance.is_position_active.return_value = True
+            mock_pm_instance.get_open_positions.return_value = [
+                {
+                    'symbol': 'BTCUSDT',
+                    'signal_type': 'BUY',
+                    'timeframe': '4h',
+                    'status': 'OPEN'
+                }
+            ]
             MockPM.return_value = mock_pm_instance
             
             with patch('signal_cache.POSITION_MANAGER_AVAILABLE', True):

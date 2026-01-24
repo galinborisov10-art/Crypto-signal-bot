@@ -38,6 +38,35 @@ SENT_SIGNALS_FILE = 'sent_signals_cache.json'
 CACHE_CLEANUP_HOURS = 168  # Clean entries older than 7 days (was 24h - too aggressive)
 ENTRY_THRESHOLD_PCT = 1.5  # Entry price difference threshold for uniqueness
 
+
+def _check_if_position_active(position_manager, signal_key):
+    """Check if signal_key has active position using existing API"""
+    try:
+        # Parse signal_key: "BTCUSDT_BUY_4h"
+        parts = signal_key.split('_')
+        if len(parts) < 3:
+            return False
+        
+        timeframe = parts[-1]
+        signal_type = parts[-2]
+        symbol = '_'.join(parts[:-2])
+        
+        # Use EXISTING get_open_positions() method
+        positions = position_manager.get_open_positions()
+        
+        # Check if any position matches
+        for pos in positions:
+            if (pos.get('symbol') == symbol and 
+                pos.get('signal_type') == signal_type and 
+                pos.get('timeframe') == timeframe and
+                pos.get('status') in ['OPEN', 'PARTIAL']):
+                return True
+        
+        return False
+    except:
+        return False
+
+
 def load_sent_signals(base_path=None):
     """
     Load sent signals from persistent JSON file
@@ -81,7 +110,7 @@ def load_sent_signals(base_path=None):
                         signal_timestamp = datetime.fromisoformat(timestamp_str).timestamp()
                     except (ValueError, TypeError):
                         # GUARD: Even with corrupted timestamp, check for active position
-                        if position_manager and position_manager.is_position_active(signal_key):
+                        if position_manager and _check_if_position_active(position_manager, signal_key):
                             # Preserve entry with corrupted timestamp if position is active
                             cleaned_cache[signal_key] = signal_data
                             preserved_count += 1
@@ -94,7 +123,7 @@ def load_sent_signals(base_path=None):
                     # Check if entry is older than cutoff
                     if signal_timestamp < cutoff:
                         # GUARD: Check if there's an active position for this signal
-                        if position_manager and position_manager.is_position_active(signal_key):
+                        if position_manager and _check_if_position_active(position_manager, signal_key):
                             # DO NOT DELETE - active position exists
                             cleaned_cache[signal_key] = signal_data
                             preserved_count += 1
