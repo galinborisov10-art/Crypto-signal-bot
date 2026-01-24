@@ -3304,7 +3304,18 @@ def load_journal():
 
 
 def save_journal(journal):
-    """Запазване на trading journal"""
+    """
+    Запазване на trading journal
+    
+    WARNING: This function does NOT do atomic read-modify-write!
+    It just writes the passed journal object to disk.
+    
+    ONLY safe for initialization (loading and immediately saving).
+    For modifications, use the specific atomic functions:
+    - log_trade_to_journal()
+    - update_trade_outcome()
+    - save_trade_to_journal()
+    """
     try:
         from datetime import datetime
         journal['metadata']['last_updated'] = datetime.now().isoformat()
@@ -3342,67 +3353,67 @@ def log_trade_to_journal(symbol, timeframe, signal_type, confidence, entry_price
         from datetime import datetime
         
         # C3 bug fix: Atomic read-modify-write with locking
-        if os.path.exists(JOURNAL_FILE):
-            with open(JOURNAL_FILE, 'r+') as f:
-                try:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                    journal = json.load(f)
-                    
-                    trade_id = len(journal['trades']) + 1
-                    
-                    trade_entry = {
-                        'id': trade_id,
-                        'timestamp': datetime.now().isoformat(),
-                        'symbol': symbol,
-                        'timeframe': timeframe,
-                        'signal': signal_type,
-                        'confidence': confidence,
-                        'entry_price': entry_price,
-                        'tp_price': tp_price,
-                        'sl_price': sl_price,
-                        'status': 'PENDING',
-                        'outcome': None,
-                        'profit_loss_pct': None,
-                        'closed_at': None,
-                        'conditions': {
-                            'rsi': analysis_data.get('rsi') if analysis_data else None,
-                            'volume_ratio': analysis_data.get('volume_ratio') if analysis_data else None,
-                            'volatility': analysis_data.get('volatility') if analysis_data else None,
-                            'trend': analysis_data.get('trend') if analysis_data else None,
-                            'btc_correlation': analysis_data.get('btc_correlation') if analysis_data else None,
-                            'sentiment': analysis_data.get('sentiment') if analysis_data else None
-                        },
-                        'notes': []
-                    }
-                    
-                    journal['trades'].append(trade_entry)
-                    journal['metadata']['total_trades'] += 1
-                    journal['metadata']['last_updated'] = datetime.now().isoformat()
-                    
-                    f.seek(0)
-                    f.truncate()
-                    json.dump(journal, f, indent=2)
-                    
-                    logger.info(f"📝 Trade #{trade_id} logged: {symbol} {signal_type} @ ${entry_price}")
-                    
-                    # Store total_trades for ML training check after lock release
-                    total_trades = journal['metadata']['total_trades']
-                    
-                    return trade_id
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                    
-                # 🤖 Auto-train ML модела на всеки 20 trades (after releasing lock)
-                if ML_AVAILABLE and total_trades % 20 == 0:
-                    try:
-                        logger.info(f"🤖 Auto-training ML model (trade #{total_trades})")
-                        ml_engine.train_model()
-                        logger.info("✅ ML model trained successfully!")
-                    except Exception as ml_error:
-                        logger.error(f"ML training error: {ml_error}")
-        else:
+        if not os.path.exists(JOURNAL_FILE):
             logger.warning("⚠️ Journal file does not exist")
             return None
+            
+        with open(JOURNAL_FILE, 'r+') as f:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                journal = json.load(f)
+                
+                trade_id = len(journal['trades']) + 1
+                
+                trade_entry = {
+                    'id': trade_id,
+                    'timestamp': datetime.now().isoformat(),
+                    'symbol': symbol,
+                    'timeframe': timeframe,
+                    'signal': signal_type,
+                    'confidence': confidence,
+                    'entry_price': entry_price,
+                    'tp_price': tp_price,
+                    'sl_price': sl_price,
+                    'status': 'PENDING',
+                    'outcome': None,
+                    'profit_loss_pct': None,
+                    'closed_at': None,
+                    'conditions': {
+                        'rsi': analysis_data.get('rsi') if analysis_data else None,
+                        'volume_ratio': analysis_data.get('volume_ratio') if analysis_data else None,
+                        'volatility': analysis_data.get('volatility') if analysis_data else None,
+                        'trend': analysis_data.get('trend') if analysis_data else None,
+                        'btc_correlation': analysis_data.get('btc_correlation') if analysis_data else None,
+                        'sentiment': analysis_data.get('sentiment') if analysis_data else None
+                    },
+                    'notes': []
+                }
+                
+                journal['trades'].append(trade_entry)
+                journal['metadata']['total_trades'] += 1
+                journal['metadata']['last_updated'] = datetime.now().isoformat()
+                
+                f.seek(0)
+                f.truncate()
+                json.dump(journal, f, indent=2)
+                
+                logger.info(f"📝 Trade #{trade_id} logged: {symbol} {signal_type} @ ${entry_price}")
+                
+                # Store total_trades for ML training check after lock release
+                total_trades = journal['metadata']['total_trades']
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        
+        # 🤖 Auto-train ML модела на всеки 20 trades (after releasing lock)
+        if ML_AVAILABLE and total_trades % 20 == 0:
+            try:
+                logger.info(f"🤖 Auto-training ML model (trade #{total_trades})")
+                ml_engine.train_model()
+                logger.info("✅ ML model trained successfully!")
+            except Exception as ml_error:
+                logger.error(f"ML training error: {ml_error}")
+        
+        return trade_id
             
     except Exception as e:
         logger.error(f"Грешка при логване в journal: {e}")
