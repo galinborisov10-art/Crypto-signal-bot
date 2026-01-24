@@ -28,6 +28,84 @@ import fcntl
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# ML FEATURE SCHEMA - Canonical Definition
+# ============================================================================
+# This schema defines required features for ML training and prediction.
+# Validation ensures feature compatibility between training and prediction.
+# ============================================================================
+
+REQUIRED_ML_FEATURES = [
+    'rsi',
+    'confidence',
+    'volume_ratio',
+    'trend_strength',
+    'volatility',
+    'timeframe',
+    'signal_type'
+]
+
+# Feature type expectations
+FEATURE_TYPES = {
+    'rsi': (int, float),
+    'confidence': (int, float),
+    'volume_ratio': (int, float),
+    'trend_strength': (int, float),
+    'volatility': (int, float),
+    'timeframe': str,
+    'signal_type': str
+}
+
+# Valid categorical values
+VALID_TIMEFRAMES = ['1h', '2h', '4h', '1d']
+VALID_SIGNAL_TYPES = ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']
+
+
+def _validate_ml_features(analysis: dict) -> tuple:
+    """
+    Validate that analysis dict contains all required ML features.
+    
+    This is a sanity gate to prevent training/prediction feature mismatch.
+    
+    Args:
+        analysis: Signal analysis dictionary
+        
+    Returns:
+        Tuple of (is_valid, missing_features)
+        - is_valid: True if all required features present and valid
+        - missing_features: List of missing/invalid feature names
+    """
+    missing = []
+    
+    # Check required features exist
+    for feature in REQUIRED_ML_FEATURES:
+        if feature not in analysis:
+            missing.append(f"{feature} (missing)")
+            continue
+        
+        value = analysis[feature]
+        
+        # Check None values
+        if value is None:
+            missing.append(f"{feature} (None)")
+            continue
+        
+        # Check type validity
+        expected_types = FEATURE_TYPES.get(feature)
+        if expected_types and not isinstance(value, expected_types):
+            missing.append(f"{feature} (wrong type: {type(value).__name__})")
+            continue
+        
+        # Check categorical values
+        if feature == 'timeframe' and value not in VALID_TIMEFRAMES:
+            missing.append(f"timeframe (invalid: {value})")
+        elif feature == 'signal_type' and value not in VALID_SIGNAL_TYPES:
+            missing.append(f"signal_type (invalid: {value})")
+    
+    is_valid = len(missing) == 0
+    return is_valid, missing
+
+
 class MLTradingEngine:
     def __init__(self):
         self.model = None
@@ -191,12 +269,25 @@ class MLTradingEngine:
             X = []
             y = []
             
+            valid_trades = 0
+            invalid_trades = 0
+            
             for trade in trades:
                 # Пропусни trades без outcome
                 if not trade.get('outcome'):
                     continue
                 
                 conditions = trade.get('conditions', {})
+                
+                # SANITY GATE: Validate training data schema
+                is_valid, missing_features = _validate_ml_features(conditions)
+                
+                if not is_valid:
+                    invalid_trades += 1
+                    logger.debug(f"⚠️ Skipping trade (invalid schema): {', '.join(missing_features)}")
+                    continue
+                
+                valid_trades += 1
                 
                 # Извлечи features (6 features - matching bot.py)
                 features = [
@@ -216,6 +307,11 @@ class MLTradingEngine:
                     y.append(1)
                 else:
                     y.append(0)
+            
+            if invalid_trades > 0:
+                logger.warning(f"ML training: {invalid_trades} trades skipped due to schema mismatch")
+            
+            logger.info(f"ML training: {valid_trades} valid trades, {invalid_trades} skipped")
             
             if len(X) < self.min_training_samples:
                 print(f"⚠️ Not enough completed trades ({len(X)} / {self.min_training_samples})")
