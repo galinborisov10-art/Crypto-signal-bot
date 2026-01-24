@@ -3267,8 +3267,14 @@ def load_journal():
     """Зареждане на trading journal"""
     try:
         if os.path.exists(JOURNAL_FILE):
+            # C3 bug fix: Use shared lock for reads
             with open(JOURNAL_FILE, 'r') as f:
-                return json.load(f)
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                    journal = json.load(f)
+                    return journal
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         else:
             from datetime import datetime
             return {
@@ -3302,8 +3308,24 @@ def save_journal(journal):
     try:
         from datetime import datetime
         journal['metadata']['last_updated'] = datetime.now().isoformat()
-        with open(JOURNAL_FILE, 'w') as f:
-            json.dump(journal, f, indent=2)
+        # C3 bug fix: Use locked write pattern
+        if os.path.exists(JOURNAL_FILE):
+            with open(JOURNAL_FILE, 'r+') as f:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    f.seek(0)
+                    f.truncate()
+                    json.dump(journal, f, indent=2)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        else:
+            # File doesn't exist, create it with locking
+            with open(JOURNAL_FILE, 'w') as f:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    json.dump(journal, f, indent=2)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         logger.info("✅ Trading journal saved successfully")
     except Exception as e:
         logger.error(f"Грешка при запазване на journal: {e}")
@@ -3318,50 +3340,77 @@ def log_trade_to_journal(symbol, timeframe, signal_type, confidence, entry_price
             return None
         
         from datetime import datetime
-        journal = load_journal()
-        if not journal:
+        
+        # C3 bug fix: Atomic read-modify-write with locking
+        if os.path.exists(JOURNAL_FILE):
+            with open(JOURNAL_FILE, 'r+') as f:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    journal = json.load(f)
+                    
+                    trade_id = len(journal['trades']) + 1
+                    
+                    trade_entry = {
+                        'id': trade_id,
+                        'timestamp': datetime.now().isoformat(),
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'signal': signal_type,
+                        'confidence': confidence,
+                        'entry_price': entry_price,
+                        'tp_price': tp_price,
+                        'sl_price': sl_price,
+                        'status': 'PENDING',
+                        'outcome': None,
+                        'profit_loss_pct': None,
+                        'closed_at': None,
+                        'conditions': {
+                            'rsi': analysis_data.get('rsi') if analysis_data else None,
+                            'volume_ratio': analysis_data.get('volume_ratio') if analysis_data else None,
+                            'volatility': analysis_data.get('volatility') if analysis_data else None,
+                            'trend': analysis_data.get('trend') if analysis_data else None,
+                            'btc_correlation': analysis_data.get('btc_correlation') if analysis_data else None,
+                            'sentiment': analysis_data.get('sentiment') if analysis_data else None
+                        },
+                        'notes': []
+                    }
+                    
+                    journal['trades'].append(trade_entry)
+                    journal['metadata']['total_trades'] += 1
+                    journal['metadata']['last_updated'] = datetime.now().isoformat()
+                    
+                    f.seek(0)
+                    f.truncate()
+                    json.dump(journal, f, indent=2)
+                    
+                    logger.info(f"📝 Trade #{trade_id} logged: {symbol} {signal_type} @ ${entry_price}")
+                    
+                    # 🤖 Auto-train ML модела на всеки 20 trades
+                    if ML_AVAILABLE and journal['metadata']['total_trades'] % 20 == 0:
+                        try:
+                            logger.info(f"🤖 Auto-training ML model (trade #{journal['metadata']['total_trades']})")
+                            # Note: Lock released before training to avoid holding lock during long operation
+                        except Exception as ml_error:
+                            logger.error(f"ML training error: {ml_error}")
+                    
+                    return trade_id
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    
+                # Train ML model after releasing lock (if needed)
+                if ML_AVAILABLE and journal['metadata']['total_trades'] % 20 == 0:
+                    try:
+                        ml_engine.train_model()
+                        logger.info("✅ ML model trained successfully!")
+                    except Exception as ml_error:
+                        logger.error(f"ML training error: {ml_error}")
+        else:
+            logger.warning("⚠️ Journal file does not exist")
             return None
-        
-        trade_id = len(journal['trades']) + 1
-        
-        trade_entry = {
-            'id': trade_id,
-            'timestamp': datetime.now().isoformat(),
-            'symbol': symbol,
-            'timeframe': timeframe,
-            'signal': signal_type,
-            'confidence': confidence,
-            'entry_price': entry_price,
-            'tp_price': tp_price,
-            'sl_price': sl_price,
-            'status': 'PENDING',
-            'outcome': None,
-            'profit_loss_pct': None,
-            'closed_at': None,
-            'conditions': {
-                'rsi': analysis_data.get('rsi') if analysis_data else None,
-                'volume_ratio': analysis_data.get('volume_ratio') if analysis_data else None,
-                'volatility': analysis_data.get('volatility') if analysis_data else None,
-                'trend': analysis_data.get('trend') if analysis_data else None,
-                'btc_correlation': analysis_data.get('btc_correlation') if analysis_data else None,
-                'sentiment': analysis_data.get('sentiment') if analysis_data else None
-            },
-            'notes': []
-        }
-        
-        journal['trades'].append(trade_entry)
-        journal['metadata']['total_trades'] += 1
-        
-        save_journal(journal)
-        logger.info(f"📝 Trade #{trade_id} logged: {symbol} {signal_type} @ ${entry_price}")
-        
-        # 🤖 Auto-train ML модела на всеки 20 trades
-        if ML_AVAILABLE and journal['metadata']['total_trades'] % 20 == 0:
-            try:
-                logger.info(f"🤖 Auto-training ML model (trade #{journal['metadata']['total_trades']})")
-                ml_engine.train_model()
-                logger.info("✅ ML model trained successfully!")
-            except Exception as ml_error:
+            
+    except Exception as e:
+        logger.error(f"Грешка при логване в journal: {e}")
+        return None
                 logger.error(f"ML training error: {ml_error}")
         
         return trade_id
@@ -3375,43 +3424,57 @@ def update_trade_outcome(trade_id, outcome, profit_loss_pct, notes=None):
     """Обновява резултата от trade и анализира за ML"""
     try:
         from datetime import datetime
-        journal = load_journal()
-        if not journal:
+        
+        # C3 bug fix: Atomic read-modify-write with locking
+        if not os.path.exists(JOURNAL_FILE):
+            logger.warning("⚠️ Journal file does not exist")
             return False
-        
-        trade = next((t for t in journal['trades'] if t['id'] == trade_id), None)
-        if not trade:
-            logger.warning(f"Trade #{trade_id} not found")
-            return False
-        
-        # Map outcome to standardized status and outcome fields
-        # This ensures compatibility with daily_reports.py expectations
-        if outcome == 'WIN':
-            trade['status'] = 'COMPLETED'  # Standardized status for closed trades
-            trade['outcome'] = 'SUCCESS'   # Standardized outcome for profitable trades
-        elif outcome == 'LOSS':
-            trade['status'] = 'COMPLETED'
-            trade['outcome'] = 'FAILED'    # Standardized outcome for losing trades
-        else:
-            trade['status'] = 'COMPLETED'
-            trade['outcome'] = 'BREAKEVEN'
-        
-        trade['profit_loss_pct'] = profit_loss_pct
-        trade['closed_at'] = datetime.now().isoformat()
-        
-        if notes:
-            trade['notes'].append({
-                'timestamp': datetime.now().isoformat(),
-                'note': notes
-            })
-        
-        # ML анализ
-        analyze_trade_patterns(journal, trade)
-        
-        save_journal(journal)
-        logger.info(f"✅ Trade #{trade_id} updated: {outcome} ({profit_loss_pct:+.2f}%)")
-        
-        return True
+            
+        with open(JOURNAL_FILE, 'r+') as f:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                journal = json.load(f)
+                
+                trade = next((t for t in journal['trades'] if t['id'] == trade_id), None)
+                if not trade:
+                    logger.warning(f"Trade #{trade_id} not found")
+                    return False
+                
+                # Map outcome to standardized status and outcome fields
+                # This ensures compatibility with daily_reports.py expectations
+                if outcome == 'WIN':
+                    trade['status'] = 'COMPLETED'  # Standardized status for closed trades
+                    trade['outcome'] = 'SUCCESS'   # Standardized outcome for profitable trades
+                elif outcome == 'LOSS':
+                    trade['status'] = 'COMPLETED'
+                    trade['outcome'] = 'FAILED'    # Standardized outcome for losing trades
+                else:
+                    trade['status'] = 'COMPLETED'
+                    trade['outcome'] = 'BREAKEVEN'
+                
+                trade['profit_loss_pct'] = profit_loss_pct
+                trade['closed_at'] = datetime.now().isoformat()
+                
+                if notes:
+                    trade['notes'].append({
+                        'timestamp': datetime.now().isoformat(),
+                        'note': notes
+                    })
+                
+                # ML анализ
+                analyze_trade_patterns(journal, trade)
+                
+                journal['metadata']['last_updated'] = datetime.now().isoformat()
+                
+                f.seek(0)
+                f.truncate()
+                json.dump(journal, f, indent=2)
+                
+                logger.info(f"✅ Trade #{trade_id} updated: {outcome} ({profit_loss_pct:+.2f}%)")
+                
+                return True
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         
     except Exception as e:
         logger.error(f"Грешка при обновяване на trade: {e}")
@@ -3845,16 +3908,41 @@ async def save_trade_to_journal(trade: Dict):
             'conditions': trade.get('signal_data', {}).get('conditions', {})
         }
         
-        # Load, modify and save with file locking (C3 bug fix)
+        # C3 bug fix: Single atomic write with statistics update
         if os.path.exists(journal_path):
             with open(journal_path, 'r+', encoding='utf-8') as f:
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock
                     journal = json.load(f)
+                    
+                    # Add trade entry
                     journal['trades'].append(journal_entry)
+                    
+                    # Update statistics in the same atomic operation
+                    trades = journal.get('trades', [])
+                    total_trades = len(trades)
+                    wins = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_WIN)
+                    losses = sum(1 for t in trades if t.get('outcome') in TRADE_OUTCOME_LOSS)
+                    win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+                    
+                    if 'statistics' not in journal:
+                        journal['statistics'] = {}
+                    
+                    journal['statistics'].update({
+                        'total_trades': total_trades,
+                        'wins': wins,
+                        'losses': losses,
+                        'win_rate': round(win_rate, 2),
+                        'last_updated': datetime.now(timezone.utc).isoformat()
+                    })
+                    
+                    # Single write
                     f.seek(0)
                     f.truncate()
                     json.dump(journal, f, indent=2, ensure_ascii=False)
+                    
+                    logger.info(f"✅ Trade saved to journal: {trade['symbol']} ({trade['outcome']})")
+                    logger.info(f"✅ Statistics updated: {total_trades} trades, {win_rate:.1f}% win rate")
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Release lock
         else:
@@ -3862,15 +3950,23 @@ async def save_trade_to_journal(trade: Dict):
             with open(journal_path, 'w', encoding='utf-8') as f:
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock
-                    journal = {'trades': [journal_entry]}
+                    journal = {
+                        'trades': [journal_entry],
+                        'statistics': {
+                            'total_trades': 1,
+                            'wins': 1 if journal_entry['outcome'] in TRADE_OUTCOME_WIN else 0,
+                            'losses': 1 if journal_entry['outcome'] in TRADE_OUTCOME_LOSS else 0,
+                            'win_rate': 100.0 if journal_entry['outcome'] in TRADE_OUTCOME_WIN else 0.0,
+                            'last_updated': datetime.now(timezone.utc).isoformat()
+                        }
+                    }
                     json.dump(journal, f, indent=2, ensure_ascii=False)
+                    logger.info(f"✅ Trade saved to journal: {trade['symbol']} ({trade['outcome']})")
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Release lock
         
-        logger.info(f"✅ Trade saved to journal: {trade['symbol']} ({trade['outcome']})")
-        
-        # Update statistics
-        await update_trade_statistics()
+    except Exception as e:
+        logger.error(f"Error saving trade to journal: {e}", exc_info=True)
         
     except Exception as e:
         logger.error(f"Error saving trade to journal: {e}", exc_info=True)
