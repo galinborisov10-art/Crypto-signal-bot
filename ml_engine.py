@@ -70,6 +70,74 @@ VALID_SIGNAL_TYPES = ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']
 ML_MODIFIER_MIN = -0.15  # Maximum penalty: -15%
 ML_MODIFIER_MAX = 0.10   # Maximum boost: +10%
 
+# ============================================================================
+# ML POLICY — CANONICAL RULES (DOCUMENTATION)
+# ============================================================================
+# These constants define ML's role in the signal pipeline.
+# ML is a SUBORDINATE layer - it provides soft influence only.
+#
+# IMPORTANT: These are DECLARATIVE constants for documentation purposes.
+# They describe ML's role but do NOT enforce runtime behavior.
+# Enforcement happens at the CALLER level (e.g., in ict_signal_engine.py).
+# ============================================================================
+
+# ML influence is SOFT and LIMITED
+ML_CAN_CREATE_SIGNALS = False       # ML cannot generate signals independently
+ML_CAN_CANCEL_SIGNALS = False       # ML cannot veto strategy signals
+ML_CAN_OVERRIDE_STRATEGY = False    # ML cannot change signal direction
+
+# ML only modifies confidence AFTER strategy decision
+ML_CONFIDENCE_ONLY = True           # ML only adjusts confidence, nothing else
+
+# ML modifier is applied EXACTLY ONCE per signal
+ML_SINGLE_APPLICATION = True        # No double-application of ML modifier
+
+# ML operates on strategy-approved signals only
+ML_REQUIRES_STRATEGY_SIGNAL = True  # ML needs a base signal to work on
+
+# ============================================================================
+# ML APPLICATION PIPELINE (DOCUMENTATION)
+# ============================================================================
+#
+# ML is applied as the FINAL step in the signal pipeline:
+#
+#   ┌─────────────────────────────────────────────────────────────┐
+#   │ 1. STRATEGY LAYER (ICT)                                     │
+#   │    ├─ Market structure analysis                             │
+#   │    ├─ Order blocks, FVGs, liquidity zones                   │
+#   │    ├─ Bias determination (BULLISH/BEARISH/NEUTRAL)          │
+#   │    └─ Base confidence calculation                           │
+#   │         ↓                                                    │
+#   │    OUTPUT: strategy_signal, base_confidence                 │
+#   └─────────────────────────────────────────────────────────────┘
+#                           ↓
+#   ┌─────────────────────────────────────────────────────────────┐
+#   │ 2. ML LAYER (SUBORDINATE)                                   │
+#   │    ├─ Validate feature schema (H5 guard)                    │
+#   │    ├─ Calculate ML confidence modifier                      │
+#   │    ├─ Clamp modifier to bounds (ML-1 guard)                 │
+#   │    └─ Apply modifier: final = base * (1 + modifier)         │
+#   │         ↓                                                    │
+#   │    OUTPUT: strategy_signal (unchanged), adjusted_confidence │
+#   └─────────────────────────────────────────────────────────────┘
+#                           ↓
+#   ┌─────────────────────────────────────────────────────────────┐
+#   │ 3. SIGNAL OUTPUT                                            │
+#   │    ├─ Signal direction: FROM STRATEGY (never changed by ML) │
+#   │    ├─ Confidence: ADJUSTED by ML (within bounds)            │
+#   │    └─ Entry/SL/TP: FROM STRATEGY (never touched by ML)      │
+#   └─────────────────────────────────────────────────────────────┘
+#
+# KEY POINTS:
+# - ML operates AFTER strategy has made all decisions
+# - ML CANNOT create signals (requires strategy_signal input)
+# - ML CANNOT cancel signals (always returns a signal)
+# - ML CANNOT override strategy direction (preserves strategy_signal)
+# - ML ONLY modifies confidence (soft influence)
+# - ML modifier applied ONCE (no double-application)
+#
+# ============================================================================
+
 
 def _validate_ml_features(analysis: dict) -> tuple:
     """
@@ -168,6 +236,24 @@ class MLTradingEngine:
     
     def predict_signal(self, analysis, classical_signal, classical_confidence):
         """Предсказва сигнал с ML и комбинира с класически"""
+        
+        # ========================================================================
+        # ML POLICY APPLICATION POINT
+        # ========================================================================
+        # This method receives a STRATEGY-APPROVED signal and confidence.
+        # ML modifies ONLY the confidence value, within strict bounds.
+        #
+        # POLICY ENFORCEMENT (at caller level):
+        # - Caller must provide classical_signal (ML cannot create signals)
+        # - Caller must not call this method for HOLD signals (ML doesn't promote)
+        # - Caller applies result ONCE (no double-application)
+        #
+        # ML BEHAVIOR (within this method):
+        # - Returns classical_signal unchanged (direction preserved)
+        # - Modifies confidence within [ML_MODIFIER_MIN, ML_MODIFIER_MAX]
+        # - Returns classical signal on any error (safe fallback)
+        # ========================================================================
+        
         try:
             # Ако няма модел или малко данни - използвай класически
             if self.model is None:
