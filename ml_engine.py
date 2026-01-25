@@ -228,14 +228,15 @@ class MLTradingEngine:
         self.sync_retrain_state()
     
     def extract_features(self, analysis):
-        """Извлича features от анализа за ML (5 features - ICT-aligned)"""
+        """Извлича features от анализа за ML (6 features - match bot.py)"""
         try:
             features = [
-                analysis.get('price_change_pct', 0),        # 1
-                analysis.get('volume_ratio', 1),            # 2
-                analysis.get('volatility', 5),              # 3
-                analysis.get('bb_position', 0.5),           # 4
-                analysis.get('ict_confidence', 0.5),        # 5
+                analysis.get('rsi', 50),                    # 1
+                analysis.get('price_change_pct', 0),        # 2
+                analysis.get('volume_ratio', 1),            # 3
+                analysis.get('volatility', 5),              # 4
+                analysis.get('bb_position', 0.5),           # 5
+                analysis.get('ict_confidence', 0.5),        # 6
             ]
             return np.array(features).reshape(1, -1)
         except Exception as e:
@@ -537,31 +538,36 @@ class MLTradingEngine:
     
     def extract_extended_features(self, analysis):
         """
-        Extract extended features from analysis (14 features - aligned with ensemble training)
+        Extract extended features from analysis (15+ features)
         
         Features include:
-        - Basic indicators (price change, volume, volatility, BB, ICT confidence) - 5 features
-        - Extended ICT features (whale blocks, liquidity zones, etc.) - 9 features
+        - Basic indicators (RSI, price change, volume)
+        - Volatility metrics (ATR, BB position)
+        - ICT confidence
+        - Trend indicators (EMAs)
+        - Market structure
+        - Volume profile
         """
         try:
             features = [
-                # Basic (5 features - aligned with runtime ML engine, PR-ML-5)
-                analysis.get('price_change_pct', 0),        # 1
-                analysis.get('volume_ratio', 1),            # 2
-                analysis.get('volatility', 5),              # 3
-                analysis.get('bb_position', 0.5),           # 4
-                analysis.get('ict_confidence', 0.5),        # 5
+                # Basic (6 features - original)
+                analysis.get('rsi', 50),                    # 1
+                analysis.get('price_change_pct', 0),        # 2
+                analysis.get('volume_ratio', 1),            # 3
+                analysis.get('volatility', 5),              # 4
+                analysis.get('bb_position', 0.5),           # 5
+                analysis.get('ict_confidence', 0.5),        # 6
                 
                 # Extended ICT features (9 features)
-                analysis.get('whale_blocks_count', 0),      # 6
-                analysis.get('liquidity_zones_count', 0),   # 7
-                analysis.get('order_blocks_count', 0),      # 8
-                analysis.get('fvgs_count', 0),              # 9
-                analysis.get('displacement_detected', 0),   # 10
-                analysis.get('structure_broken', 0),        # 11
-                analysis.get('mtf_confluence', 0),          # 12
-                analysis.get('bias_score', 0),              # 13
-                analysis.get('strength_score', 0),          # 14
+                analysis.get('whale_blocks_count', 0),      # 7
+                analysis.get('liquidity_zones_count', 0),   # 8
+                analysis.get('order_blocks_count', 0),      # 9
+                analysis.get('fvgs_count', 0),              # 10
+                analysis.get('displacement_detected', 0),   # 11
+                analysis.get('structure_broken', 0),        # 12
+                analysis.get('mtf_confluence', 0),          # 13
+                analysis.get('bias_score', 0),              # 14
+                analysis.get('strength_score', 0),          # 15
             ]
             return np.array(features).reshape(1, -1)
         except Exception as e:
@@ -603,7 +609,7 @@ class MLTradingEngine:
                 
                 # Use extended features if available
                 features = [
-                    # Basic (5 features - aligned with runtime ML engine, PR-ML-5)
+                    # Basic (5 features - aligned with training paths, PR-ML-5)
                     conditions.get('price_change_pct', 0),        # 1
                     conditions.get('volume_ratio', 1),            # 2
                     conditions.get('volatility', 5),              # 3
@@ -851,7 +857,7 @@ class MLTradingEngine:
     def calculate_feature_importance(self, rf_model, gb_model):
         """Calculate and store feature importance"""
         try:
-            # Feature names - aligned with ensemble model (14 total: 5 basic + 9 extended ICT, PR-ML-5)
+            # Feature names for ensemble model (14 total: 5 basic + 9 extended, PR-ML-5)
             feature_names = [
                 'price_change_pct', 'volume_ratio', 'volatility',
                 'bb_position', 'ict_confidence', 'whale_blocks_count',
