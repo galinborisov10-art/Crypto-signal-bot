@@ -18032,13 +18032,46 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             )
             logger.info("✅ Cache cleanup scheduled (every 10 minutes)")
             
+            # ================= AUTO SIGNAL JOB WRAPPERS =================
+            # Fix for lambda closure scope issue with asyncio in Python 3.12+
+            # Lambda functions cannot access 'asyncio' in scheduler execution context
+            # Using explicit wrapper functions following Position Monitor pattern
+            
+            async def auto_signal_1h_wrapper():
+                """Wrapper for 1H auto signal job"""
+                try:
+                    await auto_signal_job('1h', application.bot)
+                except Exception as e:
+                    logger.error(f"❌ Auto Signal 1H error: {e}", exc_info=True)
+            
+            async def auto_signal_2h_wrapper():
+                """Wrapper for 2H auto signal job"""
+                try:
+                    await auto_signal_job('2h', application.bot)
+                except Exception as e:
+                    logger.error(f"❌ Auto Signal 2H error: {e}", exc_info=True)
+            
+            async def auto_signal_4h_wrapper():
+                """Wrapper for 4H auto signal job"""
+                try:
+                    await auto_signal_job('4h', application.bot)
+                except Exception as e:
+                    logger.error(f"❌ Auto Signal 4H error: {e}", exc_info=True)
+            
+            async def auto_signal_1d_wrapper():
+                """Wrapper for 1D auto signal job"""
+                try:
+                    await auto_signal_job('1d', application.bot)
+                except Exception as e:
+                    logger.error(f"❌ Auto Signal 1D error: {e}", exc_info=True)
+            
             # ================= PR #6: AUTO SIGNAL SCHEDULER JOBS =================
             # Auto signal scheduler jobs for 1H, 2H, 4H, 1D timeframes
             # Staggered timing to prevent overlaps
             
             # 1H - Every hour at :05
             scheduler.add_job(
-                lambda: asyncio.create_task(auto_signal_job('1h', application.bot)),
+                auto_signal_1h_wrapper,
                 'cron',
                 minute=5,
                 id='auto_signal_1h',
@@ -18049,7 +18082,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             
             # 2H - Every 2 hours at :07
             scheduler.add_job(
-                lambda: asyncio.create_task(auto_signal_job('2h', application.bot)),
+                auto_signal_2h_wrapper,
                 'cron',
                 hour='*/2',
                 minute=7,
@@ -18061,7 +18094,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             
             # 4H - Every 4 hours at :10
             scheduler.add_job(
-                lambda: asyncio.create_task(auto_signal_job('4h', application.bot)),
+                auto_signal_4h_wrapper,
                 'cron',
                 hour='*/4',
                 minute=10,
@@ -18073,7 +18106,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             
             # 1D - Daily at 09:15
             scheduler.add_job(
-                lambda: asyncio.create_task(auto_signal_job('1d', application.bot)),
+                auto_signal_1d_wrapper,
                 'cron',
                 hour=9,
                 minute=15,
