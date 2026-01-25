@@ -35,30 +35,26 @@ logger = logging.getLogger(__name__)
 # Validation ensures feature compatibility between training and prediction.
 # ============================================================================
 
+# ML feature schema (ICT-aligned, PR-ML-7)
+# Aligned with extract_features() runtime vector (5 features)
 REQUIRED_ML_FEATURES = [
-    'rsi',
-    'confidence',
+    'price_change_pct',
     'volume_ratio',
-    'trend_strength',
     'volatility',
-    'timeframe',
-    'signal_type'
+    'bb_position',
+    'ict_confidence',
 ]
 
-# Feature type expectations
+# Feature type expectations (ICT-aligned, PR-ML-7)
 FEATURE_TYPES = {
-    'rsi': (int, float),
-    'confidence': (int, float),
+    'price_change_pct': (int, float),
     'volume_ratio': (int, float),
-    'trend_strength': (int, float),
     'volatility': (int, float),
-    'timeframe': str,
-    'signal_type': str
+    'bb_position': (int, float),
+    'ict_confidence': (int, float),
 }
 
-# Valid categorical values
-VALID_TIMEFRAMES = ['1h', '2h', '4h', '1d']
-VALID_SIGNAL_TYPES = ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']
+# (Categorical validation constants removed - no categorical features in ICT-aligned schema, PR-ML-7)
 
 # ============================================================================
 # ML CONFIDENCE MODIFIER BOUNDS
@@ -178,11 +174,7 @@ def _validate_ml_features(analysis: dict) -> tuple:
             missing.append(f"{feature} (wrong type: {type(value).__name__})")
             continue
         
-        # Check categorical values
-        if feature == 'timeframe' and value not in VALID_TIMEFRAMES:
-            missing.append(f"timeframe (invalid: {value})")
-        elif feature == 'signal_type' and value not in VALID_SIGNAL_TYPES:
-            missing.append(f"signal_type (invalid: {value})")
+        # (Categorical validation removed - no categorical features in ICT-aligned schema, PR-ML-7)
     
     is_valid = len(missing) == 0
     return is_valid, missing
