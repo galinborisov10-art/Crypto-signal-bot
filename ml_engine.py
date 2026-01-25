@@ -413,13 +413,14 @@ class MLTradingEngine:
                 
                 valid_trades += 1
                 
-                # Извлечи features (5 features - aligned with runtime ML engine, PR-ML-5)
+                # Извлечи features (6 features - matching bot.py)
                 features = [
-                    conditions.get('price_change_pct', 0),        # 1
-                    conditions.get('volume_ratio', 1),            # 2
-                    conditions.get('volatility', 5),              # 3
-                    conditions.get('bb_position', 0.5),           # 4
-                    conditions.get('ict_confidence', 0.5),        # 5
+                    conditions.get('rsi', 50),                    # 1
+                    conditions.get('price_change_pct', 0),        # 2
+                    conditions.get('volume_ratio', 1),            # 3
+                    conditions.get('volatility', 5),              # 4
+                    conditions.get('bb_position', 0.5),           # 5
+                    conditions.get('ict_confidence', 0.5),        # 6
                 ]
                 
                 X.append(features)
@@ -609,23 +610,21 @@ class MLTradingEngine:
                 
                 # Use extended features if available
                 features = [
-                    # Basic (5 features - aligned with training paths, PR-ML-5)
-                    conditions.get('price_change_pct', 0),        # 1
-                    conditions.get('volume_ratio', 1),            # 2
-                    conditions.get('volatility', 5),              # 3
-                    conditions.get('bb_position', 0.5),           # 4
-                    conditions.get('ict_confidence', 0.5),        # 5
-                    
-                    # Extended ICT features (9 features)
-                    conditions.get('whale_blocks_count', 0),      # 6
-                    conditions.get('liquidity_zones_count', 0),   # 7
-                    conditions.get('order_blocks_count', 0),      # 8
-                    conditions.get('fvgs_count', 0),              # 9
-                    conditions.get('displacement_detected', 0),   # 10
-                    conditions.get('structure_broken', 0),        # 11
-                    conditions.get('mtf_confluence', 0),          # 12
-                    conditions.get('bias_score', 0),              # 13
-                    conditions.get('strength_score', 0),          # 14
+                    conditions.get('rsi', 50),
+                    conditions.get('price_change_pct', 0),
+                    conditions.get('volume_ratio', 1),
+                    conditions.get('volatility', 5),
+                    conditions.get('bb_position', 0.5),
+                    conditions.get('ict_confidence', 0.5),
+                    conditions.get('whale_blocks_count', 0),
+                    conditions.get('liquidity_zones_count', 0),
+                    conditions.get('order_blocks_count', 0),
+                    conditions.get('fvgs_count', 0),
+                    conditions.get('displacement_detected', 0),
+                    conditions.get('structure_broken', 0),
+                    conditions.get('mtf_confluence', 0),
+                    conditions.get('bias_score', 0),
+                    conditions.get('strength_score', 0),
                 ]
                 
                 X.append(features)
@@ -797,13 +796,13 @@ class MLTradingEngine:
                     continue
                 
                 conditions = trade.get('conditions', {})
-                # Backtest features - aligned with runtime ML engine (5 features, PR-ML-5)
                 features = [
-                    conditions.get('price_change_pct', 0),        # 1
-                    conditions.get('volume_ratio', 1),            # 2
-                    conditions.get('volatility', 5),              # 3
-                    conditions.get('bb_position', 0.5),           # 4
-                    conditions.get('ict_confidence', 0.5),        # 5
+                    conditions.get('rsi', 50),
+                    conditions.get('price_change_pct', 0),
+                    conditions.get('volume_ratio', 1),
+                    conditions.get('volatility', 5),
+                    conditions.get('bb_position', 0.5),
+                    conditions.get('ict_confidence', 0.5),
                 ]
                 
                 X.append(features)
@@ -857,9 +856,8 @@ class MLTradingEngine:
     def calculate_feature_importance(self, rf_model, gb_model):
         """Calculate and store feature importance"""
         try:
-            # Feature names for ensemble model (14 total: 5 basic + 9 extended, PR-ML-5)
             feature_names = [
-                'price_change_pct', 'volume_ratio', 'volatility',
+                'rsi', 'price_change_pct', 'volume_ratio', 'volatility',
                 'bb_position', 'ict_confidence', 'whale_blocks_count',
                 'liquidity_zones_count', 'order_blocks_count', 'fvgs_count',
                 'displacement_detected', 'structure_broken', 'mtf_confluence',
