@@ -1101,8 +1101,9 @@ class MLTradingEngine:
             # ========================================================================
             # PRIORITY 2: INCREMENTAL RETRAIN (NOT YET IMPLEMENTED)
             # ========================================================================
-            elif self.should_incremental_retrain():
-                new_trades_count = self.get_new_trades_count()
+            # Check condition first to avoid duplicate trade counting
+            new_trades_count = self.get_new_trades_count()
+            if new_trades_count >= ML_INCREMENTAL_RETRAIN_MIN_TRADES:
                 logger.info(f"ℹ️  ML incremental retrain condition met ({new_trades_count} new trades)")
                 logger.info("⚠️  Incremental retrain NOT YET IMPLEMENTED - skipping")
                 logger.info("📌 Will be implemented in PR-ML-5+ (design decision pending)")
