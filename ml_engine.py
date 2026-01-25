@@ -1146,7 +1146,6 @@ class MLTradingEngine:
         logger.info("🔄 Auto-retraining ML model...")
         
         return self.maybe_retrain_model()
-        return False
 
 
 # Global ML instance

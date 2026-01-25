@@ -9,7 +9,6 @@ Tests the deterministic ML retraining scheduler:
 """
 
 import sys
-import os
 from datetime import datetime, timedelta
 from ml_engine import MLTradingEngine, ML_FULL_RETRAIN_INTERVAL_DAYS, ML_INCREMENTAL_RETRAIN_MIN_TRADES
 
