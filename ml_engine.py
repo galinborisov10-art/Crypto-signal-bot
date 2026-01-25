@@ -236,11 +236,13 @@ class MLTradingEngine:
     
     def predict_signal(self, analysis, classical_signal, classical_confidence):
         """
-        DEPRECATED in PR-ML-8.
+        DEPRECATED in PR-ML-8 (January 2026).
         Use get_confidence_modifier() instead.
         
         This method allows ML to override signal direction,
         which violates the ICT-first architecture.
+        
+        Will be removed in a future release.
         """
         logger.warning("⚠️ predict_signal() is deprecated. Use get_confidence_modifier().")
         
@@ -708,8 +710,10 @@ class MLTradingEngine:
     
     def predict_with_ensemble(self, analysis, classical_signal, classical_confidence):
         """
-        DEPRECATED in PR-ML-8.
+        DEPRECATED in PR-ML-8 (January 2026).
         Use get_confidence_modifier() instead.
+        
+        Will be removed in a future release.
         """
         logger.warning("⚠️ predict_with_ensemble() is deprecated. Use get_confidence_modifier().")
         

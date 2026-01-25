@@ -76,8 +76,8 @@ def test_confidence_modifier_bounds():
     print("TEST 2: Confidence Modifier Bounds")
     print("="*60)
     
-    print(f"   ML_MODIFIER_MIN: {ML_MODIFIER_MIN} ({ML_MODIFIER_MIN*100:+.0f}%)")
-    print(f"   ML_MODIFIER_MAX: {ML_MODIFIER_MAX} ({ML_MODIFIER_MAX*100:+.0f}%)")
+    print(f"   ML_MODIFIER_MIN: {ML_MODIFIER_MIN} ({ML_MODIFIER_MIN*100:+.0f})")
+    print(f"   ML_MODIFIER_MAX: {ML_MODIFIER_MAX} ({ML_MODIFIER_MAX*100:+.0f})")
     
     # Test that constants are properly defined
     if ML_MODIFIER_MIN >= 0:
