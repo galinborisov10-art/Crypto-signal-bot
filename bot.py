@@ -414,7 +414,7 @@ TRADE_OUTCOME_WIN = ['WIN', 'SUCCESS']
 TRADE_OUTCOME_LOSS = ['LOSS', 'FAILED']
 
 # ================= SCHEDULER CONFIGURATION =================
-DAILY_REPORT_MISFIRE_GRACE_TIME = 3600  # 1 hour grace period for missed daily reports
+DAILY_REPORT_MISFIRE_GRACE_TIME = 43200  # 12 hours grace period for missed daily reports
 STARTUP_CHECK_DELAY_SECONDS = 10  # Delay before checking for missed reports on startup
 DEFAULT_SWING_RR_RATIO = 3.5  # Default risk/reward ratio for ranging markets
 
@@ -17532,7 +17532,7 @@ def main():
                     'cron',
                     hour=8,
                     minute=0,
-                    misfire_grace_time=DAILY_REPORT_MISFIRE_GRACE_TIME,  # Allow 1 hour window for missed reports
+                    misfire_grace_time=DAILY_REPORT_MISFIRE_GRACE_TIME,  # Allow 12 hour window for missed reports
                     coalesce=True,            # Combine multiple missed runs into one
                     max_instances=1           # Only one instance at a time
                 )
