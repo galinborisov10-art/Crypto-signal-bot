@@ -29,29 +29,36 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# ML FEATURE SCHEMA - Canonical Definition (PR-ML-6: ICT-aligned)
+# ML FEATURE SCHEMA - Canonical Definition
 # ============================================================================
 # This schema defines required features for ML training and prediction.
 # Validation ensures feature compatibility between training and prediction.
-# Updated to match ICT-only feature space (RSI removed).
 # ============================================================================
 
 REQUIRED_ML_FEATURES = [
-    'price_change_pct',
+    'rsi',
+    'confidence',
     'volume_ratio',
+    'trend_strength',
     'volatility',
-    'bb_position',
-    'ict_confidence'
+    'timeframe',
+    'signal_type'
 ]
 
 # Feature type expectations
 FEATURE_TYPES = {
-    'price_change_pct': (int, float),
+    'rsi': (int, float),
+    'confidence': (int, float),
     'volume_ratio': (int, float),
+    'trend_strength': (int, float),
     'volatility': (int, float),
-    'bb_position': (int, float),
-    'ict_confidence': (int, float)
+    'timeframe': str,
+    'signal_type': str
 }
+
+# Valid categorical values
+VALID_TIMEFRAMES = ['1h', '2h', '4h', '1d']
+VALID_SIGNAL_TYPES = ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']
 
 # ============================================================================
 # ML CONFIDENCE MODIFIER BOUNDS
@@ -141,7 +148,6 @@ def _validate_ml_features(analysis: dict) -> tuple:
     Validate that analysis dict contains all required ML features.
     
     This is a sanity gate to prevent training/prediction feature mismatch.
-    Updated for PR-ML-6: ICT-aligned features only (RSI removed).
     
     Args:
         analysis: Signal analysis dictionary
@@ -171,6 +177,12 @@ def _validate_ml_features(analysis: dict) -> tuple:
         if expected_types and not isinstance(value, expected_types):
             missing.append(f"{feature} (wrong type: {type(value).__name__})")
             continue
+        
+        # Check categorical values
+        if feature == 'timeframe' and value not in VALID_TIMEFRAMES:
+            missing.append(f"timeframe (invalid: {value})")
+        elif feature == 'signal_type' and value not in VALID_SIGNAL_TYPES:
+            missing.append(f"signal_type (invalid: {value})")
     
     is_valid = len(missing) == 0
     return is_valid, missing
@@ -401,7 +413,6 @@ class MLTradingEngine:
                 valid_trades += 1
                 
                 # Извлечи features (5 features - ICT-aligned, PR-ML-6)
-                # Training features MUST match extract_features() runtime vector
                 features = [
                     conditions.get('price_change_pct', 0),        # 1
                     conditions.get('volume_ratio', 1),            # 2
@@ -538,7 +549,7 @@ class MLTradingEngine:
         """
         try:
             features = [
-                # Basic (5 features - ICT-aligned, matches runtime)
+                # Basic (5 features - ICT-aligned)
                 analysis.get('price_change_pct', 0),        # 1
                 analysis.get('volume_ratio', 1),            # 2
                 analysis.get('volatility', 5),              # 3
@@ -594,16 +605,13 @@ class MLTradingEngine:
                 
                 conditions = trade.get('conditions', {})
                 
-                # Use extended features (14 total: 5 basic + 9 extended, PR-ML-6)
+                # Use extended features (14 features - ICT-aligned, PR-ML-6)
                 features = [
-                    # Basic features (5 - ICT-aligned, matches runtime)
                     conditions.get('price_change_pct', 0),        # 1
                     conditions.get('volume_ratio', 1),            # 2
                     conditions.get('volatility', 5),              # 3
                     conditions.get('bb_position', 0.5),           # 4
                     conditions.get('ict_confidence', 0.5),        # 5
-                    
-                    # Extended ICT features (9)
                     conditions.get('whale_blocks_count', 0),      # 6
                     conditions.get('liquidity_zones_count', 0),   # 7
                     conditions.get('order_blocks_count', 0),      # 8
@@ -784,7 +792,6 @@ class MLTradingEngine:
                     continue
                 
                 conditions = trade.get('conditions', {})
-                # Backtest features - aligned with runtime ML engine (5 features, PR-ML-6)
                 features = [
                     conditions.get('price_change_pct', 0),        # 1
                     conditions.get('volume_ratio', 1),            # 2
@@ -844,7 +851,7 @@ class MLTradingEngine:
     def calculate_feature_importance(self, rf_model, gb_model):
         """Calculate and store feature importance"""
         try:
-            # Feature names - ICT-aligned (14 features: 5 basic + 9 extended, PR-ML-6)
+            # Feature names (14 features - ICT-aligned, PR-ML-6)
             feature_names = [
                 'price_change_pct', 'volume_ratio', 'volatility',
                 'bb_position', 'ict_confidence', 'whale_blocks_count',
