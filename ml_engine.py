@@ -228,15 +228,14 @@ class MLTradingEngine:
         self.sync_retrain_state()
     
     def extract_features(self, analysis):
-        """Извлича features от анализа за ML (6 features - match bot.py)"""
+        """Извлича features от анализа за ML (5 features - ICT-aligned, PR-ML-6)"""
         try:
             features = [
-                analysis.get('rsi', 50),                    # 1
-                analysis.get('price_change_pct', 0),        # 2
-                analysis.get('volume_ratio', 1),            # 3
-                analysis.get('volatility', 5),              # 4
-                analysis.get('bb_position', 0.5),           # 5
-                analysis.get('ict_confidence', 0.5),        # 6
+                analysis.get('price_change_pct', 0),        # 1
+                analysis.get('volume_ratio', 1),            # 2
+                analysis.get('volatility', 5),              # 3
+                analysis.get('bb_position', 0.5),           # 4
+                analysis.get('ict_confidence', 0.5),        # 5
             ]
             return np.array(features).reshape(1, -1)
         except Exception as e:
@@ -413,14 +412,13 @@ class MLTradingEngine:
                 
                 valid_trades += 1
                 
-                # Извлечи features (6 features - matching bot.py)
+                # Извлечи features (5 features - ICT-aligned, PR-ML-6)
                 features = [
-                    conditions.get('rsi', 50),                    # 1
-                    conditions.get('price_change_pct', 0),        # 2
-                    conditions.get('volume_ratio', 1),            # 3
-                    conditions.get('volatility', 5),              # 4
-                    conditions.get('bb_position', 0.5),           # 5
-                    conditions.get('ict_confidence', 0.5),        # 6
+                    conditions.get('price_change_pct', 0),        # 1
+                    conditions.get('volume_ratio', 1),            # 2
+                    conditions.get('volatility', 5),              # 3
+                    conditions.get('bb_position', 0.5),           # 4
+                    conditions.get('ict_confidence', 0.5),        # 5
                 ]
                 
                 X.append(features)
@@ -539,10 +537,10 @@ class MLTradingEngine:
     
     def extract_extended_features(self, analysis):
         """
-        Extract extended features from analysis (15+ features)
+        Extract extended features (14 features - ICT-aligned, PR-ML-6)
         
         Features include:
-        - Basic indicators (RSI, price change, volume)
+        - Basic indicators (price change, volume)
         - Volatility metrics (ATR, BB position)
         - ICT confidence
         - Trend indicators (EMAs)
@@ -551,24 +549,23 @@ class MLTradingEngine:
         """
         try:
             features = [
-                # Basic (6 features - original)
-                analysis.get('rsi', 50),                    # 1
-                analysis.get('price_change_pct', 0),        # 2
-                analysis.get('volume_ratio', 1),            # 3
-                analysis.get('volatility', 5),              # 4
-                analysis.get('bb_position', 0.5),           # 5
-                analysis.get('ict_confidence', 0.5),        # 6
+                # Basic (5 features - ICT-aligned)
+                analysis.get('price_change_pct', 0),        # 1
+                analysis.get('volume_ratio', 1),            # 2
+                analysis.get('volatility', 5),              # 3
+                analysis.get('bb_position', 0.5),           # 4
+                analysis.get('ict_confidence', 0.5),        # 5
                 
                 # Extended ICT features (9 features)
-                analysis.get('whale_blocks_count', 0),      # 7
-                analysis.get('liquidity_zones_count', 0),   # 8
-                analysis.get('order_blocks_count', 0),      # 9
-                analysis.get('fvgs_count', 0),              # 10
-                analysis.get('displacement_detected', 0),   # 11
-                analysis.get('structure_broken', 0),        # 12
-                analysis.get('mtf_confluence', 0),          # 13
-                analysis.get('bias_score', 0),              # 14
-                analysis.get('strength_score', 0),          # 15
+                analysis.get('whale_blocks_count', 0),      # 6
+                analysis.get('liquidity_zones_count', 0),   # 7
+                analysis.get('order_blocks_count', 0),      # 8
+                analysis.get('fvgs_count', 0),              # 9
+                analysis.get('displacement_detected', 0),   # 10
+                analysis.get('structure_broken', 0),        # 11
+                analysis.get('mtf_confluence', 0),          # 12
+                analysis.get('bias_score', 0),              # 13
+                analysis.get('strength_score', 0),          # 14
             ]
             return np.array(features).reshape(1, -1)
         except Exception as e:
@@ -608,23 +605,22 @@ class MLTradingEngine:
                 
                 conditions = trade.get('conditions', {})
                 
-                # Use extended features if available
+                # Use extended features (14 features - ICT-aligned, PR-ML-6)
                 features = [
-                    conditions.get('rsi', 50),
-                    conditions.get('price_change_pct', 0),
-                    conditions.get('volume_ratio', 1),
-                    conditions.get('volatility', 5),
-                    conditions.get('bb_position', 0.5),
-                    conditions.get('ict_confidence', 0.5),
-                    conditions.get('whale_blocks_count', 0),
-                    conditions.get('liquidity_zones_count', 0),
-                    conditions.get('order_blocks_count', 0),
-                    conditions.get('fvgs_count', 0),
-                    conditions.get('displacement_detected', 0),
-                    conditions.get('structure_broken', 0),
-                    conditions.get('mtf_confluence', 0),
-                    conditions.get('bias_score', 0),
-                    conditions.get('strength_score', 0),
+                    conditions.get('price_change_pct', 0),        # 1
+                    conditions.get('volume_ratio', 1),            # 2
+                    conditions.get('volatility', 5),              # 3
+                    conditions.get('bb_position', 0.5),           # 4
+                    conditions.get('ict_confidence', 0.5),        # 5
+                    conditions.get('whale_blocks_count', 0),      # 6
+                    conditions.get('liquidity_zones_count', 0),   # 7
+                    conditions.get('order_blocks_count', 0),      # 8
+                    conditions.get('fvgs_count', 0),              # 9
+                    conditions.get('displacement_detected', 0),   # 10
+                    conditions.get('structure_broken', 0),        # 11
+                    conditions.get('mtf_confluence', 0),          # 12
+                    conditions.get('bias_score', 0),              # 13
+                    conditions.get('strength_score', 0),          # 14
                 ]
                 
                 X.append(features)
@@ -797,12 +793,11 @@ class MLTradingEngine:
                 
                 conditions = trade.get('conditions', {})
                 features = [
-                    conditions.get('rsi', 50),
-                    conditions.get('price_change_pct', 0),
-                    conditions.get('volume_ratio', 1),
-                    conditions.get('volatility', 5),
-                    conditions.get('bb_position', 0.5),
-                    conditions.get('ict_confidence', 0.5),
+                    conditions.get('price_change_pct', 0),        # 1
+                    conditions.get('volume_ratio', 1),            # 2
+                    conditions.get('volatility', 5),              # 3
+                    conditions.get('bb_position', 0.5),           # 4
+                    conditions.get('ict_confidence', 0.5),        # 5
                 ]
                 
                 X.append(features)
@@ -856,8 +851,9 @@ class MLTradingEngine:
     def calculate_feature_importance(self, rf_model, gb_model):
         """Calculate and store feature importance"""
         try:
+            # Feature names (14 features - ICT-aligned, PR-ML-6)
             feature_names = [
-                'rsi', 'price_change_pct', 'volume_ratio', 'volatility',
+                'price_change_pct', 'volume_ratio', 'volatility',
                 'bb_position', 'ict_confidence', 'whale_blocks_count',
                 'liquidity_zones_count', 'order_blocks_count', 'fvgs_count',
                 'displacement_detected', 'structure_broken', 'mtf_confluence',
