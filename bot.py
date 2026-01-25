@@ -17549,7 +17549,7 @@ def main():
                         if now.hour > 8:
                             logger.info("⚠️ Bot started after 08:00 - checking for missed daily report...")
                             # Send the report now if we're within the grace period
-                            if now.hour <= 9:  # Within 1 hour of scheduled time
+                            if now.hour < 20:  # Within 12 hours of scheduled time (08:00 + 12h = 20:00)
                                 logger.warning("⚠️ Daily report was missed - sending now...")
                                 await send_daily_auto_report()
                             else:
