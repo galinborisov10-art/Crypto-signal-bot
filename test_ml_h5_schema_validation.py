@@ -9,21 +9,23 @@ import os
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ml_engine import _validate_ml_features, REQUIRED_ML_FEATURES
+from ml_engine import _validate_ml_features, REQUIRED_ML_FEATURES, VALID_TIMEFRAMES, VALID_SIGNAL_TYPES
 
 
 def test_1_valid_schema_passes():
-    """Test 1: Valid schema passes validation (ICT-aligned, PR-ML-7)"""
+    """Test 1: Valid schema passes validation"""
     print("\n" + "="*60)
-    print("TEST 1: Valid Schema Passes Validation (ICT-aligned)")
+    print("TEST 1: Valid Schema Passes Validation")
     print("="*60)
     
     valid_analysis = {
-        'price_change_pct': 2.5,
+        'rsi': 65.5,
+        'confidence': 75.0,
         'volume_ratio': 1.5,
+        'trend_strength': 0.8,
         'volatility': 5.2,
-        'bb_position': 0.75,
-        'ict_confidence': 0.82
+        'timeframe': '4h',
+        'signal_type': 'BUY'
     }
     
     is_valid, missing = _validate_ml_features(valid_analysis)
@@ -39,17 +41,19 @@ def test_1_valid_schema_passes():
 
 
 def test_2_missing_required_feature():
-    """Test 2: Missing required feature detected (ICT-aligned, PR-ML-7)"""
+    """Test 2: Missing required feature detected"""
     print("\n" + "="*60)
     print("TEST 2: Missing Required Feature Detected")
     print("="*60)
     
     incomplete_analysis = {
-        'price_change_pct': 2.5,
+        'rsi': 65.5,
+        'confidence': 75.0,
         # 'volume_ratio': missing!
+        'trend_strength': 0.8,
         'volatility': 5.2,
-        'bb_position': 0.75,
-        'ict_confidence': 0.82
+        'timeframe': '4h',
+        'signal_type': 'BUY'
     }
     
     is_valid, missing = _validate_ml_features(incomplete_analysis)
@@ -65,17 +69,19 @@ def test_2_missing_required_feature():
 
 
 def test_3_none_values_rejected():
-    """Test 3: None values rejected (ICT-aligned, PR-ML-7)"""
+    """Test 3: None values rejected"""
     print("\n" + "="*60)
     print("TEST 3: None Values Rejected")
     print("="*60)
     
     none_value_analysis = {
-        'price_change_pct': 2.5,
-        'volume_ratio': None,  # None value!
+        'rsi': 65.5,
+        'confidence': None,  # None value!
+        'volume_ratio': 1.5,
+        'trend_strength': 0.8,
         'volatility': 5.2,
-        'bb_position': 0.75,
-        'ict_confidence': 0.82
+        'timeframe': '4h',
+        'signal_type': 'BUY'
     }
     
     is_valid, missing = _validate_ml_features(none_value_analysis)
@@ -85,23 +91,25 @@ def test_3_none_values_rejected():
     print(f"Missing features: {missing}")
     
     assert is_valid == False, "None values should fail validation"
-    assert 'volume_ratio (None)' in missing, "None value should be detected"
+    assert 'confidence (None)' in missing, "None value should be detected"
     
     print("✅ PASS: None values rejected")
 
 
 def test_4_wrong_types_detected():
-    """Test 4: Wrong types detected (ICT-aligned, PR-ML-7)"""
+    """Test 4: Wrong types detected"""
     print("\n" + "="*60)
     print("TEST 4: Wrong Types Detected")
     print("="*60)
     
     wrong_type_analysis = {
-        'price_change_pct': 2.5,
+        'rsi': 65.5,
+        'confidence': 75.0,
         'volume_ratio': "1.5",  # String instead of number!
+        'trend_strength': 0.8,
         'volatility': 5.2,
-        'bb_position': 0.75,
-        'ict_confidence': 0.82
+        'timeframe': '4h',
+        'signal_type': 'BUY'
     }
     
     is_valid, missing = _validate_ml_features(wrong_type_analysis)
@@ -116,45 +124,69 @@ def test_4_wrong_types_detected():
     print("✅ PASS: Wrong types detected")
 
 
-def test_5_numeric_ranges_accepted():
-    """Test 5: Numeric ranges accepted (no categorical validation in ICT schema, PR-ML-7)"""
+def test_5_invalid_categorical_values():
+    """Test 5: Invalid categorical values rejected"""
     print("\n" + "="*60)
-    print("TEST 5: Numeric Ranges Accepted (ICT-aligned)")
+    print("TEST 5: Invalid Categorical Values Rejected")
     print("="*60)
     
-    # Test with various numeric values - all should be accepted
-    numeric_range_analysis = {
-        'price_change_pct': -10.5,  # Negative value is OK
-        'volume_ratio': 0.1,        # Small value is OK
-        'volatility': 100.0,        # Large value is OK
-        'bb_position': 1.5,         # Value > 1 is OK
-        'ict_confidence': 0.95      # High confidence is OK
+    # Test invalid timeframe
+    invalid_tf_analysis = {
+        'rsi': 65.5,
+        'confidence': 75.0,
+        'volume_ratio': 1.5,
+        'trend_strength': 0.8,
+        'volatility': 5.2,
+        'timeframe': '15m',  # Invalid timeframe!
+        'signal_type': 'BUY'
     }
     
-    is_valid, missing = _validate_ml_features(numeric_range_analysis)
+    is_valid, missing = _validate_ml_features(invalid_tf_analysis)
     
-    print(f"Analysis (various numeric ranges): {numeric_range_analysis}")
+    print(f"Analysis (invalid timeframe): {invalid_tf_analysis}")
     print(f"Valid: {is_valid}")
     print(f"Missing features: {missing}")
     
-    assert is_valid == True, "Numeric values of any range should pass (no categorical validation)"
-    assert len(missing) == 0, "No features should be reported as invalid"
+    assert is_valid == False, "Invalid timeframe should fail validation"
+    assert 'timeframe (invalid: 15m)' in missing, "Invalid timeframe should be detected"
     
-    print("✅ PASS: Numeric ranges accepted (no categorical validation in ICT schema)")
+    # Test invalid signal_type
+    invalid_signal_analysis = {
+        'rsi': 65.5,
+        'confidence': 75.0,
+        'volume_ratio': 1.5,
+        'trend_strength': 0.8,
+        'volatility': 5.2,
+        'timeframe': '4h',
+        'signal_type': 'MAYBE_BUY'  # Invalid signal type!
+    }
+    
+    is_valid, missing = _validate_ml_features(invalid_signal_analysis)
+    
+    print(f"\nAnalysis (invalid signal_type): {invalid_signal_analysis}")
+    print(f"Valid: {is_valid}")
+    print(f"Missing features: {missing}")
+    
+    assert is_valid == False, "Invalid signal_type should fail validation"
+    assert 'signal_type (invalid: MAYBE_BUY)' in missing, "Invalid signal_type should be detected"
+    
+    print("✅ PASS: Invalid categorical values rejected")
 
 
 def test_6_multiple_errors_reported():
-    """Test 6: Multiple errors reported (ICT-aligned, PR-ML-7)"""
+    """Test 6: Multiple errors reported"""
     print("\n" + "="*60)
     print("TEST 6: Multiple Errors Reported")
     print("="*60)
     
     multi_error_analysis = {
-        'price_change_pct': None,  # Error 1: None value
+        'rsi': None,  # Error 1: None value
+        'confidence': 75.0,
         # 'volume_ratio': missing!  # Error 2: Missing
-        'volatility': "high",  # Error 3: Wrong type
-        'bb_position': 0.75,
-        'ict_confidence': 0.82
+        'trend_strength': "high",  # Error 3: Wrong type
+        'volatility': 5.2,
+        'timeframe': '15m',  # Error 4: Invalid categorical
+        'signal_type': 'BUY'
     }
     
     is_valid, missing = _validate_ml_features(multi_error_analysis)
@@ -192,18 +224,18 @@ def test_7_empty_analysis_rejected():
 
 
 def run_all_tests():
-    """Run all schema validation tests (ICT-aligned, PR-ML-7)"""
+    """Run all schema validation tests"""
     print("\n" + "="*70)
-    print("ML FEATURE SCHEMA VALIDATION TEST SUITE (ICT-aligned, PR-ML-7)")
+    print("ML FEATURE SCHEMA VALIDATION TEST SUITE (BUG H5)")
     print("="*70)
-    print("\nTesting schema validation for ICT-only feature space (5 features)")
+    print("\nTesting sanity gate to prevent training/prediction feature mismatch")
     
     tests = [
         test_1_valid_schema_passes,
         test_2_missing_required_feature,
         test_3_none_values_rejected,
         test_4_wrong_types_detected,
-        test_5_numeric_ranges_accepted,
+        test_5_invalid_categorical_values,
         test_6_multiple_errors_reported,
         test_7_empty_analysis_rejected
     ]
