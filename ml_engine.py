@@ -851,7 +851,7 @@ class MLTradingEngine:
     def calculate_feature_importance(self, rf_model, gb_model):
         """Calculate and store feature importance"""
         try:
-            # Feature names - aligned with runtime ML engine (5 basic features, PR-ML-5)
+            # Feature names - aligned with ensemble model (14 total: 5 basic + 9 extended ICT, PR-ML-5)
             feature_names = [
                 'price_change_pct', 'volume_ratio', 'volatility',
                 'bb_position', 'ict_confidence', 'whale_blocks_count',
