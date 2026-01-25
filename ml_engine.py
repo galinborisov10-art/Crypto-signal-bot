@@ -95,22 +95,9 @@ ML_SINGLE_APPLICATION = True        # No double-application of ML modifier
 # ML operates on strategy-approved signals only
 ML_REQUIRES_STRATEGY_SIGNAL = True  # ML needs a base signal to work on
 
-# ============================================================================
-# ML RETRAINING POLICY (CANONICAL)
-# ============================================================================
-# ML self-trains automatically on a strict schedule to prevent overfitting
-# and ensure model freshness without destabilizing the system.
-# ============================================================================
-
-# FULL RETRAIN: Complete model rebuild (heavy operation)
-ML_FULL_RETRAIN_INTERVAL_DAYS = 7  # Once per week, no more
-
-# INCREMENTAL RETRAIN: Reserved for future implementation
-ML_INCREMENTAL_RETRAIN_MIN_TRADES = 20  # Minimum new trades (not yet implemented)
-
-# Retrain priority: FULL (7 days) > INCREMENTAL (future) > SKIP
-# Note: Incremental retrain is policy-defined but not yet implemented.
-# PR-ML-4 establishes the scheduler only. Implementation follows in PR-ML-5+.
+# ML RETRAINING POLICY
+ML_FULL_RETRAIN_INTERVAL_DAYS = 7  # Full retrain every 7 days
+ML_INCREMENTAL_RETRAIN_MIN_TRADES = 20  # Incremental retrain threshold (not yet implemented)
 
 # ============================================================================
 # ML APPLICATION PIPELINE (DOCUMENTATION)
@@ -231,20 +218,14 @@ class MLTradingEngine:
         self.last_training_time = None
         self.retrain_interval_days = 7
         
-        # ============================================================================
-        # RETRAINING STATE (NEW - SCHEDULER ONLY)
-        # ============================================================================
-        # Track retrain schedule to prevent over-training
-        self.last_full_retrain_ts = None        # Timestamp of last FULL retrain
-        self.processed_trade_count = 0          # Trades processed (for future incremental logic)
-        
-        # Note: last_full_retrain_ts will be synced with last_training_time
-        # processed_trade_count reserved for future incremental retrain implementation
+        # Retraining state tracking
+        self.last_full_retrain_ts = None
+        self.processed_trade_count = 0
         
         # Зареди модел ако съществува
         self.load_model()
         self.load_performance_history()
-        self.sync_retrain_state()  # NEW - sync from existing state
+        self.sync_retrain_state()
     
     def extract_features(self, analysis):
         """Извлича features от анализа за ML (6 features - match bot.py)"""
@@ -487,9 +468,6 @@ class MLTradingEngine:
             print(f"✅ ML Model trained successfully!")
             print(f"📊 Samples: {len(X)}")
             print(f"🎯 Training accuracy: {accuracy*100:.1f}%")
-            
-            # Record performance (updates last_training_time)
-            self.record_performance(accuracy, len(X))
             
             # Адаптивно увеличаване на ML weight
             self.adjust_ml_weight(len(X), accuracy)
@@ -961,19 +939,11 @@ class MLTradingEngine:
             logger.error(f"Load performance history error: {e}")
     
     def sync_retrain_state(self):
-        """
-        Sync retrain state from existing training data
-        
-        Maps last_training_time → last_full_retrain_ts for compatibility
-        Counts total closed trades → processed_trade_count
-        """
+        """Sync retrain state from existing training data"""
         try:
-            # Sync full retrain timestamp from existing data
             if self.last_training_time:
                 self.last_full_retrain_ts = self.last_training_time
-                logger.info(f"✅ Synced last full retrain: {self.last_full_retrain_ts.isoformat()}")
             
-            # Count total processed trades (for future incremental logic)
             if os.path.exists(self.trading_journal_path):
                 with open(self.trading_journal_path, 'r') as f:
                     fcntl.flock(f.fileno(), fcntl.LOCK_SH)
@@ -982,50 +952,25 @@ class MLTradingEngine:
                 trades = journal.get('trades', [])
                 closed_trades = [t for t in trades if t.get('outcome')]
                 self.processed_trade_count = len(closed_trades)
-                
-                logger.info(f"✅ Synced processed trade count: {self.processed_trade_count}")
         
         except Exception as e:
-            logger.warning(f"⚠️ Failed to sync retrain state: {e}")
+            logger.warning(f"Failed to sync retrain state: {e}")
     
     def should_full_retrain(self) -> bool:
-        """
-        Check if full retrain should occur (7+ days)
-        
-        Returns:
-            bool: True if 7+ days since last full retrain
-        """
+        """Check if full retrain should occur (7+ days elapsed)"""
         if self.last_full_retrain_ts is None:
-            # Never trained - allow full retrain
             return True
         
         days_since_full = (datetime.now() - self.last_full_retrain_ts).days
-        
         return days_since_full >= ML_FULL_RETRAIN_INTERVAL_DAYS
     
     def should_incremental_retrain(self) -> bool:
-        """
-        Check if incremental retrain should occur (20+ new trades)
-        
-        Note: Incremental retrain is NOT YET IMPLEMENTED.
-        This method defines the policy only.
-        
-        Returns:
-            bool: True if condition met (but implementation pending)
-        """
+        """Check if incremental retrain should occur (NOT YET IMPLEMENTED)"""
         new_trades_count = self.get_new_trades_count()
-        
         return new_trades_count >= ML_INCREMENTAL_RETRAIN_MIN_TRADES
     
     def get_new_trades_count(self) -> int:
-        """
-        Count new closed trades since last full retrain
-        
-        Reserved for future incremental retrain implementation.
-        
-        Returns:
-            int: Number of new closed trades
-        """
+        """Count new closed trades since last full retrain"""
         try:
             if not os.path.exists(self.trading_journal_path):
                 return 0
@@ -1035,10 +980,7 @@ class MLTradingEngine:
                 journal = json.load(f)
             
             trades = journal.get('trades', [])
-            
-            # Count closed trades (with outcome)
             closed_trades = [t for t in trades if t.get('outcome')]
-            
             total_closed = len(closed_trades)
             new_trades = total_closed - self.processed_trade_count
             
@@ -1049,11 +991,7 @@ class MLTradingEngine:
             return 0
     
     def sync_processed_trade_count(self):
-        """
-        Sync processed_trade_count after full retrain
-        
-        Sets counter to total closed trades (reset incremental state)
-        """
+        """Sync processed_trade_count after full retrain"""
         try:
             if os.path.exists(self.trading_journal_path):
                 with open(self.trading_journal_path, 'r') as f:
@@ -1068,84 +1006,48 @@ class MLTradingEngine:
             logger.warning(f"Failed to sync processed trade count: {e}")
     
     def maybe_retrain_model(self):
-        """
-        Deterministic ML retraining scheduler
-        
-        Priority:
-        1. FULL retrain if 7+ days since last full retrain
-        2. INCREMENTAL retrain if 20+ new trades (NOT YET IMPLEMENTED)
-        3. SKIP if neither condition met
-        
-        Returns:
-            bool: True if retrain occurred, False otherwise
-        """
+        """Deterministic ML retraining scheduler (FULL > INCREMENTAL > SKIP)"""
         try:
-            # ========================================================================
-            # PRIORITY 1: FULL RETRAIN (time-based, heavy)
-            # ========================================================================
+            # PRIORITY 1: FULL RETRAIN (7+ days)
             if self.should_full_retrain():
                 logger.info("🔄 ML full retrain triggered (7+ days elapsed)")
-                
-                success = self.train_model()  # EXISTING method - unchanged
+                success = self.train_model()
                 
                 if success:
-                    # Update timestamps (train_model already updates last_training_time)
-                    self.last_full_retrain_ts = self.last_training_time
-                    self.sync_processed_trade_count()  # Sync counter after full retrain
+                    self.last_full_retrain_ts = datetime.now()
+                    self.sync_processed_trade_count()
                     logger.info("✅ ML full retrain completed")
                     return True
                 else:
-                    logger.warning("⚠️ ML full retrain failed (model preserved)")
+                    logger.warning("⚠️ ML full retrain failed")
                     return False
             
-            # ========================================================================
             # PRIORITY 2: INCREMENTAL RETRAIN (NOT YET IMPLEMENTED)
-            # ========================================================================
-            # Check condition first to avoid duplicate trade counting
             new_trades_count = self.get_new_trades_count()
             if new_trades_count >= ML_INCREMENTAL_RETRAIN_MIN_TRADES:
-                logger.info(f"ℹ️  ML incremental retrain condition met ({new_trades_count} new trades)")
-                logger.info("⚠️  Incremental retrain NOT YET IMPLEMENTED - skipping")
-                logger.info("📌 Will be implemented in PR-ML-5+ (design decision pending)")
+                logger.info(f"ML incremental retrain condition met ({new_trades_count} new trades) - NOT YET IMPLEMENTED")
                 return False
             
-            # ========================================================================
-            # PRIORITY 3: SKIP (conditions not met)
-            # ========================================================================
+            # PRIORITY 3: SKIP
             else:
-                logger.debug("ℹ️  ML retrain skipped (conditions not met)")
+                logger.debug("ML retrain skipped (conditions not met)")
                 return False
         
         except Exception as e:
-            logger.error(f"❌ ML retrain scheduler error: {e} (model preserved)")
+            logger.error(f"ML retrain scheduler error: {e}")
             return False
     
     def should_retrain(self):
-        """
-        Check if model should be retrained (LEGACY METHOD - kept for compatibility)
-        
-        Now delegates to should_full_retrain() for consistency.
-        
-        Returns:
-            bool: True if full retrain should occur
-        """
+        """Check if model should be retrained (delegates to should_full_retrain)"""
         return self.should_full_retrain()
     
     def auto_retrain(self):
-        """
-        Automatically retrain if conditions are met (LEGACY METHOD - updated)
-        
-        Now uses maybe_retrain_model() scheduler for consistency.
-        
-        Returns:
-            bool: True if retrain occurred
-        """
+        """Automatically retrain if conditions are met (uses maybe_retrain_model)"""
         if not self.should_retrain():
             logger.info("Model retraining not needed yet")
             return False
         
         logger.info("🔄 Auto-retraining ML model...")
-        
         return self.maybe_retrain_model()
 
 
