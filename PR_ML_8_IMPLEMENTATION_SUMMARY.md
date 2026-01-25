@@ -283,3 +283,27 @@ PR-ML-8 successfully establishes ML as the **final advisory layer** that:
 **Date:** January 25, 2026  
 **Status:** ✅ COMPLETE AND VERIFIED  
 **Author:** GitHub Copilot Agent
+
+---
+
+## Known Legacy Code
+
+### bot.py - Legacy ML Validation
+
+**Location:** `bot.py::analyze_signal()` function
+
+**Status:** Not updated (intentional)
+
+**Reason:** 
+- This is legacy code outside the main ICT signal engine pipeline
+- The deprecated `predict_signal()` method still works (with deprecation warnings)
+- Main signal flow is through `ict_signal_engine.py` (updated in this PR)
+- Updating legacy code is out of scope for PR-ML-8
+
+**Impact:** 
+- If this code path is used, it will log deprecation warnings
+- No functional breakage
+- Future cleanup can migrate this to `get_confidence_modifier()`
+
+**Recommendation:** Monitor for deprecation warnings in logs and plan migration in future PR.
+
