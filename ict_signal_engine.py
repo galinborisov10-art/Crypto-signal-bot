@@ -1209,84 +1209,13 @@ class ICTSignalEngine:
             # Update ICT confidence in features
             ml_features['ict_confidence'] = base_confidence / 100.0
             
-            # Try ML Engine (hybrid prediction)
-            if self.ml_engine and self.ml_engine.model is not None:
-                try:
-                    # Map bias to signal type
-                    classical_signal = 'BUY' if bias == MarketBias.BULLISH else 'SELL' if bias == MarketBias.BEARISH else 'HOLD'
-                    
-                    ml_signal, ml_confidence, ml_mode = self.ml_engine.predict_signal(
-                        analysis=ml_features,
-                        classical_signal=classical_signal,
-                        classical_confidence=base_confidence
-                    )
-                    
-                    # Check if ML changes the signal direction
-                    if ml_signal != classical_signal:
-                        logger.warning(f"⚠️ ML suggests {ml_signal} vs ICT {classical_signal}")
-                        
-                        # SAFETY: Only allow ML override if confidence difference > 15%
-                        if abs(ml_confidence - base_confidence) > self.config['ml_override_threshold']:
-                            logger.warning(f"⚠️ ML override: {ml_signal} with {ml_confidence:.1f}% confidence")
-                            # Update bias based on ML
-                            if ml_signal == 'BUY':
-                                bias = MarketBias.BULLISH
-                            elif ml_signal == 'SELL':
-                                bias = MarketBias.BEARISH
-                            else:
-                                logger.info("ML suggests HOLD, returning no signal")
-                                return None
-                        else:
-                            logger.info(f"✅ ML adjustment too small, keeping ICT signal")
-                            ml_confidence = base_confidence
-                    
-                    ml_confidence_adjustment = ml_confidence - base_confidence
-                    
-                    # Clamp adjustment to configured limits
-                    ml_confidence_adjustment = max(
-                        self.config['ml_min_confidence_boost'],
-                        min(self.config['ml_max_confidence_boost'], ml_confidence_adjustment)
-                    )
-                    
-                    logger.info(f"ML confidence adjustment: {ml_confidence_adjustment:+.1f}% (Mode: {ml_mode})")
-                    
-                except Exception as e:
-                    logger.error(f"❌ ML Engine prediction error: {e}")
-            
-            # Try ML Predictor (win probability) if ML Engine not available
-            elif self.ml_predictor and self.ml_predictor.is_trained:
-                try:
-                    # Prepare trade data with Pure ICT features
-                    trade_data = {
-                        'entry_price': entry_price,
-                        'analysis_data': ml_features,
-                        'ict_components': ict_components,  # ✅ NEW: Pass ICT components
-                        'volume_ratio': context_data.get('volume_ratio', 1.0),  # ✅ NEW
-                        'volatility': context_data.get('volatility_pct', 1.0),  # ✅ NEW
-                        'btc_correlation': context_data.get('btc_correlation', 0.0),  # ✅ NEW
-                        'mtf_confluence': mtf_analysis.get('confluence_count', 0) / 5 if mtf_analysis else 0.5,  # ✅ NEW
-                        'risk_reward_ratio': risk_reward_ratio,  # ✅ NEW
-                        'rsi': context_data.get('rsi', 50.0),  # ✅ NEW
-                        'sentiment_score': 50.0,  # ✅ NEW: Placeholder (TODO: Add real sentiment)
-                        'confidence': confidence_after_context  # ✅ UPDATED: Use context-adjusted confidence
-                    }
-                    
-                    # Get win probability
-                    win_probability = self.ml_predictor.predict(trade_data)
-                    
-                    if win_probability is not None:
-                        # Get confidence adjustment (use context-adjusted confidence as base)
-                        ml_confidence_adjustment = self.ml_predictor.get_confidence_adjustment(
-                            ml_probability=win_probability,
-                            current_confidence=confidence_after_context
-                        )
-                        
-                        logger.info(f"ML win probability: {win_probability:.1f}%")
-                        logger.info(f"ML confidence adjustment: {ml_confidence_adjustment:+.1f}%")
-                        ml_mode = f"ML Predictor (Win: {win_probability:.1f}%)"
-                        
-                except Exception as e:
-                    logger.error(f"❌ ML Predictor error: {e}")
+            # ═══════════════════════════════════════════════════════════════
+            # ML MOVED TO FINAL POSITION (PR-ML-8)
+            # ═══════════════════════════════════════════════════════════════
+            # ML now runs AFTER all guards/risk filters as advisory-only layer.
+            # See ML Advisory call after line ~1547 (after all evaluations pass).
+            # This ensures ML NEVER influences signal direction, only confidence.
+            # ═══════════════════════════════════════════════════════════════
             
             # ═══════════════════════════════════════════════════════════════
             # SHADOW ML PREDICTOR (LOG-ONLY, NO PRODUCTION IMPACT)
@@ -1352,16 +1281,12 @@ class ICTSignalEngine:
             # - Ако confidence стане < 60%, сигналът не се изпраща
             # - Ако MTF consensus < 50%, ML не може да промени това
 
-        # ✅ UPDATED: Use context-adjusted confidence as base for ML adjustment
-        confidence = confidence_after_context + ml_confidence_adjustment
+        # ✅ Pre-ML confidence (before ML advisory layer runs)
+        # ML will be applied AFTER all guards at the end of the pipeline
+        confidence = confidence_after_context
         confidence = max(0.0, min(100.0, confidence))
         
-        logger.info(f"   → Final Confidence (after ML): {confidence:.1f}%")
-        
-        # ✅ ML RESTRICTION: Гарантирай че confidence не пада под минимум
-        if confidence < self.config['min_confidence'] and ml_confidence_adjustment < 0:
-            logger.warning(f"⚠️ ML adjustment би свалил confidence под {self.config['min_confidence']}% - ограничаване")
-            confidence = self.config['min_confidence']
+        logger.info(f"   → Confidence (before ML advisory): {confidence:.1f}%")
         
         # СТЪПКА 11.5: MTF CONSENSUS CHECK (STRICT ICT)
         logger.info("🔍 Step 11.5: MTF Consensus Validation")
@@ -1549,6 +1474,64 @@ class ICTSignalEngine:
         # =========================================================================
         # END ENTRY GATING, CONFIDENCE THRESHOLD, EXECUTION ELIGIBILITY & RISK ADMISSION
         # =========================================================================
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ PR-ML-8: ML ADVISORY LAYER (FINAL POSITION)
+        # ═══════════════════════════════════════════════════════════════
+        # ML runs LAST, after all strategy decisions, risk filters, and guards.
+        # ML acts ONLY as advisory layer that modifies confidence within bounds.
+        # ML NEVER influences signal direction, entry/SL/TP, or overrides guards.
+        # ═══════════════════════════════════════════════════════════════
+        logger.info("=" * 60)
+        logger.info("STEP 12.0: ML ADVISORY LAYER (PR-ML-8)")
+        logger.info("=" * 60)
+        
+        # Strategy signal is now LOCKED - ML cannot change it
+        strategy_signal = 'BUY' if bias == MarketBias.BULLISH else 'SELL' if bias == MarketBias.BEARISH else 'HOLD'
+        
+        if self.use_ml and self.ml_engine and self.ml_engine.model is not None:
+            try:
+                logger.info(f"🤖 Invoking ML Advisory (confidence-only modification)")
+                logger.info(f"   Strategy Signal (LOCKED): {strategy_signal}")
+                logger.info(f"   Base Confidence: {confidence:.1f}%")
+                
+                # Call new ML advisory method
+                ml_advisory = self.ml_engine.get_confidence_modifier(
+                    analysis=ml_features,
+                    final_signal=strategy_signal,
+                    base_confidence=confidence
+                )
+                
+                # Apply ML modifier to confidence ONLY
+                original_confidence = confidence
+                confidence = confidence * ml_advisory['confidence_modifier']
+                
+                # Clamp to valid range
+                confidence = max(0.0, min(100.0, confidence))
+                
+                # Logging
+                logger.info(f"   ML Mode: {ml_advisory['mode']}")
+                logger.info(f"   ML Confidence: {ml_advisory['ml_confidence']:.1f}%")
+                logger.info(f"   Confidence Modifier: {ml_advisory['confidence_modifier']:.3f}x")
+                logger.info(f"   Confidence: {original_confidence:.1f}% → {confidence:.1f}%")
+                
+                # Log warnings if any
+                if ml_advisory['warnings']:
+                    for warning in ml_advisory['warnings']:
+                        logger.warning(f"⚠️ {warning}")
+                
+                logger.info(f"✅ ML Advisory complete (direction unchanged: {strategy_signal})")
+                
+            except Exception as e:
+                logger.error(f"❌ ML Advisory error: {e}")
+                logger.info(f"✅ Continuing with ICT-only confidence: {confidence:.1f}%")
+        else:
+            logger.info("ℹ️ ML Advisory not available - using ICT-only confidence")
+        
+        logger.info("=" * 60)
+        # ═══════════════════════════════════════════════════════════════
+        # END ML ADVISORY LAYER
+        # ═══════════════════════════════════════════════════════════════
         
         # ✅ FIX 3: STEP 12a - Entry Timing Validation
         logger.info("🔍 Step 12a: Entry Timing Validation")
