@@ -235,7 +235,14 @@ class MLTradingEngine:
             return None
     
     def predict_signal(self, analysis, classical_signal, classical_confidence):
-        """Предсказва сигнал с ML и комбинира с класически"""
+        """
+        DEPRECATED in PR-ML-8.
+        Use get_confidence_modifier() instead.
+        
+        This method allows ML to override signal direction,
+        which violates the ICT-first architecture.
+        """
+        logger.warning("⚠️ predict_signal() is deprecated. Use get_confidence_modifier().")
         
         # ========================================================================
         # ML POLICY APPLICATION POINT
@@ -700,7 +707,12 @@ class MLTradingEngine:
             return False
     
     def predict_with_ensemble(self, analysis, classical_signal, classical_confidence):
-        """Predict using ensemble model"""
+        """
+        DEPRECATED in PR-ML-8.
+        Use get_confidence_modifier() instead.
+        """
+        logger.warning("⚠️ predict_with_ensemble() is deprecated. Use get_confidence_modifier().")
+        
         if not self.use_ensemble or not self.ensemble_model:
             return self.predict_signal(analysis, classical_signal, classical_confidence)
         
@@ -755,6 +767,96 @@ class MLTradingEngine:
         except Exception as e:
             logger.error(f"Ensemble prediction error: {e}")
             return classical_signal, classical_confidence, f"Classical (Ensemble error)"
+    
+    def get_confidence_modifier(self, analysis, final_signal, base_confidence):
+        """
+        ML Advisory Mode (PR-ML-8)
+        
+        Returns confidence modifier ONLY.
+        Does NOT return alternative signal.
+        
+        This method runs LAST in the pipeline, after all strategy decisions,
+        risk filters, and guards have been applied.
+        
+        Args:
+            analysis: Market analysis dict
+            final_signal: LOCKED signal from strategy (BUY/SELL)
+            base_confidence: Base confidence from strategy
+        
+        Returns:
+            dict: {
+                'confidence_modifier': float,  # Multiplier (e.g., 1.05 = +5%)
+                'ml_confidence': float,        # Raw ML confidence (0-100)
+                'mode': str,                   # "ICT + ML Advisory"
+                'warnings': list[str]          # Any ML warnings
+            }
+        """
+        try:
+            # No model = no modification
+            if self.model is None:
+                return {
+                    'confidence_modifier': 1.0,  # No change
+                    'ml_confidence': 0.0,
+                    'mode': 'ICT Only (No ML model)',
+                    'warnings': []
+                }
+            
+            # Extract features
+            features = self.extract_features(analysis)
+            if features is None:
+                return {
+                    'confidence_modifier': 1.0,
+                    'ml_confidence': 0.0,
+                    'mode': 'ICT Only (Feature error)',
+                    'warnings': ['ML feature extraction failed']
+                }
+            
+            # Normalize features
+            features_scaled = self.scaler.transform(features)
+            
+            # ML prediction
+            ml_prediction = self.model.predict(features_scaled)[0]
+            ml_proba = self.model.predict_proba(features_scaled)[0]
+            ml_confidence = max(ml_proba) * 100
+            
+            # Mapping
+            signal_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL'}
+            ml_signal = signal_map.get(ml_prediction, 'HOLD')
+            
+            # Calculate modifier (centered at 50% confidence)
+            ml_modifier = (ml_confidence - 50) / 100.0
+            
+            # BOUNDS ENFORCEMENT
+            if ml_modifier > ML_MODIFIER_MAX:
+                logger.warning(f"⚠️ ML modifier {ml_modifier:.3f} clamped to {ML_MODIFIER_MAX}")
+                ml_modifier = ML_MODIFIER_MAX
+            elif ml_modifier < ML_MODIFIER_MIN:
+                logger.warning(f"⚠️ ML modifier {ml_modifier:.3f} clamped to {ML_MODIFIER_MIN}")
+                ml_modifier = ML_MODIFIER_MIN
+            
+            # Check ML-Strategy agreement
+            warnings = []
+            if ml_signal != final_signal:
+                warnings.append(f"ML suggests {ml_signal} but strategy chose {final_signal}")
+            
+            # Convert modifier to multiplier (1.0 + modifier)
+            confidence_multiplier = 1.0 + ml_modifier
+            
+            return {
+                'confidence_modifier': confidence_multiplier,
+                'ml_confidence': ml_confidence,
+                'mode': 'ICT + ML Advisory',
+                'warnings': warnings
+            }
+            
+        except Exception as e:
+            logger.error(f"ML advisory error: {e}")
+            return {
+                'confidence_modifier': 1.0,
+                'ml_confidence': 0.0,
+                'mode': 'ICT Only (ML error)',
+                'warnings': [f'ML error: {str(e)}']
+            }
     
     def backtest_model(self, test_size=0.2):
         """
