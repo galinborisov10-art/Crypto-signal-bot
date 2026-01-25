@@ -17,7 +17,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 import joblib
 import os
@@ -305,11 +305,11 @@ class MLTradingEngine:
                     if ml_confidence * self.ml_weight > classical_confidence * (1 - self.ml_weight):
                         final_signal = ml_signal
                         final_confidence = ml_confidence * 0.9  # Penalty за конфликт
-                        mode = f"Hybrid (ML override) ⚠️"
+                        mode = f"Hybrid (ML penalty applied) ⚠️"
                     else:
                         final_signal = classical_signal
                         final_confidence = classical_confidence * 0.85  # Малък penalty
-                        mode = f"Hybrid (Classical override) ⚠️"
+                        mode = f"Hybrid (Classical penalty applied) ⚠️"
             else:
                 # FULL ML MODE
                 final_signal = ml_signal
