@@ -44,7 +44,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             direction='BEARISH',
             fvg_zones=fvg_zones,
             order_blocks=[],
-            sr_levels={}
+            sr_levels={},
+            timeframe='1h'
         )
         
         # Assertions
@@ -74,7 +75,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             direction='BULLISH',
             fvg_zones=fvg_zones,
             order_blocks=[],
-            sr_levels={}
+            sr_levels={},
+            timeframe='1h'
         )
         
         # Assertions
@@ -104,7 +106,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             direction='BEARISH',
             fvg_zones=fvg_zones,
             order_blocks=[],
-            sr_levels={}
+            sr_levels={},
+            timeframe='1h'
         )
         
         # Assertions
@@ -130,7 +133,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             direction='BEARISH',
             fvg_zones=fvg_zones,
             order_blocks=[],
-            sr_levels={}
+            sr_levels={},
+            timeframe='1h'
         )
         
         self.assertIsNotNone(entry_zone, "Entry zone at min distance should be found")
@@ -154,7 +158,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             direction='BEARISH',
             fvg_zones=fvg_zones_max,
             order_blocks=[],
-            sr_levels={}
+            sr_levels={},
+            timeframe='1h'
         )
         
         self.assertIsNotNone(entry_zone_max, "Entry zone at max distance should be found")
@@ -178,7 +183,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             direction='BEARISH',
             fvg_zones=fvg_zones_far,
             order_blocks=[],
-            sr_levels={}
+            sr_levels={},
+            timeframe='1h'
         )
         
         self.assertIsNone(entry_zone_far, "Entry zone beyond 3% should be rejected")
@@ -219,7 +225,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             direction='BEARISH',
             fvg_zones=fvg_zones,
             order_blocks=order_blocks,
-            sr_levels=sr_levels
+            sr_levels=sr_levels,
+            timeframe='1h'
         )
         
         # With similar distances, priority should be: OB (75) > FVG (70) > S/R (60)
@@ -245,7 +252,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             direction='BEARISH',
             fvg_zones=fvg_zones,
             order_blocks=[],
-            sr_levels={}
+            sr_levels={},
+            timeframe='1h'
         )
         
         self.assertEqual(status, 'VALID_WAIT', 
@@ -270,7 +278,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             direction='BEARISH',
             fvg_zones=fvg_zones,
             order_blocks=[],
-            sr_levels={}
+            sr_levels={},
+            timeframe='1h'
         )
         
         self.assertEqual(status, 'VALID_NEAR',
@@ -288,7 +297,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             direction='BEARISH',
             fvg_zones=[],
             order_blocks=[],
-            sr_levels={}
+            sr_levels={},
+            timeframe='1h'
         )
         
         self.assertIsNone(entry_zone, "Entry zone should be None when no zones found")
@@ -311,7 +321,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             direction='BEARISH',
             fvg_zones=[],
             order_blocks=order_blocks,
-            sr_levels={}
+            sr_levels={},
+            timeframe='1h'
         )
         
         self.assertIsNotNone(entry_zone, "Entry zone should be found from OB")

@@ -916,7 +916,8 @@ class ICTSignalEngine:
             direction=bias_str,
             fvg_zones=fvg_zones,
             order_blocks=order_blocks,
-            sr_levels=sr_levels
+            sr_levels=sr_levels,
+            timeframe=timeframe
         )
         
         logger.info(f"   → Entry Zone Status: {entry_status}")
@@ -2483,7 +2484,8 @@ class ICTSignalEngine:
         direction: str,  # 'BULLISH' or 'BEARISH'
         fvg_zones: List,
         order_blocks: List,
-        sr_levels: Dict
+        sr_levels: Dict,
+        timeframe: str
     ) -> Tuple[Optional[Dict], str]:
         """
         Calculate ICT-compliant entry zone based on price structure.
