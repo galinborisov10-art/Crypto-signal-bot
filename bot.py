@@ -17487,6 +17487,13 @@ def main():
             bg_tz = pytz.timezone('Europe/Sofia')
             scheduler = AsyncIOScheduler(timezone=bg_tz)
             
+            # Create context for jobs that require it
+            class SimpleContext:
+                def __init__(self, bot):
+                    self.bot = bot
+            
+            context = SimpleContext(application.bot)
+            
             # ЕДИНСТВЕН ДНЕВЕН ОТЧЕТ - Всеки ден в 08:00 българско време
             if REPORTS_AVAILABLE:
                 @safe_job("daily_report", max_retries=3, retry_delay=60)
@@ -18019,6 +18026,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                 day_of_week='sun',  # Sunday
                 hour=3,             # 03:00 UTC (05:00 BG time)
                 minute=0,
+                args=[context],     # Pass context argument
                 id='ml_auto_training',
                 name='ML Auto-Training',
                 replace_existing=True
@@ -18031,6 +18039,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                 cache_cleanup_job,
                 'interval',
                 minutes=10,
+                args=[context],     # Pass context argument
                 id='cache_cleanup',
                 name='Cache Cleanup',
                 replace_existing=True
