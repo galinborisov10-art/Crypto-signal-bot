@@ -1074,8 +1074,9 @@ class ICTSignalEngine:
         
         # ✅ FIX: Validate against TP2 (primary target) instead of TP1 (quick profit)
         # This allows TP1 for fast scalping while ensuring TP2 meets quality standards
+        # Note: tp_prices array is [TP1, TP2, TP3], so tp_prices[1] is TP2
         if len(tp_prices) >= 2:
-            # Use TP2 for quality validation
+            # Use TP2 for quality validation (tp_prices[1] = second element = TP2)
             reward = abs(tp_prices[1] - entry_price)
             tp_label = "TP2"
             logger.info(f"   → Validating R:R against TP2 (primary target)")
@@ -5292,19 +5293,20 @@ class ICTSignalEngine:
             
         except Exception as e:
             logger.error(f"Error calculating smart TPs: {e}")
-            # Fallback to mathematical TPs
+            # Fallback to mathematical TPs with timeframe-based multipliers
             risk = abs(entry_price - sl_price)
+            tp1_mult, tp2_mult, tp3_mult = get_tp_multipliers_by_timeframe(timeframe)
             if direction == 'LONG':
                 return [
-                    entry_price + (risk * 3.0),
-                    entry_price + (risk * 5.0),
-                    entry_price + (risk * 8.0)
+                    entry_price + (risk * tp1_mult),
+                    entry_price + (risk * tp2_mult),
+                    entry_price + (risk * tp3_mult)
                 ]
             else:
                 return [
-                    entry_price - (risk * 3.0),
-                    entry_price - (risk * 5.0),
-                    entry_price - (risk * 8.0)
+                    entry_price - (risk * tp1_mult),
+                    entry_price - (risk * tp2_mult),
+                    entry_price - (risk * tp3_mult)
                 ]
     
     def _adjust_tp_before_obstacle(
