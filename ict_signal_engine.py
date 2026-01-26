@@ -489,7 +489,7 @@ class ICTSignalEngine:
     def _get_default_config(self) -> Dict:
         """Get default configuration"""
         return {
-            'min_confidence': 60,          # Min 60% confidence (STRICT ICT)
+            'min_confidence': 50,          # Min 50% confidence (configurable via trading_config)
             'min_risk_reward': 3.0,        # Min 1:3 R:R (STRICT ICT)
             'max_sl_distance_pct': 3.0,    # Max 3% SL distance
             'tp_multipliers': [3, 5, 8],   # TP at 3R, 5R, 8R (STRICT ICT)
@@ -1330,7 +1330,7 @@ class ICTSignalEngine:
             # (Проверката е след изчисляване на confidence по-долу)
             
             # 3. ML confidence adjustment НЕ МОЖЕ да нарушава правилата
-            # - Ако confidence стане < 60%, сигналът не се изпраща
+            # - Ако confidence стане < min_confidence (configurable, default 50%), сигналът не се изпраща
             # - Ако MTF consensus < 50%, ML не може да промени това
 
         # ✅ Pre-ML confidence (before ML advisory layer runs)

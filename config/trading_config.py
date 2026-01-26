@@ -34,8 +34,8 @@ class TradingConfig:
     # QUALITY FILTERS (PR #8 Enhanced)
     # ════════════════════════════════════════════════════════════════
     
-    # Signal quality thresholds (increased from old values for higher quality)
-    MIN_CONFIDENCE = 70  # Increased from 60 (set to 60 for old behavior)
+    # Signal quality thresholds (set to 50 for optimal signal generation)
+    MIN_CONFIDENCE = 50  # Minimum confidence % to send signals (50-70 recommended)
     MIN_MTF_CONFLUENCE = 0.6  # Increased from 0.5 (set to 0.5 for old)
     MIN_WHALE_BLOCKS = 2  # Set to 0 for old behavior
     MIN_TOTAL_COMPONENTS = 5  # Set to 0 for old behavior
