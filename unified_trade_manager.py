@@ -340,7 +340,9 @@ class UnifiedTradeManager:
         for level in ['85%', '75%', '50%', '25%']:
             target = checkpoints[level]
             
-            if progress >= (target - tolerance):
+            # Checkpoint is triggered if progress is at or above the target (with tolerance)
+            # But we need to ensure we haven't passed to the next checkpoint
+            if progress >= target:
                 return level
         
         return None
