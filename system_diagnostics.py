@@ -216,103 +216,128 @@ async def diagnose_journal_issue(base_path: str = None) -> List[Dict[str, Any]]:
     if journal and 'trades' in journal and len(journal['trades']) > 0:
         try:
             last_trade = journal['trades'][-1]
-            last_trade_time = datetime.fromisoformat(last_trade['timestamp'])
-            hours_lag = (datetime.now() - last_trade_time).total_seconds() / 3600
+            
+            # Fix datetime parsing (handle timezone info)
+            timestamp_str = last_trade['timestamp']
+            if '+' in timestamp_str:
+                timestamp_str = timestamp_str.split('+')[0]
+            if 'T' in timestamp_str and '.' in timestamp_str:
+                # Truncate microseconds to 6 digits if longer
+                parts = timestamp_str.split('.')
+                if len(parts) == 2 and len(parts[1]) > 6:
+                    timestamp_str = parts[0] + '.' + parts[1][:6]
+            
+            last_trade_time = datetime.fromisoformat(timestamp_str)
+            now = datetime.now()
+            hours_lag = (now - last_trade_time).total_seconds() / 3600
             
             if hours_lag > 6:
-                # Deep dive: WHY no updates?
+                # ВАЖНО: Първо провери за Auto Signal crashes!
+                auto_signal_errors = grep_logs('Auto Signal.*raised an exception', hours=24, base_path=base_path)
                 
-                # Sub-check 3a: Auto-signals running?
-                auto_signal_logs = grep_logs('auto_signal_job', hours=6, base_path=base_path)
-                
-                if not auto_signal_logs:
+                if auto_signal_errors:
+                    # Auto Signal jobs crash-ват!
                     issues.append({
-                        'problem': f'Journal not updated for {hours_lag:.1f}h',
-                        'root_cause': 'Auto-signal jobs are NOT running',
-                        'evidence': 'No auto_signal_job logs in last 6 hours',
-                        'fix': 'Scheduler may have crashed. Check scheduler status.',
+                        'problem': f'Auto Signal jobs are crashing (journal not updated for {hours_lag:.1f}h)',
+                        'root_cause': 'Exception in auto signal job execution prevents new signals',
+                        'evidence': f'Last crash: {auto_signal_errors[-1][:200]}...\nTotal crashes in 24h: {len(auto_signal_errors)}',
+                        'fix': 'Check bot.log for full traceback. Common issue: lambda closure scope with asyncio (see PR #192).',
                         'commands': [
-                            f'grep "auto_signal_job" {base_path}/bot.log | tail -n 20',
-                            f'grep "APScheduler" {base_path}/bot.log | tail -n 10'
+                            f'grep -B 5 -A 50 "Auto Signal.*exception" {base_path}/bot.log | tail -n 60',
+                            f'grep "Auto Signal.*exception" {base_path}/bot.log | wc -l  # Count total crashes'
                         ]
                     })
                 else:
-                    # Sub-check 3b: Signals generated but not logged?
-                    signal_complete_logs = grep_logs('ICT Signal COMPLETE', hours=6, base_path=base_path)
-                    journal_logged_logs = grep_logs('Trade.*logged', hours=6, base_path=base_path)
+                    # Няма crashes, но пак няма нови signals
+                    auto_signal_logs = grep_logs('auto_signal_job', hours=6, base_path=base_path)
                     
-                    if signal_complete_logs and not journal_logged_logs:
-                        # Signals generated but NOT logged - find error
-                        journal_errors = grep_logs('ERROR.*journal', hours=6, base_path=base_path)
+                    if not auto_signal_logs:
+                        issues.append({
+                            'problem': f'Journal not updated for {hours_lag:.1f}h',
+                            'root_cause': 'Auto-signal jobs are NOT running',
+                            'evidence': 'No auto_signal_job logs in last 6 hours',
+                            'fix': 'Scheduler may have crashed. Check scheduler status.',
+                            'commands': [
+                                f'grep "auto_signal_job\\|APScheduler" {base_path}/bot.log | tail -n 20'
+                            ]
+                        })
+                    else:
+                        # Sub-check 3b: Signals generated but not logged?
+                        signal_complete_logs = grep_logs('ICT Signal COMPLETE', hours=6, base_path=base_path)
+                        journal_logged_logs = grep_logs('Trade.*logged', hours=6, base_path=base_path)
                         
-                        if journal_errors:
-                            # Found the error!
-                            latest_error = journal_errors[-1]
+                        if signal_complete_logs and not journal_logged_logs:
+                            # Signals generated but NOT logged - find error
+                            journal_errors = grep_logs('ERROR.*journal', hours=6, base_path=base_path)
                             
-                            # Parse error to find root cause
-                            if 'AttributeError' in latest_error:
-                                attr_match = re.search(r"'(\w+)' object has no attribute '(\w+)'", latest_error)
-                                if attr_match:
-                                    obj_name = attr_match.group(1)
-                                    attr_name = attr_match.group(2)
-                                    
+                            if journal_errors:
+                                # Found the error!
+                                latest_error = journal_errors[-1]
+                                
+                                # Parse error to find root cause
+                                if 'AttributeError' in latest_error:
+                                    attr_match = re.search(r"'(\w+)' object has no attribute '(\w+)'", latest_error)
+                                    if attr_match:
+                                        obj_name = attr_match.group(1)
+                                        attr_name = attr_match.group(2)
+                                        
+                                        issues.append({
+                                            'problem': 'Journal logging fails with AttributeError',
+                                            'root_cause': f'{obj_name} object missing attribute: {attr_name}',
+                                            'evidence': latest_error,
+                                            'fix': f'Code tries to access {obj_name}.{attr_name} which does not exist. Check ICTSignal class definition.',
+                                            'code_location': 'bot.py lines ~9900-10200 (auto_signal_job)',
+                                            'commands': [
+                                                f'grep -n "{attr_name}" {base_path}/bot.py | head -n 10',
+                                                f'grep -n "class {obj_name}" {base_path}/*.py'
+                                            ]
+                                        })
+                                
+                                elif 'PermissionError' in latest_error:
                                     issues.append({
-                                        'problem': 'Journal logging fails with AttributeError',
-                                        'root_cause': f'{obj_name} object missing attribute: {attr_name}',
+                                        'problem': 'Journal logging fails with PermissionError',
+                                        'root_cause': 'Bot lacks write permissions to journal file',
                                         'evidence': latest_error,
-                                        'fix': f'Code tries to access {obj_name}.{attr_name} which does not exist. Check ICTSignal class definition.',
-                                        'code_location': 'bot.py lines ~9900-10200 (auto_signal_job)',
+                                        'fix': f'Fix permissions: sudo chown $USER:$USER {journal_file} && chmod 644 {journal_file}',
+                                        'commands': [f'ls -lah {journal_file}']
+                                    })
+                                
+                                elif 'JSONDecodeError' in latest_error:
+                                    issues.append({
+                                        'problem': 'Journal logging fails - corrupted JSON',
+                                        'root_cause': 'trading_journal.json is corrupted or has invalid JSON',
+                                        'evidence': latest_error,
+                                        'fix': f'Restore from backup or validate JSON: python3 -m json.tool {journal_file}',
                                         'commands': [
-                                            f'grep -n "{attr_name}" {base_path}/bot.py | head -n 10',
-                                            f'grep -n "class {obj_name}" {base_path}/*.py'
+                                            f'tail -n 50 {journal_file}',
+                                            f'python3 -c "import json; json.load(open(\'{journal_file}\'))"'
+                                        ]
+                                    })
+                                
+                                else:
+                                    # Generic error - show full error
+                                    issues.append({
+                                        'problem': 'Journal logging fails with unknown error',
+                                        'root_cause': 'Check error details below',
+                                        'evidence': latest_error,
+                                        'fix': 'Review error and check log_trade_to_journal() function',
+                                        'commands': [
+                                            f'grep -B 5 -A 10 "def log_trade_to_journal" {base_path}/bot.py | head -n 30'
                                         ]
                                     })
                             
-                            elif 'PermissionError' in latest_error:
-                                issues.append({
-                                    'problem': 'Journal logging fails with PermissionError',
-                                    'root_cause': 'Bot lacks write permissions to journal file',
-                                    'evidence': latest_error,
-                                    'fix': f'Fix permissions: sudo chown $USER:$USER {journal_file} && chmod 644 {journal_file}',
-                                    'commands': [f'ls -lah {journal_file}']
-                                })
-                            
-                            elif 'JSONDecodeError' in latest_error:
-                                issues.append({
-                                    'problem': 'Journal logging fails - corrupted JSON',
-                                    'root_cause': 'trading_journal.json is corrupted or has invalid JSON',
-                                    'evidence': latest_error,
-                                    'fix': f'Restore from backup or validate JSON: python3 -m json.tool {journal_file}',
-                                    'commands': [
-                                        f'tail -n 50 {journal_file}',
-                                        f'python3 -c "import json; json.load(open(\'{journal_file}\'))"'
-                                    ]
-                                })
-                            
                             else:
-                                # Generic error - show full error
+                                # Signals generated, no errors, but not logged - logic issue
                                 issues.append({
-                                    'problem': 'Journal logging fails with unknown error',
-                                    'root_cause': 'Check error details below',
-                                    'evidence': latest_error,
-                                    'fix': 'Review error and check log_trade_to_journal() function',
+                                    'problem': 'Signals generated but not logged to journal',
+                                    'root_cause': 'log_trade_to_journal() is not being called OR returns silently',
+                                    'evidence': f'{len(signal_complete_logs)} signals generated, 0 journal entries',
+                                    'fix': 'Check if log_trade_to_journal() is called after signal generation',
+                                    'code_location': 'bot.py - auto_signal_job function',
                                     'commands': [
-                                        f'grep -B 5 -A 10 "def log_trade_to_journal" {base_path}/bot.py | head -n 30'
+                                        f'grep -n "log_trade_to_journal" {base_path}/bot.py'
                                     ]
                                 })
-                        
-                        else:
-                            # Signals generated, no errors, but not logged - logic issue
-                            issues.append({
-                                'problem': 'Signals generated but not logged to journal',
-                                'root_cause': 'log_trade_to_journal() is not being called OR returns silently',
-                                'evidence': f'{len(signal_complete_logs)} signals generated, 0 journal entries',
-                                'fix': 'Check if log_trade_to_journal() is called after signal generation',
-                                'code_location': 'bot.py - auto_signal_job function',
-                                'commands': [
-                                    f'grep -n "log_trade_to_journal" {base_path}/bot.py'
-                                ]
-                            })
         except Exception as e:
             logger.error(f"❌ Error checking journal update time: {e}")
     
@@ -482,23 +507,39 @@ async def diagnose_ml_issue(base_path: str = None) -> List[Dict[str, Any]]:
 
 async def diagnose_daily_report_issue(base_path: str = None) -> List[Dict[str, Any]]:
     """
-    Diagnostic: check whether today's daily report was produced.
-
-    Strict 3-step flow:
-      1) PRIMARY: check daily_reports.json for today's entry (source of truth).
-      2) FALLBACK: if primary failed, scan bot.log (emoji-normalized tolerant matches).
-      3) FAILURE: return a single issue dict describing diagnostic hints.
-
-    NOTE: This function is purely diagnostic and MUST NOT call grep_logs(),
-    must NOT inspect scheduler internals, and must NOT append issues before
-    PRIMARY check completes.
+    Check whether yesterday's daily report was produced.
+    
+    Daily reports are generated at 08:00 FOR THE PREVIOUS DAY.
+    This diagnostic checks for the correct date based on current time:
+    - If current time >= 08:00: check for yesterday's report
+    - If current time < 08:00: check for day before yesterday (report not generated yet)
+    - Only show warning if within grace period (08:00-20:00) and report missing
+    
+    Args:
+        base_path: Base path for bot files
+        
+    Returns:
+        List of issues found
     """
     issues: List[Dict[str, Any]] = []
 
     if base_path is None:
         base_path = os.path.dirname(os.path.abspath(__file__))
 
-    today = datetime.now().strftime('%Y-%m-%d')
+    # ВАЖНО: Daily reports са ЗА ВЧЕРА, не за днес!
+    now = datetime.now()
+    yesterday = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    # Ако е рано сутринта (преди 08:00), отчетът за вчера може още да не е генериран
+    if now.hour < 8:
+        # Провери за завчера вместо вчера
+        day_to_check = (now - timedelta(days=2)).strftime('%Y-%m-%d')
+        grace_period_active = False
+    else:
+        # Провери за вчера
+        day_to_check = yesterday
+        # Grace period е активен ако сме между 08:00 и 20:00 (12h window from PR #193)
+        grace_period_active = (8 <= now.hour < 20)
 
     # -------------------------
     # 1) PRIMARY: check daily_reports.json (source of truth)
@@ -509,65 +550,31 @@ async def diagnose_daily_report_issue(base_path: str = None) -> List[Dict[str, A
             with open(daily_reports_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             reports = data.get('reports', []) if isinstance(data, dict) else []
+            
+            # Търси отчет за правилния ден
             for report in reports:
-                if isinstance(report, dict) and report.get('date') == today:
-                    # Found today's report → healthy
+                if isinstance(report, dict) and report.get('date') == day_to_check:
+                    # Found report → healthy
                     return issues  # empty list
     except Exception as e:
-        logger.error(f"Error reading daily_reports.json during PRIMARY check: {e}")
-        # fall through to fallback
+        logger.error(f"Error reading daily_reports.json: {e}")
 
     # -------------------------
-    # 2) FALLBACK: scan bot.log with normalize_text() and tolerant patterns
+    # 2) FAILURE: Report not found for expected date
     # -------------------------
-    try:
-        log_file = os.path.join(base_path, 'bot.log')
-        if os.path.exists(log_file):
-            file_size = os.path.getsize(log_file)
-            max_size_bytes = MAX_LOG_FILE_SIZE_MB * 1024 * 1024
-            if file_size <= max_size_bytes:
-                with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
-                    lines = f.readlines()
-                lines_to_check = lines[-DEFAULT_MAX_LOG_LINES:]
-
-                patterns = [
-                    r'daily\s+report\s+sent',
-                    r'daily\s+report\s+generated',
-                    r'daily\s+report\s+delivered',
-                    r'daily\s+report'
-                ]
-                compiled = [re.compile(p, re.IGNORECASE) for p in patterns]
-
-                for line in lines_to_check:
-                    try:
-                        normalized = normalize_text(line).lower()
-                    except Exception:
-                        normalized = line.lower()
-                    for cre in compiled:
-                        if cre.search(normalized):
-                            # Found evidence in logs → warn and return healthy
-                            logger.warning("Daily report detected via log fallback")
-                            return issues  # empty list
-            else:
-                # Log too large: skip fallback scan (diagnostic cannot safely scan huge logs)
-                logger.info(f"Log file {log_file} too large ({file_size} bytes) — skipping log fallback check")
-    except Exception as e:
-        logger.error(f"Error during FALLBACK log check: {e}")
-        # fall through to failure
-
-    # -------------------------
-    # 3) FAILURE: neither primary nor fallback found evidence
-    # -------------------------
-    issues.append({
-        'problem': 'Daily report not found for today',
-        'root_cause': 'No entry in daily_reports.json and no tolerant match in bot.log',
-        'evidence': f'No report for {today} in JSON and no matching log entry or log skipped due to size.',
-        'fix': 'Verify the daily report job (schedule and send_daily_report). Ensure send_daily_report() appends to daily_reports.json.',
-        'commands': [
-            f'grep -i "daily report" {os.path.join(base_path, "bot.log")} | tail -n 50',
-            f'jq . {os.path.join(base_path, "daily_reports.json")} || cat {os.path.join(base_path, "daily_reports.json")}'
-        ]
-    })
+    # Ако няма отчет, провери дали е в grace period
+    if grace_period_active:
+        issues.append({
+            'problem': f'Daily report not found for {yesterday}',
+            'root_cause': 'Daily report job may have failed or bot was not running at 08:00',
+            'evidence': f'No report for {yesterday} in daily_reports.json. Current time: {now.strftime("%H:%M")} (within 12h grace period)',
+            'fix': 'Check if daily report job ran at 08:00. If bot restarted, it should send missed report within grace period (see PR #193).',
+            'commands': [
+                f'grep -i "daily.*report" {base_path}/bot.log | tail -n 30',
+                f'cat {base_path}/daily_reports.json | jq \'.reports[-2:]\''
+            ]
+        })
+    # else: Извън grace period - очаквано е да няма отчет за днес още
 
     return issues
 
