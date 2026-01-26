@@ -478,6 +478,13 @@ class ICTSignalEngine:
             'ml_sl_widen_max': 1.10,           # Max SL widen multiplier
             'ml_tp_extension_max': 1.15,       # Max TP extension (15%)
             'ml_override_threshold': 15,       # Min confidence diff for ML override
+            
+            # Entry Distance Validation
+            'entry_min_distance_pct': 0.005,    # Min 0.5% distance from current price
+            'entry_max_distance_short_tf': 0.050,  # Max 5% for short-term (1h, 2h)
+            'entry_max_distance_medium_tf': 0.075, # Max 7.5% for medium-term (4h)
+            'entry_max_distance_long_tf': 0.100,   # Max 10% for long-term (1d+)
+            'entry_buffer_pct': 0.002,          # 0.2% buffer zone
         }
     
     def _load_tf_hierarchy(self) -> Dict:
@@ -570,7 +577,7 @@ class ICTSignalEngine:
             return 'long'
         else:
             # Default to conservative for unknown timeframes
-            logger.warning(f"⚠️ Unknown timeframe {timeframe}, categorizing as 'short' (conservative)")
+            logger.debug(f"ℹ️ Unknown timeframe {timeframe}, categorizing as 'short' (conservative)")
             return 'short'
     
     def get_tp_multipliers_by_timeframe(self, timeframe: str) -> tuple:
@@ -601,12 +608,12 @@ class ICTSignalEngine:
         
         # Short-term: Conservative targets (1, 3, 5)
         if category == 'short':
-            logger.info(f"📊 Using conservative TPs (1,3,5) for {timeframe}")
+            logger.debug(f"📊 Using conservative TPs (1,3,5) for {timeframe}")
             return (1.0, 3.0, 5.0)
         
         # Medium/Long-term: Aggressive targets (2, 4, 6)
         elif category in ['medium', 'long']:
-            logger.info(f"📊 Using aggressive TPs (2,4,6) for {timeframe}")
+            logger.debug(f"📊 Using aggressive TPs (2,4,6) for {timeframe}")
             return (2.0, 4.0, 6.0)
         
         # Fallback (should never reach here due to helper function logic)
@@ -2544,18 +2551,18 @@ class ICTSignalEngine:
             - 'NO_ZONE': No valid entry zone found (converted to fallback in calling code)
         """
         # ✅ FIX #4: Timeframe-based distance validation with ICT-friendly thresholds
-        min_distance_pct = 0.005  # 0.5% (unchanged)
+        min_distance_pct = self.config.get('entry_min_distance_pct', 0.005)  # 0.5%
         
-        # Timeframe-based tolerance using helper method
+        # Timeframe-based tolerance using helper method and config
         category = self._get_timeframe_category(timeframe)
         if category == 'short':
-            max_distance_pct = 0.050  # 5% for short-term
+            max_distance_pct = self.config.get('entry_max_distance_short_tf', 0.050)  # 5%
         elif category == 'medium':
-            max_distance_pct = 0.075  # 7.5% for medium-term
+            max_distance_pct = self.config.get('entry_max_distance_medium_tf', 0.075)  # 7.5%
         else:  # long
-            max_distance_pct = 0.100  # 10% for daily+
+            max_distance_pct = self.config.get('entry_max_distance_long_tf', 0.100)  # 10%
         
-        entry_buffer_pct = 0.002  # 0.2%
+        entry_buffer_pct = self.config.get('entry_buffer_pct', 0.002)  # 0.2%
         
         valid_zones = []
         
