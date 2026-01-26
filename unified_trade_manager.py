@@ -190,8 +190,8 @@ class UnifiedTradeManager:
             news_data = None
             if self.fundamental_helper:
                 try:
-                    # Simple news check - just get recent critical news
-                    news_data = await self._get_critical_news(symbol)
+                    # Simple news check - synchronous placeholder for now
+                    news_data = self._get_critical_news(symbol)
                 except Exception as e:
                     logger.warning(f"⚠️ News fetch failed: {e}")
             
@@ -238,7 +238,7 @@ class UnifiedTradeManager:
     
     async def _get_current_price(self, symbol: str) -> Optional[float]:
         """
-        Fetch current market price from Binance
+        Fetch current market price from Binance (async-compatible)
         
         Args:
             symbol: Trading pair (e.g., 'BTCUSDT')
@@ -247,12 +247,19 @@ class UnifiedTradeManager:
             Current price or None if fetch fails
         """
         try:
+            import asyncio
+            
             BINANCE_PRICE_URL = "https://api.binance.com/api/v3/ticker/price"
             
-            response = requests.get(
-                BINANCE_PRICE_URL,
-                params={'symbol': symbol},
-                timeout=5
+            # Run synchronous request in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: requests.get(
+                    BINANCE_PRICE_URL,
+                    params={'symbol': symbol},
+                    timeout=5
+                )
             )
             
             if response.status_code == 200:
@@ -404,18 +411,21 @@ class UnifiedTradeManager:
             logger.error(f"❌ Signal reconstruction error: {e}")
             return None
     
-    async def _get_critical_news(self, symbol: str) -> Optional[Dict]:
+    def _get_critical_news(self, symbol: str) -> Optional[Dict]:
         """
-        Get critical news for the symbol
+        Get critical news for the symbol (synchronous placeholder)
         
         Args:
             symbol: Trading pair
             
         Returns:
             News data dict or None
+            
+        Note: This is a placeholder for future news integration.
+              Will use FundamentalHelper when fully implemented.
         """
         # Placeholder for news integration
-        # Will use FundamentalHelper when available
+        # Future: Will integrate with FundamentalHelper
         return None
     
     def _format_basic_alert_bulgarian(
@@ -566,7 +576,7 @@ class UnifiedTradeManager:
             idx = checkpoints.index(current)
             if idx < len(checkpoints) - 1:
                 return checkpoints[idx + 1]
-        except:
+        except (ValueError, IndexError):
             pass
         
         return None
@@ -689,6 +699,13 @@ class UnifiedTradeManager:
             msg += f"📊 <b>{symbol}</b>\n"
             msg += f"• Entry: ${position['entry_price']:,.2f}\n"
             msg += f"• Exit: ${exit_price:,.2f}\n"
+            
+            # Calculate P&L based on signal type
+            if 'BUY' in position['signal_type'].upper():
+                pnl = ((exit_price - position['entry_price']) / position['entry_price']) * 100
+            else:  # SELL
+                pnl = ((position['entry_price'] - exit_price) / position['entry_price']) * 100
+            
             msg += f"• P&L: {color_emoji} <b>{pnl:+.2f}%</b>\n"
             msg += f"• Outcome: {outcome}\n"
             
