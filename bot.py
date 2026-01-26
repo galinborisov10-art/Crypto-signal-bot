@@ -7962,8 +7962,9 @@ async def market_full_report(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     # Fetch MTF data for ICT analysis
                     mtf_data = fetch_mtf_data(symbol, timeframe, df)
                     
-                    # Generate ICT signal
-                    ict_engine = ICTSignalEngine()
+                    # Generate ICT signal using global instance
+                    global ict_engine_global
+                    ict_engine = ict_engine_global
                     ict_signal = ict_engine.generate_signal(
                         df=df,
                         symbol=symbol,
@@ -8302,8 +8303,9 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # ✅ FETCH MTF DATA for ICT analysis
             mtf_data = fetch_mtf_data(symbol, timeframe, df)
             
-            # Generate ICT signal WITH MTF DATA
-            ict_engine = ICTSignalEngine()
+            # Generate ICT signal WITH MTF DATA using global instance
+            global ict_engine_global
+            ict_engine = ict_engine_global
             ict_signal = ict_engine.generate_signal(
                 df=df,
                 symbol=symbol,
@@ -8630,8 +8632,9 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     try:
-        # Initialize ICT engine
-        ict_engine = ICTSignalEngine()
+        # Initialize ICT engine using global instance
+        global ict_engine_global
+        ict_engine = ict_engine_global
         
         # Fetch OHLCV data
         klines = requests.get(
@@ -11082,8 +11085,9 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             # ✅ FETCH MTF DATA
             mtf_data = fetch_mtf_data(symbol, timeframe, df)
             
-            # ✅ USE ICT ENGINE (NOT legacy analyze_signal!)
-            ict_engine = ICTSignalEngine()
+            # ✅ USE ICT ENGINE (NOT legacy analyze_signal!) - using global instance
+            global ict_engine_global
+            ict_engine = ict_engine_global
             ict_signal = ict_engine.generate_signal(
                 df=df,
                 symbol=symbol,
@@ -12870,9 +12874,10 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mtf_data = fetch_mtf_data(symbol, timeframe, df)
                 logger.info(f"✅ MTF data: {len(mtf_data) if mtf_data else 0} timeframes")
                 
-                # Generate ICT signal WITH MTF DATA
-                logger.info(f"🔧 Initializing ICTSignalEngine...")
-                ict_engine = ICTSignalEngine()
+                # Generate ICT signal WITH MTF DATA using global instance
+                logger.info(f"🔧 Using global ICTSignalEngine instance...")
+                global ict_engine_global
+                ict_engine = ict_engine_global
                 logger.info(f"🚀 Generating ICT signal with MTF data...")
                 ict_signal = ict_engine.generate_signal(
                     df=df,

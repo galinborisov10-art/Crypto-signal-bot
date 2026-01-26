@@ -549,6 +549,47 @@ class ICTSignalEngine:
             }
         }
     
+    def get_tp_multipliers_by_timeframe(self, timeframe: str) -> tuple:
+        """
+        Get optimized TP multipliers based on timeframe volatility
+        
+        Strategy:
+        - Lower TFs (1h, 2h): (1, 3, 5) - Quick validation, conservative targets
+        - Higher TFs (4h, 1d): (2, 4, 6) - Capture trends, aggressive targets
+        
+        Reasoning:
+        - 1h/2h: Faster moves, quicker reversals → Need fast TP hits
+        - 4h/1d: Stronger trends, more follow-through → Can hold for bigger TPs
+        
+        Args:
+            timeframe: Candle timeframe (e.g., '1h', '4h', '1d')
+            
+        Returns:
+            tuple: (tp1_mult, tp2_mult, tp3_mult)
+            
+        Examples:
+            >>> get_tp_multipliers_by_timeframe('1h')
+            (1.0, 3.0, 5.0)
+            >>> get_tp_multipliers_by_timeframe('4h')
+            (2.0, 4.0, 6.0)
+        """
+        tf = timeframe.lower().strip()
+        
+        # Short-term: Conservative targets (1, 3, 5)
+        if tf in ['15m', '30m', '1h', '2h']:
+            logger.info(f"📊 Using conservative TPs (1,3,5) for {timeframe}")
+            return (1.0, 3.0, 5.0)
+        
+        # Medium/Long-term: Aggressive targets (2, 4, 6)
+        elif tf in ['4h', '6h', '8h', '12h', '1d', '3d', '1w']:
+            logger.info(f"📊 Using aggressive TPs (2,4,6) for {timeframe}")
+            return (2.0, 4.0, 6.0)
+        
+        # Default: Conservative (safer)
+        else:
+            logger.warning(f"⚠️ Unknown timeframe {timeframe}, defaulting to conservative TPs (1,3,5)")
+            return (1.0, 3.0, 5.0)
+    
     def _validate_mtf_hierarchy(
         self,
         entry_tf: str,
@@ -2478,9 +2519,18 @@ class ICTSignalEngine:
             - 'TOO_LATE': Price already passed the entry zone (hard reject)
             - 'NO_ZONE': No valid entry zone found (converted to fallback in calling code)
         """
-        # ✅ FIX #4: RELAXED distance validation with ICT-friendly thresholds
+        # ✅ FIX #4: Timeframe-based distance validation with ICT-friendly thresholds
         min_distance_pct = 0.005  # 0.5% (unchanged)
-        max_distance_pct = 0.100  # 10.0% (increased from 3.0%)
+        
+        # Timeframe-based tolerance
+        tf = timeframe.lower().strip()
+        if tf in ['15m', '30m', '1h', '2h']:
+            max_distance_pct = 0.050  # 5% for short-term
+        elif tf in ['4h', '6h', '8h', '12h']:
+            max_distance_pct = 0.075  # 7.5% for medium-term
+        else:
+            max_distance_pct = 0.100  # 10% for daily+
+        
         entry_buffer_pct = 0.002  # 0.2%
         
         valid_zones = []
@@ -3079,7 +3129,7 @@ class ICTSignalEngine:
             
             if sl_price >= ob_bottom:
                 # SL е ВЪТРЕ или НАД OB - FORBIDDEN
-                logger.error(f"❌ BEARISH SL {sl_price:.2f} >= OB bottom {ob_bottom:.2f} - FORBIDDEN")
+                logger.error(f"❌ BULLISH SL {sl_price:.2f} >= OB bottom {ob_bottom:.2f} - FORBIDDEN")
                 return None, False
             
             if sl_price > required_sl_max:
@@ -3099,7 +3149,7 @@ class ICTSignalEngine:
             
             if sl_price <= ob_top:
                 # SL е ВЪТРЕ или ПОД OB - FORBIDDEN
-                logger.error(f"❌ BULLISH SL {sl_price:.2f} <= OB top {ob_top:.2f} - FORBIDDEN")
+                logger.error(f"❌ BEARISH SL {sl_price:.2f} <= OB top {ob_top:.2f} - FORBIDDEN")
                 return None, False
             
             if sl_price < required_sl_min:
@@ -5136,11 +5186,9 @@ class ICTSignalEngine:
             # Check if structure TP is enabled
             if not config.get('use_structure_tp', True):
                 logger.info("📊 Structure TP disabled - using mathematical TPs")
-                # Fallback to mathematical TPs
+                # Fallback to mathematical TPs with timeframe-based multipliers
                 risk = abs(entry_price - sl_price)
-                tp1_mult = config.get('math_tp1_multiplier', 3.0)
-                tp2_mult = config.get('math_tp2_multiplier', 5.0)
-                tp3_mult = config.get('math_tp3_multiplier', 8.0)
+                tp1_mult, tp2_mult, tp3_mult = self.get_tp_multipliers_by_timeframe(timeframe)
                 
                 if direction == 'LONG':
                     return [
@@ -5155,11 +5203,9 @@ class ICTSignalEngine:
                         entry_price - (risk * tp3_mult)
                     ]
             
-            # Step 1: Calculate mathematical TPs
+            # Step 1: Calculate mathematical TPs with timeframe-based multipliers
             risk = abs(entry_price - sl_price)
-            tp1_mult = config.get('math_tp1_multiplier', 3.0)
-            tp2_mult = config.get('math_tp2_multiplier', 5.0)
-            tp3_mult = config.get('math_tp3_multiplier', 8.0)
+            tp1_mult, tp2_mult, tp3_mult = self.get_tp_multipliers_by_timeframe(timeframe)
             
             if direction == 'LONG':
                 math_tp1 = entry_price + (risk * tp1_mult)
