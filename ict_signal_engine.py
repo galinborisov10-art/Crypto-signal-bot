@@ -549,6 +549,30 @@ class ICTSignalEngine:
             }
         }
     
+    def _get_timeframe_category(self, timeframe: str) -> str:
+        """
+        Categorize timeframe into short-term, medium-term, or long-term
+        
+        Args:
+            timeframe: Candle timeframe (e.g., '1h', '4h', '1d')
+            
+        Returns:
+            'short' for 15m-2h, 'medium' for 4h-12h, 'long' for 1d+
+            Defaults to 'short' (conservative) for unknown timeframes
+        """
+        tf = timeframe.lower().strip()
+        
+        if tf in ['15m', '30m', '1h', '2h']:
+            return 'short'
+        elif tf in ['4h', '6h', '8h', '12h']:
+            return 'medium'
+        elif tf in ['1d', '3d', '1w']:
+            return 'long'
+        else:
+            # Default to conservative for unknown timeframes
+            logger.warning(f"⚠️ Unknown timeframe {timeframe}, categorizing as 'short' (conservative)")
+            return 'short'
+    
     def get_tp_multipliers_by_timeframe(self, timeframe: str) -> tuple:
         """
         Get optimized TP multipliers based on timeframe volatility
@@ -573,21 +597,21 @@ class ICTSignalEngine:
             >>> get_tp_multipliers_by_timeframe('4h')
             (2.0, 4.0, 6.0)
         """
-        tf = timeframe.lower().strip()
+        category = self._get_timeframe_category(timeframe)
         
         # Short-term: Conservative targets (1, 3, 5)
-        if tf in ['15m', '30m', '1h', '2h']:
+        if category == 'short':
             logger.info(f"📊 Using conservative TPs (1,3,5) for {timeframe}")
             return (1.0, 3.0, 5.0)
         
         # Medium/Long-term: Aggressive targets (2, 4, 6)
-        elif tf in ['4h', '6h', '8h', '12h', '1d', '3d', '1w']:
+        elif category in ['medium', 'long']:
             logger.info(f"📊 Using aggressive TPs (2,4,6) for {timeframe}")
             return (2.0, 4.0, 6.0)
         
-        # Default: Conservative (safer)
+        # Fallback (should never reach here due to helper function logic)
         else:
-            logger.warning(f"⚠️ Unknown timeframe {timeframe}, defaulting to conservative TPs (1,3,5)")
+            logger.warning(f"⚠️ Unknown timeframe category for {timeframe}, defaulting to conservative TPs (1,3,5)")
             return (1.0, 3.0, 5.0)
     
     def _validate_mtf_hierarchy(
@@ -2522,13 +2546,13 @@ class ICTSignalEngine:
         # ✅ FIX #4: Timeframe-based distance validation with ICT-friendly thresholds
         min_distance_pct = 0.005  # 0.5% (unchanged)
         
-        # Timeframe-based tolerance
-        tf = timeframe.lower().strip()
-        if tf in ['15m', '30m', '1h', '2h']:
+        # Timeframe-based tolerance using helper method
+        category = self._get_timeframe_category(timeframe)
+        if category == 'short':
             max_distance_pct = 0.050  # 5% for short-term
-        elif tf in ['4h', '6h', '8h', '12h']:
+        elif category == 'medium':
             max_distance_pct = 0.075  # 7.5% for medium-term
-        else:
+        else:  # long
             max_distance_pct = 0.100  # 10% for daily+
         
         entry_buffer_pct = 0.002  # 0.2%
@@ -5280,19 +5304,21 @@ class ICTSignalEngine:
             
         except Exception as e:
             logger.error(f"Error calculating smart TPs: {e}")
-            # Fallback to mathematical TPs
+            # Fallback to mathematical TPs with timeframe-based multipliers
             risk = abs(entry_price - sl_price)
+            tp1_mult, tp2_mult, tp3_mult = self.get_tp_multipliers_by_timeframe(timeframe)
+            
             if direction == 'LONG':
                 return [
-                    entry_price + (risk * 3.0),
-                    entry_price + (risk * 5.0),
-                    entry_price + (risk * 8.0)
+                    entry_price + (risk * tp1_mult),
+                    entry_price + (risk * tp2_mult),
+                    entry_price + (risk * tp3_mult)
                 ]
             else:
                 return [
-                    entry_price - (risk * 3.0),
-                    entry_price - (risk * 5.0),
-                    entry_price - (risk * 8.0)
+                    entry_price - (risk * tp1_mult),
+                    entry_price - (risk * tp2_mult),
+                    entry_price - (risk * tp3_mult)
                 ]
     
     def _adjust_tp_before_obstacle(
