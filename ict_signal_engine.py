@@ -203,6 +203,48 @@ class MarketBias(Enum):
     RANGING = "RANGING"
 
 
+def get_tp_multipliers_by_timeframe(timeframe: str) -> tuple:
+    """
+    Get optimized TP multipliers based on timeframe volatility
+    
+    Strategy:
+    - Lower TFs (1h, 2h): (1, 3, 5) - Quick validation, conservative targets
+    - Higher TFs (4h, 1d): (2, 4, 6) - Capture trends, aggressive targets
+    
+    Reasoning:
+    - 1h/2h: Faster moves, quicker reversals → Need fast TP hits
+    - 4h/1d: Stronger trends, more follow-through → Can hold for bigger TPs
+    
+    Args:
+        timeframe: Candle timeframe (e.g., '1h', '4h', '1d')
+        
+    Returns:
+        tuple: (tp1_mult, tp2_mult, tp3_mult)
+        
+    Examples:
+        >>> get_tp_multipliers_by_timeframe('1h')
+        (1.0, 3.0, 5.0)
+        >>> get_tp_multipliers_by_timeframe('4h')
+        (2.0, 4.0, 6.0)
+    """
+    tf = timeframe.lower().strip()
+    
+    # Short-term: Conservative targets (1, 3, 5)
+    if tf in ['15m', '30m', '1h', '2h']:
+        logger.info(f"📊 Using conservative TPs (1,3,5) for {timeframe}")
+        return (1.0, 3.0, 5.0)
+    
+    # Medium/Long-term: Aggressive targets (2, 4, 6)
+    elif tf in ['4h', '6h', '8h', '12h', '1d', '3d', '1w']:
+        logger.info(f"📊 Using aggressive TPs (2,4,6) for {timeframe}")
+        return (2.0, 4.0, 6.0)
+    
+    # Default: Conservative (safer)
+    else:
+        logger.warning(f"⚠️ Unknown timeframe {timeframe}, defaulting to conservative TPs (1,3,5)")
+        return (1.0, 3.0, 5.0)
+
+
 @dataclass
 class ICTSignal:
     """
@@ -1019,7 +1061,8 @@ class ICTSignalEngine:
                 entry_price, sl_price, liquidity_zones, 
                 min_rr=3.0, 
                 fibonacci_data=fibonacci_data,
-                bias=bias_str
+                bias=bias_str,
+                timeframe=timeframe
             )
             logger.info(f"   → Mathematical TPs (fallback): {[f'${tp:.2f}' for tp in tp_prices]}")
         
@@ -1028,25 +1071,33 @@ class ICTSignalEngine:
         # СТЪПКА 10: RR CHECK
         logger.info("🔍 Step 10: Risk/Reward Validation")
         risk = abs(entry_price - sl_price)
-        reward = abs(tp_prices[0] - entry_price) if tp_prices else 0
+        
+        # ✅ FIX: Validate against TP2 (primary target) instead of TP1 (quick profit)
+        # This allows TP1 for fast scalping while ensuring TP2 meets quality standards
+        # Note: tp_prices array is [TP1, TP2, TP3], so tp_prices[1] is TP2
+        if len(tp_prices) >= 2:
+            # Use TP2 for quality validation (tp_prices[1] = second element = TP2)
+            reward = abs(tp_prices[1] - entry_price)
+            tp_label = "TP2"
+            logger.info(f"   → Validating R:R against TP2 (primary target)")
+        elif len(tp_prices) >= 1:
+            # Fallback to TP1 if only one TP exists
+            reward = abs(tp_prices[0] - entry_price)
+            tp_label = "TP1"
+            logger.info(f"   → Validating R:R against TP1 (single target)")
+        else:
+            reward = 0
+            tp_label = "N/A"
+        
         risk_reward_ratio = reward / risk if risk > 0 else 0
         
         logger.info(f"   → Risk: ${risk:.2f}")
-        logger.info(f"   → Reward (TP1): ${reward:.2f}")
-        logger.info(f"   → RR Ratio: {risk_reward_ratio:.2f}")
-        logger.info(f"   → Minimum Required: {self.config['min_risk_reward']:.2f}")
-        
-        if risk_reward_ratio < 3.0:
-            logger.warning(f"⚠️ RR {risk_reward_ratio:.2f} < 3.0 - adjusting to guarantee minimum")
-            if bias == MarketBias.BULLISH:
-                tp_prices[0] = entry_price + (risk * 3.0)
-            else:
-                tp_prices[0] = entry_price - (risk * 3.0)
-            risk_reward_ratio = 3.0
-            logger.info(f"   → Adjusted TP1 to: ${tp_prices[0]:.2f} (RR: {risk_reward_ratio:.2f})")
+        logger.info(f"   → Reward ({tp_label}): ${reward:.2f}")
+        logger.info(f"   → R:R Ratio: {risk_reward_ratio:.2f} (1:{risk_reward_ratio:.1f})")
+        logger.info(f"   → Minimum Required: {self.config['min_risk_reward']:.2f} (1:{self.config['min_risk_reward']:.0f})")
         
         if risk_reward_ratio < self.config['min_risk_reward']:
-            logger.info(f"❌ BLOCKED at Step 10: RR {risk_reward_ratio:.2f} < {self.config['min_risk_reward']}")
+            logger.info(f"❌ BLOCKED at Step 10: R:R {risk_reward_ratio:.2f} < {self.config['min_risk_reward']} (1:{risk_reward_ratio:.1f} < 1:{self.config['min_risk_reward']:.0f})")
             logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 10, reason: Insufficient RR)")
             logger.error(f"❌ RR {risk_reward_ratio:.2f} < {self.config['min_risk_reward']} - сигналът НЕ СЕ ИЗПРАЩА")
             context = self._extract_context_data(df, bias)
@@ -1063,7 +1114,7 @@ class ICTSignalEngine:
                 confidence=None
             )
         
-        logger.info(f"✅ PASSED Step 10: RR validated ({risk_reward_ratio:.2f} ≥ {self.config['min_risk_reward']:.2f})")
+        logger.info(f"✅ PASSED Step 10: RR validated ({risk_reward_ratio:.2f} ≥ {self.config['min_risk_reward']:.2f} → 1:{risk_reward_ratio:.1f} ≥ 1:{self.config['min_risk_reward']:.0f})")
         
         # BASE CONFIDENCE
         logger.info("🔍 Step 11: Confidence Calculation")
@@ -2480,7 +2531,15 @@ class ICTSignalEngine:
         """
         # ✅ FIX #4: RELAXED distance validation with ICT-friendly thresholds
         min_distance_pct = 0.005  # 0.5% (unchanged)
-        max_distance_pct = 0.100  # 10.0% (increased from 3.0%)
+        
+        # Timeframe-based tolerance
+        if timeframe in ['15m', '30m', '1h', '2h']:
+            max_distance_pct = 0.050  # 5% for short-term
+        elif timeframe in ['4h', '6h', '8h', '12h']:
+            max_distance_pct = 0.075  # 7.5% for medium-term
+        else:
+            max_distance_pct = 0.100  # 10% for daily+
+        
         entry_buffer_pct = 0.002  # 0.2%
         
         valid_zones = []
@@ -2836,7 +2895,8 @@ class ICTSignalEngine:
         liquidity_zones: List,
         min_rr: float = 3.0,
         fibonacci_data: Optional[Dict] = None,
-        bias: Optional[str] = None
+        bias: Optional[str] = None,
+        timeframe: str = '1h'
     ) -> List[float]:
         """
         MANDATORY: Calculate TP with GUARANTEED RR >= 1:3
@@ -2917,15 +2977,18 @@ class ICTSignalEngine:
                 if len(tp_levels) >= 3:
                     break
         
-        # Final fallback: structural levels
+        # Final fallback: structural levels with timeframe-based multipliers
         if len(tp_levels) == 1:
-            tp2 = entry_price + (risk * 5) if direction == 'LONG' else entry_price - (risk * 5)
-            tp_levels.append(tp2)
-            logger.info(f"✅ TP2 extended to 5R: {tp2}")
+            # Get timeframe-optimized multipliers
+            tp1_mult, tp2_mult, tp3_mult = get_tp_multipliers_by_timeframe(timeframe)
             
-            tp3 = entry_price + (risk * 8) if direction == 'LONG' else entry_price - (risk * 8)
+            tp2 = entry_price + (risk * tp2_mult) if direction == 'LONG' else entry_price - (risk * tp2_mult)
+            tp_levels.append(tp2)
+            logger.info(f"✅ TP2 extended to {tp2_mult}R: {tp2}")
+            
+            tp3 = entry_price + (risk * tp3_mult) if direction == 'LONG' else entry_price - (risk * tp3_mult)
             tp_levels.append(tp3)
-            logger.info(f"✅ TP3 extended to 8R: {tp3}")
+            logger.info(f"✅ TP3 extended to {tp3_mult}R: {tp3}")
         
         return tp_levels[:3]
 
@@ -3079,7 +3142,7 @@ class ICTSignalEngine:
             
             if sl_price >= ob_bottom:
                 # SL е ВЪТРЕ или НАД OB - FORBIDDEN
-                logger.error(f"❌ BEARISH SL {sl_price:.2f} >= OB bottom {ob_bottom:.2f} - FORBIDDEN")
+                logger.error(f"❌ BULLISH SL {sl_price:.2f} >= OB bottom {ob_bottom:.2f} - FORBIDDEN")
                 return None, False
             
             if sl_price > required_sl_max:
@@ -3099,7 +3162,7 @@ class ICTSignalEngine:
             
             if sl_price <= ob_top:
                 # SL е ВЪТРЕ или ПОД OB - FORBIDDEN
-                logger.error(f"❌ BULLISH SL {sl_price:.2f} <= OB top {ob_top:.2f} - FORBIDDEN")
+                logger.error(f"❌ BEARISH SL {sl_price:.2f} <= OB top {ob_top:.2f} - FORBIDDEN")
                 return None, False
             
             if sl_price < required_sl_min:
@@ -5138,9 +5201,7 @@ class ICTSignalEngine:
                 logger.info("📊 Structure TP disabled - using mathematical TPs")
                 # Fallback to mathematical TPs
                 risk = abs(entry_price - sl_price)
-                tp1_mult = config.get('math_tp1_multiplier', 3.0)
-                tp2_mult = config.get('math_tp2_multiplier', 5.0)
-                tp3_mult = config.get('math_tp3_multiplier', 8.0)
+                tp1_mult, tp2_mult, tp3_mult = get_tp_multipliers_by_timeframe(timeframe)
                 
                 if direction == 'LONG':
                     return [
@@ -5157,9 +5218,7 @@ class ICTSignalEngine:
             
             # Step 1: Calculate mathematical TPs
             risk = abs(entry_price - sl_price)
-            tp1_mult = config.get('math_tp1_multiplier', 3.0)
-            tp2_mult = config.get('math_tp2_multiplier', 5.0)
-            tp3_mult = config.get('math_tp3_multiplier', 8.0)
+            tp1_mult, tp2_mult, tp3_mult = get_tp_multipliers_by_timeframe(timeframe)
             
             if direction == 'LONG':
                 math_tp1 = entry_price + (risk * tp1_mult)
@@ -5234,19 +5293,20 @@ class ICTSignalEngine:
             
         except Exception as e:
             logger.error(f"Error calculating smart TPs: {e}")
-            # Fallback to mathematical TPs
+            # Fallback to mathematical TPs with timeframe-based multipliers
             risk = abs(entry_price - sl_price)
+            tp1_mult, tp2_mult, tp3_mult = get_tp_multipliers_by_timeframe(timeframe)
             if direction == 'LONG':
                 return [
-                    entry_price + (risk * 3.0),
-                    entry_price + (risk * 5.0),
-                    entry_price + (risk * 8.0)
+                    entry_price + (risk * tp1_mult),
+                    entry_price + (risk * tp2_mult),
+                    entry_price + (risk * tp3_mult)
                 ]
             else:
                 return [
-                    entry_price - (risk * 3.0),
-                    entry_price - (risk * 5.0),
-                    entry_price - (risk * 8.0)
+                    entry_price - (risk * tp1_mult),
+                    entry_price - (risk * tp2_mult),
+                    entry_price - (risk * tp3_mult)
                 ]
     
     def _adjust_tp_before_obstacle(
