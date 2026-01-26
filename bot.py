@@ -9732,7 +9732,8 @@ async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='HTML',
                 reply_markup=get_main_keyboard()
             )
-        except:
+        except Exception as e:
+            logger.error(f"❌ Failed to send restart error notification: {e}")
             pass
 
 
@@ -13785,8 +13786,13 @@ async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         backup_files = ['bot_stats.json', 'trading_journal.json', 'copilot_tasks.json']
         for f in backup_files:
             try:
-                subprocess.run(['cp', f, f + '.backup'], cwd=project_dir, timeout=5)
-            except:
+                result = subprocess.run(['cp', f, f + '.backup'], cwd=project_dir, timeout=5, capture_output=True, text=True)
+                if result.returncode == 0:
+                    logger.info(f"✅ Backed up: {f}")
+                else:
+                    logger.warning(f"⚠️ Backup failed for {f}: {result.stderr}")
+            except Exception as e:
+                logger.warning(f"⚠️ Backup error for {f}: {e}")
                 pass
         
         # Git pull
@@ -17759,7 +17765,8 @@ def main():
                                 parse_mode='HTML',
                                 disable_notification=False
                             )
-                        except:
+                        except Exception as e:
+                            logger.error(f"❌ Failed to send backtest error notification: {e}")
                             pass
                 
                 scheduler.add_job(
