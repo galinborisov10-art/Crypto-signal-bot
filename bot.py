@@ -261,13 +261,18 @@ logging.basicConfig(
 # ICT Enhancement Layer
 try:
     from config.config_loader import load_feature_flags, update_feature_flag
+    from config.trading_config import get_trading_config
     from ict_enhancement.ict_enhancer import ICTEnhancer
     
     FEATURE_FLAGS = load_feature_flags()
+    TRADING_CONFIG = get_trading_config()  # Load trading configuration
+    MIN_SIGNAL_CONFIDENCE = TRADING_CONFIG.get('min_confidence', 50)  # Get configurable threshold
     ict_enhancer = ICTEnhancer(FEATURE_FLAGS)
 except ImportError as e:
     logger.warning(f"ICT Enhancement not available: {e}")
     FEATURE_FLAGS = {'use_ict_enhancer': False}
+    TRADING_CONFIG = {'min_confidence': 50}
+    MIN_SIGNAL_CONFIDENCE = 50
     ict_enhancer = None
 
 # ================= SECURITY MODULES (NEW - v2.0.0) =================
@@ -8675,7 +8680,7 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if result is None:
             await processing_msg.edit_text(
                 f"❌ <b>No ICT signal generated for {symbol}</b>\n\n"
-                f"Conditions not met for high-quality signal (minimum confidence: 60%, RR: 1:3).",
+                f"Conditions not met for high-quality signal (minimum confidence: {MIN_SIGNAL_CONFIDENCE}%, RR: 1:3).",
                 parse_mode='HTML'
             )
             return
@@ -11483,7 +11488,7 @@ async def auto_signal_job(timeframe: str, bot_instance):
                 logger.error(f"❌ Stats recording error in auto-signal: {e}")
             
             # Log to ML journal for high confidence signals
-            if ict_signal.confidence >= 60:  # FIX: Aligned with Telegram send threshold (was 65)
+            if ict_signal.confidence >= MIN_SIGNAL_CONFIDENCE:  # Use configurable threshold (default 50)
                 try:
                     analysis_data = {
                         'market_bias': ict_signal.bias.value,  # Fixed: bias instead of market_bias
@@ -15392,7 +15397,7 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 hist_df, symbol, tf, mtf_data=None
                             )
                             
-                            if signal and signal.confidence >= 60:
+                            if signal and signal.confidence >= MIN_SIGNAL_CONFIDENCE:
                                 # Simulate trade
                                 future_df = df.iloc[i+1:i+11].copy()
                                 bias_str = signal.bias.value if hasattr(signal.bias, 'value') else str(signal.bias)
