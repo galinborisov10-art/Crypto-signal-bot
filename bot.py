@@ -17489,6 +17489,7 @@ def main():
             
             # Create context for jobs that require it
             class SimpleContext:
+                """Minimal context object for scheduler jobs that need bot access."""
                 def __init__(self, bot):
                     self.bot = bot
             
