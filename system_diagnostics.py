@@ -20,11 +20,11 @@ logger = logging.getLogger(__name__)
 
 # ==================== CONFIGURATION ====================
 # File size limits to prevent blocking I/O on large files
-# These limits are chosen based on typical bot log file sizes and available memory:
-# - LOG: 50MB limit handles ~6 months of logs without blocking (typical: 5-20MB)
+# These limits are chosen based on production bot log file sizes and available memory:
+# - LOG: 500MB limit for enterprise-grade production crypto bot logs (2-4 weeks retention)
 # - JOURNAL: 10MB limit handles ~10,000 trades without blocking (typical: 1-5MB)
 # - LINES: 1000 lines covers last ~2 hours of activity (typical line length: 200 bytes)
-MAX_LOG_FILE_SIZE_MB = 50  # Skip log files larger than 50MB
+MAX_LOG_FILE_SIZE_MB = 500  # Increased for production stability (crypto bot generates verbose logs)
 MAX_JOURNAL_FILE_SIZE_MB = 10  # Skip journal files larger than 10MB  
 DEFAULT_MAX_LOG_LINES = 1000  # Maximum lines to read from log file
 
