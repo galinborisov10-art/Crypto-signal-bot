@@ -230,7 +230,7 @@ def get_tp_multipliers_by_timeframe(timeframe: str) -> tuple:
     tf = timeframe.lower().strip()
     
     # Short-term: Conservative targets (1, 3, 5)
-    if tf in ['15m', '30m', '1h', '2h']:
+    if tf in ['15m', '30m', '1h', '2h', '3h']:  # ← Added 3h
         logger.info(f"📊 Using conservative TPs (1,3,5) for {timeframe}")
         return (1.0, 3.0, 5.0)
     
@@ -571,6 +571,13 @@ class ICTSignalEngine:
                     "structure_tf": "1d",
                     "htf_bias_tf": "1d"
                 },
+                "3h": {  # ← NEW: 3h hierarchy for manual signals
+                    "entry_tf": "3h",
+                    "confirmation_tf": "4h",
+                    "structure_tf": "1d",
+                    "htf_bias_tf": "1d",
+                    "description": "3h entry with 4h confirmation and daily structure (manual analysis only)"
+                },
                 "4h": {
                     "entry_tf": "4h",
                     "confirmation_tf": "4h",
@@ -716,7 +723,8 @@ class ICTSignalEngine:
         df: pd.DataFrame,
         symbol: str,
         timeframe: str = "1H",
-        mtf_data: Optional[Dict[str, pd.DataFrame]] = None
+        mtf_data: Optional[Dict[str, pd.DataFrame]] = None,
+        is_auto: bool = False  # ← NEW: Distinguish auto vs manual signals
     ) -> Optional[ICTSignal]:
         """
         Generate ICT signal with UNIFIED analysis sequence
@@ -1417,21 +1425,25 @@ class ICTSignalEngine:
         
         logger.info(f"✅ PASSED Step 11.5: MTF consensus validated ({mtf_consensus_data['consensus_pct']:.1f}% ≥ 50%)")
         
-        # Confidence check
+        # Confidence check (dynamic based on auto vs manual)
         logger.info("🔍 Step 11.6: Final Confidence Check")
-        logger.info(f"   → Final Confidence: {confidence:.1f}%")
-        logger.info(f"   → Minimum Required: {self.config['min_confidence']}%")
         
-        if confidence < self.config['min_confidence']:
-            logger.info(f"❌ BLOCKED at Step 11.6: Confidence {confidence:.1f}% < {self.config['min_confidence']}%")
-            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 11.6, reason: Low confidence)")
-            logger.error(f"❌ Confidence {confidence:.1f}% < {self.config['min_confidence']}% - сигналът НЕ СЕ ИЗПРАЩА")
+        # Determine min confidence based on signal type
+        min_confidence = 60 if is_auto else 70
+        mode = "Auto" if is_auto else "Manual"
+        
+        logger.info(f"   → Final Confidence: {confidence:.1f}%")
+        logger.info(f"   → Minimum Required: {min_confidence}% ({mode} mode)")
+        
+        if confidence < min_confidence:
+            logger.info(f"❌ BLOCKED at Step 11.6: Confidence {confidence:.1f}% < {min_confidence}% ({mode} mode)")
+            logger.error(f"❌ Confidence {confidence:.1f}% < {min_confidence}% - сигналът НЕ СЕ ИЗПРАЩА ({mode})")
             context = self._extract_context_data(df, bias)
             return self._create_no_trade_message(
                 symbol=symbol,
                 timeframe=timeframe,
-                reason=f"Ниска увереност ({confidence:.1f}%)",
-                details=f"Необходими: ≥{self.config['min_confidence']}%. Намерени: {confidence:.1f}%",
+                reason=f"Ниска увереност ({confidence:.1f}%) за {mode} сигнал",
+                details=f"Необходими: ≥{min_confidence}%. Намерени: {confidence:.1f}%",
                 mtf_breakdown=mtf_consensus_data['breakdown'],
                 current_price=context['current_price'],
                 price_change_24h=context['price_change_24h'],
@@ -1440,7 +1452,7 @@ class ICTSignalEngine:
                 confidence=confidence
             )
         
-        logger.info(f"✅ PASSED Step 11.6: Confidence validated ({confidence:.1f}% ≥ {self.config['min_confidence']}%)")
+        logger.info(f"✅ PASSED Step 11.6: Confidence validated ({confidence:.1f}% ≥ {min_confidence}% - {mode} mode)")
         
         # СТЪПКА 12: FINAL SIGNAL GENERATION
         logger.info("🔍 Step 12: Final Signal Generation")
