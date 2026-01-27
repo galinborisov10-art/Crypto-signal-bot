@@ -17815,18 +17815,16 @@ def main():
                 try:
                     logger.info("🔄 Refreshing diagnostic cache (background)...")
                     
-                    from system_diagnostics import grep_logs_cached, DIAGNOSTIC_CACHE, cleanup_expired_cache
+                    from system_diagnostics import grep_logs_cached, DIAGNOSTIC_CACHE
                     
-                    # Force cleanup and log cache state BEFORE refresh
+                    # Log cache state BEFORE refresh
                     cache_size_before = len(DIAGNOSTIC_CACHE)
-                    cleanup_expired_cache()
-                    cache_size_after_cleanup = len(DIAGNOSTIC_CACHE)
-                    
-                    logger.info(f"📊 Cache state: {cache_size_before} entries → {cache_size_after_cleanup} after cleanup")
+                    logger.info(f"📊 Cache state before refresh: {cache_size_before} entries")
                     
                     base_path = os.path.dirname(os.path.abspath(__file__))
                     
                     # Pre-populate cache with common diagnostic patterns
+                    # Note: grep_logs_cached() will automatically cleanup expired entries
                     patterns = [
                         ('ERROR.*journal', 6),           # Journal errors (6h)
                         ('ERROR.*ml.*train', 168),       # ML errors (7 days)

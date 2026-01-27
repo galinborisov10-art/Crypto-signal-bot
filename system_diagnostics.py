@@ -60,15 +60,20 @@ def cleanup_expired_cache():
     """
     now = time.time()
     
+    # Take a snapshot of items to avoid "dictionary changed size during iteration" error
+    # This is thread-safe because dict.items() returns a view that creates a snapshot
+    cache_items = list(DIAGNOSTIC_CACHE.items())
+    
     # Find expired entries
     expired_keys = [
-        key for key, (timestamp, _) in DIAGNOSTIC_CACHE.items()
+        key for key, (timestamp, _) in cache_items
         if now - timestamp > CACHE_TTL
     ]
     
     # Remove expired entries
     for key in expired_keys:
-        del DIAGNOSTIC_CACHE[key]
+        # Use dict.pop() with default to avoid KeyError if key was already deleted
+        DIAGNOSTIC_CACHE.pop(key, None)
     
     # Log cleanup activity
     if expired_keys:
@@ -86,10 +91,12 @@ def get_cached_result(cache_key: str) -> Optional[Any]:
     Returns:
         Cached result if valid, None if expired or missing
     """
-    if cache_key not in DIAGNOSTIC_CACHE:
+    # Use dict.get() to avoid race condition between check and access
+    cached_entry = DIAGNOSTIC_CACHE.get(cache_key)
+    if cached_entry is None:
         return None
     
-    cached_time, cached_result = DIAGNOSTIC_CACHE[cache_key]
+    cached_time, cached_result = cached_entry
     now = time.time()
     
     # Check if cache is still valid
@@ -98,9 +105,9 @@ def get_cached_result(cache_key: str) -> Optional[Any]:
         logger.debug(f"✅ Cache HIT for {cache_key} (age: {age_seconds:.1f}s)")
         return cached_result
     else:
-        # Cache expired
+        # Cache expired - use pop() to avoid KeyError if already deleted
         logger.debug(f"⏰ Cache EXPIRED for {cache_key}")
-        del DIAGNOSTIC_CACHE[cache_key]
+        DIAGNOSTIC_CACHE.pop(cache_key, None)
         return None
 
 def set_cached_result(cache_key: str, result: Any) -> None:
