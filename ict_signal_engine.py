@@ -2531,17 +2531,11 @@ class ICTSignalEngine:
             - 'TOO_LATE': Price already passed the entry zone (hard reject)
             - 'NO_ZONE': No valid entry zone found (converted to fallback in calling code)
         """
-        # ✅ FIX #4: RELAXED distance validation with ICT-friendly thresholds
+        # ✅ FIX #4: UNIVERSAL distance validation - NO timeframe dependency
+        # Entry distance measures signal freshness, not trade duration!
+        # A 20% entry is equally stale on 1h, 4h, or 1d timeframe.
         min_distance_pct = 0.005  # 0.5% (unchanged)
-        
-        # Timeframe-based tolerance
-        if timeframe in ['15m', '30m', '1h', '2h']:
-            max_distance_pct = 0.050  # 5% for short-term
-        elif timeframe in ['4h', '6h', '8h', '12h']:
-            max_distance_pct = 0.075  # 7.5% for medium-term
-        else:
-            max_distance_pct = 0.100  # 10% for daily+
-        
+        max_distance_pct = 0.050  # 5% UNIVERSAL MAX (all timeframes)
         entry_buffer_pct = 0.002  # 0.2%
         
         valid_zones = []
@@ -2869,16 +2863,40 @@ class ICTSignalEngine:
         
         distance_pct = best_zone['distance_pct']
         
-        if distance_pct > 0.015:  # > 1.5%
+        # ✅ NEW: Check against universal 5% max FIRST (reject stale signals)
+        if distance_pct > max_distance_pct:  # > 5%
+            status = 'TOO_FAR'
+            logger.error(
+                f"❌ Entry zone too far: {distance_pct*100:.1f}% > 5% MAX - "
+                f"сигналът НЕ СЕ ИЗПРАЩА (stale signal, universal limit)"
+            )
+            return None, 'TOO_FAR'  # REJECT SIGNAL
+        
+        # ✅ NEW: Buffer zone (3% - 5%)
+        elif distance_pct > 0.030:  # 3% - 5%
             status = 'VALID_WAIT'
-            logger.info(f"✅ Entry zone found: {entry_zone['source']} at ${entry_zone['center']:.2f} ({entry_zone['distance_pct']:.1f}% away) - WAIT for pullback")
-        elif distance_pct >= 0.005:  # 0.5% - 1.5%
+            logger.info(
+                f"✅ Entry zone in buffer: {entry_zone['source']} at "
+                f"${entry_zone['center']:.2f} ({distance_pct*100:.1f}% away) - "
+                f"WAIT for pullback"
+            )
+        
+        # ✅ MODIFIED: Optimal zone (0.5% - 3%)
+        elif distance_pct >= 0.005:  # 0.5% - 3%
             status = 'VALID_NEAR'
-            logger.info(f"✅ Entry zone found: {entry_zone['source']} at ${entry_zone['center']:.2f} ({entry_zone['distance_pct']:.1f}% away) - Price APPROACHING")
-        else:
-            # Too close, should have been caught earlier but safety check
+            logger.info(
+                f"✅ Entry zone in optimal range: {entry_zone['source']} at "
+                f"${entry_zone['center']:.2f} ({distance_pct*100:.1f}% away) - "
+                f"Price APPROACHING"
+            )
+        
+        # ✅ KEEP: Very close (< 0.5%)
+        else:  # < 0.5%
             status = 'TOO_LATE'
-            logger.warning(f"⚠️ Entry zone too close: {entry_zone['distance_pct']:.1f}%")
+            logger.warning(
+                f"⚠️ Entry zone very close: {distance_pct*100:.1f}% - "
+                f"may be too late for optimal entry"
+            )
         
         return entry_zone, status
 
