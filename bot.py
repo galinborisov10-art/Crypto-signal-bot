@@ -4212,7 +4212,10 @@ def fetch_mtf_data(symbol: str, timeframe: str, primary_df: pd.DataFrame) -> dic
         Dictionary with timeframes as keys and DataFrames as values
     """
     mtf_data = {}
-    mtf_timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d', '3d', '1w']
+    mtf_timeframes = ['5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
+    # ❌ Removed noisy/non-standard timeframes:
+    # - 1m, 3m (too noisy for consensus)
+    # - 6h, 12h, 3d (non-standard, redundant between 4h/1d and 1d/1w)
     
     for mtf_tf in mtf_timeframes:
         if mtf_tf == timeframe:  # Skip duplicate fetch
@@ -7969,7 +7972,8 @@ async def market_full_report(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         df=df,
                         symbol=symbol,
                         timeframe=timeframe,
-                        mtf_data=mtf_data
+                        mtf_data=mtf_data,
+                        is_auto=False  # ← Mark as manual signal
                     )
                     
                     # Add ICT insights to message
@@ -8310,7 +8314,8 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 df=df,
                 symbol=symbol,
                 timeframe=timeframe,
-                mtf_data=mtf_data  # ✅ FIXED: Now passing MTF data!
+                mtf_data=mtf_data,  # ✅ FIXED: Now passing MTF data!
+                is_auto=False  # ← Mark as manual signal
             )
             
             # Check for NO_TRADE or None
@@ -8668,7 +8673,8 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             df=df,
             symbol=symbol,
             timeframe=timeframe,
-            mtf_data=mtf_data  # ✅ FIXED: Using stored variable to avoid duplicate call
+            mtf_data=mtf_data,  # ✅ FIXED: Using stored variable to avoid duplicate call
+            is_auto=False  # ← Mark as manual signal
         )
         
         # Check if result is a "NO_TRADE" message (Dict) or a signal (ICTSignal object)
@@ -11093,7 +11099,8 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                 df=df,
                 symbol=symbol,
                 timeframe=timeframe,
-                mtf_data=mtf_data
+                mtf_data=mtf_data,
+                is_auto=False  # ← Mark as manual signal (alert-based)
             )
             
             # Handle NO_TRADE
@@ -11303,6 +11310,13 @@ async def auto_signal_job(timeframe: str, bot_instance):
         bot_instance: Telegram bot instance for sending messages
     """
     try:
+        # ✅ AUTO TIMEFRAME FILTER (only 1h, 2h, 4h, 1d)
+        ALLOWED_AUTO_TIMEFRAMES = ['1h', '2h', '4h', '1d']
+        
+        if timeframe not in ALLOWED_AUTO_TIMEFRAMES:
+            logger.info(f"⚠️ Auto signals disabled for {timeframe} (allowed: {ALLOWED_AUTO_TIMEFRAMES})")
+            return
+        
         # 🛑 STARTUP SUPPRESSION (PR #111)
         global STARTUP_MODE, STARTUP_TIME
         if STARTUP_MODE and STARTUP_TIME:
@@ -11353,7 +11367,8 @@ async def auto_signal_job(timeframe: str, bot_instance):
                     df=df,
                     symbol=symbol,
                     timeframe=timeframe,
-                    mtf_data=mtf_data
+                    mtf_data=mtf_data,
+                    is_auto=True  # ← Mark as auto signal
                 )
                 
                 # Handle NO_TRADE
@@ -12030,7 +12045,8 @@ async def monitor_positions_job(bot_instance):
                             df=df,
                             symbol=symbol,
                             timeframe=timeframe,
-                            mtf_data=mtf_data
+                            mtf_data=mtf_data,
+                            is_auto=True  # ← Mark as auto (re-analysis job)
                         )
                         
                         if not current_signal:
@@ -12884,7 +12900,8 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     df=df,
                     symbol=symbol,
                     timeframe=timeframe,
-                    mtf_data=mtf_data
+                    mtf_data=mtf_data,
+                    is_auto=False  # ← Mark as manual signal (callback)
                 )
                 logger.info(f"✅ ICT signal generated: {type(ict_signal)}")
                 
@@ -15395,7 +15412,7 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         try:
                             hist_df = df.iloc[:i+1].copy()
                             signal = ict_engine.ict_engine.generate_signal(
-                                hist_df, symbol, tf, mtf_data=None
+                                hist_df, symbol, tf, mtf_data=None, is_auto=True
                             )
                             
                             if signal and signal.confidence >= 60:
