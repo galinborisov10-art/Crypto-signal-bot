@@ -11932,186 +11932,56 @@ Duration: {hours:.1f} hours
 @safe_job("position_monitor", max_retries=2, retry_delay=30)
 async def monitor_positions_job(bot_instance):
     """
-    Monitor all open positions every minute
+    Monitor all open positions every minute using UnifiedTradeManager
     - Check checkpoint triggers
     - Perform re-analysis
     - Send alerts
     - Detect SL/TP hits
+    
+    PR #202: Integrated with UnifiedTradeManager
     """
     try:
         if not POSITION_MANAGER_AVAILABLE or not position_manager_global:
+            logger.debug("📊 Position manager not available, skipping monitoring")
             return
         
         if not CHECKPOINT_MONITORING_ENABLED:
+            logger.debug("📊 Checkpoint monitoring disabled, skipping")
             return
         
-        positions = position_manager_global.get_open_positions()
-        
-        if not positions:
-            return
-        
-        logger.info(f"📊 Monitoring {len(positions)} open position(s)")
-        
-        for position in positions:
-            try:
-                symbol = position['symbol']
-                timeframe = position['timeframe']
-                signal_type = position['signal_type']
-                entry_price = position['entry_price']
-                tp1_price = position['tp1_price']
-                sl_price = position['sl_price']
-                
-                # Get live price
-                current_price = get_live_price(symbol)
-                if not current_price:
-                    logger.warning(f"⚠️ Could not get live price for {symbol}")
-                    continue
-                
-                # Check SL/TP hits first
-                if AUTO_CLOSE_ON_SL_HIT and check_sl_hit(current_price, sl_price, signal_type):
-                    await handle_sl_hit(position, current_price, bot_instance)
-                    continue
-                
-                if AUTO_CLOSE_ON_TP_HIT and check_tp_hit(current_price, tp1_price, signal_type):
-                    await handle_tp_hit(position, current_price, 'TP1', bot_instance)
-                    continue
-                
-                # Calculate checkpoints
-                checkpoints = {
-                    '25%': calculate_checkpoint_price(entry_price, tp1_price, 0.25, signal_type),
-                    '50%': calculate_checkpoint_price(entry_price, tp1_price, 0.50, signal_type),
-                    '75%': calculate_checkpoint_price(entry_price, tp1_price, 0.75, signal_type),
-                    '85%': calculate_checkpoint_price(entry_price, tp1_price, 0.85, signal_type)
-                }
-                
-                # Check each checkpoint
-                for level, checkpoint_price in checkpoints.items():
-                    checkpoint_key = f'checkpoint_{level.replace("%", "")}_triggered'
-                    
-                    if position.get(checkpoint_key):
-                        continue  # Already triggered
-                    
-                    # Check if reached
-                    reached = check_checkpoint_reached(current_price, checkpoint_price, signal_type)
-                    
-                    if not reached:
-                        continue
-                    
-                    # ✅ CHECKPOINT REACHED - RE-ANALYZE
-                    logger.info(f"🔄 {symbol} reached {level} checkpoint at ${current_price:,.2f}")
-                    
-                    # Fetch current market data
-                    try:
-                        klines_response = requests.get(
-                            BINANCE_KLINES_URL,
-                            params={'symbol': symbol, 'interval': timeframe, 'limit': 200},
-                            timeout=10
-                        )
-                        
-                        if klines_response.status_code != 200:
-                            logger.warning(f"⚠️ Failed to fetch klines for {symbol}")
-                            continue
-                        
-                        klines_data = klines_response.json()
-                        df = pd.DataFrame(klines_data, columns=[
-                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
-                            'taker_buy_quote', 'ignore'
-                        ])
-                        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-                        for col in ['open', 'high', 'low', 'close', 'volume']:
-                            df[col] = df[col].astype(float)
-                        
-                        # Fetch MTF data
-                        mtf_data = fetch_mtf_data(symbol, timeframe, df)
-                        
-                        # Generate current signal
-                        current_signal = ict_engine_global.generate_signal(
-                            df=df,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            mtf_data=mtf_data
-                        )
-                        
-                        if not current_signal:
-                            logger.warning(f"⚠️ No current signal generated for {symbol}")
-                            continue
-                        
-                        # Reconstruct original signal from JSON
-                        original_signal = reconstruct_signal_from_json(position['original_signal_json'])
-                        
-                        if not original_signal:
-                            logger.warning(f"⚠️ Could not reconstruct original signal for {symbol}")
-                            continue
-                        
-                        # Perform re-analysis
-                        if TRADE_REANALYSIS_AVAILABLE and reanalysis_engine_global:
-                            analysis = reanalysis_engine_global.reanalyze_at_checkpoint(
-                                original_signal=original_signal,
-                                current_signal=current_signal,
-                                checkpoint_level=level,
-                                current_price=current_price,
-                                entry_price=entry_price,
-                                tp_price=tp1_price,
-                                sl_price=sl_price
-                            )
-                        else:
-                            # Fallback: create simple analysis
-                            analysis = {
-                                'checkpoint_level': level,
-                                'original_confidence': original_signal.confidence,
-                                'current_confidence': current_signal.confidence,
-                                'confidence_delta': current_signal.confidence - original_signal.confidence,
-                                'htf_bias_changed': original_signal.htf_bias != current_signal.htf_bias,
-                                'structure_broken': False,
-                                'valid_components_count': 0,
-                                'current_rr_ratio': 0,
-                                'recommendation': 'HOLD',
-                                'reasoning': 'Checkpoint reached',
-                                'warnings': []
-                            }
-                        
-                        # Mark as triggered
-                        position_manager_global.update_checkpoint_triggered(position['id'], level)
-                        
-                        # Log to database
-                        position_manager_global.log_checkpoint_alert(
-                            position_id=position['id'],
-                            checkpoint_level=level,
-                            trigger_price=current_price,
-                            analysis=analysis,
-                            action_taken='ALERTED'
-                        )
-                        
-                        # Send Telegram alert
-                        alert_msg = format_checkpoint_alert(
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            checkpoint_level=level,
-                            current_price=current_price,
-                            entry_price=entry_price,
-                            analysis=analysis
-                        )
-                        
-                        await bot_instance.send_message(
-                            chat_id=OWNER_CHAT_ID,
-                            text=alert_msg,
-                            parse_mode='HTML',
-                            disable_notification=False  # Sound alert
-                        )
-                        
-                        logger.info(f"✅ Checkpoint alert sent for {symbol} {level}")
-                        
-                    except Exception as e:
-                        logger.error(f"❌ Checkpoint re-analysis error for {symbol}: {e}")
-                        continue
-                
-            except Exception as e:
-                logger.error(f"❌ Position monitoring error for {position.get('symbol', 'unknown')}: {e}")
-                continue
+        # Initialize UnifiedTradeManager
+        try:
+            from unified_trade_manager import UnifiedTradeManager
+            
+            manager = UnifiedTradeManager(bot_instance=bot_instance)
+            positions = position_manager_global.get_open_positions()
+            
+            if not positions:
+                logger.debug("📊 No open positions to monitor")
+                return
+            
+            logger.info(f"📊 Monitoring {len(positions)} open position(s)")
+            
+            # Monitor each position
+            for pos in positions:
+                try:
+                    await manager.monitor_live_trade(pos)
+                except Exception as e:
+                    logger.error(f"❌ Monitor failed for {pos.get('symbol', 'UNKNOWN')}: {e}")
+                    pass  # Continue monitoring other positions
+            
+        except ImportError as e:
+            logger.error(f"❌ Could not import UnifiedTradeManager: {e}")
+            logger.warning("⚠️ Falling back to legacy monitoring (limited functionality)")
+            # Fallback to basic monitoring without re-analysis
+            positions = position_manager_global.get_open_positions()
+            if positions:
+                logger.info(f"📊 Legacy monitoring for {len(positions)} position(s)")
         
     except Exception as e:
         logger.error(f"❌ Position monitor job error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 async def send_auto_news(context: ContextTypes.DEFAULT_TYPE):

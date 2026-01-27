@@ -51,6 +51,7 @@ class PositionManager:
         - get_open_positions() - Get all open positions
         - get_position_by_id() - Get single position
         - update_checkpoint_triggered() - Mark checkpoint as triggered
+        - get_hit_checkpoints() - Get list of checkpoints already hit
         - log_checkpoint_alert() - Log checkpoint analysis
         - close_position() - Close position with P&L
         - partial_close() - Partial position close
@@ -353,6 +354,49 @@ class PositionManager:
         except Exception as e:
             logger.error(f"❌ Update checkpoint error: {e}")
             return False
+    
+    def get_hit_checkpoints(self, position_id: int) -> List[int]:
+        """
+        Get list of checkpoints already hit for position
+        
+        Args:
+            position_id: Position database ID
+            
+        Returns:
+            List of checkpoint levels (e.g., [25, 50, 75])
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT checkpoint_25_triggered, checkpoint_50_triggered,
+                       checkpoint_75_triggered, checkpoint_85_triggered
+                FROM open_positions
+                WHERE id = ?
+            """, (position_id,))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row:
+                return []
+            
+            hit_checkpoints = []
+            if row['checkpoint_25_triggered']:
+                hit_checkpoints.append(25)
+            if row['checkpoint_50_triggered']:
+                hit_checkpoints.append(50)
+            if row['checkpoint_75_triggered']:
+                hit_checkpoints.append(75)
+            if row['checkpoint_85_triggered']:
+                hit_checkpoints.append(85)
+            
+            return hit_checkpoints
+            
+        except Exception as e:
+            logger.error(f"❌ Get hit checkpoints error: {e}")
+            return []
     
     def log_checkpoint_alert(
         self,
