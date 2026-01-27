@@ -20,6 +20,9 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 import requests
 
+# Constants
+BINANCE_PRICE_URL = "https://api.binance.com/api/v3/ticker/price"
+
 # Import existing engines (NO MODIFICATIONS to these files)
 try:
     from trade_reanalysis_engine import TradeReanalysisEngine, CheckpointAnalysis
@@ -179,7 +182,7 @@ class UnifiedTradeManager:
                 
                 # 8. Save checkpoint event
                 if self.position_manager:
-                    # Mark checkpoint as triggered
+                    # Mark checkpoint as triggered (use "XX%" format for database)
                     self.position_manager.update_checkpoint_triggered(
                         position['id'],
                         f"{checkpoint}%"
@@ -563,7 +566,7 @@ Progress: {progress:.1f}% към TP1
             message = f"""
 ✅ TP1 HIT!
 
-{symbol} достигна целта @ ${price:.2f}
+{symbol} достигна целта @ {price:.2f}
 
 Позицията е затворена автоматично.
 """
@@ -599,7 +602,7 @@ Progress: {progress:.1f}% към TP1
             message = f"""
 🛑 STOP LOSS HIT
 
-{symbol} hit SL @ ${price:.2f}
+{symbol} hit SL @ {price:.2f}
 
 Позицията е затворена за защита на капитала.
 """
@@ -622,9 +625,6 @@ Progress: {progress:.1f}% към TP1
             Current price or None
         """
         try:
-            # Use Binance API (same as in bot.py)
-            BINANCE_PRICE_URL = "https://api.binance.com/api/v3/ticker/price"
-            
             response = requests.get(
                 BINANCE_PRICE_URL,
                 params={'symbol': symbol},
