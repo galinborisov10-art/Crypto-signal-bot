@@ -733,22 +733,31 @@ class ICTSignalEngine:
                 if cached_signal:
                     # ✅ Re-validate entry distance against current price
                     current_price = df['close'].iloc[-1]
-                    entry_price = cached_signal.entry_price
-                    distance_pct = abs(entry_price - current_price) / current_price
                     
-                    if distance_pct > 0.05:  # 5% max (universal limit)
+                    # Guard against zero or invalid price
+                    if current_price <= 0:
                         logger.warning(
-                            f"⚠️ Cached signal entry too far: {distance_pct*100:.1f}% > 5.0% MAX "
-                            f"(entry: ${entry_price:.4f}, current: ${current_price:.4f}) "
-                            f"- invalidating cache and re-analyzing"
+                            f"⚠️ Invalid current price: ${current_price:.4f} - "
+                            f"invalidating cache and re-analyzing"
                         )
-                        # Don't return cache, continue to full analysis below
                     else:
-                        logger.info(
-                            f"✅ Using cached signal for {symbol} {timeframe} "
-                            f"(entry {distance_pct*100:.1f}% away - within limits)"
-                        )
-                        return cached_signal
+                        entry_price = cached_signal.entry_price
+                        distance_pct = abs(entry_price - current_price) / current_price
+                        
+                        MAX_ENTRY_DISTANCE_PCT = 0.05  # 5% max (universal limit)
+                        if distance_pct > MAX_ENTRY_DISTANCE_PCT:
+                            logger.warning(
+                                f"⚠️ Cached signal entry too far: {distance_pct*100:.1f}% > 5.0% MAX "
+                                f"(entry: ${entry_price:.4f}, current: ${current_price:.4f}) "
+                                f"- invalidating cache and re-analyzing"
+                            )
+                            # Don't return cache, continue to full analysis below
+                        else:
+                            logger.info(
+                                f"✅ Using cached signal for {symbol} {timeframe} "
+                                f"(entry {distance_pct*100:.1f}% away - within limits)"
+                            )
+                            return cached_signal
             except Exception as e:
                 logger.warning(f"Cache error: {e}")
         
