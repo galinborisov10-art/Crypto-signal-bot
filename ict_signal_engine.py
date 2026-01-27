@@ -949,6 +949,26 @@ class ICTSignalEngine:
                 confidence=None
             )
         
+        # ✅ NEW: Reject signals with entry zones too far (exceeds universal 5% max)
+        if entry_status == 'TOO_FAR':
+            logger.info(f"❌ BLOCKED at Step 8: Entry zone too far from current price")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 8, reason: Entry distance exceeds 5% universal maximum)")
+            context = self._extract_context_data(df, bias)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason=f"Entry zone validation failed: {entry_status}",
+                details=f"Entry zone too far from current price (exceeds universal 5% maximum for all timeframes).",
+                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=None
+            )
+        
         # ✅ SOFT CONSTRAINT: Handle NO_ZONE case with fallback instead of rejection
         if entry_status == 'NO_ZONE' or entry_zone is None:
             logger.info(f"⚠️ Step 8 Warning: No ICT zone in optimal range, using fallback")
@@ -2501,11 +2521,12 @@ class ICTSignalEngine:
            - Search for: Bullish FVG, Bullish OB, or Support level
            - Zone must be < current_price * 0.995 (at least 0.5% below)
         
-        3. Distance constraints (SOFT - metadata only):
-           - Optimal range: 0.5% - 3.0% from current price
-           - Zones outside this range are marked with 'out_of_optimal_range' flag
-           - Confidence may be reduced by 20% if distance is out of range
-           - ⚠️ NO HARD REJECTION based on distance anymore
+        3. Distance constraints (UNIVERSAL 5% MAX):
+           - HARD REJECT: > 5% from current price (TOO_FAR - stale signal)
+           - Buffer zone: 3% - 5% from current price (VALID_WAIT - needs pullback)
+           - Optimal range: 0.5% - 3% from current price (VALID_NEAR - best entry)
+           - Very close: < 0.5% from current price (TOO_LATE - warning only)
+           - Universal 5% maximum applies to ALL timeframes (15m - 1w)
         
         4. Entry buffer: ±0.2% around zone boundaries
         
@@ -2526,23 +2547,19 @@ class ICTSignalEngine:
             }
             
             status codes:
-            - 'VALID_WAIT': Entry zone found, wait for pullback (distance > 1.5%)
-            - 'VALID_NEAR': Entry zone found, price approaching (0.5% - 1.5%)
-            - 'TOO_LATE': Price already passed the entry zone (hard reject)
+            - 'TOO_FAR': Entry zone too far (> 5% universal max - HARD REJECT)
+            - 'VALID_WAIT': Entry zone in buffer (3% - 5% - wait for pullback)
+            - 'VALID_NEAR': Entry zone in optimal range (0.5% - 3% - price approaching)
+            - 'TOO_LATE': Price already passed the entry zone (< 0.5% - warning only)
             - 'NO_ZONE': No valid entry zone found (converted to fallback in calling code)
         """
-        # ✅ FIX #4: RELAXED distance validation with ICT-friendly thresholds
-        min_distance_pct = 0.005  # 0.5% (unchanged)
-        
-        # Timeframe-based tolerance
-        if timeframe in ['15m', '30m', '1h', '2h']:
-            max_distance_pct = 0.050  # 5% for short-term
-        elif timeframe in ['4h', '6h', '8h', '12h']:
-            max_distance_pct = 0.075  # 7.5% for medium-term
-        else:
-            max_distance_pct = 0.100  # 10% for daily+
-        
-        entry_buffer_pct = 0.002  # 0.2%
+        # ✅ Universal entry distance limits for ALL timeframes (15m - 1w)
+        # Entry distance measures signal freshness, not trade duration
+        # A signal with 20% entry distance is equally stale on any timeframe
+        # Applies to both automatic signals (1h, 2h, 4h, 1d) and manual analysis (all TFs)
+        min_distance_pct = 0.005  # 0.5% minimum (unchanged)
+        max_distance_pct = 0.050  # 5% UNIVERSAL MAX (all timeframes)
+        entry_buffer_pct = 0.002  # 0.2% buffer (unchanged)
         
         valid_zones = []
         
@@ -2869,16 +2886,41 @@ class ICTSignalEngine:
         
         distance_pct = best_zone['distance_pct']
         
-        if distance_pct > 0.015:  # > 1.5%
+        # ✅ FIRST: Check against universal 5% max (reject stale signals)
+        if distance_pct > max_distance_pct:  # > 5%
+            status = 'TOO_FAR'
+            logger.error(
+                f"❌ Entry zone too far: {distance_pct*100:.1f}% > "
+                f"{max_distance_pct*100:.1f}% MAX - "
+                f"сигналът НЕ СЕ ИЗПРАЩА (stale signal, universal limit for all timeframes)"
+            )
+            return None, 'TOO_FAR'  # REJECT SIGNAL
+        
+        # ✅ Buffer zone (3% - 5%) - needs pullback
+        elif distance_pct > 0.030:  # 3% - 5%
             status = 'VALID_WAIT'
-            logger.info(f"✅ Entry zone found: {entry_zone['source']} at ${entry_zone['center']:.2f} ({entry_zone['distance_pct']:.1f}% away) - WAIT for pullback")
-        elif distance_pct >= 0.005:  # 0.5% - 1.5%
+            logger.info(
+                f"✅ Entry zone in buffer: {entry_zone['source']} at "
+                f"${entry_zone['center']:.2f} ({distance_pct*100:.1f}% away) - "
+                f"WAIT for pullback"
+            )
+        
+        # ✅ Optimal zone (0.5% - 3%) - best entry range
+        elif distance_pct >= 0.005:  # 0.5% - 3%
             status = 'VALID_NEAR'
-            logger.info(f"✅ Entry zone found: {entry_zone['source']} at ${entry_zone['center']:.2f} ({entry_zone['distance_pct']:.1f}% away) - Price APPROACHING")
-        else:
-            # Too close, should have been caught earlier but safety check
+            logger.info(
+                f"✅ Entry zone in optimal range: {entry_zone['source']} at "
+                f"${entry_zone['center']:.2f} ({distance_pct*100:.1f}% away) - "
+                f"Price APPROACHING"
+            )
+        
+        # ✅ Very close (< 0.5%) - may be too late but don't reject
+        else:  # < 0.5%
             status = 'TOO_LATE'
-            logger.warning(f"⚠️ Entry zone too close: {entry_zone['distance_pct']:.1f}%")
+            logger.warning(
+                f"⚠️ Entry zone very close: {distance_pct*100:.1f}% - "
+                f"may be too late for optimal entry"
+            )
         
         return entry_zone, status
 
