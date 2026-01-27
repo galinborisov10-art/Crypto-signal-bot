@@ -115,7 +115,7 @@ class TestEntryZoneLogic(unittest.TestCase):
         self.assertEqual(status, 'TOO_LATE', "Status should be TOO_LATE")
     
     def test_entry_zone_distance_limits(self):
-        """Test that entry zones respect 0.5% - 3.0% distance limits"""
+        """Test that entry zones respect universal 5% max distance limit"""
         # Test minimum distance (0.6% - slightly above 0.5% to pass > check)
         min_price = self.current_price * 1.006  # 0.6% above
         
@@ -141,8 +141,8 @@ class TestEntryZoneLogic(unittest.TestCase):
         self.assertGreaterEqual(entry_zone['distance_pct'], 0.5,
                                "Distance should be at least 0.5%")
         
-        # Test maximum distance (2.9% - slightly below 3.0%)
-        max_price = self.current_price * 1.029  # 2.9% above
+        # Test near maximum distance (4.8% - slightly below 5.0% universal max)
+        max_price = self.current_price * 1.048  # 4.8% above
         
         fvg_zones_max = [
             {
@@ -162,12 +162,13 @@ class TestEntryZoneLogic(unittest.TestCase):
             timeframe='1h'
         )
         
-        self.assertIsNotNone(entry_zone_max, "Entry zone at max distance should be found")
-        self.assertLessEqual(entry_zone_max['distance_pct'], 3.0,
-                            "Distance should be at most 3.0%")
+        self.assertIsNotNone(entry_zone_max, "Entry zone at near-max distance should be found")
+        self.assertLessEqual(entry_zone_max['distance_pct'], 5.0,
+                            "Distance should be less than 5% max")
+        self.assertEqual(status_max, 'VALID_WAIT', "Status should be VALID_WAIT in buffer zone (3%-5%)")
         
-        # Test beyond maximum distance (should be rejected)
-        too_far_price = self.current_price * 1.04  # 4% above (too far)
+        # Test beyond maximum distance (6% - should be rejected as TOO_FAR)
+        too_far_price = self.current_price * 1.06  # 6% above (too far)
         
         fvg_zones_far = [
             {
@@ -187,8 +188,8 @@ class TestEntryZoneLogic(unittest.TestCase):
             timeframe='1h'
         )
         
-        self.assertIsNone(entry_zone_far, "Entry zone beyond 3% should be rejected")
-        self.assertEqual(status_far, 'NO_ZONE', "Status should be NO_ZONE for too far zones")
+        self.assertIsNone(entry_zone_far, "Entry zone beyond 5% should be rejected")
+        self.assertEqual(status_far, 'TOO_FAR', "Status should be TOO_FAR for zones beyond 5%")
     
     def test_entry_zone_source_priority(self):
         """Test that FVG > OB > S/R priority is respected"""
@@ -236,8 +237,36 @@ class TestEntryZoneLogic(unittest.TestCase):
                         "Order Block should have priority due to higher quality")
     
     def test_valid_wait_status(self):
-        """Test VALID_WAIT status when distance > 1.5%"""
-        # Create FVG 2% above current price
+        """Test VALID_WAIT status in buffer zone (3% - 5%)"""
+        # Create FVG 4% above current price (buffer zone)
+        fvg_zones = [
+            {
+                'type': 'BEARISH_FVG',
+                'bottom': self.current_price * 1.04,  # 4% above
+                'top': self.current_price * 1.045,
+                'strength': 80
+            }
+        ]
+        
+        entry_zone, status = self.engine._calculate_ict_compliant_entry_zone(
+            current_price=self.current_price,
+            direction='BEARISH',
+            fvg_zones=fvg_zones,
+            order_blocks=[],
+            sr_levels={},
+            timeframe='1h'
+        )
+        
+        self.assertEqual(status, 'VALID_WAIT', 
+                        "Status should be VALID_WAIT in buffer zone (3%-5%)")
+        self.assertGreater(entry_zone['distance_pct'], 3.0,
+                          "Distance should be greater than 3%")
+        self.assertLessEqual(entry_zone['distance_pct'], 5.0,
+                            "Distance should be at most 5%")
+    
+    def test_valid_near_status(self):
+        """Test VALID_NEAR status in optimal zone (0.5% - 3%)"""
+        # Create FVG 2% above current price (optimal zone)
         fvg_zones = [
             {
                 'type': 'BEARISH_FVG',
@@ -256,38 +285,12 @@ class TestEntryZoneLogic(unittest.TestCase):
             timeframe='1h'
         )
         
-        self.assertEqual(status, 'VALID_WAIT', 
-                        "Status should be VALID_WAIT when distance > 1.5%")
-        self.assertGreater(entry_zone['distance_pct'], 1.5,
-                          "Distance should be greater than 1.5%")
-    
-    def test_valid_near_status(self):
-        """Test VALID_NEAR status when 0.5% < distance < 1.5%"""
-        # Create FVG 1% above current price
-        fvg_zones = [
-            {
-                'type': 'BEARISH_FVG',
-                'bottom': self.current_price * 1.01,  # 1% above
-                'top': self.current_price * 1.015,
-                'strength': 80
-            }
-        ]
-        
-        entry_zone, status = self.engine._calculate_ict_compliant_entry_zone(
-            current_price=self.current_price,
-            direction='BEARISH',
-            fvg_zones=fvg_zones,
-            order_blocks=[],
-            sr_levels={},
-            timeframe='1h'
-        )
-        
         self.assertEqual(status, 'VALID_NEAR',
-                        "Status should be VALID_NEAR when 0.5% < distance < 1.5%")
+                        "Status should be VALID_NEAR in optimal zone (0.5%-3%)")
         self.assertGreater(entry_zone['distance_pct'], 0.5,
                           "Distance should be greater than 0.5%")
-        self.assertLessEqual(entry_zone['distance_pct'], 1.5,
-                            "Distance should be at most 1.5%")
+        self.assertLessEqual(entry_zone['distance_pct'], 3.0,
+                            "Distance should be at most 3%")
     
     def test_no_zone_in_range(self):
         """Test NO_ZONE when no zones exist in acceptable range"""
@@ -329,6 +332,84 @@ class TestEntryZoneLogic(unittest.TestCase):
         self.assertEqual(entry_zone['source'], 'OB', "Source should be Order Block")
         self.assertGreater(entry_zone['center'], self.current_price,
                           "OB entry zone must be ABOVE current price for SELL")
+    
+    def test_too_far_rejection_universal(self):
+        """Test that TOO_FAR rejection (>5%) is universal across all timeframes"""
+        # Test case: XRPUSDT with 20.5% entry distance (real-world example)
+        far_price = self.current_price * 1.205  # 20.5% above
+        
+        fvg_zones = [
+            {
+                'type': 'BEARISH_FVG',
+                'bottom': far_price,
+                'top': far_price + 0.50,
+                'strength': 80
+            }
+        ]
+        
+        # Test on 1h timeframe
+        entry_zone_1h, status_1h = self.engine._calculate_ict_compliant_entry_zone(
+            current_price=self.current_price,
+            direction='BEARISH',
+            fvg_zones=fvg_zones,
+            order_blocks=[],
+            sr_levels={},
+            timeframe='1h'
+        )
+        
+        self.assertIsNone(entry_zone_1h, "20.5% entry should be rejected on 1h")
+        self.assertEqual(status_1h, 'TOO_FAR', "Status should be TOO_FAR on 1h")
+        
+        # Test on 4h timeframe (this previously passed with 7.5% limit - BUG!)
+        entry_zone_4h, status_4h = self.engine._calculate_ict_compliant_entry_zone(
+            current_price=self.current_price,
+            direction='BEARISH',
+            fvg_zones=fvg_zones,
+            order_blocks=[],
+            sr_levels={},
+            timeframe='4h'
+        )
+        
+        self.assertIsNone(entry_zone_4h, "20.5% entry should be rejected on 4h")
+        self.assertEqual(status_4h, 'TOO_FAR', "Status should be TOO_FAR on 4h")
+        
+        # Test on 1d timeframe (this previously passed with 10% limit - BUG!)
+        entry_zone_1d, status_1d = self.engine._calculate_ict_compliant_entry_zone(
+            current_price=self.current_price,
+            direction='BEARISH',
+            fvg_zones=fvg_zones,
+            order_blocks=[],
+            sr_levels={},
+            timeframe='1d'
+        )
+        
+        self.assertIsNone(entry_zone_1d, "20.5% entry should be rejected on 1d")
+        self.assertEqual(status_1d, 'TOO_FAR', "Status should be TOO_FAR on 1d")
+        
+        # Test edge case: exactly 6% (just above 5% limit)
+        edge_price = self.current_price * 1.06  # 6% above
+        
+        fvg_zones_edge = [
+            {
+                'type': 'BEARISH_FVG',
+                'bottom': edge_price,
+                'top': edge_price + 0.50,
+                'strength': 80
+            }
+        ]
+        
+        entry_zone_edge, status_edge = self.engine._calculate_ict_compliant_entry_zone(
+            current_price=self.current_price,
+            direction='BEARISH',
+            fvg_zones=fvg_zones_edge,
+            order_blocks=[],
+            sr_levels={},
+            timeframe='4h'
+        )
+        
+        self.assertIsNone(entry_zone_edge, "6% entry should be rejected (>5% max)")
+        self.assertEqual(status_edge, 'TOO_FAR', "Status should be TOO_FAR at 6%")
+
 
 
 class TestSignalTimingValidation(unittest.TestCase):
