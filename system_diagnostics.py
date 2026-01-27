@@ -78,8 +78,9 @@ def set_cached_result(cache_key: str, result: Any) -> None:
 
 async def grep_logs_cached(
     pattern: str, 
-    hours: int = 24, 
+    hours: int = 6,  # Match default from grep_logs
     base_path: str = None,
+    max_lines: int = DEFAULT_MAX_LOG_LINES,  # Support max_lines parameter
     force_refresh: bool = False
 ) -> List[str]:
     """
@@ -87,15 +88,16 @@ async def grep_logs_cached(
     
     Args:
         pattern: Regex pattern to search
-        hours: Hours of logs to search
+        hours: Hours of logs to search (default: 6, same as grep_logs)
         base_path: Base path for logs
+        max_lines: Maximum lines to read from end of file
         force_refresh: Force fresh grep (bypass cache)
         
     Returns:
         List of matching log lines
     """
-    # Generate cache key
-    cache_key = f"grep_{pattern}_{hours}_{base_path or 'default'}"
+    # Generate cache key (include max_lines for correct caching)
+    cache_key = f"grep_{pattern}_{hours}_{base_path or 'default'}_{max_lines}"
     
     # Check cache (unless force refresh)
     if not force_refresh:
@@ -105,7 +107,7 @@ async def grep_logs_cached(
     
     # Cache miss or force refresh - run grep
     logger.debug(f"🔄 Running fresh grep for pattern: {pattern}")
-    result = grep_logs(pattern, hours, base_path)
+    result = grep_logs(pattern, hours, base_path, max_lines)
     
     # Store in cache
     set_cached_result(cache_key, result)
