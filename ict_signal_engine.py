@@ -2528,6 +2528,7 @@ class ICTSignalEngine:
             status codes:
             - 'VALID_WAIT': Entry zone found, wait for pullback (distance > 1.5%)
             - 'VALID_NEAR': Entry zone found, price approaching (0.5% - 1.5%)
+            - 'TOO_FAR': Entry zone exceeds timeframe-based max distance (hard reject)
             - 'TOO_LATE': Price already passed the entry zone (hard reject)
             - 'NO_ZONE': No valid entry zone found (converted to fallback in calling code)
         """
@@ -2869,7 +2870,17 @@ class ICTSignalEngine:
         
         distance_pct = best_zone['distance_pct']
         
-        if distance_pct > 0.015:  # > 1.5%
+        # ✅ FIX: Check against max_distance_pct (not hardcoded 1.5%)
+        if distance_pct > max_distance_pct:
+            status = 'TOO_FAR'
+            logger.error(
+                f"❌ Entry zone too far: {distance_pct*100:.1f}% > "
+                f"{max_distance_pct*100:.1f}% (max for {timeframe}) - "
+                f"сигналът НЕ СЕ ИЗПРАЩА"
+            )
+            return None, 'TOO_FAR'  # ← REJECT SIGNAL!
+        
+        elif distance_pct > 0.015:  # > 1.5%
             status = 'VALID_WAIT'
             logger.info(f"✅ Entry zone found: {entry_zone['source']} at ${entry_zone['center']:.2f} ({entry_zone['distance_pct']:.1f}% away) - WAIT for pullback")
         elif distance_pct >= 0.005:  # 0.5% - 1.5%
