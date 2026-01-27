@@ -17810,13 +17810,21 @@ def main():
                 Background job: Refresh diagnostic cache every 5 minutes
                 Keeps cache warm so user commands respond instantly
                 
-                This job runs common diagnostic patterns in background,
-                ensuring cached results are always fresh when users click buttons.
+                CRITICAL: Also monitors cache size to detect memory leaks
                 """
                 try:
                     logger.info("🔄 Refreshing diagnostic cache (background)...")
                     
-                    from system_diagnostics import grep_logs_cached
+                    from system_diagnostics import grep_logs_cached, DIAGNOSTIC_CACHE, cleanup_expired_cache
+                    
+                    # Force cleanup and log cache state BEFORE refresh
+                    cache_size_before = len(DIAGNOSTIC_CACHE)
+                    cleanup_expired_cache()
+                    cache_size_after_cleanup = len(DIAGNOSTIC_CACHE)
+                    
+                    logger.info(f"📊 Cache state: {cache_size_before} entries → {cache_size_after_cleanup} after cleanup")
+                    
+                    base_path = os.path.dirname(os.path.abspath(__file__))
                     
                     # Pre-populate cache with common diagnostic patterns
                     patterns = [
@@ -17830,14 +17838,19 @@ def main():
                     # Run all patterns to warm cache
                     for pattern, hours in patterns:
                         try:
-                            await grep_logs_cached(pattern, hours, force_refresh=True)
+                            await grep_logs_cached(pattern, hours, base_path=base_path, force_refresh=True)
                         except Exception as e:
                             logger.warning(f"⚠️ Cache refresh failed for pattern '{pattern}': {e}")
                     
-                    logger.info("✅ Diagnostic cache refreshed successfully")
+                    cache_size_final = len(DIAGNOSTIC_CACHE)
+                    logger.info(f"✅ Diagnostic cache refreshed successfully ({cache_size_final} entries)")
+                    
+                    # Warn if cache is growing unbounded (memory leak detection)
+                    if cache_size_final > 20:
+                        logger.warning(f"⚠️ Cache size is large ({cache_size_final} entries) - potential memory leak!")
                     
                 except Exception as e:
-                    logger.error(f"❌ Diagnostic cache refresh error: {e}")
+                    logger.error(f"❌ Diagnostic cache refresh error: {e}", exc_info=True)
             
             scheduler.add_job(
                 diagnostic_cache_refresh_job,
