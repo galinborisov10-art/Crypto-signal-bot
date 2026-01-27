@@ -927,8 +927,8 @@ class ICTSignalEngine:
             logger.info(f"      • Source: {entry_zone.get('source', 'UNKNOWN')}")
             logger.info(f"      • Quality: {entry_zone.get('quality', 0)}")
         
-        # ✅ UPDATED: Only reject for TOO_LATE (timing issue), not NO_ZONE (distance issue)
-        # Validate entry zone timing
+        # ✅ UPDATED: Reject for TOO_LATE (timing issue) and TOO_FAR (distance exceeds timeframe limit)
+        # Validate entry zone timing and distance
         if entry_status == 'TOO_LATE':
             logger.info(f"❌ BLOCKED at Step 8: Entry zone validation failed (TOO_LATE)")
             logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 8, reason: Price already passed entry zone)")
@@ -941,6 +941,27 @@ class ICTSignalEngine:
                 timeframe=timeframe,
                 reason=f"Entry zone validation failed: {entry_status}",
                 details=f"Current price: ${current_price:.2f}. Price already passed the entry zone.",
+                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=None
+            )
+        
+        # ✅ NEW: Reject signals with entry zones too far (exceeds timeframe-based max distance)
+        if entry_status == 'TOO_FAR':
+            logger.info(f"❌ BLOCKED at Step 8: Entry zone too far from current price")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 8, reason: Entry distance exceeds timeframe limit)")
+            context = self._extract_context_data(df, bias)
+            # Calculate MTF consensus for detailed breakdown
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason=f"Entry zone validation failed: {entry_status}",
+                details=f"Entry zone too far from current price (exceeds timeframe-based maximum distance).",
                 mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
                 current_price=context['current_price'],
                 price_change_24h=context['price_change_24h'],
