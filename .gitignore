@@ -92,3 +92,7 @@ dist/
 coverage/
 .npm
 .eslintcache
+
+# Test files for premium signal config
+test_premium_signal_config.py
+test_file_validation.py
