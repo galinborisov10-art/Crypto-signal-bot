@@ -726,12 +726,29 @@ class ICTSignalEngine:
         """
         logger.info(f"🎯 Generating UNIFIED ICT signal for {symbol} on {timeframe}")
         
-        # Cache check
+        # Cache check with distance re-validation
         if self.cache_manager:
             try:
                 cached_signal = self.cache_manager.get_cached_signal(symbol, timeframe)
                 if cached_signal:
-                    return cached_signal
+                    # ✅ Re-validate entry distance against current price
+                    current_price = df['close'].iloc[-1]
+                    entry_price = cached_signal.entry_price
+                    distance_pct = abs(entry_price - current_price) / current_price
+                    
+                    if distance_pct > 0.05:  # 5% max (universal limit)
+                        logger.warning(
+                            f"⚠️ Cached signal entry too far: {distance_pct*100:.1f}% > 5.0% MAX "
+                            f"(entry: ${entry_price:.4f}, current: ${current_price:.4f}) "
+                            f"- invalidating cache and re-analyzing"
+                        )
+                        # Don't return cache, continue to full analysis below
+                    else:
+                        logger.info(
+                            f"✅ Using cached signal for {symbol} {timeframe} "
+                            f"(entry {distance_pct*100:.1f}% away - within limits)"
+                        )
+                        return cached_signal
             except Exception as e:
                 logger.warning(f"Cache error: {e}")
         
@@ -3067,7 +3084,7 @@ class ICTSignalEngine:
             sl_from_zone = zone_low - buffer
             sl_from_swing = recent_low - buffer
             
-            sl_price = min(sl_from_zone, sl_from_swing)
+            sl_price = max(sl_from_zone, sl_from_swing)  # ✅ Takes closest (highest for buy)
             
             # Ensure minimum distance (3% from entry for volatility protection)
             # ✅ BULLISH: SL MUST be BELOW entry
@@ -3091,7 +3108,7 @@ class ICTSignalEngine:
             sl_from_zone = zone_high + buffer
             sl_from_swing = recent_high + buffer
             
-            sl_price = max(sl_from_zone, sl_from_swing)
+            sl_price = min(sl_from_zone, sl_from_swing)  # ✅ Takes closest (lowest for sell)
             
             # ✅ REMOVED 1% CAP - Now using minimum 3% distance for volatility protection
             # Ensure minimum distance (3% from entry for volatility protection)
