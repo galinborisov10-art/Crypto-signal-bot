@@ -12,9 +12,10 @@ import re
 import logging
 import asyncio
 import unicodedata
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,91 @@ logger = logging.getLogger(__name__)
 MAX_LOG_FILE_SIZE_MB = 500  # Increased for production stability (crypto bot generates verbose logs)
 MAX_JOURNAL_FILE_SIZE_MB = 10  # Skip journal files larger than 10MB  
 DEFAULT_MAX_LOG_LINES = 1000  # Maximum lines to read from log file
+
+
+# ════════════════════════════════════════════════════════════════
+# DIAGNOSTIC RESULT CACHE (PR #4)
+# ════════════════════════════════════════════════════════════════
+
+# Global cache for diagnostic results
+DIAGNOSTIC_CACHE: Dict[str, Tuple[float, Any]] = {}
+CACHE_TTL = 300  # 5 minutes TTL (matches auto signal frequency)
+
+def get_cached_result(cache_key: str) -> Optional[Any]:
+    """
+    Get cached diagnostic result if still valid
+    
+    Args:
+        cache_key: Unique key for cached result
+        
+    Returns:
+        Cached result if valid, None if expired or missing
+    """
+    if cache_key not in DIAGNOSTIC_CACHE:
+        return None
+    
+    cached_time, cached_result = DIAGNOSTIC_CACHE[cache_key]
+    now = time.time()
+    
+    # Check if cache is still valid
+    if now - cached_time < CACHE_TTL:
+        age_seconds = now - cached_time
+        logger.debug(f"✅ Cache HIT for {cache_key} (age: {age_seconds:.1f}s)")
+        return cached_result
+    else:
+        # Cache expired
+        logger.debug(f"⏰ Cache EXPIRED for {cache_key}")
+        del DIAGNOSTIC_CACHE[cache_key]
+        return None
+
+def set_cached_result(cache_key: str, result: Any) -> None:
+    """
+    Store diagnostic result in cache
+    
+    Args:
+        cache_key: Unique key for result
+        result: Result to cache
+    """
+    DIAGNOSTIC_CACHE[cache_key] = (time.time(), result)
+    logger.debug(f"💾 Cache STORED for {cache_key}")
+
+async def grep_logs_cached(
+    pattern: str, 
+    hours: int = 6,  # Match default from grep_logs
+    base_path: str = None,
+    max_lines: int = DEFAULT_MAX_LOG_LINES,  # Support max_lines parameter
+    force_refresh: bool = False
+) -> List[str]:
+    """
+    Cached version of grep_logs - returns cached results if available
+    
+    Args:
+        pattern: Regex pattern to search
+        hours: Hours of logs to search (default: 6, same as grep_logs)
+        base_path: Base path for logs
+        max_lines: Maximum lines to read from end of file
+        force_refresh: Force fresh grep (bypass cache)
+        
+    Returns:
+        List of matching log lines
+    """
+    # Generate cache key (include max_lines for correct caching)
+    cache_key = f"grep_{pattern}_{hours}_{base_path or 'default'}_{max_lines}"
+    
+    # Check cache (unless force refresh)
+    if not force_refresh:
+        cached = get_cached_result(cache_key)
+        if cached is not None:
+            return cached
+    
+    # Cache miss or force refresh - run grep
+    logger.debug(f"🔄 Running fresh grep for pattern: {pattern}")
+    result = grep_logs(pattern, hours, base_path, max_lines)
+    
+    # Store in cache
+    set_cached_result(cache_key, result)
+    
+    return result
 
 
 # ==================== LOG PARSING UTILITIES ====================
@@ -233,7 +319,7 @@ async def diagnose_journal_issue(base_path: str = None) -> List[Dict[str, Any]]:
             
             if hours_lag > 6:
                 # ВАЖНО: Първо провери за Auto Signal crashes!
-                auto_signal_errors = grep_logs('Auto Signal.*raised an exception', hours=24, base_path=base_path)
+                auto_signal_errors = await grep_logs_cached('Auto Signal.*raised an exception', hours=24, base_path=base_path)
                 
                 if auto_signal_errors:
                     # Auto Signal jobs crash-ват!
@@ -249,7 +335,7 @@ async def diagnose_journal_issue(base_path: str = None) -> List[Dict[str, Any]]:
                     })
                 else:
                     # Няма crashes, но пак няма нови signals
-                    auto_signal_logs = grep_logs('auto_signal_job', hours=6, base_path=base_path)
+                    auto_signal_logs = await grep_logs_cached('auto_signal_job', hours=6, base_path=base_path)
                     
                     if not auto_signal_logs:
                         issues.append({
@@ -263,12 +349,12 @@ async def diagnose_journal_issue(base_path: str = None) -> List[Dict[str, Any]]:
                         })
                     else:
                         # Sub-check 3b: Signals generated but not logged?
-                        signal_complete_logs = grep_logs('ICT Signal COMPLETE', hours=6, base_path=base_path)
-                        journal_logged_logs = grep_logs('Trade.*logged', hours=6, base_path=base_path)
+                        signal_complete_logs = await grep_logs_cached('ICT Signal COMPLETE', hours=6, base_path=base_path)
+                        journal_logged_logs = await grep_logs_cached('Trade.*logged', hours=6, base_path=base_path)
                         
                         if signal_complete_logs and not journal_logged_logs:
                             # Signals generated but NOT logged - find error
-                            journal_errors = grep_logs('ERROR.*journal', hours=6, base_path=base_path)
+                            journal_errors = await grep_logs_cached('ERROR.*journal', hours=6, base_path=base_path)
                             
                             if journal_errors:
                                 # Found the error!
@@ -406,7 +492,7 @@ async def diagnose_ml_issue(base_path: str = None) -> List[Dict[str, Any]]:
             # Deep dive: WHY not trained?
             
             # Sub-check 2a: Weekly job running?
-            ml_training_logs = grep_logs('ml_auto_training_job', hours=7*24, base_path=base_path)
+            ml_training_logs = await grep_logs_cached('ml_auto_training_job', hours=7*24, base_path=base_path)
             
             if not ml_training_logs:
                 issues.append({
@@ -422,7 +508,7 @@ async def diagnose_ml_issue(base_path: str = None) -> List[Dict[str, Any]]:
                 })
             else:
                 # Sub-check 2b: Job ran but failed?
-                ml_errors = grep_logs('ERROR.*ml.*train', hours=7*24, base_path=base_path)
+                ml_errors = await grep_logs_cached('ERROR.*ml.*train', hours=7*24, base_path=base_path)
                 
                 if ml_errors:
                     latest_error = ml_errors[-1]
@@ -597,7 +683,7 @@ async def diagnose_position_monitor_issue(base_path: str = None) -> List[Dict[st
         base_path = os.path.dirname(os.path.abspath(__file__))
     
     # Check for position monitor errors in last hour
-    position_errors = grep_logs('ERROR.*position', hours=1, base_path=base_path)
+    position_errors = await grep_logs_cached('ERROR.*position', hours=1, base_path=base_path)
     
     if position_errors:
         issues.append({
@@ -631,7 +717,7 @@ async def diagnose_scheduler_issue(base_path: str = None) -> List[Dict[str, Any]
         base_path = os.path.dirname(os.path.abspath(__file__))
     
     # Check for scheduler errors
-    scheduler_errors = grep_logs('ERROR.*scheduler|ERROR.*APScheduler', hours=12, base_path=base_path)
+    scheduler_errors = await grep_logs_cached('ERROR.*scheduler|ERROR.*APScheduler', hours=12, base_path=base_path)
     
     if scheduler_errors:
         issues.append({
@@ -645,7 +731,7 @@ async def diagnose_scheduler_issue(base_path: str = None) -> List[Dict[str, Any]
         })
     
     # Check for missed jobs
-    misfire_logs = grep_logs('misfire', hours=12, base_path=base_path)
+    misfire_logs = await grep_logs_cached('misfire', hours=12, base_path=base_path)
     
     if misfire_logs:
         issues.append({
@@ -735,7 +821,7 @@ async def diagnose_real_time_monitor_issue(base_path: str = None) -> List[Dict[s
         base_path = os.path.dirname(os.path.abspath(__file__))
     
     # Check for asyncio scope errors in last 24 hours
-    asyncio_errors = grep_logs('cannot access free variable.*asyncio', hours=24, base_path=base_path)
+    asyncio_errors = await grep_logs_cached('cannot access free variable.*asyncio', hours=24, base_path=base_path)
     
     if asyncio_errors:
         latest_error = asyncio_errors[-1]
@@ -754,15 +840,15 @@ async def diagnose_real_time_monitor_issue(base_path: str = None) -> List[Dict[s
         })
     
     # Check if monitor is actually running
-    monitor_start_logs = grep_logs('Real-time Position Monitor STARTED', hours=24, base_path=base_path)
+    monitor_start_logs = await grep_logs_cached('Real-time Position Monitor STARTED', hours=24, base_path=base_path)
     
     if not monitor_start_logs:
         # Check if it was supposed to start
-        ict_available_logs = grep_logs('ICT_SIGNAL_ENGINE_AVAILABLE', hours=24, base_path=base_path)
+        ict_available_logs = await grep_logs_cached('ICT_SIGNAL_ENGINE_AVAILABLE', hours=24, base_path=base_path)
         
         if ict_available_logs:
             # Engine available but monitor not started
-            monitor_errors = grep_logs('Failed to start real-time monitor', hours=24, base_path=base_path)
+            monitor_errors = await grep_logs_cached('Failed to start real-time monitor', hours=24, base_path=base_path)
             
             if monitor_errors and not asyncio_errors:
                 # Different error than asyncio
@@ -778,7 +864,7 @@ async def diagnose_real_time_monitor_issue(base_path: str = None) -> List[Dict[s
                 })
     
     # Check for monitoring errors during runtime
-    runtime_errors = grep_logs('ERROR.*real.?time.*monitor', hours=6, base_path=base_path)
+    runtime_errors = await grep_logs_cached('ERROR.*real.?time.*monitor', hours=6, base_path=base_path)
     
     if runtime_errors and len(runtime_errors) > 3:
         issues.append({

@@ -17802,6 +17802,54 @@ def main():
                 minute=0
             )
             
+            # 🔄 DIAGNOSTIC CACHE REFRESH JOB (PR #4 - Performance Optimization)
+            # Background job to keep diagnostic cache warm for instant button responses
+            @safe_job("diagnostic_cache_refresh", max_retries=2, retry_delay=30)
+            async def diagnostic_cache_refresh_job():
+                """
+                Background job: Refresh diagnostic cache every 5 minutes
+                Keeps cache warm so user commands respond instantly
+                
+                This job runs common diagnostic patterns in background,
+                ensuring cached results are always fresh when users click buttons.
+                """
+                try:
+                    logger.info("🔄 Refreshing diagnostic cache (background)...")
+                    
+                    from system_diagnostics import grep_logs_cached
+                    
+                    # Pre-populate cache with common diagnostic patterns
+                    patterns = [
+                        ('ERROR.*journal', 6),           # Journal errors (6h)
+                        ('ERROR.*ml.*train', 168),       # ML errors (7 days)
+                        ('ERROR.*position', 1),          # Position errors (1h)
+                        ('ERROR.*scheduler|ERROR.*APScheduler', 12),  # Scheduler errors (12h)
+                        ('ERROR.*real.?time.*monitor', 6)  # Real-time monitor errors (6h)
+                    ]
+                    
+                    # Run all patterns to warm cache
+                    for pattern, hours in patterns:
+                        try:
+                            await grep_logs_cached(pattern, hours, force_refresh=True)
+                        except Exception as e:
+                            logger.warning(f"⚠️ Cache refresh failed for pattern '{pattern}': {e}")
+                    
+                    logger.info("✅ Diagnostic cache refreshed successfully")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Diagnostic cache refresh error: {e}")
+            
+            scheduler.add_job(
+                diagnostic_cache_refresh_job,
+                'interval',
+                minutes=5,
+                id='diagnostic_cache_refresh',
+                name='Diagnostic Cache Refresh (Background)',
+                max_instances=1,
+                coalesce=True
+            )
+            logger.info("✅ Diagnostic cache refresh job registered (every 5 min)")
+            
             # Автоматични новини 3 пъти дневно: 08:00, 14:00, 20:00 UTC
             scheduler.add_job(
                 lambda: asyncio.create_task(send_auto_news(application.bot)),
