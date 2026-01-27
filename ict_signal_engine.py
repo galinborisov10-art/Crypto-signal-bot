@@ -740,11 +740,12 @@ class ICTSignalEngine:
                             f"⚠️ Invalid current price: ${current_price:.4f} - "
                             f"invalidating cache and re-analyzing"
                         )
+                        # Don't return cache, continue to full analysis below
                     else:
                         entry_price = cached_signal.entry_price
                         distance_pct = abs(entry_price - current_price) / current_price
                         
-                        MAX_ENTRY_DISTANCE_PCT = 0.05  # 5% max (universal limit)
+                        MAX_ENTRY_DISTANCE_PCT = 0.05  # 5% max (universal limit, consistent with line 2578)
                         if distance_pct > MAX_ENTRY_DISTANCE_PCT:
                             logger.warning(
                                 f"⚠️ Cached signal entry too far: {distance_pct*100:.1f}% > 5.0% MAX "
@@ -3093,7 +3094,7 @@ class ICTSignalEngine:
             sl_from_zone = zone_low - buffer
             sl_from_swing = recent_low - buffer
             
-            sl_price = max(sl_from_zone, sl_from_swing)  # ✅ Takes closest (highest for buy)
+            sl_price = max(sl_from_zone, sl_from_swing)  # ✅ Takes highest (closest to entry for buy orders)
             
             # Ensure minimum distance (3% from entry for volatility protection)
             # ✅ BULLISH: SL MUST be BELOW entry
@@ -3117,7 +3118,7 @@ class ICTSignalEngine:
             sl_from_zone = zone_high + buffer
             sl_from_swing = recent_high + buffer
             
-            sl_price = min(sl_from_zone, sl_from_swing)  # ✅ Takes closest (lowest for sell)
+            sl_price = min(sl_from_zone, sl_from_swing)  # ✅ Takes lowest (closest to entry for sell orders)
             
             # ✅ REMOVED 1% CAP - Now using minimum 3% distance for volatility protection
             # Ensure minimum distance (3% from entry for volatility protection)
