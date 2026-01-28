@@ -100,3 +100,7 @@ coverage/
 # Test files for premium signal config
 test_premium_signal_config.py
 test_file_validation.py
+
+# Temporary test files for logging fix
+test_logging_fix.py
+test_no_duplicate_logging.py

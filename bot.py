@@ -257,13 +257,8 @@ except ImportError as e:
     print(f"⚠️ ML Predictor not available: {e}")
 
 # ================= LOGGING SETUP (EARLY) =================
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
+# Logging already configured at line 35 with RotatingFileHandler at line 72
+# No need for duplicate basicConfig() call to avoid double logging
 
 
 # ICT Enhancement Layer
