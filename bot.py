@@ -57,14 +57,22 @@ else:
     BASE_PATH = os.path.dirname(os.path.abspath(__file__))
     logger.info(f"📂 BASE_PATH fallback (current dir): {BASE_PATH}")
 
-# Add file handler for logging (PR #10 - Health Monitoring)
+# Add rotating file handler for logging (prevents memory leak from unbounded growth)
 try:
-    file_handler = logging.FileHandler(f'{BASE_PATH}/bot.log', encoding='utf-8')
+    from logging.handlers import RotatingFileHandler
+    
+    # Rotate at 50MB, keep 3 backups (max 200MB total)
+    file_handler = RotatingFileHandler(
+        f'{BASE_PATH}/bot.log',
+        maxBytes=50 * 1024 * 1024,  # 50 MB
+        backupCount=3,  # Keep 3 old files (bot.log.1, bot.log.2, bot.log.3)
+        encoding='utf-8'
+    )
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logging.getLogger().addHandler(file_handler)
-    logger.info(f"📝 Logging to file: {BASE_PATH}/bot.log")
+    logger.info(f"📝 Rotating file logging enabled: {BASE_PATH}/bot.log (max 50MB, 3 backups)")
 except Exception as e:
-    logger.warning(f"⚠️ Could not setup file logging: {e}")
+    logger.warning(f"⚠️ Could not setup rotating file logging: {e}")
 
 
 # Админ модул
