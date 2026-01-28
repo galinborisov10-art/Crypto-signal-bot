@@ -129,6 +129,10 @@ class UnifiedTradeManager:
         # Store current position for news assessment
         self.current_position = None
         
+        # News deduplication tracking
+        self._sent_news_alerts = {}  # {symbol: {news_id: timestamp}}
+        self._news_cooldown = 3600  # 1 hour cooldown per symbol
+        
         logger.info("✅ UnifiedTradeManager initialized")
         logger.info(f"   → PositionManager: {'Available' if self.position_manager else 'Not Available'}")
         logger.info(f"   → ReanalysisEngine: {'Available' if self.reanalysis_engine else 'Not Available'}")
@@ -416,13 +420,19 @@ class UnifiedTradeManager:
     async def _check_news(self, symbol: str) -> Optional[Dict]:
         """
         Check for recent news using existing breaking_news_monitor system
-        Integrates with FundamentalHelper and analyze_news_impact
+        With deduplication to prevent spam
+        
+        NOTE: This method returns sentiment data only (no raw headlines).
+        Raw news is already sent by breaking_news_monitor system.
         
         Args:
             symbol: Trading symbol
             
         Returns:
-            News data dictionary with priority and impact assessment or None
+            Sentiment data dictionary (label, impact, score) or None if:
+            - No sentiment detected
+            - Sentiment is neutral
+            - News already sent within cooldown period (1 hour)
         """
         try:
             if not self.fundamentals:
@@ -447,38 +457,83 @@ class UnifiedTradeManager:
             label = sentiment.get('label', '').upper()  # POSITIVE/NEGATIVE/NEUTRAL/BEARISH/BULLISH
             top_news = sentiment.get('top_news', [])
             
-            # Map labels to priority
-            priority = 'moderate'
-            if 'CRITICAL' in label:
-                priority = 'critical'
-            elif any(word in label for word in ['STRONG_BEARISH', 'STRONG_BULLISH']):
-                priority = 'critical'
-            elif 'BEARISH' in label or 'BULLISH' in label:
-                priority = 'important'
-            elif 'POSITIVE' in label or 'NEGATIVE' in label:
-                priority = 'important'
+            # Skip if neutral or no sentiment
+            if not label or label == 'NEUTRAL':
+                return None
+            
+            # Create news_id for deduplication using hash for reliability
+            news_id = ''
+            if top_news and len(top_news) > 0:
+                # Use hash of full headline for reliable deduplication
+                import hashlib
+                headline = top_news[0].get('title', '')
+                news_id = hashlib.md5(headline.encode()).hexdigest()
             else:
-                priority = 'low'
+                news_id = label  # Fallback to sentiment label
             
-            # Assess impact on current position
-            impact_assessment = ''
-            if self.current_position:
-                impact_assessment = self._assess_news_vs_position(
-                    sentiment, label, self.current_position
-                )
+            # Clean up old entries (prevent memory leak)
+            now = datetime.now()
+            self._cleanup_old_news_entries(now)
             
+            # Check deduplication
+            if symbol in self._sent_news_alerts:
+                if news_id in self._sent_news_alerts[symbol]:
+                    last_sent = self._sent_news_alerts[symbol][news_id]
+                    elapsed = (now - last_sent).total_seconds()
+                    
+                    if elapsed < self._news_cooldown:
+                        logger.debug(f"News already sent for {symbol} ({elapsed:.0f}s ago, cooldown: {self._news_cooldown}s)")
+                        return None  # Skip duplicate
+            
+            # Track this news as sent
+            if symbol not in self._sent_news_alerts:
+                self._sent_news_alerts[symbol] = {}
+            self._sent_news_alerts[symbol][news_id] = now
+            
+            # Map labels to impact
+            impact = 'MEDIUM'
+            if 'CRITICAL' in label or 'STRONG' in label:
+                impact = 'HIGH'
+            
+            logger.info(f"📰 News context added for {symbol}: {label}")
+            
+            # Return sentiment data (NOT the raw news)
             return {
-                'headline': top_news[0] if top_news else 'Market moving news',
-                'priority': priority,
-                'sentiment_label': label,
-                'impact_assessment': impact_assessment,
-                'source': 'fundamental_helper',
-                'top_news': top_news
+                'label': label,
+                'impact': impact,
+                'score': sentiment.get('score', 0),
+                # Do NOT include raw news headlines
             }
             
         except Exception as e:
             logger.error(f"❌ News check failed: {e}")
             return None
+    
+    def _cleanup_old_news_entries(self, current_time: datetime) -> None:
+        """
+        Remove news entries older than cooldown period to prevent memory leak
+        
+        Args:
+            current_time: Current datetime for comparison
+        """
+        try:
+            symbols_to_clean = list(self._sent_news_alerts.keys())
+            for symbol in symbols_to_clean:
+                news_ids_to_clean = list(self._sent_news_alerts[symbol].keys())
+                for news_id in news_ids_to_clean:
+                    last_sent = self._sent_news_alerts[symbol][news_id]
+                    elapsed = (current_time - last_sent).total_seconds()
+                    
+                    # Remove entries older than cooldown period
+                    if elapsed > self._news_cooldown:
+                        del self._sent_news_alerts[symbol][news_id]
+                
+                # Remove empty symbol entries
+                if not self._sent_news_alerts[symbol]:
+                    del self._sent_news_alerts[symbol]
+        
+        except Exception as e:
+            logger.warning(f"News cleanup error: {e}")
     
     def _assess_news_vs_position(
         self,
@@ -643,12 +698,12 @@ class UnifiedTradeManager:
         progress: float
     ) -> str:
         """
-        Generate Bulgarian narrative for checkpoint (legacy format)
+        Format checkpoint alert in Bulgarian with clear signal identification
         
         Args:
             position: Position dictionary
             analysis: CheckpointAnalysis object
-            news: News data
+            news: News data (sentiment only, no headlines)
             checkpoint: Checkpoint level
             progress: Current progress percentage
             
@@ -659,53 +714,80 @@ class UnifiedTradeManager:
             return self._format_fallback_alert(position, checkpoint, progress)
         
         try:
+            # Extract position details for SIGNAL IDENTIFICATION
+            symbol = position.get('symbol', 'N/A')
+            timeframe = position.get('timeframe', 'N/A')
+            entry_price = position.get('entry_price', 0)
+            position_type = position.get('signal_type', 'N/A')
+            timestamp = position.get('timestamp', 'N/A')
+            
+            # Format timestamp safely
+            if timestamp and isinstance(timestamp, str) and len(timestamp) > 16:
+                formatted_timestamp = timestamp[:16]
+            else:
+                formatted_timestamp = str(timestamp) if timestamp else 'N/A'
+            
+            # Current price and profit
+            current_price = getattr(analysis, 'current_price', entry_price)
+            profit_pct = self._calculate_profit_pct(position, current_price)
+            
             # Determine recommendation
             confidence_delta = getattr(analysis, 'confidence_delta', 0)
             
-            # Basic decision logic
-            if confidence_delta < -15:
-                action = "ЗАТВОРИ СЕГА"
-                emoji = "🔴"
-            elif confidence_delta < -10:
-                action = "ЗАТВОРИ 40-50%"
-                emoji = "🟡"
+            if confidence_delta > -10:
+                recommendation = "HOLD 💎"
+            elif confidence_delta > -15:
+                recommendation = "PARTIAL CLOSE 🟡 (40-50%)"
             else:
-                action = "ЗАДРЪЖ"
-                emoji = "💎"
+                recommendation = "CLOSE NOW 🔴"
             
-            # Format news section
-            news_section = ""
-            if news and news.get('top_news'):
-                top_news = news.get('top_news', [])
-                if top_news:
-                    news_section = f"\n📰 НОВИНИ: {top_news[0]}"
-            
-            # Get HTF bias info
-            htf_bias = getattr(analysis, 'htf_bias', 'UNKNOWN')
-            htf_changed = getattr(analysis, 'htf_bias_changed', False)
+            # Get analysis details
             original_confidence = getattr(analysis, 'original_confidence', 0)
             current_confidence = getattr(analysis, 'current_confidence', 0)
-            structure_broken = getattr(analysis, 'structure_broken', False)
-            valid_components = getattr(analysis, 'valid_components_count', 0)
-            current_rr = getattr(analysis, 'current_rr_ratio', 0)
             
-            # Build message
-            message = f"""
-{emoji} {checkpoint}% CHECKPOINT
+            # Build alert message with clear signal identification
+            alert = f"""🎯 CHECKPOINT ALERT - {checkpoint}% TO TP
 
-📊 {position['symbol']} АНАЛИЗ:
-• Confidence: {original_confidence:.0f}% → {current_confidence:.0f}% (Δ{confidence_delta:+.0f}%)
-• Структура: {'Валидна ✅' if not structure_broken else 'Счупена ❌'}
-• HTF Bias: {htf_bias} {'⚠️ ПРОМЕНЕН' if htf_changed else '✅'}
-• Valid компоненти: {valid_components}
-• R:R: {current_rr:.1f}:1
-{news_section}
+━━━━━━━━━━━━━━━━━━━━━━━━
+📊 SIGNAL DETAILS:
+Symbol: {symbol}
+Timeframe: {timeframe}
+Entry: ${entry_price:.4f}
+Position Type: {position_type}
+Opened: {formatted_timestamp}
 
-{emoji} ПРЕПОРЪКА: {action}
+━━━━━━━━━━━━━━━━━━━━━━━━
+📈 CURRENT STATUS:
+Progress to TP: {progress:.1f}%
+Current Price: ${current_price:.4f}
+Current Profit: {profit_pct:+.2f}%
 
-💡 Progress: {progress:.1f}% към TP1
+━━━━━━━━━━━━━━━━━━━━━━━━
+🔄 ICT RE-ANALYSIS:
+Recommendation: {recommendation}
+New Confidence: {current_confidence:.1f}%
+
+Reasoning:
 """
-            return message
+            
+            # Add reasoning
+            reasoning = getattr(analysis, 'reasoning', [])
+            if reasoning:
+                for line in reasoning:
+                    alert += f"{line}\n"
+            else:
+                alert += "✅ ICT analysis supports current position\n"
+            
+            # Add news context if exists (NARRATIVE ONLY, NO HEADLINES)
+            if news:
+                alert += "\n"
+                alert += self._format_news_narrative(
+                    sentiment_label=news.get('label', 'NEUTRAL'),
+                    impact=news.get('impact', 'LOW'),
+                    position_type=position_type
+                )
+            
+            return alert
             
         except Exception as e:
             logger.error(f"❌ Alert formatting error: {e}")
@@ -733,6 +815,102 @@ Progress: {progress:.1f}% към TP1
 
 Позицията се развива. Следващ checkpoint @ {next_checkpoint}
 """
+    
+    def _calculate_profit_pct(self, position: Dict, current_price: float) -> float:
+        """
+        Calculate current profit percentage
+        
+        Args:
+            position: Position dictionary with entry_price and signal_type
+            current_price: Current market price
+            
+        Returns:
+            Profit percentage (positive for profit, negative for loss)
+        """
+        try:
+            entry_price = position.get('entry_price', 0)
+            signal_type = position.get('signal_type', 'BUY')
+            
+            if entry_price == 0:
+                return 0.0
+            
+            if signal_type in ['BUY', 'STRONG_BUY']:
+                # LONG position: profit when price goes up
+                profit_pct = ((current_price - entry_price) / entry_price) * 100
+            else:
+                # SHORT position: profit when price goes down
+                profit_pct = ((entry_price - current_price) / entry_price) * 100
+            
+            return profit_pct
+            
+        except Exception as e:
+            logger.error(f"Error calculating profit: {e}")
+            return 0.0
+    
+    def _format_news_narrative(
+        self,
+        sentiment_label: str,
+        impact: str,
+        position_type: str
+    ) -> str:
+        """
+        Generate Bulgarian narrative from news sentiment (NO raw headlines!)
+        
+        Args:
+            sentiment_label: BULLISH/BEARISH/NEUTRAL
+            impact: LOW/MEDIUM/HIGH
+            position_type: BUY/SELL/STRONG_BUY/STRONG_SELL
+        
+        Returns:
+            Formatted Bulgarian narrative text
+        """
+        
+        is_long = position_type in ['BUY', 'STRONG_BUY']
+        
+        narrative = "━━━━━━━━━━━━━━━━━━━━━━━━\n📰 NEWS CONTEXT:\n"
+        
+        # Case 1: News contradicts position
+        if is_long and 'BEARISH' in sentiment_label:
+            narrative += (
+                "⚠️ Засечен bearish sentiment в пазара\n"
+                "⚠️ Противоречи на LONG позицията\n\n"
+                "💡 Моята позиция като swing trader:\n"
+                "• Затварям 20-30% за risk reduction\n"
+                "• Остатък оставам, НО с tight monitoring\n"
+                "• Watch closely: Price reaction в следващите 30-60 min\n"
+            )
+        
+        elif not is_long and 'BULLISH' in sentiment_label:
+            narrative += (
+                "⚠️ Засечен bullish sentiment в пазара\n"
+                "⚠️ Противоречи на SHORT позицията\n\n"
+                "💡 Моята позиция като swing trader:\n"
+                "• Затварям 20-30% за risk reduction\n"
+                "• Остатък оставам, НО с tight monitoring\n"
+                "• Watch closely: Price reaction в следващите 30-60 min\n"
+            )
+        
+        # Case 2: Neutral or mixed news
+        elif 'NEUTRAL' in sentiment_label or impact == 'MEDIUM':
+            narrative += (
+                "📰 News sentiment е неутрален или смесен\n\n"
+                "💡 Моята позиция като swing trader:\n"
+                "• Новината може да създаде volatility, но не е clear contradiction\n"
+                "• Затварям малка част (10-15%) preventive\n"
+                "• Остатък оставам по план\n"
+            )
+        
+        # Case 3: News supports position
+        else:
+            narrative += (
+                "✅ News sentiment supports текущата позиция\n\n"
+                "💡 Моята позиция като swing trader:\n"
+                "• Sentiment alignment добавя confidence\n"
+                "• Продължавам по план към следващ TP\n"
+                "• Monitor за continuation\n"
+            )
+        
+        return narrative
     
     async def _send_checkpoint_alert(self, user_id: int, message: str) -> None:
         """
