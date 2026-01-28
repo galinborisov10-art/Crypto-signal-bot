@@ -422,11 +422,17 @@ class UnifiedTradeManager:
         Check for recent news using existing breaking_news_monitor system
         With deduplication to prevent spam
         
+        NOTE: This method returns sentiment data only (no raw headlines).
+        Raw news is already sent by breaking_news_monitor system.
+        
         Args:
             symbol: Trading symbol
             
         Returns:
-            Sentiment data dictionary (NOT raw news) or None
+            Sentiment data dictionary (label, impact, score) or None if:
+            - No sentiment detected
+            - Sentiment is neutral
+            - News already sent within cooldown period (1 hour)
         """
         try:
             if not self.fundamentals:
@@ -455,15 +461,21 @@ class UnifiedTradeManager:
             if not label or label == 'NEUTRAL':
                 return None
             
-            # Create news_id for deduplication (use first headline or label)
+            # Create news_id for deduplication using hash for reliability
             news_id = ''
             if top_news and len(top_news) > 0:
-                news_id = top_news[0].get('title', '')[:50]  # First 50 chars of headline
+                # Use hash of full headline for reliable deduplication
+                import hashlib
+                headline = top_news[0].get('title', '')
+                news_id = hashlib.md5(headline.encode()).hexdigest()
             else:
                 news_id = label  # Fallback to sentiment label
             
-            # Check deduplication
+            # Clean up old entries (prevent memory leak)
             now = datetime.now()
+            self._cleanup_old_news_entries(now)
+            
+            # Check deduplication
             if symbol in self._sent_news_alerts:
                 if news_id in self._sent_news_alerts[symbol]:
                     last_sent = self._sent_news_alerts[symbol][news_id]
@@ -482,8 +494,6 @@ class UnifiedTradeManager:
             impact = 'MEDIUM'
             if 'CRITICAL' in label or 'STRONG' in label:
                 impact = 'HIGH'
-            elif 'NEUTRAL' in label:
-                impact = 'LOW'
             
             logger.info(f"📰 News context added for {symbol}: {label}")
             
@@ -498,6 +508,32 @@ class UnifiedTradeManager:
         except Exception as e:
             logger.error(f"❌ News check failed: {e}")
             return None
+    
+    def _cleanup_old_news_entries(self, current_time: datetime) -> None:
+        """
+        Remove news entries older than cooldown period to prevent memory leak
+        
+        Args:
+            current_time: Current datetime for comparison
+        """
+        try:
+            symbols_to_clean = list(self._sent_news_alerts.keys())
+            for symbol in symbols_to_clean:
+                news_ids_to_clean = list(self._sent_news_alerts[symbol].keys())
+                for news_id in news_ids_to_clean:
+                    last_sent = self._sent_news_alerts[symbol][news_id]
+                    elapsed = (current_time - last_sent).total_seconds()
+                    
+                    # Remove entries older than cooldown period
+                    if elapsed > self._news_cooldown:
+                        del self._sent_news_alerts[symbol][news_id]
+                
+                # Remove empty symbol entries
+                if not self._sent_news_alerts[symbol]:
+                    del self._sent_news_alerts[symbol]
+        
+        except Exception as e:
+            logger.warning(f"News cleanup error: {e}")
     
     def _assess_news_vs_position(
         self,
@@ -685,6 +721,12 @@ class UnifiedTradeManager:
             position_type = position.get('signal_type', 'N/A')
             timestamp = position.get('timestamp', 'N/A')
             
+            # Format timestamp safely
+            if timestamp and isinstance(timestamp, str) and len(timestamp) > 16:
+                formatted_timestamp = timestamp[:16]
+            else:
+                formatted_timestamp = str(timestamp) if timestamp else 'N/A'
+            
             # Current price and profit
             current_price = getattr(analysis, 'current_price', entry_price)
             profit_pct = self._calculate_profit_pct(position, current_price)
@@ -712,7 +754,7 @@ Symbol: {symbol}
 Timeframe: {timeframe}
 Entry: ${entry_price:.4f}
 Position Type: {position_type}
-Opened: {timestamp[:16] if len(str(timestamp)) > 16 else timestamp}
+Opened: {formatted_timestamp}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 📈 CURRENT STATUS:
