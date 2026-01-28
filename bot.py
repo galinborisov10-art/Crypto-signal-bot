@@ -11972,7 +11972,34 @@ async def monitor_positions_job(bot_instance):
             logger.debug("📊 Checkpoint monitoring disabled, skipping")
             return
         
-
+        # Initialize UnifiedTradeManager
+        try:
+            from unified_trade_manager import UnifiedTradeManager
+            
+            manager = UnifiedTradeManager(bot_instance=bot_instance)
+            positions = position_manager_global.get_open_positions()
+            
+            if not positions:
+                logger.debug("📊 No open positions to monitor")
+                return
+            
+            logger.info(f"📊 Monitoring {len(positions)} open position(s)")
+            
+            # Monitor each position
+            for pos in positions:
+                try:
+                    await manager.monitor_live_trade(pos)
+                except Exception as e:
+                    logger.error(f"❌ Monitor failed for {pos.get('symbol', 'UNKNOWN')}: {e}")
+                    pass  # Continue monitoring other positions
+            
+        except ImportError as e:
+            logger.error(f"❌ Could not import UnifiedTradeManager: {e}")
+            logger.warning("⚠️ Falling back to legacy monitoring (limited functionality)")
+            # Fallback to basic monitoring without re-analysis
+            positions = position_manager_global.get_open_positions()
+            if positions:
+                logger.info(f"📊 Legacy monitoring for {len(positions)} position(s)")
         
     except Exception as e:
         logger.error(f"❌ Position monitor job error: {e}")
