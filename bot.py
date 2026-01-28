@@ -57,14 +57,22 @@ else:
     BASE_PATH = os.path.dirname(os.path.abspath(__file__))
     logger.info(f"📂 BASE_PATH fallback (current dir): {BASE_PATH}")
 
-# Add file handler for logging (PR #10 - Health Monitoring)
+# Add rotating file handler for logging (prevents memory leak from unbounded growth)
 try:
-    file_handler = logging.FileHandler(f'{BASE_PATH}/bot.log', encoding='utf-8')
+    from logging.handlers import RotatingFileHandler
+    
+    # Rotate at 50MB, keep 3 backups (max 200MB total)
+    file_handler = RotatingFileHandler(
+        f'{BASE_PATH}/bot.log',
+        maxBytes=50 * 1024 * 1024,  # 50 MB
+        backupCount=3,  # Keep 3 old files (bot.log.1, bot.log.2, bot.log.3)
+        encoding='utf-8'
+    )
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logging.getLogger().addHandler(file_handler)
-    logger.info(f"📝 Logging to file: {BASE_PATH}/bot.log")
+    logger.info(f"📝 Rotating file logging enabled: {BASE_PATH}/bot.log (max 50MB, 3 backups)")
 except Exception as e:
-    logger.warning(f"⚠️ Could not setup file logging: {e}")
+    logger.warning(f"⚠️ Could not setup rotating file logging: {e}")
 
 
 # Админ модул
@@ -4212,7 +4220,10 @@ def fetch_mtf_data(symbol: str, timeframe: str, primary_df: pd.DataFrame) -> dic
         Dictionary with timeframes as keys and DataFrames as values
     """
     mtf_data = {}
-    mtf_timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d', '3d', '1w']
+    mtf_timeframes = ['5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
+    # ❌ Removed noisy/non-standard timeframes:
+    # - 1m, 3m (too noisy for consensus)
+    # - 6h, 12h, 3d (non-standard, redundant between 4h/1d and 1d/1w)
     
     for mtf_tf in mtf_timeframes:
         if mtf_tf == timeframe:  # Skip duplicate fetch
@@ -7969,7 +7980,8 @@ async def market_full_report(update: Update, context: ContextTypes.DEFAULT_TYPE)
                         df=df,
                         symbol=symbol,
                         timeframe=timeframe,
-                        mtf_data=mtf_data
+                        mtf_data=mtf_data,
+                        is_auto=False  # ← Mark as manual signal
                     )
                     
                     # Add ICT insights to message
@@ -8310,7 +8322,8 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 df=df,
                 symbol=symbol,
                 timeframe=timeframe,
-                mtf_data=mtf_data  # ✅ FIXED: Now passing MTF data!
+                mtf_data=mtf_data,  # ✅ FIXED: Now passing MTF data!
+                is_auto=False  # ← Mark as manual signal
             )
             
             # Check for NO_TRADE or None
@@ -8668,7 +8681,8 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             df=df,
             symbol=symbol,
             timeframe=timeframe,
-            mtf_data=mtf_data  # ✅ FIXED: Using stored variable to avoid duplicate call
+            mtf_data=mtf_data,  # ✅ FIXED: Using stored variable to avoid duplicate call
+            is_auto=False  # ← Mark as manual signal
         )
         
         # Check if result is a "NO_TRADE" message (Dict) or a signal (ICTSignal object)
@@ -11093,7 +11107,8 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                 df=df,
                 symbol=symbol,
                 timeframe=timeframe,
-                mtf_data=mtf_data
+                mtf_data=mtf_data,
+                is_auto=False  # ← Mark as manual signal (alert-based)
             )
             
             # Handle NO_TRADE
@@ -11303,6 +11318,13 @@ async def auto_signal_job(timeframe: str, bot_instance):
         bot_instance: Telegram bot instance for sending messages
     """
     try:
+        # ✅ AUTO TIMEFRAME FILTER (only 1h, 2h, 4h, 1d)
+        ALLOWED_AUTO_TIMEFRAMES = ['1h', '2h', '4h', '1d']
+        
+        if timeframe not in ALLOWED_AUTO_TIMEFRAMES:
+            logger.info(f"⚠️ Auto signals disabled for {timeframe} (allowed: {ALLOWED_AUTO_TIMEFRAMES})")
+            return
+        
         # 🛑 STARTUP SUPPRESSION (PR #111)
         global STARTUP_MODE, STARTUP_TIME
         if STARTUP_MODE and STARTUP_TIME:
@@ -11353,7 +11375,8 @@ async def auto_signal_job(timeframe: str, bot_instance):
                     df=df,
                     symbol=symbol,
                     timeframe=timeframe,
-                    mtf_data=mtf_data
+                    mtf_data=mtf_data,
+                    is_auto=True  # ← Mark as auto signal
                 )
                 
                 # Handle NO_TRADE
@@ -11949,34 +11972,7 @@ async def monitor_positions_job(bot_instance):
             logger.debug("📊 Checkpoint monitoring disabled, skipping")
             return
         
-        # Initialize UnifiedTradeManager
-        try:
-            from unified_trade_manager import UnifiedTradeManager
-            
-            manager = UnifiedTradeManager(bot_instance=bot_instance)
-            positions = position_manager_global.get_open_positions()
-            
-            if not positions:
-                logger.debug("📊 No open positions to monitor")
-                return
-            
-            logger.info(f"📊 Monitoring {len(positions)} open position(s)")
-            
-            # Monitor each position
-            for pos in positions:
-                try:
-                    await manager.monitor_live_trade(pos)
-                except Exception as e:
-                    logger.error(f"❌ Monitor failed for {pos.get('symbol', 'UNKNOWN')}: {e}")
-                    pass  # Continue monitoring other positions
-            
-        except ImportError as e:
-            logger.error(f"❌ Could not import UnifiedTradeManager: {e}")
-            logger.warning("⚠️ Falling back to legacy monitoring (limited functionality)")
-            # Fallback to basic monitoring without re-analysis
-            positions = position_manager_global.get_open_positions()
-            if positions:
-                logger.info(f"📊 Legacy monitoring for {len(positions)} position(s)")
+
         
     except Exception as e:
         logger.error(f"❌ Position monitor job error: {e}")
@@ -12754,7 +12750,8 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     df=df,
                     symbol=symbol,
                     timeframe=timeframe,
-                    mtf_data=mtf_data
+                    mtf_data=mtf_data,
+                    is_auto=False  # ← Mark as manual signal (callback)
                 )
                 logger.info(f"✅ ICT signal generated: {type(ict_signal)}")
                 
@@ -15265,7 +15262,7 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         try:
                             hist_df = df.iloc[:i+1].copy()
                             signal = ict_engine.ict_engine.generate_signal(
-                                hist_df, symbol, tf, mtf_data=None
+                                hist_df, symbol, tf, mtf_data=None, is_auto=True
                             )
                             
                             if signal and signal.confidence >= 60:
@@ -17655,9 +17652,68 @@ def main():
                 minute=0
             )
             
+            # 🔄 DIAGNOSTIC CACHE REFRESH JOB (PR #4 - Performance Optimization)
+            # Background job to keep diagnostic cache warm for instant button responses
+            @safe_job("diagnostic_cache_refresh", max_retries=2, retry_delay=30)
+            async def diagnostic_cache_refresh_job():
+                """
+                Background job: Refresh diagnostic cache every 5 minutes
+                Keeps cache warm so user commands respond instantly
+                
+                CRITICAL: Also monitors cache size to detect memory leaks
+                """
+                try:
+                    logger.info("🔄 Refreshing diagnostic cache (background)...")
+                    
+                    from system_diagnostics import grep_logs_cached, DIAGNOSTIC_CACHE
+                    
+                    # Log cache state BEFORE refresh
+                    cache_size_before = len(DIAGNOSTIC_CACHE)
+                    logger.info(f"📊 Cache state before refresh: {cache_size_before} entries")
+                    
+                    base_path = os.path.dirname(os.path.abspath(__file__))
+                    
+                    # Pre-populate cache with common diagnostic patterns
+                    # Note: grep_logs_cached() will automatically cleanup expired entries
+                    patterns = [
+                        ('ERROR.*journal', 6),           # Journal errors (6h)
+                        ('ERROR.*ml.*train', 168),       # ML errors (7 days)
+                        ('ERROR.*position', 1),          # Position errors (1h)
+                        ('ERROR.*scheduler|ERROR.*APScheduler', 12),  # Scheduler errors (12h)
+                        ('ERROR.*real.?time.*monitor', 6)  # Real-time monitor errors (6h)
+                    ]
+                    
+                    # Run all patterns to warm cache
+                    for pattern, hours in patterns:
+                        try:
+                            await grep_logs_cached(pattern, hours, base_path=base_path, force_refresh=True)
+                        except Exception as e:
+                            logger.warning(f"⚠️ Cache refresh failed for pattern '{pattern}': {e}")
+                    
+                    cache_size_final = len(DIAGNOSTIC_CACHE)
+                    logger.info(f"✅ Diagnostic cache refreshed successfully ({cache_size_final} entries)")
+                    
+                    # Warn if cache is growing unbounded (memory leak detection)
+                    if cache_size_final > 20:
+                        logger.warning(f"⚠️ Cache size is large ({cache_size_final} entries) - potential memory leak!")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Diagnostic cache refresh error: {e}", exc_info=True)
+            
+            scheduler.add_job(
+                diagnostic_cache_refresh_job,
+                'interval',
+                minutes=5,
+                id='diagnostic_cache_refresh',
+                name='Diagnostic Cache Refresh (Background)',
+                max_instances=1,
+                coalesce=True
+            )
+            logger.info("✅ Diagnostic cache refresh job registered (every 5 min)")
+            
             # Автоматични новини 3 пъти дневно: 08:00, 14:00, 20:00 UTC
             scheduler.add_job(
-                lambda: asyncio.create_task(send_auto_news(application.bot)),
+                lambda: application.create_task(send_auto_news(application.bot)),
                 'cron',
                 hour='8,14,20',
                 minute=0
