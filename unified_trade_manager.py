@@ -135,6 +135,31 @@ class UnifiedTradeManager:
         logger.info(f"   → FundamentalHelper: {'Available' if self.fundamentals else 'Not Available'}")
         logger.info(f"   → NarrativeTemplates: {'Available' if NARRATIVE_TEMPLATES_AVAILABLE else 'Not Available'}")
         logger.info(f"   → Checkpoint levels: {self.checkpoint_levels}")
+        
+        # AUTO-SYNC from journal on startup
+        self._sync_from_journal()
+    
+    def _sync_from_journal(self):
+        """
+        Sync pending trades from journal on startup
+        
+        Ensures all PENDING trades from trading_journal.json
+        are tracked in positions.db for checkpoint monitoring.
+        """
+        try:
+            logger.info("🔄 Syncing pending trades from journal...")
+            from sync_journal_to_positions import sync_journal_to_positions
+            stats = sync_journal_to_positions()
+            
+            if stats['added'] > 0:
+                logger.info(f"✅ Journal sync complete: {stats['added']} positions added")
+            elif stats['skipped'] > 0:
+                logger.info(f"ℹ️  Journal sync complete: All positions already tracked")
+            else:
+                logger.info(f"ℹ️  Journal sync complete: No pending trades to sync")
+                
+        except Exception as e:
+            logger.error(f"❌ Journal sync failed: {e}")
     
     async def monitor_live_trade(self, position: Dict) -> None:
         """

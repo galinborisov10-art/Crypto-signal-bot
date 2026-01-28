@@ -69,6 +69,10 @@ ml_model.pkl
 ml_scaler.pkl
 *.pkl
 
+# Database files (runtime data - should not be committed)
+*.db
+positions.db
+
 # Cache files (NEW - Phase 2)
 cache/
 cache/*.json

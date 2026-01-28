@@ -18637,6 +18637,23 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             except Exception as e:
                 logger.warning(f"⚠️ Keepalive ping грешка: {e}")
         
+        # JOURNAL SYNC механизъм - синхронизира pending trades от journal към positions.db
+        async def sync_journal_job(context):
+            """Periodic sync of trading_journal.json to positions.db"""
+            try:
+                logger.debug("🔄 Running scheduled journal sync...")
+                from sync_journal_to_positions import sync_journal_to_positions
+                stats = sync_journal_to_positions()
+                
+                if stats['added'] > 0:
+                    logger.info(f"✅ Scheduled journal sync: {stats['added']} new positions added")
+                elif stats['errors'] > 0:
+                    logger.warning(f"⚠️ Scheduled journal sync: {stats['errors']} errors occurred")
+                # Only log at debug level if no changes
+                    
+            except Exception as e:
+                logger.error(f"❌ Scheduled journal sync failed: {e}")
+        
         app.job_queue.run_once(schedule_reports_task, 5)
         app.job_queue.run_once(enable_auto_alerts_task, 10)
         app.job_queue.run_once(send_startup_notification_task, 0.5)  # ВЕДНАГА - след 0.5 сек
@@ -18651,6 +18668,16 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
         
         # Keepalive ping на всеки 30 минути (1800 секунди)
         app.job_queue.run_repeating(keepalive_ping, interval=1800, first=1800)
+        
+        # Journal sync на всеки 5 минути (300 секунди)
+        # First sync after 5 minutes to avoid duplicate with startup sync
+        app.job_queue.run_repeating(
+            sync_journal_job,
+            interval=300,  # 5 minutes
+            first=300,  # First sync after 5 minutes (startup sync already ran)
+            name='journal_sync'
+        )
+        logger.info("🔄 Journal sync scheduler activated (interval: 5 min, first run: 5 min)")
     
     # Стартирай бота с error handling и БЕЗКРАЕН auto-recovery
     retry_count = 0
