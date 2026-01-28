@@ -17871,7 +17871,7 @@ def main():
             
             # Автоматични новини 3 пъти дневно: 08:00, 14:00, 20:00 UTC
             scheduler.add_job(
-                lambda: asyncio.create_task(send_auto_news(application.bot)),
+                lambda: application.create_task(send_auto_news(application.bot)),
                 'cron',
                 hour='8,14,20',
                 minute=0
