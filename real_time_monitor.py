@@ -232,7 +232,6 @@ class RealTimePositionMonitor:
     async def _fetch_current_price(self, symbol: str) -> Optional[float]:
         """Fetch current price from Binance (async)"""
         try:
-            import asyncio
             # Use asyncio.to_thread to run sync request in thread pool
             response = await asyncio.to_thread(
                 requests.get,
@@ -259,7 +258,6 @@ class RealTimePositionMonitor:
     async def _fetch_klines(self, symbol: str, timeframe: str, limit: int = 100) -> Optional[List]:
         """Fetch klines data from Binance (async)"""
         try:
-            import asyncio
             # Use asyncio.to_thread to run sync request in thread pool
             response = await asyncio.to_thread(
                 requests.get,
