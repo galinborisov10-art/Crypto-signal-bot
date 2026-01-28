@@ -154,10 +154,10 @@ class PositionManager:
         Open a new position for tracking
         
         Args:
-            signal: ICTSignal object
+            signal: ICTSignal object or MockSignal object
             symbol: Trading pair (e.g., 'BTCUSDT')
             timeframe: Timeframe (e.g., '1h', '2h')
-            source: 'AUTO' or 'MANUAL'
+            source: 'AUTO', 'MANUAL', or 'JOURNAL_SYNC'
             
         Returns:
             position_id: Database ID of opened position
@@ -166,13 +166,29 @@ class PositionManager:
             conn = self._get_connection()
             cursor = conn.cursor()
             
-            # Extract signal data
+            # Extract signal data with defensive parsing
             signal_type = signal.signal_type.value if hasattr(signal.signal_type, 'value') else str(signal.signal_type)
             entry_price = signal.entry_price
             sl_price = signal.sl_price
-            tp1_price = signal.tp_prices[0] if signal.tp_prices else None
-            tp2_price = signal.tp_prices[1] if len(signal.tp_prices) > 1 else None
-            tp3_price = signal.tp_prices[2] if len(signal.tp_prices) > 2 else None
+            
+            # Extract tp_prices safely - handle both ICTSignal (tp_prices list) and MockSignal
+            tp_prices = []
+            if hasattr(signal, 'tp_prices') and signal.tp_prices:
+                # Modern format: tp_prices as array
+                tp_prices = signal.tp_prices if isinstance(signal.tp_prices, list) else [signal.tp_prices]
+            elif hasattr(signal, 'tp1_price'):
+                # Legacy format: tp1_price, tp2_price, tp3_price as separate attributes
+                if hasattr(signal, 'tp1_price') and signal.tp1_price:
+                    tp_prices.append(signal.tp1_price)
+                if hasattr(signal, 'tp2_price') and signal.tp2_price:
+                    tp_prices.append(signal.tp2_price)
+                if hasattr(signal, 'tp3_price') and signal.tp3_price:
+                    tp_prices.append(signal.tp3_price)
+            
+            # Extract individual TP prices for database
+            tp1_price = tp_prices[0] if len(tp_prices) > 0 else None
+            tp2_price = tp_prices[1] if len(tp_prices) > 1 else None
+            tp3_price = tp_prices[2] if len(tp_prices) > 2 else None
             
             # Serialize full signal
             signal_json = self._serialize_signal(signal)
