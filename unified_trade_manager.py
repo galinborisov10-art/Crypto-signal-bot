@@ -58,6 +58,15 @@ except ImportError:
     ICTSignal = None
     logging.warning("ICTSignalEngine not available")
 
+try:
+    from narrative_templates import SwingTraderNarrative, NarrativeSelector
+    NARRATIVE_TEMPLATES_AVAILABLE = True
+except ImportError:
+    NARRATIVE_TEMPLATES_AVAILABLE = False
+    SwingTraderNarrative = None
+    NarrativeSelector = None
+    logging.warning("NarrativeTemplates not available")
+
 logger = logging.getLogger(__name__)
 
 
@@ -117,10 +126,14 @@ class UnifiedTradeManager:
         # Checkpoint levels
         self.checkpoint_levels = [25, 50, 75, 85]
         
+        # Store current position for news assessment
+        self.current_position = None
+        
         logger.info("✅ UnifiedTradeManager initialized")
         logger.info(f"   → PositionManager: {'Available' if self.position_manager else 'Not Available'}")
         logger.info(f"   → ReanalysisEngine: {'Available' if self.reanalysis_engine else 'Not Available'}")
         logger.info(f"   → FundamentalHelper: {'Available' if self.fundamentals else 'Not Available'}")
+        logger.info(f"   → NarrativeTemplates: {'Available' if NARRATIVE_TEMPLATES_AVAILABLE else 'Not Available'}")
         logger.info(f"   → Checkpoint levels: {self.checkpoint_levels}")
     
     async def monitor_live_trade(self, position: Dict) -> None:
@@ -134,11 +147,15 @@ class UnifiedTradeManager:
         1. Get current price
         2. Calculate progress (reuse backtest logic)
         3. Check if checkpoint reached
-        4. If yes → re-analyze + generate alert
-        5. Check TP/SL hits
+        4. If yes → re-analyze + check news + smart filtering
+        5. Send alert ONLY if meaningful change
+        6. Check TP/SL hits
         """
         try:
             symbol = position['symbol']
+            
+            # Store current position for news assessment
+            self.current_position = position
             
             # 1. Get current price
             current_price = await self._get_current_price(symbol)
@@ -165,22 +182,33 @@ class UnifiedTradeManager:
                 # 5. Check news
                 news_data = await self._check_news(symbol)
                 
-                # 6. Generate Bulgarian alert
-                alert_message = self._format_bulgarian_alert(
-                    position,
-                    analysis,
-                    news_data,
-                    checkpoint,
-                    progress
+                # 6. Smart filtering - should we send alert?
+                should_alert, alert_type = self._should_send_alert(
+                    analysis, news_data, checkpoint, position
                 )
                 
-                # 7. Send Telegram alert
-                await self._send_checkpoint_alert(
-                    position.get('user_id') or position.get('id'),
-                    alert_message
-                )
+                if should_alert:
+                    logger.info(f"📢 Alert triggered: {alert_type}")
+                    
+                    # 7. Generate professional narrative
+                    alert_message = self._format_professional_alert(
+                        position,
+                        analysis,
+                        news_data,
+                        checkpoint,
+                        progress,
+                        current_price
+                    )
+                    
+                    # 8. Send Telegram alert
+                    await self._send_checkpoint_alert(
+                        position.get('user_id') or position.get('id'),
+                        alert_message
+                    )
+                else:
+                    logger.info(f"🔇 Silent monitoring at {checkpoint}% - no significant changes")
                 
-                # 8. Save checkpoint event
+                # 9. Save checkpoint event (always, even if no alert sent)
                 if self.position_manager:
                     # Mark checkpoint as triggered (use "XX%" format for database)
                     self.position_manager.update_checkpoint_triggered(
@@ -188,17 +216,17 @@ class UnifiedTradeManager:
                         f"{checkpoint}%"
                     )
                     
-                    # Log checkpoint alert
-                    if analysis:
+                    # Log checkpoint alert only if alert was sent
+                    if should_alert and analysis:
                         self.position_manager.log_checkpoint_alert(
                             position_id=position['id'],
                             checkpoint_level=f"{checkpoint}%",
                             trigger_price=current_price,
                             analysis=analysis,
-                            action_taken='ALERTED'
+                            action_taken='ALERTED' if should_alert else 'MONITORED'
                         )
             
-            # 9. Check TP/SL hits
+            # 10. Check TP/SL hits
             await self._check_tp_sl_hits(position, current_price)
             
         except Exception as e:
@@ -362,13 +390,14 @@ class UnifiedTradeManager:
     
     async def _check_news(self, symbol: str) -> Optional[Dict]:
         """
-        Check for recent news using existing FundamentalHelper
+        Check for recent news using existing breaking_news_monitor system
+        Integrates with FundamentalHelper and analyze_news_impact
         
         Args:
             symbol: Trading symbol
             
         Returns:
-            News data dictionary or None
+            News data dictionary with priority and impact assessment or None
         """
         try:
             if not self.fundamentals:
@@ -379,29 +408,217 @@ class UnifiedTradeManager:
                 logger.debug("Fundamental analysis disabled, skipping news check")
                 return None
             
-            # Get fundamental data
-            # Note: This is a simplified call - may need adjustment based on actual API
-            news = {
-                'sentiment': None,
-                'top_news': []
-            }
+            # Get fundamental data (existing system)
+            try:
+                fund_data = self.fundamentals.get_fundamental_data(symbol)
+            except Exception as e:
+                logger.warning(f"Could not get fundamental data: {e}")
+                return None
             
-            return news
+            if not fund_data:
+                return None
+            
+            sentiment = fund_data.get('sentiment', {})
+            label = sentiment.get('label', '').upper()  # POSITIVE/NEGATIVE/NEUTRAL/BEARISH/BULLISH
+            top_news = sentiment.get('top_news', [])
+            
+            # Map labels to priority
+            priority = 'moderate'
+            if 'CRITICAL' in label:
+                priority = 'critical'
+            elif any(word in label for word in ['STRONG_BEARISH', 'STRONG_BULLISH']):
+                priority = 'critical'
+            elif 'BEARISH' in label or 'BULLISH' in label:
+                priority = 'important'
+            elif 'POSITIVE' in label or 'NEGATIVE' in label:
+                priority = 'important'
+            else:
+                priority = 'low'
+            
+            # Assess impact on current position
+            impact_assessment = ''
+            if self.current_position:
+                impact_assessment = self._assess_news_vs_position(
+                    sentiment, label, self.current_position
+                )
+            
+            return {
+                'headline': top_news[0] if top_news else 'Market moving news',
+                'priority': priority,
+                'sentiment_label': label,
+                'impact_assessment': impact_assessment,
+                'source': 'fundamental_helper',
+                'top_news': top_news
+            }
             
         except Exception as e:
             logger.error(f"❌ News check failed: {e}")
             return None
     
+    def _assess_news_vs_position(
+        self,
+        sentiment: Dict,
+        label: str,
+        position: Dict
+    ) -> str:
+        """
+        Assess how news impacts current position
+        Maps sentiment labels (BEARISH/BULLISH) against position direction
+        
+        Args:
+            sentiment: Sentiment data dictionary
+            label: Sentiment label (BEARISH/BULLISH/NEUTRAL/etc)
+            position: Position dictionary
+            
+        Returns:
+            Impact assessment string
+        """
+        try:
+            is_long = position['signal_type'] in ['BUY', 'STRONG_BUY']
+            
+            # Check if news contradicts position
+            if is_long and ('BEARISH' in label or 'NEGATIVE' in label):
+                if 'STRONG_BEARISH' in label or 'CRITICAL' in label:
+                    return "🚨 CRITICAL: Bearish news против LONG позиция - HIGH REVERSAL RISK!"
+                else:
+                    return "⚠️ Bearish news против LONG - Consider partial exit"
+            
+            elif not is_long and ('BULLISH' in label or 'POSITIVE' in label):
+                if 'STRONG_BULLISH' in label or 'CRITICAL' in label:
+                    return "🚨 CRITICAL: Bullish news против SHORT позиция - HIGH REVERSAL RISK!"
+                else:
+                    return "⚠️ Bullish news против SHORT - Consider partial exit"
+            
+            elif is_long and ('BULLISH' in label or 'POSITIVE' in label):
+                return "✅ Bullish news подкрепя LONG позиция - Momentum в наша полза"
+            
+            elif not is_long and ('BEARISH' in label or 'NEGATIVE' in label):
+                return "✅ Bearish news подкрепя SHORT позиция - Momentum в наша полза"
+            
+            else:
+                return "ℹ️ Neutral news - no clear impact на позицията"
+            
+        except Exception as e:
+            logger.error(f"❌ News impact assessment failed: {e}")
+            return ""
+    
+    def _should_send_alert(
+        self,
+        analysis: Optional[Any],
+        news: Optional[Dict],
+        checkpoint: int,
+        position: Dict
+    ) -> tuple:
+        """
+        Smart alert filtering - determines if alert should be sent
+        
+        Alert ONLY when:
+        - Checkpoint reached AND (bias changed OR structure broken OR confidence drop >10%)
+        - Critical news (CRITICAL priority)
+        - Important news (important priority) affecting position
+        - At 25% and 85% checkpoints (confirmation alerts)
+        
+        Silent monitoring when:
+        - Checkpoint reached but nothing changed
+        - News is LOW impact or NEUTRAL
+        
+        Args:
+            analysis: CheckpointAnalysis object
+            news: News data dictionary
+            checkpoint: Checkpoint level (25, 50, 75, 85)
+            position: Position dictionary
+            
+        Returns:
+            Tuple (should_alert: bool, alert_type: str)
+        """
+        try:
+            # Always alert at 25% (entry confirmation) and 85% (near TP1)
+            if checkpoint in [25, 85]:
+                return (True, f'{checkpoint}% confirmation checkpoint')
+            
+            # Check for critical news
+            if news and news.get('priority') == 'critical':
+                return (True, 'critical news alert')
+            
+            # Check for important news affecting position
+            if news and news.get('priority') == 'important':
+                impact = news.get('impact_assessment', '')
+                if 'против' in impact or 'REVERSAL RISK' in impact:
+                    return (True, 'important news contradicting position')
+            
+            # Check analysis changes (if available)
+            if analysis:
+                # Structure broken - always alert
+                if hasattr(analysis, 'structure_broken') and analysis.structure_broken:
+                    return (True, 'structure broken')
+                
+                # HTF bias changed - always alert
+                if hasattr(analysis, 'htf_bias_changed') and analysis.htf_bias_changed:
+                    return (True, 'HTF bias changed')
+                
+                # Confidence drop >10% - alert
+                if hasattr(analysis, 'confidence_delta'):
+                    if analysis.confidence_delta < -10:
+                        return (True, f'confidence drop {analysis.confidence_delta:.0f}%')
+            
+            # No significant changes - silent monitoring
+            return (False, 'no significant changes')
+            
+        except Exception as e:
+            logger.error(f"❌ Alert filtering failed: {e}")
+            # Default to sending alert on error (fail-safe)
+            return (True, 'error - fail-safe alert')
+    
+    def _format_professional_alert(
+        self,
+        position: Dict,
+        analysis: Optional[Any],
+        news: Optional[Dict],
+        checkpoint: int,
+        progress: float,
+        current_price: float
+    ) -> str:
+        """
+        Generate professional Bulgarian narrative using SwingTraderNarrative
+        
+        Args:
+            position: Position dictionary
+            analysis: CheckpointAnalysis object
+            news: News data
+            checkpoint: Checkpoint level
+            progress: Current progress percentage
+            current_price: Current market price
+            
+        Returns:
+            Professional Bulgarian alert message with reasoning
+        """
+        try:
+            # Use narrative templates if available
+            if NARRATIVE_TEMPLATES_AVAILABLE and NarrativeSelector:
+                return NarrativeSelector.select_narrative(
+                    position, analysis, news, checkpoint, progress, current_price
+                )
+            else:
+                # Fallback to old format
+                return self._format_bulgarian_alert(
+                    position, analysis, news, checkpoint, progress
+                )
+                
+        except Exception as e:
+            logger.error(f"❌ Professional alert formatting failed: {e}")
+            # Fallback to simple format
+            return self._format_fallback_alert(position, checkpoint, progress)
+    
     def _format_bulgarian_alert(
         self,
         position: Dict,
-        analysis: Optional[CheckpointAnalysis],
+        analysis: Optional[Any],
         news: Optional[Dict],
         checkpoint: int,
         progress: float
     ) -> str:
         """
-        Generate Bulgarian narrative for checkpoint
+        Generate Bulgarian narrative for checkpoint (legacy format)
         
         Args:
             position: Position dictionary
@@ -418,7 +635,7 @@ class UnifiedTradeManager:
         
         try:
             # Determine recommendation
-            confidence_delta = analysis.confidence_delta
+            confidence_delta = getattr(analysis, 'confidence_delta', 0)
             
             # Basic decision logic
             if confidence_delta < -15:
@@ -433,27 +650,30 @@ class UnifiedTradeManager:
             
             # Format news section
             news_section = ""
-            if news and news.get('sentiment'):
-                sentiment = news['sentiment']
-                if sentiment.get('label') in ['CRITICAL', 'BEARISH', 'BULLISH']:
-                    top_news = sentiment.get('top_news', [])
-                    if top_news:
-                        news_section = f"\n📰 НОВИНИ: {top_news[0]}"
+            if news and news.get('top_news'):
+                top_news = news.get('top_news', [])
+                if top_news:
+                    news_section = f"\n📰 НОВИНИ: {top_news[0]}"
             
             # Get HTF bias info
             htf_bias = getattr(analysis, 'htf_bias', 'UNKNOWN')
-            htf_changed = analysis.htf_bias_changed
+            htf_changed = getattr(analysis, 'htf_bias_changed', False)
+            original_confidence = getattr(analysis, 'original_confidence', 0)
+            current_confidence = getattr(analysis, 'current_confidence', 0)
+            structure_broken = getattr(analysis, 'structure_broken', False)
+            valid_components = getattr(analysis, 'valid_components_count', 0)
+            current_rr = getattr(analysis, 'current_rr_ratio', 0)
             
             # Build message
             message = f"""
 {emoji} {checkpoint}% CHECKPOINT
 
 📊 {position['symbol']} АНАЛИЗ:
-• Confidence: {analysis.original_confidence:.0f}% → {analysis.current_confidence:.0f}% (Δ{confidence_delta:+.0f}%)
-• Структура: {'Валидна ✅' if not analysis.structure_broken else 'Счупена ❌'}
+• Confidence: {original_confidence:.0f}% → {current_confidence:.0f}% (Δ{confidence_delta:+.0f}%)
+• Структура: {'Валидна ✅' if not structure_broken else 'Счупена ❌'}
 • HTF Bias: {htf_bias} {'⚠️ ПРОМЕНЕН' if htf_changed else '✅'}
-• Valid компоненти: {analysis.valid_components_count}
-• R:R: {analysis.current_rr_ratio:.1f}:1
+• Valid компоненти: {valid_components}
+• R:R: {current_rr:.1f}:1
 {news_section}
 
 {emoji} ПРЕПОРЪКА: {action}

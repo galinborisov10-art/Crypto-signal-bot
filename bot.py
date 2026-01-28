@@ -5839,9 +5839,147 @@ async def analyze_news_impact(title, description=""):
     }
 
 
+async def check_news_impact_on_positions(article, impact):
+    """
+    Проверява дали критични новини засягат отворени позиции
+    Изпраща immediate alert ако новината contradicts позицията
+    """
+    try:
+        # Get open positions
+        open_positions = position_manager_global.get_open_positions()
+        
+        if not open_positions:
+            logger.debug("Няма отворени позиции за проверка")
+            return
+        
+        # Import narrative templates
+        try:
+            from narrative_templates import SwingTraderNarrative
+            NARRATIVES_AVAILABLE = True
+        except ImportError:
+            NARRATIVES_AVAILABLE = False
+            logger.warning("Narrative templates не са налични")
+        
+        for pos in open_positions:
+            symbol = pos['symbol']
+            
+            # Check if news is related to this symbol or general market
+            if not symbol_matches_news(symbol, article):
+                continue
+            
+            # Assess impact on this position
+            is_long = pos['signal_type'] in ['BUY', 'STRONG_BUY']
+            sentiment = impact['sentiment']
+            impact_level = impact['impact']
+            
+            # Determine if news contradicts position
+            should_alert = False
+            
+            if is_long and sentiment == 'BEARISH' and impact_level == 'CRITICAL':
+                should_alert = True
+                impact_assessment = "🚨 CRITICAL: Bearish news против LONG позиция - HIGH REVERSAL RISK!"
+            elif not is_long and sentiment == 'BULLISH' and impact_level == 'CRITICAL':
+                should_alert = True
+                impact_assessment = "🚨 CRITICAL: Bullish news против SHORT позиция - HIGH REVERSAL RISK!"
+            elif is_long and sentiment == 'BEARISH' and impact_level == 'HIGH':
+                should_alert = True
+                impact_assessment = "⚠️ Bearish news против LONG - Consider partial exit"
+            elif not is_long and sentiment == 'BULLISH' and impact_level == 'HIGH':
+                should_alert = True
+                impact_assessment = "⚠️ Bullish news против SHORT - Consider partial exit"
+            
+            # Send immediate alert if contradicting
+            if should_alert:
+                logger.info(f"🔴 Critical news alert for position {pos['id']} ({symbol})")
+                
+                # Get current price
+                try:
+                    import requests
+                    response = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=5)
+                    current_price = float(response.json()['price'])
+                except Exception as e:
+                    logger.warning(f"Could not get current price for {symbol}: {e}")
+                    current_price = pos.get('entry_price', 0)
+                
+                # Generate alert message
+                if NARRATIVES_AVAILABLE:
+                    news_data = {
+                        'headline': article.get('title', 'Breaking market news'),
+                        'sentiment_label': sentiment,
+                        'priority': 'critical' if impact_level == 'CRITICAL' else 'important',
+                        'impact_assessment': impact_assessment
+                    }
+                    
+                    alert_message = SwingTraderNarrative.critical_news_alert(
+                        pos, news_data, current_price, impact_assessment
+                    )
+                else:
+                    # Fallback simple alert
+                    alert_message = f"""
+🔴 BREAKING NEWS ALERT - {symbol}
+
+📰 {article.get('title', 'Market news')}
+
+Impact: {impact_assessment}
+
+Current price: {current_price:.2f}
+Position: {'LONG' if is_long else 'SHORT'}
+
+IMMEDIATE ACTION MAY BE REQUIRED!
+"""
+                
+                # Send via Telegram
+                from telegram import Bot
+                bot = Bot(token=TELEGRAM_BOT_TOKEN)
+                await bot.send_message(
+                    chat_id=OWNER_CHAT_ID,
+                    text=alert_message,
+                    parse_mode='HTML',
+                    disable_notification=False  # WITH sound!
+                )
+                
+                logger.info(f"✅ Critical news alert sent for {symbol}")
+        
+    except Exception as e:
+        logger.error(f"Грешка при проверка на новини срещу позиции: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
+def symbol_matches_news(symbol, article):
+    """
+    Проверява дали новината е свързана със символа
+    """
+    try:
+        title = article.get('title', '').lower()
+        description = article.get('description', '').lower()
+        
+        # Extract base symbol (remove USDT, BUSD, etc.)
+        base_symbol = symbol.replace('USDT', '').replace('BUSD', '').replace('USD', '')
+        
+        # Check if symbol mentioned
+        if base_symbol.lower() in title or base_symbol.lower() in description:
+            return True
+        
+        # Check for BTC - affects all crypto
+        if 'bitcoin' in title or 'btc' in title:
+            return True
+        
+        # Check for general crypto market news
+        crypto_keywords = ['crypto', 'cryptocurrency', 'blockchain', 'altcoin', 'defi', 'market']
+        if any(keyword in title for keyword in crypto_keywords):
+            return True
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"Грешка при проверка на symbol match: {e}")
+        return False
+
+
 @safe_job("breaking_news_monitor", max_retries=2, retry_delay=30)
 async def monitor_breaking_news():
-    """Мониторинг на критични новини в реално време"""
+    """Мониторинг на критични новини в реално време + проверка на отворени позиции"""
     try:
         # Извлечи последни новини
         news = await fetch_market_news()
@@ -5879,6 +6017,13 @@ async def monitor_breaking_news():
                 article['impact_analysis'] = impact
                 critical_news.append(article)
                 seen_news.add(title)
+                
+                # NEW: Check if critical news affects open positions
+                if POSITION_MANAGER_AVAILABLE and position_manager_global:
+                    try:
+                        await check_news_impact_on_positions(article, impact)
+                    except Exception as e:
+                        logger.error(f"Грешка при проверка на новини срещу позиции: {e}")
         
         # Запази виждането в cache
         if critical_news:
