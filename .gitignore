@@ -104,3 +104,6 @@ test_file_validation.py
 # Temporary test files for logging fix
 test_logging_fix.py
 test_no_duplicate_logging.py
+
+# Diagnostic reports (generated files)
+diagnostic_report_*.md
