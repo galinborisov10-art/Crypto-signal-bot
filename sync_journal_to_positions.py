@@ -69,7 +69,9 @@ class MockSignal:
     
     def __post_init__(self):
         """Ensure tp_prices is a list"""
-        if not isinstance(self.tp_prices, list):
+        if self.tp_prices is None:
+            self.tp_prices = []
+        elif not isinstance(self.tp_prices, list):
             self.tp_prices = [self.tp_prices]
 
 
@@ -177,11 +179,15 @@ def check_position_exists(position_manager, symbol: str, timeframe: str, entry_p
         open_positions = position_manager.get_open_positions()
         
         for pos in open_positions:
-            # Match by symbol, timeframe, and entry price
+            # Match by symbol, timeframe, and entry price (with 0.01% tolerance)
             if (pos.get('symbol') == symbol and 
-                pos.get('timeframe') == timeframe and
-                abs(pos.get('entry_price', 0) - entry_price) < 0.01):  # Allow small float diff
-                return True
+                pos.get('timeframe') == timeframe):
+                # Use percentage-based comparison for entry price
+                pos_entry = pos.get('entry_price', 0)
+                if pos_entry > 0:
+                    price_diff_pct = abs(pos_entry - entry_price) / pos_entry
+                    if price_diff_pct < 0.0001:  # 0.01% tolerance
+                        return True
         
         return False
         
@@ -214,6 +220,11 @@ def sync_journal_to_positions() -> Dict[str, int]:
         
     except ImportError as e:
         logger.error(f"❌ Cannot import PositionManager: {e}")
+        stats['errors'] = 1
+        return stats
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize PositionManager: {e}")
+        stats['errors'] = 1
         return stats
     
     # Load journal
@@ -238,6 +249,22 @@ def sync_journal_to_positions() -> Dict[str, int]:
             entry_price = trade.get('entry_price', 0)
             
             logger.info(f"\n📝 Processing trade #{trade_id}: {symbol} {signal_type} @ ${entry_price}")
+            
+            # Validate required fields
+            if not symbol:
+                logger.error(f"   ❌ SKIPPED - Missing symbol")
+                stats['errors'] += 1
+                continue
+            
+            if not timeframe:
+                logger.error(f"   ❌ SKIPPED - Missing timeframe")
+                stats['errors'] += 1
+                continue
+            
+            if entry_price <= 0:
+                logger.error(f"   ❌ SKIPPED - Invalid entry price: {entry_price}")
+                stats['errors'] += 1
+                continue
             
             # Check if already exists
             if check_position_exists(position_manager, symbol, timeframe, entry_price):

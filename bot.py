@@ -18641,7 +18641,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
         async def sync_journal_job(context):
             """Periodic sync of trading_journal.json to positions.db"""
             try:
-                logger.info("🔄 Running scheduled journal sync...")
+                logger.debug("🔄 Running scheduled journal sync...")
                 from sync_journal_to_positions import sync_journal_to_positions
                 stats = sync_journal_to_positions()
                 
@@ -18649,8 +18649,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                     logger.info(f"✅ Scheduled journal sync: {stats['added']} new positions added")
                 elif stats['errors'] > 0:
                     logger.warning(f"⚠️ Scheduled journal sync: {stats['errors']} errors occurred")
-                else:
-                    logger.debug(f"ℹ️  Scheduled journal sync: No new positions")
+                # Only log at debug level if no changes
                     
             except Exception as e:
                 logger.error(f"❌ Scheduled journal sync failed: {e}")
@@ -18671,13 +18670,14 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
         app.job_queue.run_repeating(keepalive_ping, interval=1800, first=1800)
         
         # Journal sync на всеки 5 минути (300 секунди)
+        # First sync after 5 minutes to avoid duplicate with startup sync
         app.job_queue.run_repeating(
             sync_journal_job,
             interval=300,  # 5 minutes
-            first=60,  # First sync after 60 seconds
+            first=300,  # First sync after 5 minutes (startup sync already ran)
             name='journal_sync'
         )
-        logger.info("🔄 Journal sync scheduler activated (interval: 5 min)")
+        logger.info("🔄 Journal sync scheduler activated (interval: 5 min, first run: 5 min)")
     
     # Стартирай бота с error handling и БЕЗКРАЕН auto-recovery
     retry_count = 0
