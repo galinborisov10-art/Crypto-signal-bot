@@ -58,6 +58,7 @@ backtest_results.json
 daily_reports.json
 trading_journal.json
 active_auto_signals.json
+.daily_report_sent
 
 # Backtest результати и архив (динамични данни)
 backtest_results/

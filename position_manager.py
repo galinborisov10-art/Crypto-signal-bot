@@ -251,7 +251,7 @@ class PositionManager:
                 
                 positions.append(position)
             
-            logger.info(f"📊 Retrieved {len(positions)} open position(s)")
+            logger.debug(f"📊 Retrieved {len(positions)} open position(s)")
             return positions
             
         except Exception as e:

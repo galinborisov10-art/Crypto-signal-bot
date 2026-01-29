@@ -268,7 +268,7 @@ def sync_journal_to_positions() -> Dict[str, int]:
             
             # Check if already exists
             if check_position_exists(position_manager, symbol, timeframe, entry_price):
-                logger.info(f"   ⏭️  SKIPPED - Position already exists")
+                logger.debug(f"   ⏭️  SKIPPED - Position already exists")
                 stats['skipped'] += 1
                 continue
             

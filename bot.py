@@ -17537,10 +17537,59 @@ def main():
             
             # ЕДИНСТВЕН ДНЕВЕН ОТЧЕТ - Всеки ден в 08:00 българско време
             if REPORTS_AVAILABLE:
+                # Helper functions for daily report tracking
+                def was_daily_report_sent_today():
+                    """Check if daily report was already sent today (with file locking)"""
+                    try:
+                        flag_file = f"{BASE_PATH}/.daily_report_sent"
+                        if not os.path.exists(flag_file):
+                            return False
+                        
+                        # Use file locking to prevent race conditions
+                        with open(flag_file, 'r') as f:
+                            fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # Shared lock for reading
+                            try:
+                                last_sent = f.read().strip()
+                            finally:
+                                fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Unlock
+                        
+                        # Check if it's today
+                        bg_tz = pytz.timezone('Europe/Sofia')
+                        today = datetime.now(bg_tz).date().isoformat()
+                        
+                        return last_sent == today
+                    except Exception as e:
+                        logger.error(f"Error checking daily report flag: {e}")
+                        return False
+
+                def mark_daily_report_sent():
+                    """Mark daily report as sent for today (with file locking)"""
+                    try:
+                        flag_file = f"{BASE_PATH}/.daily_report_sent"
+                        bg_tz = pytz.timezone('Europe/Sofia')
+                        today = datetime.now(bg_tz).date().isoformat()
+                        
+                        # Use file locking to ensure atomic write
+                        with open(flag_file, 'w') as f:
+                            fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock for writing
+                            try:
+                                f.write(today)
+                            finally:
+                                fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Unlock
+                        
+                        logger.info(f"✅ Marked daily report as sent for {today}")
+                    except Exception as e:
+                        logger.error(f"Error marking daily report sent: {e}")
+                
                 @safe_job("daily_report", max_retries=3, retry_delay=60)
                 async def send_daily_auto_report():
                     """Изпраща автоматичен дневен отчет към owner за ВЧЕРА"""
                     try:
+                        # Check if report was already sent today (prevent duplicates at 08:00)
+                        if was_daily_report_sent_today():
+                            logger.info("✅ Daily report already sent today - skipping scheduled send")
+                            return
+                        
                         report = report_engine.generate_daily_report()
                         if report:
                             message = report_engine.format_report_message(report)
@@ -17551,6 +17600,7 @@ def main():
                                 disable_notification=False  # Със звук
                             )
                             logger.info("✅ Daily report sent successfully")
+                            mark_daily_report_sent()  # Mark report as sent for today
                         else:
                             # Send notification about missing data
                             await application.bot.send_message(
@@ -17568,6 +17618,7 @@ def main():
                                 disable_notification=False
                             )
                             logger.warning("⚠️ Daily report has no data to send")
+                            mark_daily_report_sent()  # Mark as sent to prevent repeated "no data" notifications
                     except Exception as e:
                         logger.error(f"❌ Daily report error: {e}")
                         # Send error notification
@@ -17593,17 +17644,22 @@ def main():
                 
                 # Add startup check for missed daily report
                 async def check_missed_daily_report():
-                    """Check if daily report was missed today and send it"""
+                    """Check if daily report was ACTUALLY missed (not just restart)"""
                     try:
                         bg_tz = pytz.timezone('Europe/Sofia')
                         now = datetime.now(bg_tz)
                         
+                        # CRITICAL FIX: Check if report was already sent today
+                        if was_daily_report_sent_today():
+                            logger.info("✅ Daily report already sent today - skipping startup check")
+                            return
+                        
                         # If after 08:00 and before 23:59, check if report needs to be sent
-                        if now.hour > 8:
+                        if now.hour >= 8:
                             logger.info("⚠️ Bot started after 08:00 - checking for missed daily report...")
                             # Send the report now if we're within the grace period
                             if now.hour < 20:  # Within 12 hours of scheduled time (08:00 + 12h = 20:00)
-                                logger.warning("⚠️ Daily report was missed - sending now...")
+                                logger.warning("⚠️ Daily report was truly missed - sending now...")
                                 await send_daily_auto_report()
                             else:
                                 logger.info("ℹ️ Outside grace period - daily report will send tomorrow")
