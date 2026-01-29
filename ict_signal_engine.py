@@ -2023,21 +2023,95 @@ class ICTSignalEngine:
         
         return components
     
+    def _detect_timeframe(self, df: pd.DataFrame) -> str:
+        """
+        Detect timeframe from DataFrame by analyzing timestamp intervals.
+        
+        Args:
+            df: DataFrame with DatetimeIndex
+            
+        Returns:
+            Detected timeframe as lowercase string (e.g., '1h', '4h', '1d')
+        """
+        if len(df) < 2:
+            return '1h'  # Default fallback
+        
+        try:
+            # Calculate time difference between first two candles in minutes
+            time_diff = (df.index[1] - df.index[0]).total_seconds() / 60
+            
+            # Map time difference to timeframe
+            if time_diff <= 1:
+                return '1m'
+            elif time_diff <= 3:
+                return '3m'
+            elif time_diff <= 5:
+                return '5m'
+            elif time_diff <= 15:
+                return '15m'
+            elif time_diff <= 30:
+                return '30m'
+            elif time_diff <= 60:
+                return '1h'
+            elif time_diff <= 120:
+                return '2h'
+            elif time_diff <= 240:
+                return '4h'
+            elif time_diff <= 360:
+                return '6h'
+            elif time_diff <= 720:
+                return '12h'
+            elif time_diff <= 1440:
+                return '1d'
+            elif time_diff <= 4320:
+                return '3d'
+            else:
+                return '1w'
+        except Exception as e:
+            logger.warning(f"Error detecting timeframe: {e}, using default '1h'")
+            return '1h'
+    
     def _analyze_mtf_confluence(
         self,
         primary_df: pd.DataFrame,
         mtf_data: Optional[Dict[str, pd.DataFrame]],
         symbol: str
     ) -> Optional[Dict]:
-        """Analyze multi-timeframe confluence"""
+        """Analyze multi-timeframe confluence with dynamic timeframe selection"""
         if not self.mtf_analyzer or mtf_data is None or not isinstance(mtf_data, dict):
             return None
         
         try:
-            # Get higher timeframes
-            htf_df = mtf_data.get('1d') or mtf_data.get('4h')
-            mtf_df = mtf_data.get('4h') or mtf_data.get('1h')
-            ltf_df = mtf_data.get('1h') or primary_df
+            # Detect primary timeframe from DataFrame
+            primary_tf = self._detect_timeframe(primary_df)
+            logger.debug(f"Detected primary timeframe: {primary_tf}")
+            
+            # Dynamic timeframe selection based on entry timeframe
+            if primary_tf == '1h':
+                # 1h entries: HTF=1d/4h, MTF=4h/2h, LTF=30m/15m
+                htf_df = mtf_data.get('1d') or mtf_data.get('4h')
+                mtf_df = mtf_data.get('4h') or mtf_data.get('2h')
+                ltf_df = mtf_data.get('30m') or mtf_data.get('15m') or primary_df
+            elif primary_tf == '2h':
+                # 2h entries: HTF=1d/1w, MTF=4h/1d, LTF=1h
+                htf_df = mtf_data.get('1d') or mtf_data.get('1w')
+                mtf_df = mtf_data.get('4h') or mtf_data.get('1d')
+                ltf_df = mtf_data.get('1h') or primary_df
+            elif primary_tf == '4h':
+                # 4h entries: HTF=1w/1d, MTF=1d/4h, LTF=2h/1h
+                htf_df = mtf_data.get('1w') or mtf_data.get('1d')
+                mtf_df = mtf_data.get('1d') or mtf_data.get('4h')
+                ltf_df = mtf_data.get('2h') or mtf_data.get('1h') or primary_df
+            elif primary_tf == '1d':
+                # 1d entries: HTF=1w, MTF=1w/1d, LTF=4h
+                htf_df = mtf_data.get('1w') or primary_df
+                mtf_df = mtf_data.get('1w') or mtf_data.get('1d')
+                ltf_df = mtf_data.get('4h') or primary_df
+            else:
+                # Fallback for other timeframes (5m, 15m, 30m, etc.)
+                htf_df = mtf_data.get('1d') or mtf_data.get('4h')
+                mtf_df = mtf_data.get('4h') or mtf_data.get('1h')
+                ltf_df = mtf_data.get('1h') or primary_df
             
             if htf_df is None or mtf_df is None or ltf_df is None:
                 return None
