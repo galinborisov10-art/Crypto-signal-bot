@@ -17539,15 +17539,19 @@ def main():
             if REPORTS_AVAILABLE:
                 # Helper functions for daily report tracking
                 def was_daily_report_sent_today():
-                    """Check if daily report was already sent today"""
+                    """Check if daily report was already sent today (with file locking)"""
                     try:
                         flag_file = f"{BASE_PATH}/.daily_report_sent"
                         if not os.path.exists(flag_file):
                             return False
                         
-                        # Read timestamp from flag file
+                        # Use file locking to prevent race conditions
                         with open(flag_file, 'r') as f:
-                            last_sent = f.read().strip()
+                            fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # Shared lock for reading
+                            try:
+                                last_sent = f.read().strip()
+                            finally:
+                                fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Unlock
                         
                         # Check if it's today
                         bg_tz = pytz.timezone('Europe/Sofia')
@@ -17559,14 +17563,19 @@ def main():
                         return False
 
                 def mark_daily_report_sent():
-                    """Mark daily report as sent for today"""
+                    """Mark daily report as sent for today (with file locking)"""
                     try:
                         flag_file = f"{BASE_PATH}/.daily_report_sent"
                         bg_tz = pytz.timezone('Europe/Sofia')
                         today = datetime.now(bg_tz).date().isoformat()
                         
+                        # Use file locking to ensure atomic write
                         with open(flag_file, 'w') as f:
-                            f.write(today)
+                            fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock for writing
+                            try:
+                                f.write(today)
+                            finally:
+                                fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Unlock
                         
                         logger.info(f"✅ Marked daily report as sent for {today}")
                     except Exception as e:
@@ -17576,6 +17585,11 @@ def main():
                 async def send_daily_auto_report():
                     """Изпраща автоматичен дневен отчет към owner за ВЧЕРА"""
                     try:
+                        # Check if report was already sent today (prevent duplicates at 08:00)
+                        if was_daily_report_sent_today():
+                            logger.info("✅ Daily report already sent today - skipping scheduled send")
+                            return
+                        
                         report = report_engine.generate_daily_report()
                         if report:
                             message = report_engine.format_report_message(report)
@@ -17604,6 +17618,7 @@ def main():
                                 disable_notification=False
                             )
                             logger.warning("⚠️ Daily report has no data to send")
+                            mark_daily_report_sent()  # Mark as sent to prevent repeated "no data" notifications
                     except Exception as e:
                         logger.error(f"❌ Daily report error: {e}")
                         # Send error notification
@@ -17640,7 +17655,7 @@ def main():
                             return
                         
                         # If after 08:00 and before 23:59, check if report needs to be sent
-                        if now.hour > 8:
+                        if now.hour >= 8:
                             logger.info("⚠️ Bot started after 08:00 - checking for missed daily report...")
                             # Send the report now if we're within the grace period
                             if now.hour < 20:  # Within 12 hours of scheduled time (08:00 + 12h = 20:00)
