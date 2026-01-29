@@ -2035,9 +2035,9 @@ class ICTSignalEngine:
         
         try:
             # Get higher timeframes
-            htf_df = mtf_data.get('1D') or mtf_data.get('4H')
-            mtf_df = mtf_data.get('4H') or mtf_data.get('1H')
-            ltf_df = mtf_data.get('1H') or primary_df
+            htf_df = mtf_data.get('1d') or mtf_data.get('4h')
+            mtf_df = mtf_data.get('4h') or mtf_data.get('1h')
+            ltf_df = mtf_data.get('1h') or primary_df
             
             if htf_df is None or mtf_df is None or ltf_df is None:
                 return None
