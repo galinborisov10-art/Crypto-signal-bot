@@ -101,7 +101,7 @@ def test_helper_functions_exist():
         'check_sl_hit',
         'check_tp_hit',
         'reconstruct_signal_from_json',
-        'format_checkpoint_alert',
+        # 'format_checkpoint_alert',  # REMOVED - checkpoint alert system disabled
         'handle_sl_hit',
         'handle_tp_hit'
     ]

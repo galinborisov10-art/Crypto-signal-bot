@@ -11896,91 +11896,6 @@ def reconstruct_signal_from_json(signal_json: str) -> Optional[Any]:
         return None
 
 
-def format_checkpoint_alert(
-    symbol: str,
-    timeframe: str,
-    checkpoint_level: str,
-    current_price: float,
-    entry_price: float,
-    analysis: Any
-) -> str:
-    """
-    Format beautiful checkpoint alert message
-    
-    Args:
-        symbol: Trading pair
-        timeframe: Timeframe
-        checkpoint_level: '25%', '50%', '75%', '85%'
-        current_price: Current market price
-        entry_price: Entry price
-        analysis: CheckpointAnalysis object
-        
-    Returns:
-        Formatted HTML message
-    """
-    recommendation_emoji = {
-        'HOLD': '🟢',
-        'PARTIAL_CLOSE': '🟡',
-        'CLOSE_NOW': '🔴',
-        'MOVE_SL': '🔵'
-    }
-    
-    # Get recommendation value
-    if hasattr(analysis, 'recommendation'):
-        rec_value = analysis.recommendation.value if hasattr(analysis.recommendation, 'value') else str(analysis.recommendation)
-    else:
-        rec_value = analysis.get('recommendation', 'HOLD')
-    
-    emoji = recommendation_emoji.get(rec_value, '⚪')
-    
-    # Calculate gain from entry
-    gain_percent = ((current_price - entry_price) / entry_price) * 100
-    
-    # Get analysis values
-    orig_conf = analysis.original_confidence if hasattr(analysis, 'original_confidence') else analysis.get('original_confidence', 0)
-    curr_conf = analysis.current_confidence if hasattr(analysis, 'current_confidence') else analysis.get('current_confidence', 0)
-    conf_delta = analysis.confidence_delta if hasattr(analysis, 'confidence_delta') else analysis.get('confidence_delta', 0)
-    htf_changed = analysis.htf_bias_changed if hasattr(analysis, 'htf_bias_changed') else analysis.get('htf_bias_changed', False)
-    struct_broken = analysis.structure_broken if hasattr(analysis, 'structure_broken') else analysis.get('structure_broken', False)
-    valid_comps = analysis.valid_components_count if hasattr(analysis, 'valid_components_count') else analysis.get('valid_components_count', 0)
-    curr_rr = analysis.current_rr_ratio if hasattr(analysis, 'current_rr_ratio') else analysis.get('current_rr_ratio', 0)
-    reasoning = analysis.reasoning if hasattr(analysis, 'reasoning') else analysis.get('reasoning', '')
-    warnings = analysis.warnings if hasattr(analysis, 'warnings') else analysis.get('warnings', [])
-    
-    msg = f"""
-🔄 <b>CHECKPOINT ALERT - {checkpoint_level} to TP1</b>
-
-━━━━━━━━━━━━━━━━━
-📊 <b>{symbol}</b> ({timeframe.upper()})
-Current Price: ${current_price:,.2f}
-Gain from Entry: {gain_percent:+.2f}%
-
-━━━━━━━━━━━━━━━━━
-📈 <b>RE-ANALYSIS COMPLETE</b>
-
-Original Confidence: {orig_conf:.1f}%
-Current Confidence: {curr_conf:.1f}%
-<b>Change: {conf_delta:+.1f}%</b>
-
-HTF Bias: {"❌ <b>CHANGED</b>" if htf_changed else "✅ Unchanged"}
-Structure: {"❌ <b>BROKEN</b>" if struct_broken else "✅ Intact"}
-Valid Components: {valid_comps}
-Current R:R: {curr_rr:.2f}
-
-━━━━━━━━━━━━━━━━━
-{emoji} <b>RECOMMENDATION: {rec_value}</b>
-
-<i>{reasoning}</i>
-"""
-    
-    if warnings:
-        msg += "\n\n⚠️ <b>Warnings:</b>\n"
-        for warning in warnings:
-            msg += f"• {warning}\n"
-    
-    return msg
-
-
 async def handle_sl_hit(position: Dict, exit_price: float, bot_instance):
     """
     Handle stop-loss hit - auto close position
@@ -18231,27 +18146,6 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             )
             logger.info("✅ Auto signal 1D scheduled (daily at 09:15 UTC)")
             
-            # ================= PR #7: POSITION MONITORING JOB =================
-            # Position monitoring - Every 1 minute
-            if POSITION_MANAGER_AVAILABLE and CHECKPOINT_MONITORING_ENABLED:
-                # Create proper async wrapper to avoid lambda/asyncio scoping issues
-                async def position_monitor_wrapper():
-                    """Wrapper for position monitoring job"""
-                    try:
-                        await monitor_positions_job(application.bot)
-                    except Exception as e:
-                        logger.error(f"❌ Position monitor error: {e}")
-                
-                scheduler.add_job(
-                    position_monitor_wrapper,  # Use wrapper instead of lambda
-                    'cron',
-                    minute='*',  # Every minute
-                    id='position_monitor',
-                    name='Position Monitor',
-                    replace_existing=True
-                )
-                logger.info("✅ Position monitor scheduled (every 1 minute)")
-            
             # ============================================================================
             # PR #10: INTELLIGENT HEALTH MONITORING JOBS
             # ============================================================================
@@ -18367,43 +18261,6 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                 replace_existing=True
             )
             logger.info("✅ Daily report health monitor scheduled (daily at 09:00)")
-            
-            # 4. Position Monitor Health (every hour)
-            @safe_job("position_monitor_health", max_retries=2, retry_delay=30)
-            async def position_monitor_health_job():
-                """Check for position monitor errors"""
-                try:
-                    from system_diagnostics import diagnose_position_monitor_issue
-                    from diagnostic_messages import format_issue_alert
-                    
-                    logger.info("🏥 Running position monitor health check...")
-                    issues = await diagnose_position_monitor_issue(BASE_PATH)
-                    
-                    if issues:
-                        for issue in issues:
-                            message = format_issue_alert("POSITION MONITOR", issue)
-                            await application.bot.send_message(
-                                chat_id=OWNER_CHAT_ID,
-                                text=message,
-                                parse_mode='HTML',
-                                disable_notification=False
-                            )
-                        logger.warning(f"⚠️ Position monitor health check found {len(issues)} issues")
-                    else:
-                        logger.info("✅ Position monitor health check passed")
-                except Exception as e:
-                    logger.error(f"❌ Position monitor health check error: {e}")
-            
-            scheduler.add_job(
-                position_monitor_health_job,
-                'cron',
-                hour='*',  # Every hour
-                minute=30,
-                id='position_monitor_health',
-                name='Position Monitor Health',
-                replace_existing=True
-            )
-            logger.info("✅ Position monitor health check scheduled (every hour)")
             
             # 5. Scheduler Health Monitor (every 12 hours)
             @safe_job("scheduler_health_monitor", max_retries=2, retry_delay=30)

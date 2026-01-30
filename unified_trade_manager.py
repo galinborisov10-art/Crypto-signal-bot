@@ -224,12 +224,6 @@ class UnifiedTradeManager:
                         progress,
                         current_price
                     )
-                    
-                    # 8. Send Telegram alert
-                    await self._send_checkpoint_alert(
-                        position.get('user_id') or position.get('id'),
-                        alert_message
-                    )
                 else:
                     logger.info(f"🔇 Silent monitoring at {checkpoint}% - no significant changes")
                 
@@ -240,16 +234,6 @@ class UnifiedTradeManager:
                         position['id'],
                         f"{checkpoint}%"
                     )
-                    
-                    # Log checkpoint alert only if alert was sent
-                    if should_alert and analysis:
-                        self.position_manager.log_checkpoint_alert(
-                            position_id=position['id'],
-                            checkpoint_level=f"{checkpoint}%",
-                            trigger_price=current_price,
-                            analysis=analysis,
-                            action_taken='ALERTED' if should_alert else 'MONITORED'
-                        )
             
             # 10. Check TP/SL hits
             await self._check_tp_sl_hits(position, current_price)
@@ -734,29 +718,6 @@ Progress: {progress:.1f}% към TP1
 Позицията се развива. Следващ checkpoint @ {next_checkpoint}
 """
     
-    async def _send_checkpoint_alert(self, user_id: int, message: str) -> None:
-        """
-        Send alert via Telegram
-        
-        Args:
-            user_id: User/chat ID
-            message: Alert message
-        """
-        try:
-            if not self.bot_instance:
-                logger.warning("⚠️ No bot instance available for sending alerts")
-                return
-            
-            await self.bot_instance.send_message(
-                chat_id=user_id,
-                text=message,
-                parse_mode='HTML'
-            )
-            logger.info(f"✅ Checkpoint alert sent to {user_id}")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to send checkpoint alert: {e}")
-    
     async def _check_tp_sl_hits(self, position: Dict, current_price: float) -> None:
         """
         Check if TP or SL hit
@@ -815,10 +776,7 @@ Progress: {progress:.1f}% към TP1
 
 Позицията е затворена автоматично.
 """
-            await self._send_checkpoint_alert(
-                position.get('user_id') or position.get('id'),
-                message
-            )
+            # Note: Alert notification removed - checkpoint alert system disabled
             
         except Exception as e:
             logger.error(f"❌ Handle TP hit failed: {e}")
@@ -851,10 +809,7 @@ Progress: {progress:.1f}% към TP1
 
 Позицията е затворена за защита на капитала.
 """
-            await self._send_checkpoint_alert(
-                position.get('user_id') or position.get('id'),
-                message
-            )
+            # Note: Alert notification removed - checkpoint alert system disabled
             
         except Exception as e:
             logger.error(f"❌ Handle SL hit failed: {e}")
