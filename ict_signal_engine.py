@@ -1079,8 +1079,8 @@ class ICTSignalEngine:
         # 3. Current timeframe components
         order_block = (
             entry_setup.get('ob') or
-            (self.htf_components.get('order_blocks', [None])[0] if hasattr(self, 'htf_components') and self.htf_components.get('order_blocks') else None) or
-            (ict_components.get('order_blocks', [None])[0] if ict_components.get('order_blocks') else None)
+            ((self.htf_components.get('order_blocks') or [None])[0] if hasattr(self, 'htf_components') else None) or
+            ((ict_components.get('order_blocks') or [None])[0] if ict_components else None)
         )
         
         if order_block:

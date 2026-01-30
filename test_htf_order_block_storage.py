@@ -154,8 +154,8 @@ class TestHTFOrderBlockStorage(unittest.TestCase):
         # Test the fallback chain logic
         order_block = (
             None or  # No entry setup OB
-            (self.engine.htf_components.get('order_blocks', [None])[0] 
-             if hasattr(self.engine, 'htf_components') and self.engine.htf_components.get('order_blocks') 
+            ((self.engine.htf_components.get('order_blocks') or [None])[0] 
+             if hasattr(self.engine, 'htf_components') 
              else None) or
             None  # No current timeframe OB
         )
