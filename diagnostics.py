@@ -240,8 +240,8 @@ def check_signal_schema_validation() -> DiagnosticResult:
 def check_nan_in_indicators() -> DiagnosticResult:
     """Check 4: Test indicator calculations for NaN"""
     try:
-        # Create sample data
-        dates = pd.date_range(start='2024-01-01', periods=100, freq='h')  # Changed from '1H' to 'h'
+        # Create sample data (using 'h' for hourly frequency)
+        dates = pd.date_range(start='2024-01-01', periods=100, freq='h')
         df = pd.DataFrame({
             'timestamp': dates,
             'open': np.random.uniform(45000, 50000, 100),

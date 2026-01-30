@@ -1068,7 +1068,7 @@ async def translate_text(text: str, target_lang: str = 'bg') -> str:
         return text
 
 
-async def safe_send_telegram(context, chat_id, text, **kwargs):
+async def safe_send_telegram(context, chat_id, text, **kwargs) -> Optional[Any]:
     """
     Safe Telegram send with DIAGNOSTIC_MODE support
     
@@ -1131,8 +1131,8 @@ def get_main_keyboard():
         [KeyboardButton("📚 ML Анализ"), KeyboardButton("⚙️ Настройки")],
         [KeyboardButton("🔔 Alerts"), KeyboardButton("🏥 Health")],  # PR #113: Added Health button
         [KeyboardButton("🛠 Diagnostics"), KeyboardButton("💻 Workspace")],  # NEW: Diagnostics button
-        [KeyboardButton("🔄 Рестарт"), KeyboardButton("🏠 Меню")],
-        [KeyboardButton("ℹ️ Помощ")]
+        [KeyboardButton("🔄 Рестарт"), KeyboardButton("ℹ️ Помощ")],
+        [KeyboardButton("🏠 Меню")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -17597,8 +17597,8 @@ def main():
                     text=f"❌ *Startup Diagnostic Failed*\n\n`{str(e)}`",
                     parse_mode='Markdown'
                 )
-            except:
-                pass  # Fail silently if can't send
+            except Exception as notify_error:
+                logger.error(f"Failed to send startup diagnostic error notification: {notify_error}")
     
     # Set post_init callback
     app.post_init = post_init

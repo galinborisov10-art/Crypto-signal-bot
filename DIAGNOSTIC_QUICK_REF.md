@@ -27,7 +27,12 @@ DIAGNOSTIC_MODE=true
 python3 -c "
 import asyncio
 from diagnostics import run_quick_check
-asyncio.run(run_quick_check()).then(print)
+
+async def test():
+    report = await run_quick_check()
+    print(report)
+
+asyncio.run(test())
 "
 ```
 
