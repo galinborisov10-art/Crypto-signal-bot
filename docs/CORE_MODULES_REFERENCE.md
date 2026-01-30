@@ -23,7 +23,7 @@
 
 ### Core Application Functions
 
-#### `main()` - Line 17264
+#### `main()` - Line 17417
 **Purpose:** Application entry point and initialization
 
 **Responsibilities:**
