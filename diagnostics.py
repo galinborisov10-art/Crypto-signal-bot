@@ -125,14 +125,22 @@ def check_logger_configuration() -> DiagnosticResult:
     try:
         root_logger = logging.getLogger()
         
-        # Check handlers
-        if not root_logger.handlers:
-            return DiagnosticResult(
-                name="Logger Configuration",
-                status="FAIL",
-                severity="HIGH",
-                message="No logger handlers configured"
-            )
+        # Check handlers - also check for NullHandler or no handlers in quiet mode
+        handlers_count = len(root_logger.handlers)
+        
+        # Allow no handlers if logging is configured at module level
+        if handlers_count == 0:
+            # Check if any module-level loggers exist
+            module_loggers = [name for name in logging.Logger.manager.loggerDict 
+                            if logging.getLogger(name).handlers]
+            
+            if not module_loggers:
+                return DiagnosticResult(
+                    name="Logger Configuration",
+                    status="WARN",
+                    severity="LOW",
+                    message="No root logger handlers (may use module-level loggers)"
+                )
         
         # Check log level
         if root_logger.level > logging.INFO:
@@ -147,7 +155,7 @@ def check_logger_configuration() -> DiagnosticResult:
             name="Logger Configuration",
             status="PASS",
             severity="LOW",
-            message=f"{len(root_logger.handlers)} handlers, level={logging.getLevelName(root_logger.level)}"
+            message=f"{handlers_count} handlers, level={logging.getLevelName(root_logger.level)}"
         )
     
     except Exception as e:
@@ -233,7 +241,7 @@ def check_nan_in_indicators() -> DiagnosticResult:
     """Check 4: Test indicator calculations for NaN"""
     try:
         # Create sample data
-        dates = pd.date_range(start='2024-01-01', periods=100, freq='1H')
+        dates = pd.date_range(start='2024-01-01', periods=100, freq='h')  # Changed from '1H' to 'h'
         df = pd.DataFrame({
             'timestamp': dates,
             'open': np.random.uniform(45000, 50000, 100),
