@@ -76,8 +76,8 @@ def test_bot_uses_correct_attributes():
 
 
 def test_position_monitor_wrapper():
-    """Verify position monitor has async wrapper instead of lambda"""
-    print("\n🧪 Testing position monitor wrapper function...")
+    """Verify position monitor wrapper has been removed (checkpoint alert system disabled)"""
+    print("\n🧪 Testing position monitor wrapper removal...")
     
     try:
         with open('bot.py', 'r', encoding='utf-8') as f:
@@ -86,26 +86,26 @@ def test_position_monitor_wrapper():
         # Check for incorrect lambda usage
         lambda_monitor = re.search(r'lambda:.*asyncio\.create_task\(monitor_positions_job', content)
         if lambda_monitor:
-            print("  ❌ Found lambda usage for position monitor (should use wrapper)")
+            print("  ❌ Found lambda usage for position monitor (should be removed)")
             return False
         else:
             print("  ✅ No lambda usage for position monitor found")
         
-        # Check for wrapper function
+        # Check that wrapper function is REMOVED
         wrapper_def = re.search(r'async def position_monitor_wrapper\(\):', content)
         if wrapper_def:
-            print("  ✅ Found position_monitor_wrapper() function")
-        else:
-            print("  ⚠️ position_monitor_wrapper() function not found")
+            print("  ❌ position_monitor_wrapper() function still exists (should be removed)")
             return False
+        else:
+            print("  ✅ position_monitor_wrapper() function removed")
         
-        # Check wrapper is used in scheduler
+        # Check wrapper is NOT used in scheduler
         wrapper_usage = re.search(r'scheduler\.add_job\(\s*position_monitor_wrapper', content, re.MULTILINE)
         if wrapper_usage:
-            print("  ✅ position_monitor_wrapper is used in scheduler")
-        else:
-            print("  ❌ position_monitor_wrapper is NOT used in scheduler")
+            print("  ❌ position_monitor_wrapper is still used in scheduler (should be removed)")
             return False
+        else:
+            print("  ✅ position_monitor_wrapper is NOT used in scheduler")
         
         return True
     except Exception as e:

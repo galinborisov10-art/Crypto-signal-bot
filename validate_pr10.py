@@ -82,7 +82,7 @@ monitor_jobs = [
     'journal_health_monitor_job',
     'ml_health_monitor_job',
     'daily_report_health_monitor_job',
-    'position_monitor_health_job',
+    # 'position_monitor_health_job',  # REMOVED - checkpoint alert system disabled
     'scheduler_health_monitor_job',
     'disk_space_monitor_job'
 ]
