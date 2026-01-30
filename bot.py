@@ -1068,7 +1068,7 @@ async def translate_text(text: str, target_lang: str = 'bg') -> str:
         return text
 
 
-async def safe_send_telegram(context, chat_id, text, **kwargs) -> Optional[Any]:
+async def safe_send_telegram(context_or_bot, chat_id, text, **kwargs) -> Optional[Any]:
     """
     Safe Telegram send with DIAGNOSTIC_MODE support
     
@@ -1078,7 +1078,7 @@ async def safe_send_telegram(context, chat_id, text, **kwargs) -> Optional[Any]:
     - All sends are logged
     
     Args:
-        context: Telegram context
+        context_or_bot: Telegram context or bot instance
         chat_id: Chat ID to send to
         text: Message text
         **kwargs: Additional arguments for send_message
@@ -1096,8 +1096,13 @@ async def safe_send_telegram(context, chat_id, text, **kwargs) -> Optional[Any]:
         # Prefix admin messages
         text = f"[DIAGNOSTIC MODE]\n\n{text}"
     
-    # Send normally
-    return await context.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+    # Send normally - handle both context and bot objects
+    if hasattr(context_or_bot, 'bot'):
+        # It's a context object
+        return await context_or_bot.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+    else:
+        # It's a bot object directly
+        return await context_or_bot.send_message(chat_id=chat_id, text=text, **kwargs)
 
 
 def get_user_settings(bot_data, chat_id):
@@ -2825,9 +2830,10 @@ async def send_signal_alert(alert):
                 message += f"💡 Препоръчвам частично затваряне за сигурност\n"
         
         # Изпрати съобщението
-        await application.bot.send_message(
-            chat_id=OWNER_CHAT_ID,
-            text=message,
+        await safe_send_telegram(
+            application.bot,
+            OWNER_CHAT_ID,
+            message,
             parse_mode='HTML',
             disable_notification=False  # Със звук!
         )
@@ -7699,9 +7705,10 @@ async def market_quick_overview(update: Update, context: ContextTypes.DEFAULT_TY
     # Fetch market data
     data = await fetch_json(BINANCE_24H_URL)
     if not data:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="❌ Грешка при извличане на данни"
+        await safe_send_telegram(
+            context,
+            update.effective_chat.id,
+            "❌ Грешка при извличане на данни"
         )
         return
     
@@ -7737,9 +7744,10 @@ async def market_quick_overview(update: Update, context: ContextTypes.DEFAULT_TY
     message += f"🟢 {'Растящи' if user_language == 'bg' else 'Rising'}: <b>{sentiment_analysis['positive_count']}</b> | "
     message += f"🔴 {'Падащи' if user_language == 'bg' else 'Falling'}: <b>{sentiment_analysis['negative_count']}</b>\n"
     
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=message,
+    await safe_send_telegram(
+        context,
+        update.effective_chat.id,
+        message,
         parse_mode='HTML'
     )
 
@@ -7794,9 +7802,10 @@ async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             all_analyses.append(analysis)
             
             # Send analysis for this pair (plain text, no HTML parsing)
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=analysis['message']
+            await safe_send_telegram(
+                context,
+                update.effective_chat.id,
+                analysis['message']
             )
             
             # Anti-spam delay
@@ -7804,30 +7813,34 @@ async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             
         except asyncio.TimeoutError:
             logger.error(f"Timeout analyzing {symbol}")
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"⚠️ Timeout при анализ на {symbol} - прескачам"
+            await safe_send_telegram(
+                context,
+                update.effective_chat.id,
+                f"⚠️ Timeout при анализ на {symbol} - прескачам"
             )
         except Exception as e:
             logger.error(f"Error analyzing {symbol}: {e}", exc_info=True)
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"❌ Грешка при анализ на {symbol}: {str(e)}"
+            await safe_send_telegram(
+                context,
+                update.effective_chat.id,
+                f"❌ Грешка при анализ на {symbol}: {str(e)}"
             )
     
     # Generate and send summary (plain text, no HTML parsing)
     try:
         summary = generate_swing_summary(all_analyses)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=summary
+        await safe_send_telegram(
+            context,
+            update.effective_chat.id,
+            summary
         )
         logger.info(f"✅ Swing analysis completed for {len(all_analyses)} pairs")
     except Exception as e:
         logger.error(f"Error generating summary: {e}", exc_info=True)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="❌ Грешка при генериране на обобщение"
+        await safe_send_telegram(
+            context,
+            update.effective_chat.id,
+            "❌ Грешка при генериране на обобщение"
         )
 
 
@@ -8733,9 +8746,10 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Notify user (only in signal_cmd, not in callback)
             if real_time_monitor_global and ict_signal.signal_type.value in ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="🎯 <b>Signal added to real-time monitor!</b>\n\n"
+                await safe_send_telegram(
+                    context,
+                    update.effective_chat.id,
+                    "🎯 <b>Signal added to real-time monitor!</b>\n\n"
                          "You'll receive alerts at:\n"
                          "• 80% progress to TP (with ICT re-analysis)\n"
                          "• Final WIN/LOSS when TP/SL reached",
@@ -11388,9 +11402,10 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         
         # Send message
         try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=final_msg,
+            await safe_send_telegram(
+                context,
+                chat_id,
+                final_msg,
                 parse_mode='HTML',
                 disable_web_page_preview=True,
                 disable_notification=False  # Sound alert for auto signals

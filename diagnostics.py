@@ -286,10 +286,22 @@ def check_nan_in_indicators() -> DiagnosticResult:
 def check_duplicate_signal_guard() -> DiagnosticResult:
     """Check 5: Verify duplicate signal prevention exists"""
     try:
-        # Check if cache manager exists
-        from cache_manager import CacheManager
-        
-        cache_mgr = CacheManager()
+        # Check if cache manager exists - try both locations
+        try:
+            from cache_manager import CacheManager
+            cache_mgr = CacheManager()
+        except ImportError:
+            try:
+                from bot import CacheManager
+                cache_mgr = CacheManager()
+            except (ImportError, AttributeError):
+                # CacheManager not available - this is OK, system may use different deduplication
+                return DiagnosticResult(
+                    name="Duplicate Guard",
+                    status="WARN",
+                    severity="LOW",
+                    message="CacheManager not found (may use different duplicate prevention)"
+                )
         
         # Check for duplicate detection method
         if not hasattr(cache_mgr, 'has_signal') and not hasattr(cache_mgr, 'get'):
@@ -307,13 +319,6 @@ def check_duplicate_signal_guard() -> DiagnosticResult:
             message="Cache manager with duplicate detection present"
         )
     
-    except ImportError:
-        return DiagnosticResult(
-            name="Duplicate Guard",
-            status="WARN",
-            severity="LOW",
-            message="CacheManager not found (may use different duplicate prevention)"
-        )
     except Exception as e:
         return DiagnosticResult(
             name="Duplicate Guard",
