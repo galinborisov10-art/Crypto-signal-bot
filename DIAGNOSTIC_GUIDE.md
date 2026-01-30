@@ -293,9 +293,16 @@ class DiagnosticRunner:
 ### Core Functions
 ```python
 async def run_quick_check() -> str
-async def safe_send_telegram(context, chat_id, text, **kwargs)
+async def safe_send_telegram(context, chat_id, text, **kwargs) -> Optional[Any]
 async def diagnostics_menu_handler(update, context)
 async def handle_quick_check(update, context)
+```
+
+### DiagnosticRunner Methods
+```python
+async def run_check(check_name: str, check_func, timeout: int = 30) -> DiagnosticResult
+async def run_all(checks: List[Tuple[str, Callable]]) -> List[DiagnosticResult]
+def format_report() -> str
 ```
 
 ## Change Log

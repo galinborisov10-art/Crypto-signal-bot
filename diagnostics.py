@@ -10,7 +10,7 @@ import importlib
 import inspect
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Callable
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ class DiagnosticRunner:
                 details=f"{type(e).__name__}: {e}"
             )
     
-    async def run_all(self, checks: List[Tuple[str, callable]]) -> List[DiagnosticResult]:
+    async def run_all(self, checks: List[Tuple[str, Callable]]) -> List[DiagnosticResult]:
         """Run all diagnostic checks sequentially"""
         self.start_time = datetime.now()
         self.results = []
@@ -240,7 +240,7 @@ def check_signal_schema_validation() -> DiagnosticResult:
 def check_nan_in_indicators() -> DiagnosticResult:
     """Check 4: Test indicator calculations for NaN"""
     try:
-        # Create sample data (using 'h' for hourly frequency)
+        # Create sample data (using 'h' for hourly frequency - lowercase for pandas 2.x)
         dates = pd.date_range(start='2024-01-01', periods=100, freq='h')
         df = pd.DataFrame({
             'timestamp': dates,
