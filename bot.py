@@ -299,6 +299,17 @@ else:
 
 OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '7003238836'))
 
+# ========================================
+# DIAGNOSTIC MODE (Production-Safe Testing)
+# ========================================
+DIAGNOSTIC_MODE = os.getenv('DIAGNOSTIC_MODE', 'false').lower() == 'true'
+
+if DIAGNOSTIC_MODE:
+    logger.warning("⚠️ DIAGNOSTIC MODE ENABLED - No real signals/alerts will be sent!")
+    logger.warning("   → All Telegram sends will be mocked")
+    logger.warning("   → All Binance trades will be mocked")
+    logger.warning("   → Reports go to admin only")
+
 # ================= USER ACCESS CONTROL =================
 # Списък с разрешени потребители (Owner винаги е разрешен)
 # PR #113: Defensive fallback to ensure access even if env var issues
@@ -1057,6 +1068,38 @@ async def translate_text(text: str, target_lang: str = 'bg') -> str:
         return text
 
 
+async def safe_send_telegram(context, chat_id, text, **kwargs):
+    """
+    Safe Telegram send with DIAGNOSTIC_MODE support
+    
+    When DIAGNOSTIC_MODE=true:
+    - User messages are blocked
+    - Admin messages are prefixed with [DIAGNOSTIC]
+    - All sends are logged
+    
+    Args:
+        context: Telegram context
+        chat_id: Chat ID to send to
+        text: Message text
+        **kwargs: Additional arguments for send_message
+    
+    Returns:
+        Message object or None if blocked
+    """
+    if DIAGNOSTIC_MODE:
+        # Block non-admin messages
+        if chat_id != OWNER_CHAT_ID:
+            logger.info(f"🔒 DIAGNOSTIC MODE: Blocked message to user {chat_id}")
+            logger.debug(f"   Blocked content: {text[:100]}...")
+            return None
+        
+        # Prefix admin messages
+        text = f"[DIAGNOSTIC MODE]\n\n{text}"
+    
+    # Send normally
+    return await context.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+
+
 def get_user_settings(bot_data, chat_id):
     """Вземи настройките на потребителя или създай по подразбиране"""
     if chat_id not in bot_data:
@@ -1087,8 +1130,9 @@ def get_main_keyboard():
         [KeyboardButton("📰 Новини"), KeyboardButton("📋 Отчети")],
         [KeyboardButton("📚 ML Анализ"), KeyboardButton("⚙️ Настройки")],
         [KeyboardButton("🔔 Alerts"), KeyboardButton("🏥 Health")],  # PR #113: Added Health button
-        [KeyboardButton("🔄 Рестарт"), KeyboardButton("💻 Workspace")],
-        [KeyboardButton("🏠 Меню"), KeyboardButton("ℹ️ Помощ")]
+        [KeyboardButton("🛠 Diagnostics"), KeyboardButton("💻 Workspace")],  # NEW: Diagnostics button
+        [KeyboardButton("🔄 Рестарт"), KeyboardButton("🏠 Меню")],
+        [KeyboardButton("ℹ️ Помощ")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -12639,6 +12683,40 @@ https://github.com/galinborisov10-art/Crypto-signal-bot
             parse_mode='HTML'
         )
     
+    # ========== DIAGNOSTIC BUTTON HANDLERS ==========
+    elif text == "🛠 Diagnostics":
+        await diagnostics_menu_handler(update, context)
+    
+    elif text == "🔍 Quick Check":
+        await handle_quick_check(update, context)
+    
+    elif text == "🔙 Back to Main Menu":
+        await handle_back_to_main_menu(update, context)
+    
+    elif text == "🔬 Full Self-Audit":
+        # Placeholder for future implementation
+        await update.message.reply_text(
+            "🔬 *Full Self-Audit*\n\n"
+            "This feature is coming soon!",
+            parse_mode='Markdown'
+        )
+    
+    elif text == "📊 System Status":
+        # Placeholder for future implementation
+        await update.message.reply_text(
+            "📊 *System Status*\n\n"
+            "This feature is coming soon!",
+            parse_mode='Markdown'
+        )
+    
+    elif text == "🔄 Replay Last Signal":
+        # Placeholder for future implementation
+        await update.message.reply_text(
+            "🔄 *Replay Last Signal*\n\n"
+            "This feature is coming soon!",
+            parse_mode='Markdown'
+        )
+    
     elif text == "💬 Copilot":
         copilot_message = """
 🤖 <b>GitHub Copilot Chat</b>
@@ -16093,6 +16171,66 @@ async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     overview += "\n💡 <i>Избери бутон за детайли</i>"
     
     await update.message.reply_text(overview, parse_mode='HTML', reply_markup=reply_markup)
+
+
+# ========================================
+# DIAGNOSTICS MENU AND HANDLERS
+# ========================================
+
+async def diagnostics_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show diagnostics submenu (admin only)"""
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("❌ Admin only")
+        return
+    
+    keyboard = [
+        [KeyboardButton("🔍 Quick Check")],
+        [KeyboardButton("🔬 Full Self-Audit")],
+        [KeyboardButton("📊 System Status")],
+        [KeyboardButton("🔄 Replay Last Signal")],
+        [KeyboardButton("🔙 Back to Main Menu")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    await update.message.reply_text(
+        "🛠 *Diagnostics Control Panel*\n\n"
+        "Select diagnostic action:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+
+async def handle_quick_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Quick Check button"""
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("❌ Admin only")
+        return
+    
+    # Send "running" message
+    msg = await update.message.reply_text("🔍 Running diagnostics...", parse_mode='Markdown')
+    
+    try:
+        # Import and run checks
+        from diagnostics import run_quick_check
+        
+        # Run checks
+        report = await run_quick_check()
+        
+        # Send report
+        await msg.edit_text(report, parse_mode='Markdown')
+    
+    except Exception as e:
+        await msg.edit_text(f"❌ Diagnostic failed:\n{e}")
+        logger.error(f"Diagnostic error: {e}", exc_info=True)
+
+
+async def handle_back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle back to main menu button"""
+    await start_cmd(update, context)
 
 
 async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
