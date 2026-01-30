@@ -17569,6 +17569,40 @@ def main():
         except Exception as ml_error:
             logger.error(f"❌ ML initialization error: {ml_error}")
     
+    # ========================================
+    # DIAGNOSTIC AUTO-RUN AT STARTUP (Optional)
+    # ========================================
+    async def post_init(application):
+        """Run after bot starts - sends Quick Check diagnostics to admin"""
+        logger.info("🚀 Bot started, running Quick Check diagnostics...")
+        
+        try:
+            from diagnostics import run_quick_check
+            
+            report = await run_quick_check()
+            
+            # Send to admin
+            await application.bot.send_message(
+                chat_id=OWNER_CHAT_ID,
+                text=f"🤖 *Bot Started*\n\n{report}",
+                parse_mode='Markdown'
+            )
+            logger.info("✅ Startup diagnostics sent to admin")
+        except Exception as e:
+            logger.error(f"❌ Startup diagnostic failed: {e}")
+            # Try to send error notification
+            try:
+                await application.bot.send_message(
+                    chat_id=OWNER_CHAT_ID,
+                    text=f"❌ *Startup Diagnostic Failed*\n\n`{str(e)}`",
+                    parse_mode='Markdown'
+                )
+            except:
+                pass  # Fail silently if can't send
+    
+    # Set post_init callback
+    app.post_init = post_init
+    
     # APScheduler за автоматични отчети (стартира СЛЕД app.run_polling)
     if ADMIN_MODULE_AVAILABLE or REPORTS_AVAILABLE:
         async def schedule_reports(application):
