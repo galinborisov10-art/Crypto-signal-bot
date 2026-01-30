@@ -299,6 +299,17 @@ else:
 
 OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '7003238836'))
 
+# ========================================
+# DIAGNOSTIC MODE (Production-Safe Testing)
+# ========================================
+DIAGNOSTIC_MODE = os.getenv('DIAGNOSTIC_MODE', 'false').lower() == 'true'
+
+if DIAGNOSTIC_MODE:
+    logger.warning("⚠️ DIAGNOSTIC MODE ENABLED - No real signals/alerts will be sent!")
+    logger.warning("   → All Telegram sends will be mocked")
+    logger.warning("   → All Binance trades will be mocked")
+    logger.warning("   → Reports go to admin only")
+
 # ================= USER ACCESS CONTROL =================
 # Списък с разрешени потребители (Owner винаги е разрешен)
 # PR #113: Defensive fallback to ensure access even if env var issues
@@ -1057,6 +1068,43 @@ async def translate_text(text: str, target_lang: str = 'bg') -> str:
         return text
 
 
+async def safe_send_telegram(context_or_bot, chat_id, text, **kwargs) -> Optional[Any]:
+    """
+    Safe Telegram send with DIAGNOSTIC_MODE support
+    
+    When DIAGNOSTIC_MODE=true:
+    - User messages are blocked
+    - Admin messages are prefixed with [DIAGNOSTIC]
+    - All sends are logged
+    
+    Args:
+        context_or_bot: Telegram context or bot instance
+        chat_id: Chat ID to send to
+        text: Message text
+        **kwargs: Additional arguments for send_message
+    
+    Returns:
+        Message object or None if blocked
+    """
+    if DIAGNOSTIC_MODE:
+        # Block non-admin messages
+        if chat_id != OWNER_CHAT_ID:
+            logger.info(f"🔒 DIAGNOSTIC MODE: Blocked message to user {chat_id}")
+            logger.debug(f"   Blocked content: {text[:100]}...")
+            return None
+        
+        # Prefix admin messages
+        text = f"[DIAGNOSTIC MODE]\n\n{text}"
+    
+    # Send normally - handle both context and bot objects
+    if hasattr(context_or_bot, 'bot'):
+        # It's a context object
+        return await context_or_bot.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+    else:
+        # It's a bot object directly
+        return await context_or_bot.send_message(chat_id=chat_id, text=text, **kwargs)
+
+
 def get_user_settings(bot_data, chat_id):
     """Вземи настройките на потребителя или създай по подразбиране"""
     if chat_id not in bot_data:
@@ -1087,8 +1135,9 @@ def get_main_keyboard():
         [KeyboardButton("📰 Новини"), KeyboardButton("📋 Отчети")],
         [KeyboardButton("📚 ML Анализ"), KeyboardButton("⚙️ Настройки")],
         [KeyboardButton("🔔 Alerts"), KeyboardButton("🏥 Health")],  # PR #113: Added Health button
-        [KeyboardButton("🔄 Рестарт"), KeyboardButton("💻 Workspace")],
-        [KeyboardButton("🏠 Меню"), KeyboardButton("ℹ️ Помощ")]
+        [KeyboardButton("🛠 Diagnostics"), KeyboardButton("💻 Workspace")],  # NEW: Diagnostics button
+        [KeyboardButton("🔄 Рестарт"), KeyboardButton("ℹ️ Помощ")],
+        [KeyboardButton("🏠 Меню")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -2781,9 +2830,10 @@ async def send_signal_alert(alert):
                 message += f"💡 Препоръчвам частично затваряне за сигурност\n"
         
         # Изпрати съобщението
-        await application.bot.send_message(
-            chat_id=OWNER_CHAT_ID,
-            text=message,
+        await safe_send_telegram(
+            application.bot,
+            OWNER_CHAT_ID,
+            message,
             parse_mode='HTML',
             disable_notification=False  # Със звук!
         )
@@ -7655,9 +7705,10 @@ async def market_quick_overview(update: Update, context: ContextTypes.DEFAULT_TY
     # Fetch market data
     data = await fetch_json(BINANCE_24H_URL)
     if not data:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="❌ Грешка при извличане на данни"
+        await safe_send_telegram(
+            context,
+            update.effective_chat.id,
+            "❌ Грешка при извличане на данни"
         )
         return
     
@@ -7693,9 +7744,10 @@ async def market_quick_overview(update: Update, context: ContextTypes.DEFAULT_TY
     message += f"🟢 {'Растящи' if user_language == 'bg' else 'Rising'}: <b>{sentiment_analysis['positive_count']}</b> | "
     message += f"🔴 {'Падащи' if user_language == 'bg' else 'Falling'}: <b>{sentiment_analysis['negative_count']}</b>\n"
     
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=message,
+    await safe_send_telegram(
+        context,
+        update.effective_chat.id,
+        message,
         parse_mode='HTML'
     )
 
@@ -7750,9 +7802,10 @@ async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             all_analyses.append(analysis)
             
             # Send analysis for this pair (plain text, no HTML parsing)
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=analysis['message']
+            await safe_send_telegram(
+                context,
+                update.effective_chat.id,
+                analysis['message']
             )
             
             # Anti-spam delay
@@ -7760,30 +7813,34 @@ async def market_swing_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             
         except asyncio.TimeoutError:
             logger.error(f"Timeout analyzing {symbol}")
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"⚠️ Timeout при анализ на {symbol} - прескачам"
+            await safe_send_telegram(
+                context,
+                update.effective_chat.id,
+                f"⚠️ Timeout при анализ на {symbol} - прескачам"
             )
         except Exception as e:
             logger.error(f"Error analyzing {symbol}: {e}", exc_info=True)
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"❌ Грешка при анализ на {symbol}: {str(e)}"
+            await safe_send_telegram(
+                context,
+                update.effective_chat.id,
+                f"❌ Грешка при анализ на {symbol}: {str(e)}"
             )
     
     # Generate and send summary (plain text, no HTML parsing)
     try:
         summary = generate_swing_summary(all_analyses)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=summary
+        await safe_send_telegram(
+            context,
+            update.effective_chat.id,
+            summary
         )
         logger.info(f"✅ Swing analysis completed for {len(all_analyses)} pairs")
     except Exception as e:
         logger.error(f"Error generating summary: {e}", exc_info=True)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="❌ Грешка при генериране на обобщение"
+        await safe_send_telegram(
+            context,
+            update.effective_chat.id,
+            "❌ Грешка при генериране на обобщение"
         )
 
 
@@ -8689,9 +8746,10 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Notify user (only in signal_cmd, not in callback)
             if real_time_monitor_global and ict_signal.signal_type.value in ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="🎯 <b>Signal added to real-time monitor!</b>\n\n"
+                await safe_send_telegram(
+                    context,
+                    update.effective_chat.id,
+                    "🎯 <b>Signal added to real-time monitor!</b>\n\n"
                          "You'll receive alerts at:\n"
                          "• 80% progress to TP (with ICT re-analysis)\n"
                          "• Final WIN/LOSS when TP/SL reached",
@@ -11344,9 +11402,10 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         
         # Send message
         try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=final_msg,
+            await safe_send_telegram(
+                context,
+                chat_id,
+                final_msg,
                 parse_mode='HTML',
                 disable_web_page_preview=True,
                 disable_notification=False  # Sound alert for auto signals
@@ -12637,6 +12696,40 @@ https://github.com/galinborisov10-art/Crypto-signal-bot
         await update.message.reply_text(
             commands_message,
             parse_mode='HTML'
+        )
+    
+    # ========== DIAGNOSTIC BUTTON HANDLERS ==========
+    elif text == "🛠 Diagnostics":
+        await diagnostics_menu_handler(update, context)
+    
+    elif text == "🔍 Quick Check":
+        await handle_quick_check(update, context)
+    
+    elif text == "🔙 Back to Main Menu":
+        await handle_back_to_main_menu(update, context)
+    
+    elif text == "🔬 Full Self-Audit":
+        # Placeholder for future implementation
+        await update.message.reply_text(
+            "🔬 *Full Self-Audit*\n\n"
+            "This feature is coming soon!",
+            parse_mode='Markdown'
+        )
+    
+    elif text == "📊 System Status":
+        # Placeholder for future implementation
+        await update.message.reply_text(
+            "📊 *System Status*\n\n"
+            "This feature is coming soon!",
+            parse_mode='Markdown'
+        )
+    
+    elif text == "🔄 Replay Last Signal":
+        # Placeholder for future implementation
+        await update.message.reply_text(
+            "🔄 *Replay Last Signal*\n\n"
+            "This feature is coming soon!",
+            parse_mode='Markdown'
         )
     
     elif text == "💬 Copilot":
@@ -16095,6 +16188,66 @@ async def reports_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(overview, parse_mode='HTML', reply_markup=reply_markup)
 
 
+# ========================================
+# DIAGNOSTICS MENU AND HANDLERS
+# ========================================
+
+async def diagnostics_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show diagnostics submenu (admin only)"""
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("❌ Admin only")
+        return
+    
+    keyboard = [
+        [KeyboardButton("🔍 Quick Check")],
+        [KeyboardButton("🔬 Full Self-Audit")],
+        [KeyboardButton("📊 System Status")],
+        [KeyboardButton("🔄 Replay Last Signal")],
+        [KeyboardButton("🔙 Back to Main Menu")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    await update.message.reply_text(
+        "🛠 *Diagnostics Control Panel*\n\n"
+        "Select diagnostic action:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+
+async def handle_quick_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Quick Check button"""
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("❌ Admin only")
+        return
+    
+    # Send "running" message
+    msg = await update.message.reply_text("🔍 Running diagnostics...", parse_mode='Markdown')
+    
+    try:
+        # Import and run checks
+        from diagnostics import run_quick_check
+        
+        # Run checks
+        report = await run_quick_check()
+        
+        # Send report
+        await msg.edit_text(report, parse_mode='Markdown')
+    
+    except Exception as e:
+        await msg.edit_text(f"❌ Diagnostic failed:\n{e}")
+        logger.error(f"Diagnostic error: {e}", exc_info=True)
+
+
+async def handle_back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle back to main menu button"""
+    await start_cmd(update, context)
+
+
 async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработва callbacks от reports меню"""
     query = update.callback_query
@@ -17430,6 +17583,40 @@ def main():
                 logger.info(f"⏳ ML model waiting for more data ({status['training_samples']}/{status['min_samples_needed']} samples)")
         except Exception as ml_error:
             logger.error(f"❌ ML initialization error: {ml_error}")
+    
+    # ========================================
+    # DIAGNOSTIC AUTO-RUN AT STARTUP (Optional)
+    # ========================================
+    async def post_init(application):
+        """Run after bot starts - sends Quick Check diagnostics to admin"""
+        logger.info("🚀 Bot started, running Quick Check diagnostics...")
+        
+        try:
+            from diagnostics import run_quick_check
+            
+            report = await run_quick_check()
+            
+            # Send to admin
+            await application.bot.send_message(
+                chat_id=OWNER_CHAT_ID,
+                text=f"🤖 *Bot Started*\n\n{report}",
+                parse_mode='Markdown'
+            )
+            logger.info("✅ Startup diagnostics sent to admin")
+        except Exception as e:
+            logger.error(f"❌ Startup diagnostic failed: {e}")
+            # Try to send error notification
+            try:
+                await application.bot.send_message(
+                    chat_id=OWNER_CHAT_ID,
+                    text=f"❌ *Startup Diagnostic Failed*\n\n`{str(e)}`",
+                    parse_mode='Markdown'
+                )
+            except Exception as notify_error:
+                logger.error(f"Failed to send startup diagnostic error notification: {notify_error}")
+    
+    # Set post_init callback
+    app.post_init = post_init
     
     # APScheduler за автоматични отчети (стартира СЛЕД app.run_polling)
     if ADMIN_MODULE_AVAILABLE or REPORTS_AVAILABLE:
