@@ -768,14 +768,6 @@ Progress: {progress:.1f}% към TP1
                     outcome='TP_HIT'
                 )
             
-            # Send notification
-            message = f"""
-✅ TP1 HIT!
-
-{symbol} достигна целта @ {price:.2f}
-
-Позицията е затворена автоматично.
-"""
             # Note: Alert notification removed - checkpoint alert system disabled
             
         except Exception as e:
@@ -801,14 +793,6 @@ Progress: {progress:.1f}% към TP1
                     outcome='SL_HIT'
                 )
             
-            # Send notification
-            message = f"""
-🛑 STOP LOSS HIT
-
-{symbol} hit SL @ {price:.2f}
-
-Позицията е затворена за защита на капитала.
-"""
             # Note: Alert notification removed - checkpoint alert system disabled
             
         except Exception as e:
