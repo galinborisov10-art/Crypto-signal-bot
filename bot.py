@@ -8552,6 +8552,24 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await processing_msg.edit_text(cooldown_msg, parse_mode='HTML')
                     return
             
+            # ✅ PHASE 2B: Capture signal for replay diagnostics (non-blocking)
+            try:
+                from diagnostics import capture_signal_for_replay
+                signal_data = {
+                    'symbol': symbol,
+                    'timeframe': timeframe,
+                    'signal_type': ict_signal.signal_type.value,
+                    'direction': ict_signal.signal_type.value,  # BUY/SELL/HOLD
+                    'entry_price': ict_signal.entry_price,
+                    'stop_loss': ict_signal.sl_price,
+                    'take_profit': ict_signal.tp_prices,
+                    'confidence': ict_signal.confidence,
+                    'timestamp': datetime.now().isoformat()
+                }
+                capture_signal_for_replay(signal_data, df)
+            except Exception as e:
+                logger.warning(f"⚠️ Replay capture failed (non-critical): {e}")
+            
             # Format with 13-point output
             signal_msg = format_ict_signal_13_point(ict_signal)
             
@@ -11345,6 +11363,24 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                     cooldown_minutes=60
                 ):
                     return None
+            
+            # ✅ PHASE 2B: Capture signal for replay diagnostics (non-blocking)
+            try:
+                from diagnostics import capture_signal_for_replay
+                signal_data = {
+                    'symbol': symbol,
+                    'timeframe': timeframe,
+                    'signal_type': ict_signal.signal_type.value,
+                    'direction': ict_signal.signal_type.value,  # BUY/SELL/HOLD
+                    'entry_price': ict_signal.entry_price,
+                    'stop_loss': ict_signal.sl_price,
+                    'take_profit': ict_signal.tp_prices,
+                    'confidence': ict_signal.confidence,
+                    'timestamp': datetime.now().isoformat()
+                }
+                capture_signal_for_replay(signal_data, df)
+            except Exception as e:
+                logger.warning(f"⚠️ Replay capture failed (non-critical): {e}")
             
             # Return ICT signal data (NOT legacy analysis!)
             return {
