@@ -12705,6 +12705,15 @@ https://github.com/galinborisov10-art/Crypto-signal-bot
     elif text == "🔍 Quick Check":
         await handle_quick_check(update, context)
     
+    elif text == "🎬 Replay Signals":
+        await handle_replay_signals(update, context)
+    
+    elif text == "📈 Replay Report":
+        await handle_replay_report(update, context)
+    
+    elif text == "🗑️ Clear Replay Cache":
+        await handle_clear_replay_cache(update, context)
+    
     elif text == "🔙 Back to Main Menu":
         await handle_back_to_main_menu(update, context)
     
@@ -16202,16 +16211,18 @@ async def diagnostics_menu_handler(update: Update, context: ContextTypes.DEFAULT
     
     keyboard = [
         [KeyboardButton("🔍 Quick Check")],
-        [KeyboardButton("🔬 Full Self-Audit")],
-        [KeyboardButton("📊 System Status")],
-        [KeyboardButton("🔄 Replay Last Signal")],
+        [KeyboardButton("🎬 Replay Signals"), KeyboardButton("📈 Replay Report")],
+        [KeyboardButton("🗑️ Clear Replay Cache")],
         [KeyboardButton("🔙 Back to Main Menu")]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
     await update.message.reply_text(
-        "🛠 *Diagnostics Control Panel*\n\n"
-        "Select diagnostic action:",
+        "🛠 *Diagnostics Menu*\n\n"
+        "🔍 Quick Check - 20 diagnostic tests\n"
+        "🎬 Replay Signals - Regression detection\n"
+        "📈 Replay Report - View replay results\n"
+        "🗑️ Clear Cache - Reset replay storage",
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
@@ -16246,6 +16257,86 @@ async def handle_quick_check(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def handle_back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle back to main menu button"""
     await start_cmd(update, context)
+
+
+async def handle_replay_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Run replay diagnostics"""
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("❌ Admin only")
+        return
+    
+    await update.message.reply_text("🎬 Running signal replay...")
+    
+    try:
+        from diagnostics import ReplayEngine, ReplayCache
+        
+        cache = ReplayCache()
+        engine = ReplayEngine(cache)
+        report = await engine.replay_all_signals()
+        
+        await update.message.reply_text(
+            report,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Replay failed: {str(e)}"
+        )
+        logger.error(f"Replay error: {e}", exc_info=True)
+
+
+async def handle_replay_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show replay cache status"""
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("❌ Admin only")
+        return
+    
+    try:
+        from diagnostics import ReplayCache
+        
+        cache = ReplayCache()
+        signals = cache.load_signals()
+        
+        report = f"📈 *Replay Cache Status*\n\n"
+        report += f"Cached signals: {len(signals)}/{cache.MAX_SIGNALS}\n"
+        report += f"Storage: {cache.CACHE_FILE}\n\n"
+        
+        if signals:
+            report += "*Recent Signals:*\n"
+            for sig in signals[-5:]:  # Last 5
+                report += f"• {sig.symbol} {sig.timeframe} - {sig.timestamp[:19]}\n"
+        else:
+            report += "No signals cached yet."
+        
+        await update.message.reply_text(report, parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+        logger.error(f"Replay report error: {e}", exc_info=True)
+
+
+async def handle_clear_replay_cache(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Clear replay cache"""
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("❌ Admin only")
+        return
+    
+    try:
+        from diagnostics import ReplayCache
+        
+        cache = ReplayCache()
+        if cache.clear_cache():
+            await update.message.reply_text("✅ Replay cache cleared")
+        else:
+            await update.message.reply_text("⚠️ Cache was already empty")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+        logger.error(f"Clear cache error: {e}", exc_info=True)
 
 
 async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

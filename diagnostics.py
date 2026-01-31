@@ -3,6 +3,7 @@ Production-Safe Diagnostic System
 Author: Copilot
 Date: 2026-01-30
 Phase 2A: Expanded to 20 checks
+Phase 2B: Replay Diagnostics for Regression Detection
 """
 
 import logging
@@ -12,11 +13,14 @@ import inspect
 import numpy as np
 import pandas as pd
 import requests
-from typing import Dict, List, Tuple, Callable
+from typing import Dict, List, Tuple, Callable, Optional
 from datetime import datetime
 from pathlib import Path
 import time
 import tempfile
+import json
+import hashlib
+from dataclasses import dataclass, asdict
 
 logger = logging.getLogger(__name__)
 
@@ -1393,3 +1397,373 @@ async def run_quick_check() -> str:
     
     await runner.run_all(checks)
     return runner.format_report()
+
+
+# ============================================================
+# PHASE 2B: REPLAY DIAGNOSTICS FOR REGRESSION DETECTION
+# ============================================================
+
+@dataclass
+class SignalSnapshot:
+    """Snapshot of a signal for replay"""
+    timestamp: str
+    symbol: str
+    timeframe: str
+    klines_snapshot: List[List]  # Max 100 rows
+    original_signal: Dict
+    signal_hash: str
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for JSON serialization"""
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'SignalSnapshot':
+        """Create from dictionary"""
+        return cls(**data)
+
+
+class ReplayCache:
+    """Manages replay signal storage with rotation"""
+    MAX_SIGNALS = 10
+    MAX_KLINES_PER_SIGNAL = 100
+    CACHE_FILE = Path("replay_cache.json")
+    
+    def __init__(self):
+        self.cache_file = self.CACHE_FILE
+    
+    def _generate_signal_hash(self, signal_data: Dict, klines: pd.DataFrame) -> str:
+        """Generate unique hash for signal"""
+        # Create hash from signal type, symbol, timeframe, and timestamp
+        hash_input = f"{signal_data.get('symbol', '')}_{signal_data.get('timeframe', '')}_{signal_data.get('signal_type', '')}_{signal_data.get('timestamp', '')}"
+        return hashlib.md5(hash_input.encode()).hexdigest()[:12]
+    
+    def save_signal(self, signal_data: Dict, klines: pd.DataFrame) -> bool:
+        """
+        Save signal snapshot with rotation
+        
+        Args:
+            signal_data: Signal dictionary with required fields
+            klines: DataFrame with klines data
+        
+        Returns:
+            bool: True if saved successfully
+        """
+        try:
+            # Validate inputs
+            if not isinstance(signal_data, dict):
+                logger.warning("⚠️ Replay capture: signal_data is not a dict")
+                return False
+            
+            if not isinstance(klines, pd.DataFrame) or len(klines) == 0:
+                logger.warning("⚠️ Replay capture: invalid klines data")
+                return False
+            
+            # Limit klines to MAX_KLINES_PER_SIGNAL most recent rows
+            klines_limited = klines.tail(self.MAX_KLINES_PER_SIGNAL).copy()
+            
+            # Convert DataFrame to list of lists
+            klines_snapshot = []
+            for _, row in klines_limited.iterrows():
+                # Store essential OHLCV data
+                klines_snapshot.append([
+                    int(row.name.timestamp() * 1000) if hasattr(row.name, 'timestamp') else 0,
+                    str(row.get('open', 0)),
+                    str(row.get('high', 0)),
+                    str(row.get('low', 0)),
+                    str(row.get('close', 0)),
+                    str(row.get('volume', 0))
+                ])
+            
+            # Create snapshot
+            snapshot = SignalSnapshot(
+                timestamp=datetime.now().isoformat(),
+                symbol=signal_data.get('symbol', 'UNKNOWN'),
+                timeframe=signal_data.get('timeframe', 'UNKNOWN'),
+                klines_snapshot=klines_snapshot,
+                original_signal=signal_data,
+                signal_hash=self._generate_signal_hash(signal_data, klines)
+            )
+            
+            # Load existing signals
+            signals = self.load_signals()
+            
+            # Add new snapshot
+            signals.append(snapshot)
+            
+            # Rotate if exceeds MAX_SIGNALS
+            if len(signals) > self.MAX_SIGNALS:
+                signals = signals[-self.MAX_SIGNALS:]
+                logger.info(f"🔄 Rotated replay cache (removed oldest signal)")
+            
+            # Save to file
+            cache_data = {
+                "signals": [sig.to_dict() for sig in signals],
+                "metadata": {
+                    "max_signals": self.MAX_SIGNALS,
+                    "max_klines": self.MAX_KLINES_PER_SIGNAL,
+                    "last_cleanup": datetime.now().isoformat(),
+                    "version": "1.0"
+                }
+            }
+            
+            with open(self.cache_file, 'w') as f:
+                json.dump(cache_data, f, indent=2)
+            
+            logger.info(f"✅ Saved signal snapshot: {snapshot.symbol} {snapshot.timeframe} (hash: {snapshot.signal_hash})")
+            return True
+        
+        except Exception as e:
+            logger.warning(f"⚠️ Replay capture failed (non-critical): {e}")
+            return False
+    
+    def load_signals(self) -> List[SignalSnapshot]:
+        """Load all signal snapshots from cache"""
+        try:
+            if not self.cache_file.exists():
+                return []
+            
+            with open(self.cache_file, 'r') as f:
+                cache_data = json.load(f)
+            
+            signals = cache_data.get('signals', [])
+            return [SignalSnapshot.from_dict(sig) for sig in signals]
+        
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to load replay cache: {e}")
+            return []
+    
+    def clear_cache(self) -> bool:
+        """Clear all cached signals"""
+        try:
+            if self.cache_file.exists():
+                self.cache_file.unlink()
+                logger.info("✅ Replay cache cleared")
+                return True
+            else:
+                logger.info("ℹ️ Replay cache already empty")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Failed to clear replay cache: {e}")
+            return False
+    
+    def get_signal_count(self) -> int:
+        """Get number of cached signals"""
+        return len(self.load_signals())
+
+
+class ReplayEngine:
+    """Replays signals and detects regressions"""
+    
+    def __init__(self, cache: ReplayCache):
+        self.cache = cache
+    
+    async def replay_signal(self, snapshot: SignalSnapshot) -> Optional[Dict]:
+        """
+        Re-run signal through engine (read-only)
+        
+        Args:
+            snapshot: SignalSnapshot to replay
+        
+        Returns:
+            Dict with replayed signal data or None if failed
+        """
+        try:
+            # Reconstruct DataFrame from snapshot
+            klines_data = []
+            for kline in snapshot.klines_snapshot:
+                klines_data.append({
+                    'timestamp': kline[0],
+                    'open': float(kline[1]),
+                    'high': float(kline[2]),
+                    'low': float(kline[3]),
+                    'close': float(kline[4]),
+                    'volume': float(kline[5])
+                })
+            
+            df = pd.DataFrame(klines_data)
+            
+            # Convert timestamp to datetime index
+            if 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                df.set_index('timestamp', inplace=True)
+            
+            # Import signal engine
+            from ict_signal_engine import ICTSignalEngine
+            
+            # Create engine instance (read-only mode)
+            engine = ICTSignalEngine()
+            
+            # Generate signal (read-only - no cache write)
+            signal = engine.generate_signal(
+                df=df,
+                symbol=snapshot.symbol,
+                timeframe=snapshot.timeframe,
+                mtf_data=None,  # No MTF data for replay
+                is_auto=False
+            )
+            
+            if signal is None:
+                logger.warning(f"⚠️ Replay produced no signal for {snapshot.symbol} {snapshot.timeframe}")
+                return None
+            
+            # Convert signal to dict
+            replayed_signal = {
+                'signal_type': signal.signal_type.value if hasattr(signal.signal_type, 'value') else str(signal.signal_type),
+                'direction': signal.direction,
+                'entry_price': signal.entry_price,
+                'stop_loss': signal.stop_loss,
+                'take_profit': signal.take_profit if isinstance(signal.take_profit, list) else [signal.take_profit],
+                'confidence': signal.confidence,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            logger.info(f"✅ Replayed signal: {snapshot.symbol} {snapshot.timeframe}")
+            return replayed_signal
+        
+        except Exception as e:
+            logger.error(f"❌ Replay failed for {snapshot.symbol} {snapshot.timeframe}: {e}")
+            return None
+    
+    def compare_signals(self, original: Dict, replayed: Dict) -> Dict:
+        """
+        Compare signals and detect regressions
+        
+        Args:
+            original: Original signal dict
+            replayed: Replayed signal dict
+        
+        Returns:
+            Dict with comparison results
+        """
+        TOLERANCE_PERCENT = 0.0001  # 0.01%
+        
+        def check_price_match(orig_price: float, replay_price: float, base_price: float) -> bool:
+            """Check if prices match within tolerance"""
+            if base_price == 0:
+                return orig_price == replay_price
+            delta = abs(orig_price - replay_price) / base_price
+            return delta <= TOLERANCE_PERCENT
+        
+        def check_tp_arrays(orig_tp: List, replay_tp: List, base_price: float) -> bool:
+            """Check if TP arrays match"""
+            if len(orig_tp) != len(replay_tp):
+                return False
+            for o, r in zip(orig_tp, replay_tp):
+                if not check_price_match(o, r, base_price):
+                    return False
+            return True
+        
+        # Extract values
+        orig_type = original.get('signal_type', 'UNKNOWN')
+        replay_type = replayed.get('signal_type', 'UNKNOWN')
+        
+        orig_dir = original.get('direction', 'UNKNOWN')
+        replay_dir = replayed.get('direction', 'UNKNOWN')
+        
+        orig_entry = original.get('entry_price', 0)
+        replay_entry = replayed.get('entry_price', 0)
+        
+        orig_sl = original.get('stop_loss', 0)
+        replay_sl = replayed.get('stop_loss', 0)
+        
+        orig_tp = original.get('take_profit', [])
+        replay_tp = replayed.get('take_profit', [])
+        
+        # Ensure TP is a list
+        if not isinstance(orig_tp, list):
+            orig_tp = [orig_tp] if orig_tp else []
+        if not isinstance(replay_tp, list):
+            replay_tp = [replay_tp] if replay_tp else []
+        
+        # Run checks
+        checks = {
+            'signal_type': orig_type == replay_type,
+            'direction': orig_dir == replay_dir,
+            'entry_delta': check_price_match(orig_entry, replay_entry, orig_entry),
+            'sl_delta': check_price_match(orig_sl, replay_sl, orig_entry),
+            'tp_delta': check_tp_arrays(orig_tp, replay_tp, orig_entry)
+        }
+        
+        diffs = [k for k, v in checks.items() if not v]
+        
+        return {
+            'match': len(diffs) == 0,
+            'diffs': diffs,
+            'summary': f"✅ Match" if not diffs else f"❌ Regression: {', '.join(diffs)}"
+        }
+    
+    async def replay_all_signals(self) -> str:
+        """
+        Replay all cached signals and format report
+        
+        Returns:
+            str: Formatted report for Telegram
+        """
+        try:
+            signals = self.cache.load_signals()
+            
+            if not signals:
+                return "📊 *Replay Report*\n\n⚠️ No signals in cache yet.\n\nGenerate some signals first!"
+            
+            report = f"🎬 *Signal Replay Report*\n\n"
+            report += f"📊 Testing {len(signals)} cached signals...\n\n"
+            
+            passed = 0
+            failed = 0
+            errors = 0
+            
+            for i, snapshot in enumerate(signals, 1):
+                # Replay signal
+                replayed = await self.replay_signal(snapshot)
+                
+                if replayed is None:
+                    errors += 1
+                    report += f"{i}. ⚠️ {snapshot.symbol} {snapshot.timeframe} - *Replay Error*\n"
+                    continue
+                
+                # Compare signals
+                comparison = self.compare_signals(snapshot.original_signal, replayed)
+                
+                if comparison['match']:
+                    passed += 1
+                    report += f"{i}. ✅ {snapshot.symbol} {snapshot.timeframe} - *Match*\n"
+                else:
+                    failed += 1
+                    diffs_str = ', '.join(comparison['diffs'])
+                    report += f"{i}. ❌ {snapshot.symbol} {snapshot.timeframe} - *Regression*\n"
+                    report += f"   └─ Changed: {diffs_str}\n"
+            
+            report += f"\n{'='*30}\n\n"
+            report += f"✅ Passed: {passed}\n"
+            report += f"❌ Failed: {failed}\n"
+            report += f"⚠️ Errors: {errors}\n\n"
+            
+            if failed == 0 and errors == 0:
+                report += "🎉 *All signals match!* No regressions detected."
+            elif failed > 0:
+                report += f"⚠️ *Warning:* {failed} regression(s) detected!"
+            
+            return report
+        
+        except Exception as e:
+            logger.error(f"❌ Replay all failed: {e}")
+            return f"❌ *Replay Error*\n\n{str(e)}"
+
+
+def capture_signal_for_replay(signal_data: Dict, klines: pd.DataFrame) -> None:
+    """
+    Capture signal snapshot for replay (non-blocking)
+    
+    Called from signal generation (read-only hook)
+    Runs in background, never blocks signal generation
+    
+    Args:
+        signal_data: Signal dictionary
+        klines: DataFrame with klines data
+    """
+    try:
+        cache = ReplayCache()
+        cache.save_signal(signal_data, klines)
+    except Exception as e:
+        logger.warning(f"⚠️ Replay capture failed (non-critical): {e}")
