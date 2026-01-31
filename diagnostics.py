@@ -1555,8 +1555,20 @@ class ReplayCache:
 class ReplayEngine:
     """Replays signals and detects regressions"""
     
-    def __init__(self, cache: ReplayCache):
+    def __init__(self, cache: ReplayCache, signal_engine=None):
         self.cache = cache
+        # Reuse global engine for production parity
+        if signal_engine is None:
+            try:
+                from bot import ict_engine_global
+                self.signal_engine = ict_engine_global
+                logger.info("✅ ReplayEngine using global ICT engine")
+            except ImportError:
+                from ict_signal_engine import ICTSignalEngine
+                self.signal_engine = ICTSignalEngine()
+                logger.warning("⚠️ ReplayEngine created new ICT engine")
+        else:
+            self.signal_engine = signal_engine
     
     async def replay_signal(self, snapshot: SignalSnapshot) -> Optional[Dict]:
         """
@@ -1588,25 +1600,8 @@ class ReplayEngine:
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                 df.set_index('timestamp', inplace=True)
             
-            # ✅ FIX 1: Use global production engine instance
-            # Try to import and use the global engine first
-            engine = None
-            try:
-                import bot
-                if hasattr(bot, 'ict_engine_global'):
-                    engine = bot.ict_engine_global
-                    logger.info("✅ Using global production ICT engine for replay")
-            except (ImportError, AttributeError) as e:
-                logger.warning(f"⚠️ Could not access global engine: {e}")
-            
-            # Fallback to creating new instance if global not available
-            if engine is None:
-                from ict_signal_engine import ICTSignalEngine
-                engine = ICTSignalEngine()
-                logger.warning("⚠️ Using fallback ICT engine instance for replay")
-            
             # Generate signal (read-only - no cache write)
-            signal = engine.generate_signal(
+            signal = self.signal_engine.generate_signal(
                 df=df,
                 symbol=snapshot.symbol,
                 timeframe=snapshot.timeframe,
@@ -1670,7 +1665,7 @@ class ReplayEngine:
             return True
         
         def check_confidence_match(orig_conf: float, replay_conf: float) -> bool:
-            """Check if confidence values match within tolerance"""
+            """Check if confidence matches within tolerance"""
             return abs(orig_conf - replay_conf) <= CONFIDENCE_TOLERANCE
         
         # Extract values
