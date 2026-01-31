@@ -169,6 +169,24 @@ except ImportError as e:
     SIGNAL_CACHE_AVAILABLE = False
     logger.warning(f"⚠️ Signal Cache not available: {e}")
 
+# Replay Diagnostics (Phase 2B)
+try:
+    from diagnostics import ReplayCache, ReplayEngine
+    replay_cache_global = ReplayCache()
+    # Inject ict_engine_global for production parity
+    if ICT_SIGNAL_ENGINE_AVAILABLE:
+        replay_engine_global = ReplayEngine(
+            cache=replay_cache_global,
+            signal_engine=ict_engine_global
+        )
+        logger.info("✅ ReplayEngine initialized with global ICT engine")
+    else:
+        replay_engine_global = None
+        logger.warning("⚠️ ReplayEngine not initialized (ICT engine unavailable)")
+except ImportError as e:
+    replay_cache_global = None
+    replay_engine_global = None
+    logger.warning(f"⚠️ Replay Diagnostics not available: {e}")
 
 # Position Manager (PR #7)
 try:
@@ -16306,11 +16324,14 @@ async def handle_replay_signals(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text("🎬 Running signal replay...")
     
     try:
-        from diagnostics import ReplayEngine, ReplayCache
+        # Use globally injected replay engine
+        global replay_engine_global
         
-        cache = ReplayCache()
-        engine = ReplayEngine(cache)
-        report = await engine.replay_all_signals()
+        if replay_engine_global is None:
+            await update.message.reply_text("❌ Replay engine not available")
+            return
+        
+        report = await replay_engine_global.replay_all_signals()
         
         await update.message.reply_text(
             report,
@@ -16332,14 +16353,18 @@ async def handle_replay_report(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     
     try:
-        from diagnostics import ReplayCache
+        # Use global replay cache
+        global replay_cache_global
         
-        cache = ReplayCache()
-        signals = cache.load_signals()
+        if replay_cache_global is None:
+            await update.message.reply_text("❌ Replay cache not available")
+            return
+        
+        signals = replay_cache_global.load_signals()
         
         report = f"📈 *Replay Cache Status*\n\n"
-        report += f"Cached signals: {len(signals)}/{cache.MAX_SIGNALS}\n"
-        report += f"Storage: {cache.CACHE_FILE}\n\n"
+        report += f"Cached signals: {len(signals)}/{replay_cache_global.MAX_SIGNALS}\n"
+        report += f"Storage: {replay_cache_global.CACHE_FILE}\n\n"
         
         if signals:
             report += "*Recent Signals:*\n"
@@ -16363,10 +16388,14 @@ async def handle_clear_replay_cache(update: Update, context: ContextTypes.DEFAUL
         return
     
     try:
-        from diagnostics import ReplayCache
+        # Use global replay cache
+        global replay_cache_global
         
-        cache = ReplayCache()
-        if cache.clear_cache():
+        if replay_cache_global is None:
+            await update.message.reply_text("❌ Replay cache not available")
+            return
+        
+        if replay_cache_global.clear_cache():
             await update.message.reply_text("✅ Replay cache cleared")
         else:
             await update.message.reply_text("⚠️ Cache was already empty")
