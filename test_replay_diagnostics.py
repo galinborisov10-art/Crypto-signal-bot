@@ -103,11 +103,9 @@ def test_signal_comparison():
     
     try:
         from diagnostics import ReplayEngine, ReplayCache
-        from ict_signal_engine import ICTSignalEngine
         
         cache = ReplayCache()
-        signal_engine = ICTSignalEngine()
-        engine = ReplayEngine(cache, signal_engine)
+        engine = ReplayEngine(cache)
         
         # Test 1: Identical signals
         original = {
@@ -136,24 +134,24 @@ def test_signal_comparison():
         assert 'signal_type' in result['diffs'], "Should list signal_type as diff"
         print("✅ Passed: Detects signal type difference")
         
-        # Test 3: Price within tolerance (Phase 2B uses 0.5% tolerance)
+        # Test 3: Price within tolerance (0.01%)
         replayed = original.copy()
-        replayed['entry_price'] = 45000.0 + (45000.0 * 0.004)  # 0.4% difference (within 0.5%)
+        replayed['entry_price'] = 45000.0 + (45000.0 * 0.00005)  # 0.005% difference
         
         result = engine.compare_signals(original, replayed)
         print(f"Test 3 - Within tolerance: {result['summary']}")
         assert result['match'] == True, "Should match within tolerance"
-        print("✅ Passed: Accepts prices within 0.5% tolerance")
+        print("✅ Passed: Accepts prices within 0.01% tolerance")
         
-        # Test 4: Price outside tolerance (Phase 2B uses 0.5% tolerance)
+        # Test 4: Price outside tolerance
         replayed = original.copy()
-        replayed['entry_price'] = 45000.0 + (45000.0 * 0.006)  # 0.6% difference (outside 0.5%)
+        replayed['entry_price'] = 45000.0 + (45000.0 * 0.0002)  # 0.02% difference
         
         result = engine.compare_signals(original, replayed)
         print(f"Test 4 - Outside tolerance: {result['summary']}")
         assert result['match'] == False, "Should detect price difference"
         assert 'entry_delta' in result['diffs'], "Should list entry_delta as diff"
-        print("✅ Passed: Detects prices outside 0.5% tolerance")
+        print("✅ Passed: Detects prices outside 0.01% tolerance")
         
         # Test 5: Different TP arrays
         replayed = original.copy()
