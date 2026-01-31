@@ -38,13 +38,30 @@ asyncio.run(test())
 
 ## 🔍 Quick Check Tests
 
-| Test | Severity | Checks |
-|------|----------|--------|
-| Logger Configuration | LOW | Handler count, log level |
-| Critical Imports | HIGH | pandas, numpy, requests, telegram, ta |
-| Signal Schema | MED | ICTSignalEngine structure |
-| NaN Detection | MED | Indicator calculations |
-| Duplicate Guard | MED | Cache manager presence |
+| # | Test | Severity | Group |
+|---|------|----------|-------|
+| 1 | Logger Configuration | LOW | Core |
+| 2 | Critical Imports | HIGH | Core |
+| 3 | Signal Schema | MED | Core |
+| 4 | NaN Detection | MED | Core |
+| 5 | Duplicate Guard | MED | Core |
+| 6 | MTF Timeframes Available | HIGH | MTF Data |
+| 7 | HTF Components Storage | MED | MTF Data |
+| 8 | Klines Data Freshness | MED | MTF Data |
+| 9 | Price Data Sanity | HIGH | MTF Data |
+| 10 | Signal Required Fields | HIGH | Signal Schema |
+| 11 | Cache Write/Read Test | MED | Signal Schema |
+| 12 | Signal Type Validation | LOW | Signal Schema |
+| 13 | Memory Usage | MED | Runtime Health |
+| 14 | Response Time Test | LOW | Runtime Health |
+| 15 | Exception Rate | MED | Runtime Health |
+| 16 | Job Queue Health | LOW | Runtime Health |
+| 17 | Binance API Reachable | HIGH | External |
+| 18 | Telegram API Responsive | MED | External |
+| 19 | File System Access | MED | External |
+| 20 | Log File Writeable | LOW | External |
+
+**Total:** 20 checks (Phase 2A expanded from 5)
 
 ## 🛡️ DIAGNOSTIC_MODE Behavior
 
@@ -107,9 +124,9 @@ asyncio.run(test())
 ```
 /help           - Bot help
 🛠 Diagnostics  - Open diagnostic menu
-🔍 Quick Check  - Run 5 core tests
+🔍 Quick Check  - Run 20 diagnostic tests
 🔙 Main Menu    - Return to main menu
 ```
 
 ---
-**Version:** 1.0.0 | **Updated:** 2026-01-30
+**Version:** 2.0.0 (Phase 2A) | **Updated:** 2026-01-30 | **Tests:** 20
