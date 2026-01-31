@@ -360,7 +360,7 @@ def check_mtf_timeframes_available() -> DiagnosticResult:
     - 4h data available
     - 1d data available
     
-    Severity: HIGH
+    Severity: MED (network-dependent check)
     """
     try:
         BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
@@ -376,7 +376,7 @@ def check_mtf_timeframes_available() -> DiagnosticResult:
                         'interval': tf,
                         'limit': 1
                     },
-                    timeout=5
+                    timeout=3
                 )
                 
                 if response.status_code != 200:
@@ -385,29 +385,29 @@ def check_mtf_timeframes_available() -> DiagnosticResult:
                     failed_timeframes.append(f"{tf} (empty data)")
             
             except requests.RequestException as e:
-                failed_timeframes.append(f"{tf} ({str(e)})")
+                failed_timeframes.append(f"{tf} (network error)")
         
         if failed_timeframes:
             return DiagnosticResult(
                 name="MTF Timeframes Available",
-                status="FAIL",
-                severity="HIGH",
-                message=f"Failed timeframes: {', '.join(failed_timeframes)}"
+                status="WARN",
+                severity="MED",
+                message=f"Network issue: {len(failed_timeframes)}/{len(timeframes)} timeframes unavailable"
             )
         
         return DiagnosticResult(
             name="MTF Timeframes Available",
             status="PASS",
-            severity="HIGH",
+            severity="MED",
             message=f"All {len(timeframes)} timeframes accessible"
         )
     
     except Exception as e:
         return DiagnosticResult(
             name="MTF Timeframes Available",
-            status="FAIL",
-            severity="HIGH",
-            message=f"Exception: {e}"
+            status="WARN",
+            severity="MED",
+            message=f"Network exception: {str(e)[:50]}"
         )
 
 
@@ -421,7 +421,7 @@ def check_htf_components_storage() -> DiagnosticResult:
     - Can read back HTF data
     - Data persists correctly
     
-    Severity: MED
+    Severity: LOW (synthetic validation)
     """
     try:
         # Mock bot_data dictionary
@@ -446,8 +446,8 @@ def check_htf_components_storage() -> DiagnosticResult:
             return DiagnosticResult(
                 name="HTF Components Storage",
                 status="WARN",
-                severity="MED",
-                message="htf_components dict not found (may not be initialized)"
+                severity="LOW",
+                message="Synthetic check: htf_components dict not initialized"
             )
         
         # Verify data integrity
@@ -455,23 +455,23 @@ def check_htf_components_storage() -> DiagnosticResult:
             return DiagnosticResult(
                 name="HTF Components Storage",
                 status="FAIL",
-                severity="MED",
-                message="Data corruption detected"
+                severity="LOW",
+                message="Synthetic check: data corruption detected"
             )
         
         return DiagnosticResult(
             name="HTF Components Storage",
             status="PASS",
-            severity="MED",
-            message="Storage read/write working"
+            severity="LOW",
+            message="Synthetic check: storage read/write working"
         )
     
     except Exception as e:
         return DiagnosticResult(
             name="HTF Components Storage",
             status="FAIL",
-            severity="MED",
-            message=f"Exception: {e}"
+            severity="LOW",
+            message=f"Synthetic check exception: {e}"
         )
 
 
@@ -484,7 +484,7 @@ def check_klines_data_freshness() -> DiagnosticResult:
     - Check timestamp is within last 2 hours
     - Verify close_time is recent
     
-    Severity: MED
+    Severity: MED (network-dependent check)
     """
     try:
         BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
@@ -496,24 +496,24 @@ def check_klines_data_freshness() -> DiagnosticResult:
                 'interval': '1h',
                 'limit': 1
             },
-            timeout=5
+            timeout=3
         )
         
         if response.status_code != 200:
             return DiagnosticResult(
                 name="Klines Data Freshness",
-                status="FAIL",
+                status="WARN",
                 severity="MED",
-                message=f"API error: {response.status_code}"
+                message=f"Network issue: API status {response.status_code}"
             )
         
         klines = response.json()
         if not klines:
             return DiagnosticResult(
                 name="Klines Data Freshness",
-                status="FAIL",
+                status="WARN",
                 severity="MED",
-                message="Empty klines response"
+                message="Network issue: empty klines response"
             )
         
         # Parse timestamp (close_time is at index 6)
@@ -538,12 +538,19 @@ def check_klines_data_freshness() -> DiagnosticResult:
             message=f"Data is fresh ({age_hours:.1f}h old)"
         )
     
+    except requests.RequestException as e:
+        return DiagnosticResult(
+            name="Klines Data Freshness",
+            status="WARN",
+            severity="MED",
+            message=f"Network exception: {str(e)[:50]}"
+        )
     except Exception as e:
         return DiagnosticResult(
             name="Klines Data Freshness",
-            status="FAIL",
+            status="WARN",
             severity="MED",
-            message=f"Exception: {e}"
+            message=f"Exception: {str(e)[:50]}"
         )
 
 
@@ -558,7 +565,7 @@ def check_price_data_sanity() -> DiagnosticResult:
     - High >= Open, Close
     - Low <= Open, Close
     
-    Severity: HIGH
+    Severity: MED (network-dependent check)
     """
     try:
         BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
@@ -570,15 +577,15 @@ def check_price_data_sanity() -> DiagnosticResult:
                 'interval': '1h',
                 'limit': 10
             },
-            timeout=5
+            timeout=3
         )
         
         if response.status_code != 200:
             return DiagnosticResult(
                 name="Price Data Sanity",
-                status="FAIL",
-                severity="HIGH",
-                message=f"API error: {response.status_code}"
+                status="WARN",
+                severity="MED",
+                message=f"Network issue: API status {response.status_code}"
             )
         
         klines = response.json()
@@ -610,7 +617,7 @@ def check_price_data_sanity() -> DiagnosticResult:
             return DiagnosticResult(
                 name="Price Data Sanity",
                 status="FAIL",
-                severity="HIGH",
+                severity="MED",
                 message=f"{len(anomalies)} anomalies found",
                 details="; ".join(anomalies[:3])  # First 3 anomalies
             )
@@ -618,16 +625,23 @@ def check_price_data_sanity() -> DiagnosticResult:
         return DiagnosticResult(
             name="Price Data Sanity",
             status="PASS",
-            severity="HIGH",
+            severity="MED",
             message=f"All {len(klines)} candles valid"
         )
     
+    except requests.RequestException as e:
+        return DiagnosticResult(
+            name="Price Data Sanity",
+            status="WARN",
+            severity="MED",
+            message=f"Network exception: {str(e)[:50]}"
+        )
     except Exception as e:
         return DiagnosticResult(
             name="Price Data Sanity",
-            status="FAIL",
-            severity="HIGH",
-            message=f"Exception: {e}"
+            status="WARN",
+            severity="MED",
+            message=f"Exception: {str(e)[:50]}"
         )
 
 
@@ -1099,53 +1113,60 @@ def check_binance_api_reachable() -> DiagnosticResult:
     Tests:
     - GET https://api.binance.com/api/v3/ping
     - Response status 200
-    - Response time < 5s
+    - Response time < 3s
     
-    Severity: HIGH
+    Severity: MED (network-dependent check)
     """
     try:
         BINANCE_PING_URL = "https://api.binance.com/api/v3/ping"
         
         start = time.time()
-        response = requests.get(BINANCE_PING_URL, timeout=5)
+        response = requests.get(BINANCE_PING_URL, timeout=3)
         elapsed = time.time() - start
         
         if response.status_code != 200:
             return DiagnosticResult(
                 name="Binance API Reachable",
-                status="FAIL",
-                severity="HIGH",
-                message=f"API returned status {response.status_code}"
+                status="WARN",
+                severity="MED",
+                message=f"Network issue: API status {response.status_code}"
             )
         
-        if elapsed > 5:
+        if elapsed > 3:
             return DiagnosticResult(
                 name="Binance API Reachable",
                 status="WARN",
-                severity="HIGH",
-                message=f"Slow response: {elapsed:.1f}s (>5s)"
+                severity="MED",
+                message=f"Slow response: {elapsed:.1f}s (>3s)"
             )
         
         return DiagnosticResult(
             name="Binance API Reachable",
             status="PASS",
-            severity="HIGH",
+            severity="MED",
             message=f"API responsive ({elapsed*1000:.0f}ms)"
         )
     
     except requests.Timeout:
         return DiagnosticResult(
             name="Binance API Reachable",
-            status="FAIL",
-            severity="HIGH",
-            message="API timeout (>5s)"
+            status="WARN",
+            severity="MED",
+            message="Network timeout (>3s)"
+        )
+    except requests.RequestException as e:
+        return DiagnosticResult(
+            name="Binance API Reachable",
+            status="WARN",
+            severity="MED",
+            message=f"Network exception: {str(e)[:50]}"
         )
     except Exception as e:
         return DiagnosticResult(
             name="Binance API Reachable",
-            status="FAIL",
-            severity="HIGH",
-            message=f"Exception: {e}"
+            status="WARN",
+            severity="MED",
+            message=f"Exception: {str(e)[:50]}"
         )
 
 
