@@ -79,6 +79,9 @@ cache/*.json
 !cache/.gitkeep
 test_distance_filter_removal.py
 
+# Replay cache (Phase 2B - runtime data)
+replay_cache.json
+
 # Test files for NO_ZONE logging validation (temporary)
 test_no_zone_logging.py
 test_fallback_logging_integration.py
