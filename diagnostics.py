@@ -1555,20 +1555,17 @@ class ReplayCache:
 class ReplayEngine:
     """Replays signals and detects regressions"""
     
-    def __init__(self, cache: ReplayCache, signal_engine=None):
+    def __init__(self, cache: ReplayCache, signal_engine):
+        """
+        Initialize ReplayEngine with dependency injection
+        
+        Args:
+            cache: ReplayCache instance
+            signal_engine: ICTSignalEngine instance (injected from bot.py)
+        """
         self.cache = cache
-        # Reuse global engine for production parity
-        if signal_engine is None:
-            try:
-                from bot import ict_engine_global
-                self.signal_engine = ict_engine_global
-                logger.info("✅ ReplayEngine using global ICT engine")
-            except ImportError:
-                from ict_signal_engine import ICTSignalEngine
-                self.signal_engine = ICTSignalEngine()
-                logger.warning("⚠️ ReplayEngine created new ICT engine")
-        else:
-            self.signal_engine = signal_engine
+        self.signal_engine = signal_engine
+        logger.info("✅ ReplayEngine initialized with injected engine")
     
     async def replay_signal(self, snapshot: SignalSnapshot) -> Optional[Dict]:
         """
