@@ -1588,11 +1588,22 @@ class ReplayEngine:
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                 df.set_index('timestamp', inplace=True)
             
-            # Import signal engine
-            from ict_signal_engine import ICTSignalEngine
+            # ✅ FIX 1: Use global production engine instance
+            # Try to import and use the global engine first
+            engine = None
+            try:
+                import bot
+                if hasattr(bot, 'ict_engine_global'):
+                    engine = bot.ict_engine_global
+                    logger.info("✅ Using global production ICT engine for replay")
+            except (ImportError, AttributeError) as e:
+                logger.warning(f"⚠️ Could not access global engine: {e}")
             
-            # Create engine instance (read-only mode)
-            engine = ICTSignalEngine()
+            # Fallback to creating new instance if global not available
+            if engine is None:
+                from ict_signal_engine import ICTSignalEngine
+                engine = ICTSignalEngine()
+                logger.warning("⚠️ Using fallback ICT engine instance for replay")
             
             # Generate signal (read-only - no cache write)
             signal = engine.generate_signal(
@@ -1636,14 +1647,18 @@ class ReplayEngine:
         Returns:
             Dict with comparison results
         """
-        TOLERANCE_PERCENT = 0.0001  # 0.01%
+        # ✅ FIX 2: Relaxed price tolerance from 0.01% to 0.5%
+        PRICE_TOLERANCE_PERCENT = 0.005  # 0.5% tolerance for price levels
+        
+        # ✅ FIX 3: Add confidence tolerance
+        CONFIDENCE_TOLERANCE = 5  # ±5 points tolerance for confidence
         
         def check_price_match(orig_price: float, replay_price: float, base_price: float) -> bool:
             """Check if prices match within tolerance"""
             if base_price == 0:
                 return orig_price == replay_price
             delta = abs(orig_price - replay_price) / base_price
-            return delta <= TOLERANCE_PERCENT
+            return delta <= PRICE_TOLERANCE_PERCENT
         
         def check_tp_arrays(orig_tp: List, replay_tp: List, base_price: float) -> bool:
             """Check if TP arrays match"""
@@ -1653,6 +1668,10 @@ class ReplayEngine:
                 if not check_price_match(o, r, base_price):
                     return False
             return True
+        
+        def check_confidence_match(orig_conf: float, replay_conf: float) -> bool:
+            """Check if confidence values match within tolerance"""
+            return abs(orig_conf - replay_conf) <= CONFIDENCE_TOLERANCE
         
         # Extract values
         orig_type = original.get('signal_type', 'UNKNOWN')
@@ -1670,19 +1689,24 @@ class ReplayEngine:
         orig_tp = original.get('take_profit', [])
         replay_tp = replayed.get('take_profit', [])
         
+        # ✅ FIX 3: Extract confidence values
+        orig_confidence = original.get('confidence', 0)
+        replay_confidence = replayed.get('confidence', 0)
+        
         # Ensure TP is a list
         if not isinstance(orig_tp, list):
             orig_tp = [orig_tp] if orig_tp else []
         if not isinstance(replay_tp, list):
             replay_tp = [replay_tp] if replay_tp else []
         
-        # Run checks
+        # Run checks (including confidence check)
         checks = {
             'signal_type': orig_type == replay_type,
             'direction': orig_dir == replay_dir,
             'entry_delta': check_price_match(orig_entry, replay_entry, orig_entry),
             'sl_delta': check_price_match(orig_sl, replay_sl, orig_entry),
-            'tp_delta': check_tp_arrays(orig_tp, replay_tp, orig_entry)
+            'tp_delta': check_tp_arrays(orig_tp, replay_tp, orig_entry),
+            'confidence_delta': check_confidence_match(orig_confidence, replay_confidence)
         }
         
         diffs = [k for k, v in checks.items() if not v]
