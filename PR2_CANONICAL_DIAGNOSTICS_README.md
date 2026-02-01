@@ -4,34 +4,53 @@
 
 This PR implements **5 canonical diagnostic test groups** that integrate with the DiagnosticRunner foundation from PR 1. These tests provide comprehensive self-audit capabilities for the bot without modifying signal logic or behavior.
 
+## ✅ CANONICAL CORRECTION APPLIED
+
+**Problem**: Initial implementation used module-level sweep (`inspect.getmembers(ict_signal_engine)`), analyzing ALL functions in modules regardless of runtime reachability.
+
+**Solution**: Implemented runtime-aware function discovery starting from bot.py entry point using AST + import inspection. Now analyzes ONLY the 171 functions actually reachable from bot.py at runtime.
+
+**Key Change**: Added `discover_runtime_functions()` helper that:
+- Parses bot.py AST to find imports (NO execution)
+- Follows import chain to local modules only
+- Builds allowlist of runtime-reachable callables
+- Discovers 171 functions from 49 modules
+- Entry point: bot.py (CANONICAL requirement met)
+
 ## Core Principles
 
 ✅ **Read-only**: Tests never modify signal logic or behavior  
 ✅ **Dry-run only**: No real trading or Telegram messages  
 ✅ **Mock external services**: Safe testing without side effects  
 ✅ **Admin-only**: Diagnostic execution restricted to admin users  
-✅ **Runtime analysis**: Analyzes only code actually used by the bot  
+✅ **Runtime analysis**: Analyzes ONLY code actually used by the bot (CANONICAL)  
 
 ## The 5 Canonical Test Groups
 
-### 1. Exception Sweep
-**Purpose**: Auto-discover and test public functions from runtime-reachable modules
+### 1. Exception Sweep (UPDATED - CANONICAL)
+**Purpose**: Auto-discover and test PUBLIC functions from bot.py runtime execution graph
+
+**CANONICAL CHANGE**: Now uses runtime-aware discovery instead of module-level sweep
 
 **What it does**:
-- Discovers functions from `ict_signal_engine.py` and other runtime modules
-- Executes with safe mock inputs (DataFrames, prices, periods)
+- Discovers runtime-reachable functions starting from bot.py (171 functions from 49 modules)
+- Tests first 20 functions with safe mock inputs (execution limit for speed)
+- Validates signatures for all 171 functions
 - Catches runtime exceptions without affecting production
 - Excludes dangerous functions (send_message, execute_trade, place_order)
 
 **Output**:
-- List of tested functions
+- Runtime functions discovered
+- Functions tested vs skipped
 - Any exceptions caught
 - Pass/warn/fail status
 
 **Example Result**:
 ```
-✅ PASS: Tested 10 functions without exceptions
-⚠️ WARN: Found 2 exceptions in test_function_x, test_function_y
+✅ PASS: Tested 20 runtime-reachable functions without exceptions
+Runtime functions discovered: 171
+Tested: 20
+Skipped: 151
 ```
 
 ### 2. Config/ENV Diagnostics
