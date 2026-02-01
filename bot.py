@@ -16277,7 +16277,7 @@ async def diagnostics_menu_handler(update: Update, context: ContextTypes.DEFAULT
     
     await update.message.reply_text(
         "🛠 *Diagnostics Menu*\n\n"
-        "🔍 Quick Check - 21 diagnostic tests\n"
+        "🔍 Quick Check - 26 diagnostic tests (PR 1 + PR 2)\n"
         "🔌 Wiring Scan - Dependency analysis\n"
         "🎬 Replay Signals - Regression detection\n"
         "📈 Replay Report - View replay results\n"
