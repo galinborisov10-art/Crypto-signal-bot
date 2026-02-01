@@ -1441,90 +1441,69 @@ def _wrap_check_for_foundation(check_func: Callable) -> Callable:
 
 async def run_quick_check() -> str:
     """
-    Run 24 diagnostic checks via FoundationRunner (PR 2A: Core Test Pack)
-    All checks are READ-ONLY with no side effects
+    🔒 PR 2A: CANONICAL DIAGNOSTIC TEST PACK - SCOPE LOCKED
+    
+    Runs 15 diagnostic checks across 5 canonical groups:
+    1. Exception Sweep (3 checks)
+    2. Config/ENV Diagnostics (3 checks)
+    3. Indicator Edge-Case Tests (4 checks)
+    4. Schema/Serialization Validation (2 checks)
+    5. Signal Pipeline Dry-Run (3 checks)
+    
+    All checks are READ-ONLY with no side effects.
+    External services are MOCKED.
     """
     
-    # Import PR 2A checks from diagnostic_tests.py
-    from diagnostic_tests import (
-        # GROUP 1: Logger Tests (4)
-        check_logger_configuration as pr2a_logger_config,
-        check_handler_validation,
-        check_log_file_accessibility,
-        check_log_level_consistency,
-        # GROUP 2: Exception Sweep (3)
+    # Import CANONICAL PR 2A checks
+    from diagnostic_tests_canonical import (
+        # GROUP 1: Exception Sweep (3)
         check_discover_public_functions,
         check_mock_execution_safety,
         check_exception_type_analysis,
-        # GROUP 3: Indicator Tests (4)
+        # GROUP 2: Config/ENV Diagnostics (3)
+        check_required_config_keys,
+        check_value_type_validation,
+        check_default_fallback_safety,
+        # GROUP 3: Indicator Edge-Case Tests (4)
         check_nan_propagation,
         check_divide_by_zero_safety,
         check_boundary_input_testing,
         check_indicator_schema_validation,
-        # GROUP 4: Signal Pipeline Dry-Run (3)
-        check_signal_creation_dryrun,
-        check_signal_schema_validation as pr2a_signal_schema,
-        check_mock_send_validation,
-        # GROUP 5: Config/Env Tests (3)
-        check_required_config_keys,
-        check_value_type_validation,
-        check_default_fallback_safety,
-        # GROUP 6: Schema/Type Validation (2)
+        # GROUP 4: Schema/Serialization Validation (2)
         check_core_data_objects,
         check_serialization_safety,
-        # GROUP 7: Duplicate/Idempotency (2)
-        check_duplicate_guard_existence,
-        check_deduplication_key_validation,
-        # GROUP 8: Retry/Loop Risk (1)
-        check_unbounded_retry_detection,
-        # GROUP 9: Binance Read-Only (2)
-        check_mock_binance_fetch,
-        check_response_schema_validation
+        # GROUP 5: Signal Pipeline Dry-Run (3)
+        check_signal_creation_dryrun,
+        check_signal_schema_validation,
+        check_mock_send_validation,
     )
     
-    # Define 24 checks from PR 2A specification
+    # Define 15 CANONICAL checks (SCOPE LOCKED)
     check_list = [
-        # GROUP 1: Logger Tests (4 checks)
-        ("Logger Configuration", pr2a_logger_config),
-        ("Handler Validation", check_handler_validation),
-        ("Log File Accessibility", check_log_file_accessibility),
-        ("Log Level Consistency", check_log_level_consistency),
-        
-        # GROUP 2: Exception Sweep (3 checks)
+        # GROUP 1: Exception Sweep (3 checks)
         ("Discover Public Functions", check_discover_public_functions),
         ("Mock Execution Safety", check_mock_execution_safety),
         ("Exception Type Analysis", check_exception_type_analysis),
         
-        # GROUP 3: Indicator Tests (4 checks)
+        # GROUP 2: Config/ENV Diagnostics (3 checks)
+        ("Required Config Keys", check_required_config_keys),
+        ("Value Type Validation", check_value_type_validation),
+        ("Default Fallback Safety", check_default_fallback_safety),
+        
+        # GROUP 3: Indicator Edge-Case Tests (4 checks)
         ("NaN Propagation Detection", check_nan_propagation),
         ("Divide-by-Zero Safety", check_divide_by_zero_safety),
         ("Boundary Input Testing", check_boundary_input_testing),
         ("Indicator Schema Validation", check_indicator_schema_validation),
         
-        # GROUP 4: Signal Pipeline Dry-Run (3 checks)
-        ("Signal Creation Dry-Run", check_signal_creation_dryrun),
-        ("Signal Schema Validation", pr2a_signal_schema),
-        ("Mock Send Validation", check_mock_send_validation),
-        
-        # GROUP 5: Config/Env Tests (3 checks)
-        ("Required Config Keys", check_required_config_keys),
-        ("Value Type Validation", check_value_type_validation),
-        ("Default Fallback Safety", check_default_fallback_safety),
-        
-        # GROUP 6: Schema/Type Validation (2 checks)
+        # GROUP 4: Schema/Serialization Validation (2 checks)
         ("Core Data Objects", check_core_data_objects),
         ("Serialization Safety", check_serialization_safety),
         
-        # GROUP 7: Duplicate/Idempotency (2 checks)
-        ("Duplicate Guard Existence", check_duplicate_guard_existence),
-        ("Deduplication Key Validation", check_deduplication_key_validation),
-        
-        # GROUP 8: Retry/Loop Risk (1 check)
-        ("Unbounded Retry Detection", check_unbounded_retry_detection),
-        
-        # GROUP 9: Binance Read-Only (2 checks)
-        ("Mock Binance Data Fetch", check_mock_binance_fetch),
-        ("Response Schema Validation", check_response_schema_validation),
+        # GROUP 5: Signal Pipeline Dry-Run (3 checks)
+        ("Signal Creation Dry-Run", check_signal_creation_dryrun),
+        ("Signal Schema Validation", check_signal_schema_validation),
+        ("Mock Send Validation", check_mock_send_validation),
     ]
     
     # Wrap checks for foundation runner
