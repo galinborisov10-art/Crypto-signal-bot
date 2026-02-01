@@ -1487,21 +1487,15 @@ async def run_quick_check() -> str:
     
     # Wrap OLD format checks for foundation runner
     # (PR 2 tests already return FoundationResult, so don't wrap them)
+    # PR 2 tests are identified by "PR2:" prefix in their display name
     wrapped_checks = []
-    pr2_tests = {
-        test_exception_sweep,
-        test_config_diagnostics,
-        test_indicator_edge_cases,
-        test_schema_validation,
-        test_signal_pipeline_dryrun
-    }
     
     for name, func in check_list:
-        if func in pr2_tests:
-            # PR 2 tests already return FoundationResult
+        if name.startswith("PR2:"):
+            # PR 2 tests already return FoundationResult - don't wrap
             wrapped_checks.append((name, func))
         else:
-            # Old tests need wrapping
+            # Old tests return DiagnosticResult - need wrapping
             wrapped_checks.append((name, _wrap_check_for_foundation(func)))
     
     # Use FoundationRunner
@@ -1938,6 +1932,8 @@ def test_exception_sweep() -> FoundationResult:
                     params = sig.parameters
                     
                     # Skip functions with too many required params (would need complex mocking)
+                    # Limit: 3 parameters - beyond this, mock argument generation becomes
+                    # too complex and error-prone (e.g., interdependent params, complex objects)
                     required_params = [p for p in params.values() if p.default == inspect.Parameter.empty]
                     if len(required_params) > 3:
                         continue
@@ -2168,6 +2164,10 @@ def test_indicator_edge_cases() -> FoundationResult:
                     rsi = 100 - (100 / (1 + rs))
                     
                     # Check for NaN/inf
+                    # Note: NaN is EXPECTED in edge cases like:
+                    # - 'all_same': no price movement = no gains/losses = divide by zero
+                    # - 'single_candle': insufficient data for rolling window
+                    # We report these to document behavior, not as critical bugs
                     if rsi.isna().any():
                         issues.append(f"RSI: NaN detected in {case_name}")
                     if np.isinf(rsi).any():
