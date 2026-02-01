@@ -21,6 +21,7 @@ import tempfile
 import json
 import hashlib
 from dataclasses import dataclass, asdict
+from diagnostic_runner import DiagnosticRunner as FoundationRunner, DiagnosticResult as FoundationResult, DIAGNOSTIC_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -1412,11 +1413,37 @@ async def check_wiring() -> DiagnosticResult:
 # QUICK CHECK FUNCTION
 # ========================================
 
+def _convert_to_foundation_result(old_result: DiagnosticResult) -> FoundationResult:
+    """Convert old DiagnosticResult to new FoundationResult format"""
+    return FoundationResult(
+        test_name=old_result.name,
+        status=old_result.status,
+        severity=old_result.severity,
+        execution_time_ms=0.0,  # Will be set by runner
+        message=old_result.message,
+        details=old_result.details,
+        exception_info=None,
+        timestamp=old_result.timestamp
+    )
+
+def _wrap_check_for_foundation(check_func: Callable) -> Callable:
+    """Wrap a check function to return FoundationResult"""
+    if inspect.iscoroutinefunction(check_func):
+        async def async_wrapper():
+            result = await check_func()
+            return _convert_to_foundation_result(result)
+        return async_wrapper
+    else:
+        def sync_wrapper():
+            result = check_func()
+            return _convert_to_foundation_result(result)
+        return sync_wrapper
+
 async def run_quick_check() -> str:
-    """Run 21 diagnostic checks (Phase 2C: added wiring check)"""
-    runner = DiagnosticRunner()
+    """Run 21 diagnostic checks via FoundationRunner (PR 1: Foundation)"""
     
-    checks = [
+    # Define checks (unchanged list)
+    check_list = [
         # Original 5 checks
         ("Logger Configuration", check_logger_configuration),
         ("Critical Imports", check_critical_imports),
@@ -1451,8 +1478,31 @@ async def run_quick_check() -> str:
         ("Code Wiring", check_wiring),
     ]
     
-    await runner.run_all(checks)
-    return runner.format_report()
+    # Wrap checks for foundation runner
+    wrapped_checks = [(name, _wrap_check_for_foundation(func)) for name, func in check_list]
+    
+    # Use FoundationRunner
+    foundation_runner = FoundationRunner()
+    foundation_results = await foundation_runner.run_all_checks(wrapped_checks)
+    
+    # Convert back to old format for existing format_report() compatibility
+    old_runner = DiagnosticRunner()
+    old_runner.start_time = datetime.fromtimestamp(foundation_runner.start_time)
+    old_runner.end_time = datetime.fromtimestamp(foundation_runner.end_time)
+    old_runner.results = []
+    
+    for fr in foundation_results:
+        old_result = DiagnosticResult(
+            name=fr.test_name,
+            status=fr.status,
+            severity=fr.severity,
+            message=fr.message,
+            details=fr.details
+        )
+        old_runner.results.append(old_result)
+    
+    return old_runner.format_report()
+
 
 
 # ============================================================
