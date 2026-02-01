@@ -1485,8 +1485,24 @@ async def run_quick_check() -> str:
         ("PR2: Signal Pipeline Dry-Run", test_signal_pipeline_dryrun),
     ]
     
-    # Wrap checks for foundation runner
-    wrapped_checks = [(name, _wrap_check_for_foundation(func)) for name, func in check_list]
+    # Wrap OLD format checks for foundation runner
+    # (PR 2 tests already return FoundationResult, so don't wrap them)
+    wrapped_checks = []
+    pr2_tests = {
+        test_exception_sweep,
+        test_config_diagnostics,
+        test_indicator_edge_cases,
+        test_schema_validation,
+        test_signal_pipeline_dryrun
+    }
+    
+    for name, func in check_list:
+        if func in pr2_tests:
+            # PR 2 tests already return FoundationResult
+            wrapped_checks.append((name, func))
+        else:
+            # Old tests need wrapping
+            wrapped_checks.append((name, _wrap_check_for_foundation(func)))
     
     # Use FoundationRunner
     foundation_runner = FoundationRunner()
