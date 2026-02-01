@@ -17,7 +17,6 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple, Any
 from datetime import datetime
-from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +139,6 @@ class WiringAnalyzer:
         self.issues: List[WiringIssue] = []
         self.visited_modules: Set[str] = set()
         self.base_path = self._detect_base_path()
-        self.singleton_instances: Dict[str, int] = defaultdict(int)
     
     def _detect_base_path(self) -> Path:
         """Detect base path for the project"""
@@ -188,7 +186,8 @@ class WiringAnalyzer:
             # Step 4 & 5: Detect issues
             self._detect_circular_dependencies()
             self._detect_missing_imports()
-            self._detect_singleton_violations()
+            # Note: Singleton violation detection is intentionally skipped
+            # to avoid false positives per Phase 2C requirements
             
             # Step 6: Package report
             report.issues = self.issues
@@ -379,46 +378,4 @@ class WiringAnalyzer:
                                 description=f"Import '{imported_module}' may fail",
                                 reason=f"Module not found: {imported_module}"
                             ))
-    
-    def _detect_singleton_violations(self):
-        """
-        Detect multiple instances of classes that should be singletons
-        
-        This is a simplified check that looks for patterns like:
-        - Multiple instantiations of ICTSignalEngine
-        - Multiple instantiations of ReplayEngine
-        """
-        # Known singleton classes
-        singleton_classes = [
-            'ICTSignalEngine',
-            'ReplayEngine',
-            'CacheManager'
-        ]
-        
-        # This is a basic check - in real implementation would need AST analysis
-        # For now, we'll skip this as it requires deeper analysis
-        # and the problem statement says "no false positives on Phase 2B code"
-        pass
 
-
-def detect_issues(self):
-    """
-    Detect REAL runtime issues ONLY:
-    
-    - Missing imports (ImportError risk)
-    - Circular dependencies between modules
-    - Function signature mismatches (wrong parameter count)
-    - Multiple singleton instantiations
-    - Unreachable critical functions
-    - Inconsistent dependency injection usage
-    
-    For each issue:
-    - file path
-    - line number (if applicable)
-    - function/module name
-    - exact reason
-    - severity: HIGH / MEDIUM / LOW
-    """
-    # This method is already covered by the individual detect methods
-    # called in analyze()
-    pass
