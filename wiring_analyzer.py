@@ -150,9 +150,13 @@ class WiringAnalyzer:
             '/workspaces/Crypto-signal-bot',
             '/home/runner/work/Crypto-signal-bot/Crypto-signal-bot'
         ]:
-            path = Path(path_str)
-            if path.exists() and (path / 'bot.py').exists():
-                return path
+            try:
+                path = Path(path_str)
+                if path.exists() and (path / 'bot.py').exists():
+                    return path
+            except (PermissionError, OSError):
+                # Skip paths we don't have permission to access
+                continue
         
         # Fallback to current directory
         return Path.cwd()
@@ -220,30 +224,37 @@ class WiringAnalyzer:
         self.visited_modules.add(module_name)
         
         try:
-            # Try to import module
-            if module_name in sys.modules:
+            # Find module file path
+            module_file = None
+            
+            # First, check if it's in the base directory
+            potential_paths = [
+                self.base_path / f"{module_name}.py",
+                self.base_path / module_name / "__init__.py",
+            ]
+            
+            for path in potential_paths:
+                if path.exists():
+                    module_file = path
+                    break
+            
+            # If not found locally, check if already imported
+            if not module_file and module_name in sys.modules:
                 module = sys.modules[module_name]
-            else:
-                try:
-                    module = importlib.import_module(module_name)
-                except ImportError:
-                    # Module not found - will be detected as missing import
-                    return
+                module_file_str = getattr(module, '__file__', None)
+                if module_file_str:
+                    module_file = Path(module_file_str)
+                    # Only analyze local modules
+                    if not str(module_file).startswith(str(self.base_path)):
+                        return
             
-            # Get module file
-            module_file = getattr(module, '__file__', None)
-            if not module_file:
-                return
-            
-            # Only analyze local modules (in project directory)
-            module_path = Path(module_file)
-            if not str(module_path).startswith(str(self.base_path)):
+            if not module_file or not module_file.exists():
                 return
             
             # Parse AST to find imports
             try:
-                with open(module_path, 'r', encoding='utf-8') as f:
-                    tree = ast.parse(f.read(), filename=str(module_path))
+                with open(module_file, 'r', encoding='utf-8') as f:
+                    tree = ast.parse(f.read(), filename=str(module_file))
             except Exception as e:
                 logger.debug(f"Could not parse {module_name}: {e}")
                 return
@@ -263,12 +274,45 @@ class WiringAnalyzer:
             
             # Recursively analyze imported modules
             for imported_module in imports:
-                # Only follow local imports
-                if not imported_module.startswith(('telegram', 'pandas', 'numpy', 'requests', 'ta', 'matplotlib', 'mplfinance', 'apscheduler', 'dotenv', 'logging', 'pathlib', 'datetime', 'asyncio', 'json', 'os', 'sys', 'time', 'hashlib', 're', 'io', 'html', 'pytz', 'gc', 'uuid', 'fcntl')):
+                # Only follow local imports (not standard library or third-party)
+                if self._is_local_module(imported_module):
                     self._build_dependency_graph(imported_module, depth + 1)
         
         except Exception as e:
             logger.debug(f"Error analyzing module {module_name}: {e}")
+    
+    def _is_local_module(self, module_name: str) -> bool:
+        """Check if module is a local project module (not stdlib or third-party)"""
+        # List of known third-party and stdlib modules
+        external_modules = [
+            'telegram', 'pandas', 'numpy', 'requests', 'ta', 'matplotlib', 
+            'mplfinance', 'apscheduler', 'dotenv', 'logging', 'pathlib', 
+            'datetime', 'asyncio', 'json', 'os', 'sys', 'time', 'hashlib', 
+            're', 'io', 'html', 'pytz', 'gc', 'uuid', 'fcntl', 'functools',
+            'collections', 'typing', 'dataclasses', 'abc', 'enum', 'threading',
+            'multiprocessing', 'subprocess', 'shutil', 'tempfile', 'glob',
+            'pickle', 'csv', 'xml', 'sqlite3', 'configparser', 'argparse',
+            'http', 'urllib', 'socket', 'ssl', 'email', 'base64', 'binascii',
+            'struct', 'array', 'math', 'random', 'statistics', 'decimal',
+            'fractions', 'numbers', 'itertools', 'operator', 'contextlib',
+            'warnings', 'traceback', 'inspect', 'importlib', 'ast', 'dis',
+            'httpx', 'aiohttp', 'pydantic', 'sqlalchemy', 'alembic', 'redis',
+            'celery', 'pytest', 'unittest', 'mock', 'coverage', 'flake8',
+            'black', 'isort', 'mypy', 'pylint', 'bandit', 'safety',
+            # Additional third-party libraries used in this project
+            'bs4', 'feedparser', 'deep_translator', 'sklearn', 'tensorflow',
+            'keras', 'torch', 'transformers', 'joblib', 'scipy', 'seaborn',
+            'plotly', 'dash', 'flask', 'fastapi', 'uvicorn', 'gunicorn',
+            'boto3', 'botocore', 's3transfer', 'click', 'rich', 'tqdm',
+            'colorama', 'termcolor', 'prettytable', 'tabulate', 'psutil'
+        ]
+        
+        # Check if it starts with any external module
+        for ext_mod in external_modules:
+            if module_name.startswith(ext_mod):
+                return False
+        
+        return True
     
     def _detect_circular_dependencies(self):
         """Detect circular dependencies using DFS"""
@@ -312,8 +356,8 @@ class WiringAnalyzer:
         """Detect imports that may fail at runtime"""
         for module_name, imports in self.dependency_graph.items():
             for imported_module in imports:
-                # Skip standard library and known third-party modules
-                if imported_module.startswith(('telegram', 'pandas', 'numpy', 'requests', 'ta', 'matplotlib', 'mplfinance', 'apscheduler', 'dotenv', 'logging', 'pathlib', 'datetime', 'asyncio', 'json', 'os', 'sys', 'time', 'hashlib', 're', 'io', 'html', 'pytz', 'gc', 'uuid', 'fcntl')):
+                # Skip external modules
+                if not self._is_local_module(imported_module):
                     continue
                 
                 # Check if module is reachable
