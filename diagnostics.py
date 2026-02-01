@@ -1440,48 +1440,97 @@ def _wrap_check_for_foundation(check_func: Callable) -> Callable:
         return sync_wrapper
 
 async def run_quick_check() -> str:
-    """Run 21 diagnostic checks via FoundationRunner (PR 1: Foundation)"""
+    """
+    Run 24 diagnostic checks via FoundationRunner (PR 2A: Core Test Pack)
+    All checks are READ-ONLY with no side effects
+    """
     
-    # Define checks (unchanged list)
+    # Import PR 2A checks from diagnostic_tests.py
+    from diagnostic_tests import (
+        # GROUP 1: Logger Tests (4)
+        check_logger_configuration as pr2a_logger_config,
+        check_handler_validation,
+        check_log_file_accessibility,
+        check_log_level_consistency,
+        # GROUP 2: Exception Sweep (3)
+        check_discover_public_functions,
+        check_mock_execution_safety,
+        check_exception_type_analysis,
+        # GROUP 3: Indicator Tests (4)
+        check_nan_propagation,
+        check_divide_by_zero_safety,
+        check_boundary_input_testing,
+        check_indicator_schema_validation,
+        # GROUP 4: Signal Pipeline Dry-Run (3)
+        check_signal_creation_dryrun,
+        check_signal_schema_validation as pr2a_signal_schema,
+        check_mock_send_validation,
+        # GROUP 5: Config/Env Tests (3)
+        check_required_config_keys,
+        check_value_type_validation,
+        check_default_fallback_safety,
+        # GROUP 6: Schema/Type Validation (2)
+        check_core_data_objects,
+        check_serialization_safety,
+        # GROUP 7: Duplicate/Idempotency (2)
+        check_duplicate_guard_existence,
+        check_deduplication_key_validation,
+        # GROUP 8: Retry/Loop Risk (1)
+        check_unbounded_retry_detection,
+        # GROUP 9: Binance Read-Only (2)
+        check_mock_binance_fetch,
+        check_response_schema_validation
+    )
+    
+    # Define 24 checks from PR 2A specification
     check_list = [
-        # Original 5 checks
-        ("Logger Configuration", check_logger_configuration),
-        ("Critical Imports", check_critical_imports),
-        ("Signal Schema", check_signal_schema_validation),
-        ("NaN Detection", check_nan_in_indicators),
-        ("Duplicate Guard", check_duplicate_signal_guard),
+        # GROUP 1: Logger Tests (4 checks)
+        ("Logger Configuration", pr2a_logger_config),
+        ("Handler Validation", check_handler_validation),
+        ("Log File Accessibility", check_log_file_accessibility),
+        ("Log Level Consistency", check_log_level_consistency),
         
-        # GROUP 1: MTF Data Validation (4 checks)
-        ("MTF Timeframes Available", check_mtf_timeframes_available),
-        ("HTF Components Storage", check_htf_components_storage),
-        ("Klines Data Freshness", check_klines_data_freshness),
-        ("Price Data Sanity", check_price_data_sanity),
+        # GROUP 2: Exception Sweep (3 checks)
+        ("Discover Public Functions", check_discover_public_functions),
+        ("Mock Execution Safety", check_mock_execution_safety),
+        ("Exception Type Analysis", check_exception_type_analysis),
         
-        # GROUP 2: Signal Schema Extended (3 checks)
-        ("Signal Required Fields", check_signal_required_fields),
-        ("Cache Write/Read Test", check_cache_write_read),
-        ("Signal Type Validation", check_signal_type_validation),
+        # GROUP 3: Indicator Tests (4 checks)
+        ("NaN Propagation Detection", check_nan_propagation),
+        ("Divide-by-Zero Safety", check_divide_by_zero_safety),
+        ("Boundary Input Testing", check_boundary_input_testing),
+        ("Indicator Schema Validation", check_indicator_schema_validation),
         
-        # GROUP 3: Runtime Health (4 checks)
-        ("Memory Usage", check_memory_usage),
-        ("Response Time Test", check_response_time),
-        ("Exception Rate", check_exception_rate),
-        ("Job Queue Health", check_job_queue_health),
+        # GROUP 4: Signal Pipeline Dry-Run (3 checks)
+        ("Signal Creation Dry-Run", check_signal_creation_dryrun),
+        ("Signal Schema Validation", pr2a_signal_schema),
+        ("Mock Send Validation", check_mock_send_validation),
         
-        # GROUP 4: External Integration (4 checks)
-        ("Binance API Reachable", check_binance_api_reachable),
-        ("Telegram API Responsive", check_telegram_api_responsive),
-        ("File System Access", check_file_system_access),
-        ("Log File Writeable", check_log_file_writeable),
+        # GROUP 5: Config/Env Tests (3 checks)
+        ("Required Config Keys", check_required_config_keys),
+        ("Value Type Validation", check_value_type_validation),
+        ("Default Fallback Safety", check_default_fallback_safety),
         
-        # PHASE 2C: Code Wiring (1 check)
-        ("Code Wiring", check_wiring),
+        # GROUP 6: Schema/Type Validation (2 checks)
+        ("Core Data Objects", check_core_data_objects),
+        ("Serialization Safety", check_serialization_safety),
+        
+        # GROUP 7: Duplicate/Idempotency (2 checks)
+        ("Duplicate Guard Existence", check_duplicate_guard_existence),
+        ("Deduplication Key Validation", check_deduplication_key_validation),
+        
+        # GROUP 8: Retry/Loop Risk (1 check)
+        ("Unbounded Retry Detection", check_unbounded_retry_detection),
+        
+        # GROUP 9: Binance Read-Only (2 checks)
+        ("Mock Binance Data Fetch", check_mock_binance_fetch),
+        ("Response Schema Validation", check_response_schema_validation),
     ]
     
     # Wrap checks for foundation runner
     wrapped_checks = [(name, _wrap_check_for_foundation(func)) for name, func in check_list]
     
-    # Use FoundationRunner
+    # Use FoundationRunner (from PR 1)
     foundation_runner = FoundationRunner()
     foundation_results = await foundation_runner.run_all_checks(wrapped_checks)
     
