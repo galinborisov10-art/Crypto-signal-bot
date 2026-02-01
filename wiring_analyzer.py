@@ -2,12 +2,49 @@
 Wiring Analyzer - Runtime-aware dependency and code wiring analysis
 Phase 2C: Read-only diagnostic tool for detecting wiring issues
 
-This analyzer:
-- Analyzes ALL code REACHABLE from bot.py (imported modules and their functions)
-- REACHABLE ≠ EXECUTED: Analyzes code that CAN run, not only code that HAS run
-- Detects missing imports, circular dependencies, signature mismatches
-- Reports issues with file, line, severity
-- NO behavior changes, NO auto-fix, NO modifications
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+READ-ONLY DIAGNOSTICS - NO AUTO-FIX, NO CODE MUTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This analyzer performs STATIC ANALYSIS ONLY:
+
+✅ WHAT IT DOES (Read-only operations):
+  - Reads Python source files using ast.parse() in READ mode
+  - Analyzes Abstract Syntax Trees (AST) in memory
+  - Builds dependency graphs from import statements
+  - Detects issues: missing imports, circular deps, signature mismatches
+  - Reports findings in structured format (Telegram, JSON)
+
+❌ WHAT IT DOES NOT DO (No mutations):
+  - Does NOT modify any source code files
+  - Does NOT fix issues automatically
+  - Does NOT write to filesystem (except logging)
+  - Does NOT change runtime behavior
+  - Does NOT execute or import user code (AST parse only)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Key Principle: REACHABLE ≠ EXECUTED
+- Analyzes ALL code that CAN be called (imported modules and functions)
+- Does NOT require code to have been executed
+- Detects issues BEFORE they cause runtime failures
+
+Analysis Scope:
+- Starting point: bot.py
+- Traverses: All imported local modules recursively
+- Depth limit: 10 levels (configurable)
+- Exclusions: External libraries, standard library
+
+Detection Capabilities:
+- Missing imports (ImportError risk)
+- Circular dependencies (module A → B → A)
+- Function signature mismatches (wrong arg count)
+- Guarded imports (try/except protected)
+
+Output Formats:
+- Telegram: Compact, user-friendly with emojis
+- JSON: Structured data for logging/integration
+- Console: Detailed diagnostic messages
 """
 
 import ast
@@ -218,7 +255,29 @@ class WiringReport:
 
 
 class WiringAnalyzer:
-    """Analyzes code wiring from bot.py execution path"""
+    """
+    Analyzes code wiring from bot.py execution path
+    
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ⚠️ READ-ONLY STATIC ANALYSIS - NO AUTO-FIX, NO CODE MUTATION
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    This class performs DETECTION ONLY:
+    - Reads source files in READ mode
+    - Parses AST in memory
+    - Builds dependency graphs
+    - Detects issues
+    - Generates reports
+    
+    This class does NOT:
+    - Modify source files
+    - Fix detected issues
+    - Write to filesystem (except logging)
+    - Change runtime behavior
+    - Execute or import analyzed code
+    
+    All operations are read-only static analysis for diagnostic purposes.
+    """
     
     def __init__(self):
         self.root_module = "bot"
@@ -260,19 +319,31 @@ class WiringAnalyzer:
     
     def analyze(self) -> WiringReport:
         """
-        Analyze wiring starting from bot.py
+        Perform READ-ONLY static analysis of code wiring from bot.py
         
-        Steps:
-        1. Load bot.py module
-        2. Trace all imports recursively (ALL reachable modules)
-        3. Build dependency graph
-        4. Analyze function definitions in all reachable modules
+        ⚠️ READ-ONLY OPERATION - NO CODE MODIFICATION
+        This method only reads and analyzes source code. It does NOT:
+        - Modify any files
+        - Fix detected issues
+        - Change runtime behavior
+        - Write to filesystem (except logging)
+        
+        Analysis Steps:
+        1. Read bot.py source code (READ mode only)
+        2. Parse imports and trace dependencies recursively
+        3. Build in-memory dependency graph
+        4. Analyze function definitions via AST
         5. Analyze function calls and validate signatures
-        6. Detect wiring issues
-        7. Return structured report
+        6. Detect issues (missing imports, circular deps, signature mismatches)
+        7. Generate structured report
         
         Note: REACHABLE ≠ EXECUTED
-        We analyze all code that CAN be called, not only code that HAS been called.
+        We analyze all code that CAN be called (via imports),
+        not only code that HAS been executed at runtime.
+        
+        Returns:
+            WiringReport: Structured report containing detected issues,
+                         metadata, and analysis summary. No files modified.
         """
         report = WiringReport()
         
@@ -368,10 +439,11 @@ class WiringAnalyzer:
                 return
             
             # Parse AST to find imports
+            # ⚠️ READ-ONLY: File is opened in READ mode ('r'), never modified
             try:
                 with open(module_file, 'r', encoding='utf-8') as f:
                     tree = ast.parse(f.read(), filename=str(module_file))
-                    # Cache the AST for later analysis
+                    # Cache the AST for later analysis (in-memory only)
                     self.module_asts[module_name] = tree
             except Exception as e:
                 logger.debug(f"Could not parse {module_name}: {e}")
@@ -516,13 +588,20 @@ class WiringAnalyzer:
     
     def _detect_signature_mismatches(self):
         """
-        Detect function calls with wrong argument counts
+        Detect function calls with wrong argument counts (Detection only - no auto-fix)
         
         Compares function calls against their definitions to find
         signature mismatches that would cause runtime errors.
         
+        This method ONLY identifies mismatches. It does NOT:
+        - Modify function calls
+        - Add/remove arguments
+        - Change function signatures
+        
         Note: Only validates calls to locally-defined functions to avoid
         false positives from built-in methods and library functions.
+        
+        Returns: None (adds issues to self.issues list)
         """
         for module_name, calls in self.function_calls.items():
             for func_name, line, call_info in calls:
@@ -598,7 +677,16 @@ class WiringAnalyzer:
                         ))
     
     def _detect_circular_dependencies(self):
-        """Detect circular dependencies using DFS"""
+        """
+        Detect circular dependencies using DFS (Detection only - no auto-fix)
+        
+        This method ONLY identifies circular import chains. It does NOT:
+        - Modify import statements
+        - Reorganize code
+        - Fix the circular dependency
+        
+        Returns: None (adds issues to self.issues list)
+        """
         
         def has_cycle_dfs(node: str, visited: Set[str], rec_stack: Set[str], path: List[str]) -> Optional[List[str]]:
             """DFS to detect cycles in dependency graph"""
@@ -636,7 +724,16 @@ class WiringAnalyzer:
                     ))
     
     def _detect_missing_imports(self):
-        """Detect imports that may fail at runtime"""
+        """
+        Detect imports that may fail at runtime (Detection only - no auto-fix)
+        
+        This method ONLY identifies potentially missing modules. It does NOT:
+        - Install missing packages
+        - Create missing files
+        - Modify import statements
+        
+        Returns: None (adds issues to self.issues list)
+        """
         for module_name, imports in self.dependency_graph.items():
             for imported_module in imports:
                 # Skip external modules
