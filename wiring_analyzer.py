@@ -14,12 +14,54 @@ import ast
 import importlib
 import inspect
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# Configuration constants
+MAX_DEPENDENCY_DEPTH = 10  # Maximum recursion depth for dependency traversal
+
+# Known external modules (stdlib and third-party)
+EXTERNAL_MODULES = {
+    'telegram', 'pandas', 'numpy', 'requests', 'ta', 'matplotlib', 
+    'mplfinance', 'apscheduler', 'dotenv', 'logging', 'pathlib', 
+    'datetime', 'asyncio', 'json', 'os', 'sys', 'time', 'hashlib', 
+    're', 'io', 'html', 'pytz', 'gc', 'uuid', 'fcntl', 'functools',
+    'collections', 'typing', 'dataclasses', 'abc', 'enum', 'threading',
+    'multiprocessing', 'subprocess', 'shutil', 'tempfile', 'glob',
+    'pickle', 'csv', 'xml', 'sqlite3', 'configparser', 'argparse',
+    'http', 'urllib', 'socket', 'ssl', 'email', 'base64', 'binascii',
+    'struct', 'array', 'math', 'random', 'statistics', 'decimal',
+    'fractions', 'numbers', 'itertools', 'operator', 'contextlib',
+    'warnings', 'traceback', 'inspect', 'importlib', 'ast', 'dis',
+    'httpx', 'aiohttp', 'pydantic', 'sqlalchemy', 'alembic', 'redis',
+    'celery', 'pytest', 'unittest', 'mock', 'coverage', 'flake8',
+    'black', 'isort', 'mypy', 'pylint', 'bandit', 'safety',
+    # Additional third-party libraries used in this project
+    'bs4', 'feedparser', 'deep_translator', 'sklearn', 'tensorflow',
+    'keras', 'torch', 'transformers', 'joblib', 'scipy', 'seaborn',
+    'plotly', 'dash', 'flask', 'fastapi', 'uvicorn', 'gunicorn',
+    'boto3', 'botocore', 's3transfer', 'click', 'rich', 'tqdm',
+    'colorama', 'termcolor', 'prettytable', 'tabulate', 'psutil'
+}
+
+# Common built-in/library methods that should not be validated
+COMMON_METHODS = {
+    'get', 'set', 'pop', 'append', 'extend', 'remove', 'insert',
+    'update', 'items', 'keys', 'values', 'split', 'join', 'strip',
+    'replace', 'format', 'startswith', 'endswith', 'find', 'index',
+    'count', 'sort', 'reverse', 'copy', 'clear', 'add', 'discard',
+    'read', 'write', 'close', 'open', 'print', 'len', 'str', 'int',
+    'float', 'bool', 'list', 'dict', 'set', 'tuple', 'range',
+    'enumerate', 'zip', 'map', 'filter', 'sorted', 'reversed',
+    'sum', 'min', 'max', 'abs', 'round', 'all', 'any', 'isinstance',
+    'hasattr', 'getattr', 'setattr', 'delattr', 'type', 'id',
+    'send', 'reply_text', 'edit_text', 'answer', 'edit_message_text'
+}
 
 
 class WiringIssue:
@@ -64,7 +106,7 @@ class WiringReport:
         self.modules_analyzed = 0
         self.functions_analyzed = 0
         self.dependency_graph: Dict[str, List[str]] = {}
-        self.timestamp = datetime.now()
+        self.timestamp = datetime.now(timezone.utc)
     
     def add_issue(self, issue: WiringIssue):
         """Add an issue to the report"""
@@ -145,6 +187,13 @@ class WiringAnalyzer:
     
     def _detect_base_path(self) -> Path:
         """Detect base path for the project"""
+        # Try environment variable first
+        env_path = os.getenv('BOT_BASE_PATH')
+        if env_path:
+            path = Path(env_path)
+            if path.exists() and (path / 'bot.py').exists():
+                return path
+        
         # Try common paths
         for path_str in [
             '/root/Crypto-signal-bot',
@@ -230,7 +279,7 @@ class WiringAnalyzer:
             depth: Current recursion depth (limit to 10)
         """
         # Prevent infinite recursion
-        if depth > 10 or module_name in self.visited_modules:
+        if depth > MAX_DEPENDENCY_DEPTH or module_name in self.visited_modules:
             return
         
         self.visited_modules.add(module_name)
@@ -297,32 +346,8 @@ class WiringAnalyzer:
     
     def _is_local_module(self, module_name: str) -> bool:
         """Check if module is a local project module (not stdlib or third-party)"""
-        # List of known third-party and stdlib modules
-        external_modules = [
-            'telegram', 'pandas', 'numpy', 'requests', 'ta', 'matplotlib', 
-            'mplfinance', 'apscheduler', 'dotenv', 'logging', 'pathlib', 
-            'datetime', 'asyncio', 'json', 'os', 'sys', 'time', 'hashlib', 
-            're', 'io', 'html', 'pytz', 'gc', 'uuid', 'fcntl', 'functools',
-            'collections', 'typing', 'dataclasses', 'abc', 'enum', 'threading',
-            'multiprocessing', 'subprocess', 'shutil', 'tempfile', 'glob',
-            'pickle', 'csv', 'xml', 'sqlite3', 'configparser', 'argparse',
-            'http', 'urllib', 'socket', 'ssl', 'email', 'base64', 'binascii',
-            'struct', 'array', 'math', 'random', 'statistics', 'decimal',
-            'fractions', 'numbers', 'itertools', 'operator', 'contextlib',
-            'warnings', 'traceback', 'inspect', 'importlib', 'ast', 'dis',
-            'httpx', 'aiohttp', 'pydantic', 'sqlalchemy', 'alembic', 'redis',
-            'celery', 'pytest', 'unittest', 'mock', 'coverage', 'flake8',
-            'black', 'isort', 'mypy', 'pylint', 'bandit', 'safety',
-            # Additional third-party libraries used in this project
-            'bs4', 'feedparser', 'deep_translator', 'sklearn', 'tensorflow',
-            'keras', 'torch', 'transformers', 'joblib', 'scipy', 'seaborn',
-            'plotly', 'dash', 'flask', 'fastapi', 'uvicorn', 'gunicorn',
-            'boto3', 'botocore', 's3transfer', 'click', 'rich', 'tqdm',
-            'colorama', 'termcolor', 'prettytable', 'tabulate', 'psutil'
-        ]
-        
         # Check if it starts with any external module
-        for ext_mod in external_modules:
+        for ext_mod in EXTERNAL_MODULES:
             if module_name.startswith(ext_mod):
                 return False
         
@@ -416,20 +441,7 @@ class WiringAnalyzer:
         for module_name, calls in self.function_calls.items():
             for func_name, line, call_info in calls:
                 # Skip common built-in/library methods that generate false positives
-                common_methods = {
-                    'get', 'set', 'pop', 'append', 'extend', 'remove', 'insert',
-                    'update', 'items', 'keys', 'values', 'split', 'join', 'strip',
-                    'replace', 'format', 'startswith', 'endswith', 'find', 'index',
-                    'count', 'sort', 'reverse', 'copy', 'clear', 'add', 'discard',
-                    'read', 'write', 'close', 'open', 'print', 'len', 'str', 'int',
-                    'float', 'bool', 'list', 'dict', 'set', 'tuple', 'range',
-                    'enumerate', 'zip', 'map', 'filter', 'sorted', 'reversed',
-                    'sum', 'min', 'max', 'abs', 'round', 'all', 'any', 'isinstance',
-                    'hasattr', 'getattr', 'setattr', 'delattr', 'type', 'id',
-                    'send', 'reply_text', 'edit_text', 'answer', 'edit_message_text'
-                }
-                
-                if func_name in common_methods:
+                if func_name in COMMON_METHODS:
                     continue
                 
                 # Look for function definition in current module
