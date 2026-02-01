@@ -3,7 +3,8 @@ Wiring Analyzer - Runtime-aware dependency and code wiring analysis
 Phase 2C: Read-only diagnostic tool for detecting wiring issues
 
 This analyzer:
-- Analyzes ONLY code reachable from bot.py execution path
+- Analyzes ALL code REACHABLE from bot.py (imported modules and their functions)
+- REACHABLE ≠ EXECUTED: Analyzes code that CAN run, not only code that HAS run
 - Detects missing imports, circular dependencies, signature mismatches
 - Reports issues with file, line, severity
 - NO behavior changes, NO auto-fix, NO modifications
@@ -135,10 +136,12 @@ class WiringAnalyzer:
     def __init__(self):
         self.root_module = "bot"
         self.dependency_graph: Dict[str, List[str]] = {}
-        self.function_calls: Dict[str, List[str]] = {}
+        self.function_calls: Dict[str, List[Tuple[str, int, List[str]]]] = {}  # module -> [(func_name, line, args)]
+        self.function_defs: Dict[str, Dict[str, Any]] = {}  # module.func -> {params, line, ...}
         self.issues: List[WiringIssue] = []
         self.visited_modules: Set[str] = set()
         self.base_path = self._detect_base_path()
+        self.module_asts: Dict[str, ast.Module] = {}  # Cache ASTs for analysis
     
     def _detect_base_path(self) -> Path:
         """Detect base path for the project"""
@@ -165,31 +168,41 @@ class WiringAnalyzer:
         
         Steps:
         1. Load bot.py module
-        2. Trace all imports recursively (only reachable modules)
+        2. Trace all imports recursively (ALL reachable modules)
         3. Build dependency graph
-        4. Analyze function signatures
-        5. Detect wiring issues
-        6. Return structured report
+        4. Analyze function definitions in all reachable modules
+        5. Analyze function calls and validate signatures
+        6. Detect wiring issues
+        7. Return structured report
+        
+        Note: REACHABLE ≠ EXECUTED
+        We analyze all code that CAN be called, not only code that HAS been called.
         """
         report = WiringReport()
         
         try:
             logger.info("🔌 Starting wiring analysis from bot.py")
             
-            # Step 1 & 2: Build dependency graph
+            # Step 1-3: Build dependency graph (imports all reachable modules)
             self._build_dependency_graph(self.root_module)
             
-            # Step 3: Store dependency graph in report
+            # Step 4: Analyze function definitions in all reachable modules
+            self._analyze_function_definitions()
+            
+            # Step 5: Analyze function calls and validate signatures
+            self._analyze_function_calls()
+            
+            # Store dependency graph in report
             report.dependency_graph = self.dependency_graph
             report.modules_analyzed = len(self.visited_modules)
+            report.functions_analyzed = len(self.function_defs)
             
-            # Step 4 & 5: Detect issues
+            # Step 6: Detect issues
             self._detect_circular_dependencies()
             self._detect_missing_imports()
-            # Note: Singleton violation detection is intentionally skipped
-            # to avoid false positives per Phase 2C requirements
+            self._detect_signature_mismatches()
             
-            # Step 6: Package report
+            # Step 7: Package report
             report.issues = self.issues
             
             logger.info(f"✅ Wiring analysis complete: {len(self.issues)} issues found")
@@ -254,6 +267,8 @@ class WiringAnalyzer:
             try:
                 with open(module_file, 'r', encoding='utf-8') as f:
                     tree = ast.parse(f.read(), filename=str(module_file))
+                    # Cache the AST for later analysis
+                    self.module_asts[module_name] = tree
             except Exception as e:
                 logger.debug(f"Could not parse {module_name}: {e}")
                 return
@@ -312,6 +327,177 @@ class WiringAnalyzer:
                 return False
         
         return True
+    
+    def _analyze_function_definitions(self):
+        """
+        Analyze all function definitions in reachable modules
+        
+        Extracts function signatures (parameters, defaults) for all functions
+        in modules that are reachable from bot.py.
+        """
+        for module_name, tree in self.module_asts.items():
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    func_key = f"{module_name}.{node.name}"
+                    
+                    # Extract parameter info
+                    params = []
+                    defaults_count = len(node.args.defaults)
+                    args_count = len(node.args.args)
+                    required_count = args_count - defaults_count
+                    
+                    for i, arg in enumerate(node.args.args):
+                        param_info = {
+                            'name': arg.arg,
+                            'required': i < required_count,
+                            'position': i
+                        }
+                        params.append(param_info)
+                    
+                    self.function_defs[func_key] = {
+                        'module': module_name,
+                        'name': node.name,
+                        'line': node.lineno,
+                        'params': params,
+                        'required_params': required_count,
+                        'total_params': args_count,
+                        'has_varargs': node.args.vararg is not None,
+                        'has_kwargs': node.args.kwarg is not None,
+                        'is_async': isinstance(node, ast.AsyncFunctionDef)
+                    }
+    
+    def _analyze_function_calls(self):
+        """
+        Analyze function calls in reachable modules
+        
+        Extracts all function calls to track usage patterns and prepare
+        for signature validation.
+        """
+        for module_name, tree in self.module_asts.items():
+            calls = []
+            
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    # Try to extract function name
+                    func_name = None
+                    if isinstance(node.func, ast.Name):
+                        func_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        func_name = node.func.attr
+                    
+                    if func_name:
+                        # Count arguments
+                        arg_count = len(node.args)
+                        kwarg_count = len(node.keywords)
+                        
+                        calls.append((
+                            func_name,
+                            getattr(node, 'lineno', 0),
+                            {
+                                'args': arg_count,
+                                'kwargs': kwarg_count,
+                                'total': arg_count + kwarg_count
+                            }
+                        ))
+            
+            if calls:
+                self.function_calls[module_name] = calls
+    
+    def _detect_signature_mismatches(self):
+        """
+        Detect function calls with wrong argument counts
+        
+        Compares function calls against their definitions to find
+        signature mismatches that would cause runtime errors.
+        
+        Note: Only validates calls to locally-defined functions to avoid
+        false positives from built-in methods and library functions.
+        """
+        for module_name, calls in self.function_calls.items():
+            for func_name, line, call_info in calls:
+                # Skip common built-in/library methods that generate false positives
+                common_methods = {
+                    'get', 'set', 'pop', 'append', 'extend', 'remove', 'insert',
+                    'update', 'items', 'keys', 'values', 'split', 'join', 'strip',
+                    'replace', 'format', 'startswith', 'endswith', 'find', 'index',
+                    'count', 'sort', 'reverse', 'copy', 'clear', 'add', 'discard',
+                    'read', 'write', 'close', 'open', 'print', 'len', 'str', 'int',
+                    'float', 'bool', 'list', 'dict', 'set', 'tuple', 'range',
+                    'enumerate', 'zip', 'map', 'filter', 'sorted', 'reversed',
+                    'sum', 'min', 'max', 'abs', 'round', 'all', 'any', 'isinstance',
+                    'hasattr', 'getattr', 'setattr', 'delattr', 'type', 'id',
+                    'send', 'reply_text', 'edit_text', 'answer', 'edit_message_text'
+                }
+                
+                if func_name in common_methods:
+                    continue
+                
+                # Look for function definition in current module
+                func_key = f"{module_name}.{func_name}"
+                func_def = self.function_defs.get(func_key)
+                
+                # If not found locally, only check imported functions from our modules
+                if not func_def:
+                    # Try to find in imported modules only
+                    found_in_import = False
+                    for imported_module in self.dependency_graph.get(module_name, []):
+                        if self._is_local_module(imported_module):
+                            imported_key = f"{imported_module}.{func_name}"
+                            func_def = self.function_defs.get(imported_key)
+                            if func_def:
+                                found_in_import = True
+                                break
+                    
+                    # If not found in our local modules, skip (likely external/built-in)
+                    if not found_in_import:
+                        continue
+                
+                if func_def:
+                    # Check if call matches signature
+                    required = func_def['required_params']
+                    total = func_def['total_params']
+                    has_varargs = func_def['has_varargs']
+                    has_kwargs = func_def['has_kwargs']
+                    
+                    args_provided = call_info['args']
+                    kwargs_provided = call_info['kwargs']
+                    
+                    # Skip validation if function accepts *args or **kwargs
+                    if has_varargs or has_kwargs:
+                        continue
+                    
+                    # For methods, first parameter is usually 'self' or 'cls'
+                    # We don't count it in the call, so adjust required count
+                    if func_def['params'] and func_def['params'][0]['name'] in ['self', 'cls']:
+                        required = max(0, required - 1)
+                        total = max(0, total - 1)
+                    
+                    # Total arguments provided (positional + keyword)
+                    total_provided = args_provided + kwargs_provided
+                    
+                    # Check if too few arguments
+                    if total_provided < required:
+                        self.issues.append(WiringIssue(
+                            severity="HIGH",
+                            file=f"{module_name}.py",
+                            line=line,
+                            function=func_name,
+                            issue_type="signature_mismatch",
+                            description=f"Function '{func_name}' called with too few arguments",
+                            reason=f"Expected at least {required} args, got {total_provided}"
+                        ))
+                    
+                    # Check if too many arguments (and no *args)
+                    elif total_provided > total and not has_varargs:
+                        self.issues.append(WiringIssue(
+                            severity="HIGH",
+                            file=f"{module_name}.py",
+                            line=line,
+                            function=func_name,
+                            issue_type="signature_mismatch",
+                            description=f"Function '{func_name}' called with too many arguments",
+                            reason=f"Expected at most {total} args, got {total_provided}"
+                        ))
     
     def _detect_circular_dependencies(self):
         """Detect circular dependencies using DFS"""
