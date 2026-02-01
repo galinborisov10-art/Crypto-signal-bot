@@ -382,17 +382,30 @@ class WiringAnalyzer:
             guarded = set()
             
             # Walk the AST to find imports and detect try/except blocks
+            # Use a recursive visitor to handle nested structures
+            def find_imports_in_node(node):
+                """Recursively find all imports in a node and its children"""
+                found = []
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        found.append(alias.name)
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        found.append(node.module)
+                
+                # Recursively check child nodes
+                for child in ast.iter_child_nodes(node):
+                    found.extend(find_imports_in_node(child))
+                
+                return found
+            
+            # Find guarded imports in try/except blocks
             for node in ast.walk(tree):
-                # Check if this is a try/except block
                 if isinstance(node, ast.Try):
-                    # Extract imports from within try block
-                    for child in node.body:
-                        if isinstance(child, ast.Import):
-                            for alias in child.names:
-                                guarded.add(alias.name)
-                        elif isinstance(child, ast.ImportFrom):
-                            if child.module:
-                                guarded.add(child.module)
+                    # Extract all imports from within try block (including nested)
+                    for stmt in node.body:
+                        imports_in_try = find_imports_in_node(stmt)
+                        guarded.update(imports_in_try)
             
             # Now extract all imports (including guarded ones)
             for node in ast.walk(tree):
@@ -641,7 +654,7 @@ class WiringAnalyzer:
                         package_dir = self.base_path / imported_module.replace('.', '/')
                         if not (package_dir.exists() and (package_dir / '__init__.py').exists()):
                             # Check if this import is guarded (in try/except block)
-                            is_guarded = module_name in self.guarded_imports and imported_module in self.guarded_imports[module_name]
+                            is_guarded = imported_module in self.guarded_imports.get(module_name, set())
                             
                             if is_guarded:
                                 # Downgrade severity for guarded imports
