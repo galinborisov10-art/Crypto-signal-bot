@@ -12759,6 +12759,9 @@ https://github.com/galinborisov10-art/Crypto-signal-bot
     elif text == "🔍 Quick Check":
         await handle_quick_check(update, context)
     
+    elif text == "🔌 Wiring Scan":
+        await handle_wiring_scan(update, context)
+    
     elif text == "🎬 Replay Signals":
         await handle_replay_signals(update, context)
     
@@ -16265,6 +16268,7 @@ async def diagnostics_menu_handler(update: Update, context: ContextTypes.DEFAULT
     
     keyboard = [
         [KeyboardButton("🔍 Quick Check")],
+        [KeyboardButton("🔌 Wiring Scan")],
         [KeyboardButton("🎬 Replay Signals"), KeyboardButton("📈 Replay Report")],
         [KeyboardButton("🗑️ Clear Replay Cache")],
         [KeyboardButton("🔙 Back to Main Menu")]
@@ -16273,7 +16277,8 @@ async def diagnostics_menu_handler(update: Update, context: ContextTypes.DEFAULT
     
     await update.message.reply_text(
         "🛠 *Diagnostics Menu*\n\n"
-        "🔍 Quick Check - 20 diagnostic tests\n"
+        "🔍 Quick Check - 21 diagnostic tests\n"
+        "🔌 Wiring Scan - Dependency analysis\n"
         "🎬 Replay Signals - Regression detection\n"
         "📈 Replay Report - View replay results\n"
         "🗑️ Clear Cache - Reset replay storage",
@@ -16402,6 +16407,40 @@ async def handle_clear_replay_cache(update: Update, context: ContextTypes.DEFAUL
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)}")
         logger.error(f"Clear cache error: {e}", exc_info=True)
+
+
+async def handle_wiring_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Admin-only: Run wiring & dependency analysis
+    
+    Command: /wiring_scan or button in /diagnostics menu
+    """
+    # Check admin access
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_CHAT_ID:
+        await update.message.reply_text("❌ Admin access required")
+        return
+    
+    await update.message.reply_text("🔌 Running wiring analysis...")
+    
+    try:
+        from wiring_analyzer import WiringAnalyzer
+        
+        analyzer = WiringAnalyzer()
+        report = analyzer.analyze()
+        
+        # Format for Telegram
+        telegram_report = report.format_telegram()
+        
+        await update.message.reply_text(
+            telegram_report,
+            parse_mode='Markdown'
+        )
+        
+    except Exception as e:
+        logger.error(f"Wiring scan failed: {e}")
+        await update.message.reply_text(f"❌ Analysis failed: {e}")
 
 
 async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -17626,6 +17665,7 @@ def main():
     app.add_handler(CommandHandler("debug", debug_mode_cmd))  # 🔍 Toggle debug mode (admin)
     app.add_handler(CommandHandler("health", health_cmd))  # 🏥 System health diagnostic (PR #10)
     app.add_handler(CommandHandler("quick_health", quick_health_cmd))  # 🏥 Quick health check (5s)
+    app.add_handler(CommandHandler("wiring_scan", handle_wiring_scan))  # 🔌 Wiring & dependency analysis (Phase 2C)
     
     # Active Trades Management Commands
     app.add_handler(CommandHandler("close_trade", close_trade_cmd))  # 🔒 Manually close a trade

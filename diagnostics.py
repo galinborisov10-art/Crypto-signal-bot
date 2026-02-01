@@ -1356,11 +1356,64 @@ def check_log_file_writeable() -> DiagnosticResult:
 
 
 # ========================================
+# CHECK 21: CODE WIRING (PHASE 2C)
+# ========================================
+
+async def check_wiring() -> DiagnosticResult:
+    """
+    Check 21: Code wiring and dependencies
+    
+    Analyzes runtime-reachable code from bot.py
+    """
+    try:
+        from wiring_analyzer import WiringAnalyzer
+        
+        analyzer = WiringAnalyzer()
+        report = analyzer.analyze()
+        
+        high_count = sum(1 for issue in report.issues if issue.severity == 'HIGH')
+        med_count = sum(1 for issue in report.issues if issue.severity == 'MEDIUM')
+        low_count = sum(1 for issue in report.issues if issue.severity == 'LOW')
+        
+        if high_count > 0:
+            return DiagnosticResult(
+                name="Code Wiring",
+                status="FAIL",
+                severity="HIGH",
+                message=f"{high_count} critical wiring issues detected",
+                details=f"Run /wiring_scan for details"
+            )
+        elif med_count > 0:
+            return DiagnosticResult(
+                name="Code Wiring",
+                status="WARN",
+                severity="MED",
+                message=f"{med_count} medium wiring issues",
+                details=f"Run /wiring_scan for details"
+            )
+        else:
+            return DiagnosticResult(
+                name="Code Wiring",
+                status="PASS",
+                severity="LOW",
+                message="No wiring issues detected"
+            )
+    
+    except Exception as e:
+        return DiagnosticResult(
+            name="Code Wiring",
+            status="FAIL",
+            severity="HIGH",
+            message=f"Wiring analysis failed: {e}"
+        )
+
+
+# ========================================
 # QUICK CHECK FUNCTION
 # ========================================
 
 async def run_quick_check() -> str:
-    """Run 20 diagnostic checks (Phase 2A expanded)"""
+    """Run 21 diagnostic checks (Phase 2C: added wiring check)"""
     runner = DiagnosticRunner()
     
     checks = [
@@ -1393,6 +1446,9 @@ async def run_quick_check() -> str:
         ("Telegram API Responsive", check_telegram_api_responsive),
         ("File System Access", check_file_system_access),
         ("Log File Writeable", check_log_file_writeable),
+        
+        # PHASE 2C: Code Wiring (1 check)
+        ("Code Wiring", check_wiring),
     ]
     
     await runner.run_all(checks)
