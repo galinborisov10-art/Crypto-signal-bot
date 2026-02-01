@@ -1,5 +1,21 @@
 # Diagnostic Orchestrator Implementation - Summary
 
+## ⚠️ PRODUCTION SAFETY NOTICE
+
+**This module is DIAGNOSTIC INFRASTRUCTURE ONLY.**
+
+The `DIAGNOSTIC_MODE` flag in `diagnostic_orchestrator.py` is intended ONLY for diagnostic execution contexts (manual or admin-triggered diagnostics).
+
+- ❌ **MUST NOT** be imported or relied upon by production runtime code paths
+- ❌ **MUST NOT** be used in signals, trading, Telegram handlers, or schedulers
+- ✅ **ONLY USE** in diagnostic test functions and admin diagnostic commands
+
+**For production runtime diagnostic mode, use `bot.py`'s `DIAGNOSTIC_MODE` environment variable.**
+
+This module is intentionally NOT wired into bot startup or runtime logic.
+
+---
+
 ## What Was Implemented
 
 This PR implements the **foundation infrastructure** for diagnostic test orchestration. It is a minimal, safe, read-only framework that does NOT include any actual diagnostic tests.

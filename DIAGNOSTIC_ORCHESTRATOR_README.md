@@ -1,5 +1,20 @@
 # Diagnostic Orchestrator - Foundation Infrastructure
 
+## ⚠️ PRODUCTION SAFETY NOTICE
+
+**This module is DIAGNOSTIC INFRASTRUCTURE ONLY.**
+
+- ✅ **Intended use:** Manual or admin-triggered diagnostic test execution
+- ✅ **Intended use:** Diagnostic test development and validation
+- ❌ **NOT for use:** Production runtime code paths (bot.py, signal handlers, trading)
+- ❌ **NOT for use:** Scheduled tasks, Telegram handlers, or startup logic
+
+**The `DIAGNOSTIC_MODE` flag in this module is separate from and must not be confused with the production `DIAGNOSTIC_MODE` environment variable used in `bot.py`.**
+
+This module is intentionally NOT wired into bot startup or runtime logic. It provides orchestration infrastructure that should only be explicitly invoked when running diagnostics.
+
+---
+
 ## Overview
 
 The Diagnostic Orchestrator is a **foundation infrastructure module** for running diagnostic tests safely and reliably. This is orchestration infrastructure ONLY - it does not include any actual diagnostic tests.
@@ -139,20 +154,46 @@ The entire diagnostic run is capped at a maximum time (default 10 minutes). If t
 Each test runs in isolation. If a test raises an exception, it's caught and converted to a FAIL result. Other tests continue to run.
 
 ### 4. DIAGNOSTIC_MODE Management
+
+⚠️ **IMPORTANT PRODUCTION SAFETY NOTICE**
+
+The `DIAGNOSTIC_MODE` flag in this module is for **diagnostic infrastructure only**:
+
+- ✅ **USE:** In diagnostic test functions called via `DiagnosticRunner`
+- ✅ **USE:** In admin-triggered diagnostic commands
+- ✅ **USE:** In manual diagnostic execution contexts
+
+- ❌ **DO NOT USE:** In production runtime code paths (bot.py, signal handlers, trading logic)
+- ❌ **DO NOT USE:** In scheduled tasks or Telegram command handlers
+- ❌ **DO NOT USE:** In startup or initialization code
+
+**For production runtime diagnostic mode, use `bot.py`'s `DIAGNOSTIC_MODE` which is controlled via environment variable.**
+
+This module is intentionally NOT wired into bot startup or runtime logic. It provides orchestration infrastructure that is explicitly invoked only when running diagnostics.
+
 The runner automatically:
-- Enables `DIAGNOSTIC_MODE = True` at the start
+- Enables `DIAGNOSTIC_MODE = True` at the start of a diagnostic run
 - Disables `DIAGNOSTIC_MODE = False` at the end
 - **Guarantees** reset even if something crashes (via try/finally)
 
-Bot code should check this flag:
+Diagnostic test code can check this flag:
 ```python
 from diagnostic_orchestrator import DIAGNOSTIC_MODE
 
-def send_signal():
+def diagnostic_test_function():
+    # This is OK - we're in a diagnostic test context
     if DIAGNOSTIC_MODE:
-        logger.info("🔒 DIAGNOSTIC_MODE: Skipping signal send")
-        return
-    # Actual signal sending logic
+        logger.info("Running in diagnostic mode")
+    # Test logic here
+```
+
+**Production code should NEVER import or check this flag:**
+```python
+# ❌ WRONG - Do not do this in bot.py or production handlers
+from diagnostic_orchestrator import DIAGNOSTIC_MODE  # NO!
+
+# ✅ CORRECT - Use bot.py's environment-based flag
+DIAGNOSTIC_MODE = os.getenv('DIAGNOSTIC_MODE', 'false').lower() == 'true'
 ```
 
 ## Result Aggregation

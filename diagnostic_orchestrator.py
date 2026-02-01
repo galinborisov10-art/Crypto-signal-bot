@@ -36,10 +36,20 @@ from typing import Callable, List, Tuple, Dict, Any, Optional
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Global diagnostic mode flag
-# This flag is used to prevent actual signal execution, Telegram sends, trades, etc.
-# during diagnostic runs. All bot code should check this flag before performing
-# actions that modify state or interact with external systems.
+# ⚠️ IMPORTANT – PRODUCTION SAFETY NOTICE
+# ------------------------------------------------------------
+# DIAGNOSTIC_MODE is intended ONLY for diagnostic execution
+# contexts (manual or admin-triggered diagnostics).
+#
+# ❌ MUST NOT be imported or relied upon by production runtime
+# code paths (signals, trading, Telegram handlers, schedulers).
+#
+# This module provides DIAGNOSTIC INFRASTRUCTURE ONLY and is
+# intentionally NOT wired into bot startup or runtime logic.
+#
+# For production runtime diagnostic mode, use bot.py's
+# DIAGNOSTIC_MODE which is controlled via environment variable.
+# ------------------------------------------------------------
 DIAGNOSTIC_MODE = False
 
 
