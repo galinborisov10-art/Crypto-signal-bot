@@ -75,7 +75,9 @@ class WiringIssue:
         function: Optional[str],
         issue_type: str,
         description: str,
-        reason: str
+        reason: str,
+        is_guarded: bool = False,
+        guard_info: Optional[str] = None
     ):
         self.severity = severity
         self.file = file
@@ -84,10 +86,12 @@ class WiringIssue:
         self.issue_type = issue_type
         self.description = description
         self.reason = reason
+        self.is_guarded = is_guarded
+        self.guard_info = guard_info
     
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON serialization"""
-        return {
+        result = {
             "severity": self.severity,
             "file": self.file,
             "line": self.line,
@@ -96,6 +100,10 @@ class WiringIssue:
             "description": self.description,
             "reason": self.reason
         }
+        if self.is_guarded:
+            result["is_guarded"] = True
+            result["guard_info"] = self.guard_info
+        return result
 
 
 class WiringReport:
@@ -107,10 +115,17 @@ class WiringReport:
         self.functions_analyzed = 0
         self.dependency_graph: Dict[str, List[str]] = {}
         self.timestamp = datetime.now(timezone.utc)
+        self.skipped_analyses: List[str] = []
+        self.max_depth_reached = False
     
     def add_issue(self, issue: WiringIssue):
         """Add an issue to the report"""
         self.issues.append(issue)
+    
+    def add_skipped_analysis(self, analysis: str):
+        """Track skipped analysis"""
+        if analysis not in self.skipped_analyses:
+            self.skipped_analyses.append(analysis)
     
     def format_telegram(self) -> str:
         """Format for Telegram display (compact)"""
@@ -137,6 +152,8 @@ class WiringReport:
                         location += f":{issue.line}"
                     report += f"• {location}\n"
                     report += f"  {issue.description}\n"
+                    if issue.is_guarded and issue.guard_info:
+                        report += f"  ℹ️ {issue.guard_info}\n"
             report += "\n"
         
         # Show MEDIUM severity issues (limited to 3)
@@ -150,13 +167,39 @@ class WiringReport:
                         location += f":{issue.line}"
                     report += f"• {location}\n"
                     report += f"  {issue.description}\n"
+                    if issue.is_guarded and issue.guard_info:
+                        report += f"  ℹ️ {issue.guard_info}\n"
                     count += 1
             if med_count > 3:
                 report += f"  ... and {med_count - 3} more\n"
             report += "\n"
         
+        # Show LOW severity issues (guarded imports)
+        if low_count > 0:
+            report += "🟢 LOW (Safe):\n"
+            guarded_count = 0
+            for issue in self.issues:
+                if issue.severity == 'LOW' and issue.is_guarded and guarded_count < 3:
+                    location = f"{issue.file}"
+                    report += f"• {location}\n"
+                    report += f"  {issue.description}\n"
+                    if issue.guard_info:
+                        report += f"  ℹ️ {issue.guard_info}\n"
+                    guarded_count += 1
+            if low_count > 3:
+                report += f"  ... and {low_count - 3} more\n"
+            report += "\n"
+        
         report += f"Analysis root: bot.py\n"
         report += f"Modules analyzed: {self.modules_analyzed}\n"
+        
+        # Show skipped analyses if any
+        if self.skipped_analyses or self.max_depth_reached:
+            report += f"\n⚠️ Skipped Analyses:\n"
+            for skipped in self.skipped_analyses:
+                report += f"• {skipped}\n"
+            if self.max_depth_reached:
+                report += f"• Max dependency depth reached (depth > {MAX_DEPENDENCY_DEPTH})\n"
         
         return report
     
@@ -168,7 +211,9 @@ class WiringReport:
             "modules_analyzed": self.modules_analyzed,
             "functions_analyzed": self.functions_analyzed,
             "issues": [issue.to_dict() for issue in self.issues],
-            "dependency_graph": self.dependency_graph
+            "dependency_graph": self.dependency_graph,
+            "skipped_analyses": self.skipped_analyses,
+            "max_depth_reached": self.max_depth_reached
         }
 
 
@@ -184,6 +229,8 @@ class WiringAnalyzer:
         self.visited_modules: Set[str] = set()
         self.base_path = self._detect_base_path()
         self.module_asts: Dict[str, ast.Module] = {}  # Cache ASTs for analysis
+        self.guarded_imports: Dict[str, Set[str]] = {}  # module -> set of guarded import names
+        self.max_depth_reached = False  # Track if we hit max dependency depth
     
     def _detect_base_path(self) -> Path:
         """Detect base path for the project"""
@@ -253,6 +300,10 @@ class WiringAnalyzer:
             
             # Step 7: Package report
             report.issues = self.issues
+            report.max_depth_reached = self.max_depth_reached
+            
+            # Report skipped analyses
+            report.add_skipped_analysis("Singleton violation detection (by design in Phase 2C)")
             
             logger.info(f"✅ Wiring analysis complete: {len(self.issues)} issues found")
             
@@ -279,7 +330,11 @@ class WiringAnalyzer:
             depth: Current recursion depth (limit to 10)
         """
         # Prevent infinite recursion
-        if depth > MAX_DEPENDENCY_DEPTH or module_name in self.visited_modules:
+        if depth > MAX_DEPENDENCY_DEPTH:
+            self.max_depth_reached = True
+            return
+        
+        if module_name in self.visited_modules:
             return
         
         self.visited_modules.add(module_name)
@@ -322,8 +377,24 @@ class WiringAnalyzer:
                 logger.debug(f"Could not parse {module_name}: {e}")
                 return
             
-            # Extract imports
+            # Extract imports and detect guarded ones
             imports = []
+            guarded = set()
+            
+            # Walk the AST to find imports and detect try/except blocks
+            for node in ast.walk(tree):
+                # Check if this is a try/except block
+                if isinstance(node, ast.Try):
+                    # Extract imports from within try block
+                    for child in node.body:
+                        if isinstance(child, ast.Import):
+                            for alias in child.names:
+                                guarded.add(alias.name)
+                        elif isinstance(child, ast.ImportFrom):
+                            if child.module:
+                                guarded.add(child.module)
+            
+            # Now extract all imports (including guarded ones)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
@@ -332,8 +403,10 @@ class WiringAnalyzer:
                     if node.module:
                         imports.append(node.module)
             
-            # Store dependencies
+            # Store dependencies and guarded imports
             self.dependency_graph[module_name] = imports
+            if guarded:
+                self.guarded_imports[module_name] = guarded
             
             # Recursively analyze imported modules
             for imported_module in imports:
@@ -567,13 +640,26 @@ class WiringAnalyzer:
                         # Check if it's a package
                         package_dir = self.base_path / imported_module.replace('.', '/')
                         if not (package_dir.exists() and (package_dir / '__init__.py').exists()):
+                            # Check if this import is guarded (in try/except block)
+                            is_guarded = module_name in self.guarded_imports and imported_module in self.guarded_imports[module_name]
+                            
+                            if is_guarded:
+                                # Downgrade severity for guarded imports
+                                severity = "LOW"
+                                guard_info = "Guarded import – runtime safe (try/except)"
+                            else:
+                                severity = "HIGH"
+                                guard_info = None
+                            
                             self.issues.append(WiringIssue(
-                                severity="HIGH",
+                                severity=severity,
                                 file=f"{module_name}.py",
                                 line=None,
                                 function=None,
                                 issue_type="missing_import",
                                 description=f"Import '{imported_module}' may fail",
-                                reason=f"Module not found: {imported_module}"
+                                reason=f"Module not found: {imported_module}",
+                                is_guarded=is_guarded,
+                                guard_info=guard_info
                             ))
 
