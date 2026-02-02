@@ -4215,7 +4215,7 @@ def fetch_mtf_data(symbol: str, timeframe: str, primary_df: pd.DataFrame) -> dic
         Dictionary with timeframes as keys and DataFrames as values
     """
     mtf_data = {}
-    mtf_timeframes = ['5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
+    mtf_timeframes = ['15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
     # ❌ Removed noisy/non-standard timeframes:
     # - 1m, 3m (too noisy for consensus)
     # - 6h, 12h, 3d (non-standard, redundant between 4h/1d and 1d/1w)
@@ -8382,7 +8382,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     custom_timeframe = None
     if len(context.args) > 1:
         tf = context.args[1].lower()
-        valid_timeframes = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+        valid_timeframes = ['15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
         if tf in valid_timeframes:
             custom_timeframe = tf
         else:
@@ -10720,7 +10720,7 @@ async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Директна промяна
     tf = context.args[0].lower()
-    valid_tfs = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
+    valid_tfs = ['15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
     
     if tf not in valid_tfs:
         await update.message.reply_text(f"❌ Невалиден таймфрейм. Избери от: {', '.join(valid_tfs)}")
@@ -11211,7 +11211,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     logger.info("🔍 Започвам ASYNC проверка на всички монети и timeframes...")
     
     # Основни timeframes за проверка - 1h, 2h, 4h, 1d
-    timeframes_to_check = ['1h', '2h', '4h', '1d']
+    timeframes_to_check = ['1h', '2h', '3h', '4h', '1d']
     
     # 🚀 ASYNC ПАРАЛЕЛЕН АНАЛИЗ - всички монети/timeframes наведнъж
     async def analyze_single_pair(symbol, timeframe):
@@ -11459,7 +11459,7 @@ async def auto_signal_job(timeframe: str, bot_instance):
     """
     try:
         # ✅ AUTO TIMEFRAME FILTER (only 1h, 2h, 4h, 1d)
-        ALLOWED_AUTO_TIMEFRAMES = ['1h', '2h', '4h', '1d']
+        ALLOWED_AUTO_TIMEFRAMES = ['1h', '2h', '3h', '4h', '1d']
         
         if timeframe not in ALLOWED_AUTO_TIMEFRAMES:
             logger.info(f"⚠️ Auto signals disabled for {timeframe} (allowed: {ALLOWED_AUTO_TIMEFRAMES})")
