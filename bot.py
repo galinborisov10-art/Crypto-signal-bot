@@ -17711,8 +17711,8 @@ async def send_diagnostic_report(application, report):
         if not chat_id:
             return
         
-        # Format the report message
-        message = f"📊 <b>Startup Diagnostics Report</b>\n\n{report}"
+        # Format the report message (Markdown format to match run_quick_check output)
+        message = f"📊 *Startup Diagnostics Report*\n\n{report}"
         
         await application.bot.send_message(
             chat_id=chat_id,
