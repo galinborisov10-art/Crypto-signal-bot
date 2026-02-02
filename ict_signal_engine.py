@@ -1075,11 +1075,11 @@ class ICTSignalEngine:
         # ✅ VALIDATE SL (STRICT ICT)
         # Try to get Order Block from:
         # 1. Entry setup
-        # 2. HTF components (stored from Step 1)
+        # 2. HTF components (stored from Step 1, per-symbol to avoid race conditions)
         # 3. Current timeframe components
         order_block = (
             entry_setup.get('ob') or
-            ((self.htf_components.get('order_blocks') or [None])[0] if hasattr(self, 'htf_components') else None) or
+            ((self.htf_components_by_symbol.get(symbol, {}).get('order_blocks') or [None])[0] if hasattr(self, 'htf_components_by_symbol') else None) or
             ((ict_components.get('order_blocks') or [None])[0] if ict_components else None)
         )
         
@@ -1087,8 +1087,9 @@ class ICTSignalEngine:
             logger.info(f"   → Validating SL against Order Block")
             if hasattr(order_block, 'zone_low'):
                 logger.info(f"      • OB Range: ${order_block.zone_low:.2f} - ${order_block.zone_high:.2f}")
-                # Check if it's from HTF
-                if hasattr(self, 'htf_components') and order_block in self.htf_components.get('order_blocks', []):
+                # Check if it's from HTF (per-symbol storage)
+                htf_comps = self.htf_components_by_symbol.get(symbol, {}) if hasattr(self, 'htf_components_by_symbol') else {}
+                if order_block in htf_comps.get('order_blocks', []):
                     logger.info(f"      • Using HTF Order Block for SL validation")
             
             sl_price, sl_valid = self._validate_sl_position(sl_price, order_block, bias, entry_price)
@@ -4301,13 +4302,15 @@ class ICTSignalEngine:
                     # Determine bias from 1D
                     bias_components = self._detect_ict_components(df_1d, '1d')
                     
-                    # ✅ STORE HTF components for later use
-                    self.htf_components = bias_components
+                    # ✅ STORE HTF components for later use (per-symbol to avoid race conditions)
+                    if not hasattr(self, 'htf_components_by_symbol'):
+                        self.htf_components_by_symbol = {}
+                    self.htf_components_by_symbol[symbol] = bias_components
                     
                     htf_bias = self._determine_market_bias(df_1d, bias_components, None)
                     htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
                     logger.info(f"✅ HTF Bias from 1D: {htf_bias_str}")
-                    logger.info(f"✅ Stored {len(bias_components.get('order_blocks', []))} HTF Order Blocks for SL validation")
+                    logger.info(f"✅ Stored {len(bias_components.get('order_blocks', []))} HTF Order Blocks for {symbol} SL validation")
                     return htf_bias_str
             
             # Опит 2: 4H timeframe (fallback)
@@ -4317,13 +4320,15 @@ class ICTSignalEngine:
                 if df_4h is not None and not df_4h.empty and len(df_4h) >= 20:
                     bias_components = self._detect_ict_components(df_4h, '4h')
                     
-                    # ✅ STORE HTF components for later use
-                    self.htf_components = bias_components
+                    # ✅ STORE HTF components for later use (per-symbol to avoid race conditions)
+                    if not hasattr(self, 'htf_components_by_symbol'):
+                        self.htf_components_by_symbol = {}
+                    self.htf_components_by_symbol[symbol] = bias_components
                     
                     htf_bias = self._determine_market_bias(df_4h, bias_components, None)
                     htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
                     logger.info(f"✅ HTF Bias from 4H (fallback): {htf_bias_str}")
-                    logger.info(f"✅ Stored {len(bias_components.get('order_blocks', []))} HTF Order Blocks for SL validation")
+                    logger.info(f"✅ Stored {len(bias_components.get('order_blocks', []))} HTF Order Blocks for {symbol} SL validation")
                     return htf_bias_str
             
             logger.warning("❌ No HTF data available, using NEUTRAL bias")
