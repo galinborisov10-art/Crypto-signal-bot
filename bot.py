@@ -4332,8 +4332,8 @@ def _timeframe_order(tf: str) -> int:
     """
     order = {
         '1m': 1, '3m': 2, '5m': 3, '15m': 4, '30m': 5,
-        '1h': 6, '2h': 7, '4h': 9, '6h': 10, '12h': 11,
-        '1d': 12, '3d': 13, '1w': 14
+        '1h': 6, '2h': 7, '4h': 8, '6h': 9, '12h': 10,
+        '1d': 11, '3d': 12, '1w': 13
     }
     return order.get(tf.lower(), 999)  # Unknown TFs go to end
 
