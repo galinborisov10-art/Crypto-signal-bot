@@ -80,9 +80,10 @@ async def run_startup_diagnostics_safe(simulate_mode='normal'):
         logger.info("🔍 Running startup diagnostics (non-blocking)...")
         
         if simulate_mode == 'timeout':
-            # Simulate timeout
+            # Simulate timeout - sleep longer than timeout duration
+            # Using 2 seconds sleep with 1 second timeout for proportional test
             await asyncio.wait_for(
-                asyncio.sleep(100),
+                asyncio.sleep(2.0),
                 timeout=1.0
             )
         elif simulate_mode == 'crash':

@@ -17648,6 +17648,8 @@ async def run_startup_diagnostics_safe():
         from diagnostics import run_quick_check
         
         # Run diagnostics with timeout
+        # 60 seconds chosen to allow comprehensive checks without blocking startup
+        # Should be enough for ~20 diagnostic tests to complete
         report = await asyncio.wait_for(
             run_quick_check(),
             timeout=60.0
@@ -17711,13 +17713,15 @@ async def send_diagnostic_report(application, report):
         if not chat_id:
             return
         
-        # Format the report message (Markdown format to match run_quick_check output)
+        # Format the report message
+        # NOTE: run_quick_check() in diagnostics.py returns Markdown format
+        # (uses * for bold, _ for italic). If this changes, update parse_mode.
         message = f"📊 *Startup Diagnostics Report*\n\n{report}"
         
         await application.bot.send_message(
             chat_id=chat_id,
             text=message,
-            parse_mode="Markdown"  # run_quick_check returns Markdown
+            parse_mode="Markdown"  # Must match format returned by run_quick_check()
         )
         logger.info("✅ Diagnostic report sent")
     except Exception as e:
