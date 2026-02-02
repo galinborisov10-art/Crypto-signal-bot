@@ -1,0 +1,37 @@
+name: Startup Diagnostics Guard
+
+on:
+  pull_request:
+    paths:
+      - 'bot.py'
+      - 'diagnostics.py'
+      - 'telegram_bot.py'
+  push:
+    branches:
+      - main
+    paths:
+      - 'bot.py'
+
+jobs:
+  check-startup-diagnostics:
+    name: Enforce Non-Blocking Startup Diagnostics
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run startup diagnostics guard
+        run: |
+          chmod +x .github/scripts/check_startup_diagnostics.sh
+          .github/scripts/check_startup_diagnostics.sh
+      
+      - name: Upload results as artifact (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-guard-failure
+          path: |
+            bot.py
+            .github/scripts/check_startup_diagnostics.sh
+          retention-days: 7
