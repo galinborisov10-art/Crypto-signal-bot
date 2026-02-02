@@ -84,18 +84,22 @@ class TestHTFOrderBlockStorage(unittest.TestCase):
         # Call the function
         bias_str = self.engine._get_htf_bias_with_fallback('BTCUSDT', mtf_data)
         
-        # Verify HTF components are stored
-        self.assertTrue(hasattr(self.engine, 'htf_components'), 
+        # Verify HTF components are stored (per-symbol)
+        self.assertTrue(hasattr(self.engine, 'htf_components_by_symbol'), 
                        "❌ HTF components were not stored")
-        self.assertIsInstance(self.engine.htf_components, dict,
+        self.assertIsInstance(self.engine.htf_components_by_symbol, dict,
                             "❌ HTF components is not a dictionary")
+        self.assertIn('BTCUSDT', self.engine.htf_components_by_symbol,
+                     "❌ BTCUSDT not found in htf_components_by_symbol")
+        
+        htf_comp = self.engine.htf_components_by_symbol['BTCUSDT']
         
         print(f"   ✅ HTF Bias: {bias_str}")
-        print(f"   ✅ HTF Components stored: {type(self.engine.htf_components)}")
+        print(f"   ✅ HTF Components stored for BTCUSDT: {type(htf_comp)}")
         
         # Check if order_blocks key exists
-        if 'order_blocks' in self.engine.htf_components:
-            print(f"   ✅ Order Blocks detected: {len(self.engine.htf_components['order_blocks'])}")
+        if 'order_blocks' in htf_comp:
+            print(f"   ✅ Order Blocks detected: {len(htf_comp['order_blocks'])}")
         else:
             print(f"   ℹ️  No Order Blocks in HTF components (this is OK for test data)")
     
@@ -116,18 +120,22 @@ class TestHTFOrderBlockStorage(unittest.TestCase):
         # Call the function
         bias_str = self.engine._get_htf_bias_with_fallback('BTCUSDT', mtf_data)
         
-        # Verify HTF components are stored
-        self.assertTrue(hasattr(self.engine, 'htf_components'), 
+        # Verify HTF components are stored (per-symbol)
+        self.assertTrue(hasattr(self.engine, 'htf_components_by_symbol'), 
                        "❌ HTF components were not stored from 4h fallback")
-        self.assertIsInstance(self.engine.htf_components, dict,
+        self.assertIsInstance(self.engine.htf_components_by_symbol, dict,
                             "❌ HTF components is not a dictionary")
+        self.assertIn('BTCUSDT', self.engine.htf_components_by_symbol,
+                     "❌ BTCUSDT not found in htf_components_by_symbol")
+        
+        htf_comp = self.engine.htf_components_by_symbol['BTCUSDT']
         
         print(f"   ✅ HTF Bias (from 4H): {bias_str}")
-        print(f"   ✅ HTF Components stored: {type(self.engine.htf_components)}")
+        print(f"   ✅ HTF Components stored for BTCUSDT: {type(htf_comp)}")
         
         # Check if order_blocks key exists
-        if 'order_blocks' in self.engine.htf_components:
-            print(f"   ✅ Order Blocks detected: {len(self.engine.htf_components['order_blocks'])}")
+        if 'order_blocks' in htf_comp:
+            print(f"   ✅ Order Blocks detected: {len(htf_comp['order_blocks'])}")
         else:
             print(f"   ℹ️  No Order Blocks in HTF components (this is OK for test data)")
     
@@ -135,8 +143,10 @@ class TestHTFOrderBlockStorage(unittest.TestCase):
         """Test 3: Verify HTF components persist and can be accessed"""
         print("\n📊 Test 3: HTF Components Persistence")
         
-        # Store some test data
-        self.engine.htf_components = {
+        # Store some test data (per-symbol)
+        if not hasattr(self.engine, 'htf_components_by_symbol'):
+            self.engine.htf_components_by_symbol = {}
+        self.engine.htf_components_by_symbol['BTCUSDT'] = {
             'order_blocks': [
                 MagicMock(zone_low=49000, zone_high=49500),
                 MagicMock(zone_low=48500, zone_high=49000)
@@ -145,17 +155,19 @@ class TestHTFOrderBlockStorage(unittest.TestCase):
         }
         
         # Verify the data persists
-        self.assertTrue(hasattr(self.engine, 'htf_components'))
-        self.assertEqual(len(self.engine.htf_components['order_blocks']), 2)
+        self.assertTrue(hasattr(self.engine, 'htf_components_by_symbol'))
+        self.assertIn('BTCUSDT', self.engine.htf_components_by_symbol)
+        self.assertEqual(len(self.engine.htf_components_by_symbol['BTCUSDT']['order_blocks']), 2)
         
         print(f"   ✅ HTF Components persist correctly")
-        print(f"   ✅ Can access {len(self.engine.htf_components['order_blocks'])} stored Order Blocks")
+        print(f"   ✅ Can access {len(self.engine.htf_components_by_symbol['BTCUSDT']['order_blocks'])} stored Order Blocks")
         
-        # Test the fallback chain logic
+        # Test the fallback chain logic (with symbol)
+        symbol = 'BTCUSDT'
         order_block = (
             None or  # No entry setup OB
-            ((self.engine.htf_components.get('order_blocks') or [None])[0] 
-             if hasattr(self.engine, 'htf_components') 
+            ((self.engine.htf_components_by_symbol.get(symbol, {}).get('order_blocks') or [None])[0] 
+             if hasattr(self.engine, 'htf_components_by_symbol') 
              else None) or
             None  # No current timeframe OB
         )
