@@ -1006,33 +1006,12 @@ async def fetch_json(url: str, params: dict = None):
 
 async def fetch_klines(symbol: str, interval: str, limit: int = 100):
     """
-    Fetch klines data from Binance with automatic 3h conversion.
-    Ако interval='3h', автоматично взима 1h данни и ги конвертира към 3h.
+    Fetch klines data from Binance.
     """
     try:
-        # Проверка дали е поискан 3h таймфрейм
-        if interval == '3h':
-            # Binance не поддържа 3h, използвай 1h и конвертирай
-            # За да получим достатъчно 3h свещи, трябват 3x повече 1h свещи
-            limit_1h = limit * 3
-            
-            params = {'symbol': symbol, 'interval': '1h', 'limit': limit_1h}
-            klines_1h = await fetch_json(BINANCE_KLINES_URL, params)
-            
-            if not klines_1h:
-                logger.error(f"❌ Не успях да извлека 1h данни за {symbol}")
-                return None
-            
-            # Конвертирай 1h към 3h
-            klines_3h = convert_1h_to_3h(klines_1h)
-            
-            logger.info(f"✅ Конвертирани {len(klines_1h)} x 1h свещи → {len(klines_3h)} x 3h свещи за {symbol}")
-            
-            return klines_3h
-        else:
-            # Стандартна заявка за всички други интервали
-            params = {'symbol': symbol, 'interval': interval, 'limit': limit}
-            return await fetch_json(BINANCE_KLINES_URL, params)
+        # Стандартна заявка за всички интервали
+        params = {'symbol': symbol, 'interval': interval, 'limit': limit}
+        return await fetch_json(BINANCE_KLINES_URL, params)
             
     except Exception as e:
         logger.error(f"Грешка при fetch_klines за {symbol} {interval}: {e}")
@@ -2006,7 +1985,6 @@ def generate_tradingview_chart_url(symbol, timeframe, tp_price=None, sl_price=No
         '30m': '30',
         '1h': '60',
         '2h': '120',
-        '3h': '180',
         '4h': '240',
         '1d': 'D',
         '1w': 'W'
@@ -2043,7 +2021,6 @@ async def fetch_tradingview_chart_image(symbol, timeframe):
         '30m': '30m',
         '1h': '1h',
         '2h': '2h',
-        '3h': '4h',  # Binance няма 3h, използваме 4h като най-близък
         '4h': '4h',
         '1d': '1d',
         '1w': '1w'
@@ -2392,7 +2369,7 @@ async def get_higher_timeframe_confirmation(symbol, current_timeframe, signal):
     """Multi-timeframe потвърждение"""
     try:
         # Определи по-висок таймфрейм
-        tf_hierarchy = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+        tf_hierarchy = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
         
         if current_timeframe not in tf_hierarchy:
             return None
@@ -3037,7 +3014,7 @@ def calculate_adaptive_tp_sl(symbol, volatility, timeframe):
         # Корекция според таймфрейм
         tf_multipliers = {
             '1m': 0.5, '5m': 0.6, '15m': 0.7, '30m': 0.8,
-            '1h': 0.9, '2h': 1.0, '3h': 1.1, '4h': 1.2, '1d': 1.5, '1w': 2.0
+            '1h': 0.9, '2h': 1.0, '4h': 1.2, '1d': 1.5, '1w': 2.0
         }
         tf_mult = tf_multipliers.get(timeframe, 1.0)
         
@@ -3064,7 +3041,7 @@ async def get_multi_timeframe_analysis(symbol, current_timeframe):
     """Анализира сигнала на ВСИЧКИ таймфреймове за пълна картина"""
     try:
         # ВСИЧКИ таймфреймове за анализ
-        all_timeframes = ['1m', '5m', '15m', '1h', '2h', '3h', '4h', '1d', '1w']
+        all_timeframes = ['1m', '5m', '15m', '1h', '2h', '4h', '1d', '1w']
         
         mtf_signals = {}
         
@@ -4215,7 +4192,7 @@ def fetch_mtf_data(symbol: str, timeframe: str, primary_df: pd.DataFrame) -> dic
         Dictionary with timeframes as keys and DataFrames as values
     """
     mtf_data = {}
-    mtf_timeframes = ['15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+    mtf_timeframes = ['15m', '30m', '1h', '2h', '4h', '1d', '1w']
     # ❌ Removed noisy/non-standard timeframes:
     # - 1m, 3m (too noisy for consensus)
     # - 6h, 12h, 3d (non-standard, redundant between 4h/1d and 1d/1w)
@@ -4355,7 +4332,7 @@ def _timeframe_order(tf: str) -> int:
     """
     order = {
         '1m': 1, '3m': 2, '5m': 3, '15m': 4, '30m': 5,
-        '1h': 6, '2h': 7, '3h': 8, '4h': 9, '6h': 10, '12h': 11,
+        '1h': 6, '2h': 7, '4h': 9, '6h': 10, '12h': 11,
         '1d': 12, '3d': 13, '1w': 14
     }
     return order.get(tf.lower(), 999)  # Unknown TFs go to end
@@ -8382,7 +8359,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     custom_timeframe = None
     if len(context.args) > 1:
         tf = context.args[1].lower()
-        valid_timeframes = ['15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+        valid_timeframes = ['15m', '30m', '1h', '2h', '4h', '1d', '1w']
         if tf in valid_timeframes:
             custom_timeframe = tf
         else:
@@ -10704,10 +10681,9 @@ async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [
                 InlineKeyboardButton("📊 1ч", callback_data="tf_1h"),
                 InlineKeyboardButton("📊 2ч", callback_data="tf_2h"),
-                InlineKeyboardButton("📊 3ч", callback_data="tf_3h"),
+                InlineKeyboardButton("📈 4ч", callback_data="tf_4h"),
             ],
             [
-                InlineKeyboardButton("📈 4ч", callback_data="tf_4h"),
                 InlineKeyboardButton("📈 1д", callback_data="tf_1d"),
                 InlineKeyboardButton("📈 1с", callback_data="tf_1w"),
             ]
@@ -10720,7 +10696,7 @@ async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Директна промяна
     tf = context.args[0].lower()
-    valid_tfs = ['15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+    valid_tfs = ['15m', '30m', '1h', '2h', '4h', '1d', '1w']
     
     if tf not in valid_tfs:
         await update.message.reply_text(f"❌ Невалиден таймфрейм. Избери от: {', '.join(valid_tfs)}")
@@ -11211,7 +11187,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     logger.info("🔍 Започвам ASYNC проверка на всички монети и timeframes...")
     
     # Основни timeframes за проверка - 1h, 2h, 4h, 1d
-    timeframes_to_check = ['1h', '2h', '3h', '4h', '1d']
+    timeframes_to_check = ['1h', '2h', '4h', '1d']
     
     # 🚀 ASYNC ПАРАЛЕЛЕН АНАЛИЗ - всички монети/timeframes наведнъж
     async def analyze_single_pair(symbol, timeframe):
@@ -11459,7 +11435,7 @@ async def auto_signal_job(timeframe: str, bot_instance):
     """
     try:
         # ✅ AUTO TIMEFRAME FILTER (only 1h, 2h, 4h, 1d)
-        ALLOWED_AUTO_TIMEFRAMES = ['1h', '2h', '3h', '4h', '1d']
+        ALLOWED_AUTO_TIMEFRAMES = ['1h', '2h', '4h', '1d']
         
         if timeframe not in ALLOWED_AUTO_TIMEFRAMES:
             logger.info(f"⚠️ Auto signals disabled for {timeframe} (allowed: {ALLOWED_AUTO_TIMEFRAMES})")
@@ -12742,7 +12718,6 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("📊 2h", callback_data=f"tf_{symbol}_2h"),
             ],
             [
-                InlineKeyboardButton("📊 3h", callback_data=f"tf_{symbol}_3h"),
                 InlineKeyboardButton("📊 4h", callback_data=f"tf_{symbol}_4h"),
                 InlineKeyboardButton("📈 1d", callback_data=f"tf_{symbol}_1d"),
             ],
@@ -14560,7 +14535,7 @@ def _format_backtest_report(results: Dict) -> str:
         text += "<b>⏰ TIMEFRAME BREAKDOWN</b>\n"
         
         # Sort timeframes
-        tf_order = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+        tf_order = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
         sorted_tfs = sorted(
             by_timeframe.items(),
             key=lambda x: tf_order.index(x[0]) if x[0] in tf_order else 999
@@ -15274,8 +15249,8 @@ async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Examples:
       /backtest                    # Default: 6 symbols, 3 TF, 30 days
       /backtest XRPUSDT            # Single symbol, all TF
-      /backtest XRPUSDT 3h         # Single symbol + TF
-      /backtest XRPUSDT 3h 30      # Custom days
+      /backtest XRPUSDT 4h         # Single symbol + TF
+      /backtest XRPUSDT 4h 30      # Custom days
     """
     # Check for ICT Backtest Engine (preferred)
     if ICT_BACKTEST_AVAILABLE:
@@ -16375,7 +16350,7 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += "<b>⏰ PER-TIMEFRAME BREAKDOWN</b>\n"
                 
                 # Sort timeframes logically
-                tf_order = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+                tf_order = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
                 sorted_tfs = sorted(timeframe_stats.keys(), 
                                     key=lambda x: tf_order.index(x) if x in tf_order else 999)
                 
