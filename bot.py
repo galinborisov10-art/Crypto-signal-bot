@@ -16288,7 +16288,12 @@ async def diagnostics_menu_handler(update: Update, context: ContextTypes.DEFAULT
 
 
 async def handle_quick_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Quick Check button"""
+    """
+    Handle Quick Check button - User-triggered diagnostic command.
+    
+    NOTE: This is a user-triggered command (not startup), so direct 
+    run_quick_check() call is ALLOWED per enforcement policy.
+    """
     user_id = update.effective_user.id
     
     if user_id != OWNER_CHAT_ID:
@@ -16300,6 +16305,7 @@ async def handle_quick_check(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     try:
         # Import and run checks
+        # ✅ ALLOWED: User-triggered command (not startup)
         from diagnostics import run_quick_check
         
         # Run checks
@@ -17625,11 +17631,28 @@ Avg Checkpoints: {stats['avg_checkpoints_triggered']:.1f}
 # 4. Run diagnostics (NEVER blocks)
 # 5. Send diagnostic report
 #
+# ⚠️  ENFORCEMENT POLICY:
+# 
+# ❌ FORBIDDEN: Direct calls to run_quick_check() at startup
+# ❌ FORBIDDEN: Blocking try/except with diagnostics in post_init()
+# ❌ FORBIDDEN: Any diagnostic code that can prevent startup message
+# 
+# ✅ ALLOWED: Only run_startup_diagnostics_safe() may call run_quick_check()
+# ✅ ALLOWED: User-triggered commands (e.g., /health) can call directly
+# ✅ ALLOWED: Background jobs can call diagnostics (non-startup)
+#
+# ONLY PERMITTED STARTUP FLOW:
+#   send_startup_message() 
+#   → run_startup_diagnostics_safe() 
+#   → send_diagnostic_report()
+#
 # ════════════════════════════════════════════════════════════════
 
 async def run_startup_diagnostics_safe():
     """
     Run startup diagnostics in a non-blocking, fail-safe manner.
+    
+    ⚠️  THIS IS THE ONLY FUNCTION ALLOWED TO CALL run_quick_check() AT STARTUP
     
     GUARANTEES:
     - Never raises exceptions
