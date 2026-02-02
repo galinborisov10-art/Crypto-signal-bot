@@ -3236,11 +3236,6 @@ class ICTSignalEngine:
             # SL ТРЯБВА да е ПОД OB bottom с buffer
             required_sl_max = ob_bottom * (1 - min_buffer_pct)
             
-            if sl_price >= ob_bottom:
-                # SL е ВЪТРЕ или НАД OB - FORBIDDEN
-                logger.error(f"❌ BULLISH SL {sl_price:.2f} >= OB bottom {ob_bottom:.2f} - FORBIDDEN")
-                return None, False
-            
             if sl_price > required_sl_max:
                 # SL е твърде близо до OB - коригирай
                 sl_price = ob_bottom * (1 - max_buffer_pct)  # 0.3% под OB
@@ -3255,11 +3250,6 @@ class ICTSignalEngine:
         elif direction == 'BEARISH' or direction == MarketBias.BEARISH:
             # SL ТРЯБВА да е НАД OB top с buffer
             required_sl_min = ob_top * (1 + min_buffer_pct)
-            
-            if sl_price <= ob_top:
-                # SL е ВЪТРЕ или ПОД OB - FORBIDDEN
-                logger.error(f"❌ BEARISH SL {sl_price:.2f} <= OB top {ob_top:.2f} - FORBIDDEN")
-                return None, False
             
             if sl_price < required_sl_min:
                 # SL е твърде близо до OB - коригирай
