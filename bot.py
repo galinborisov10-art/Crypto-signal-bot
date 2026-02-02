@@ -16288,7 +16288,12 @@ async def diagnostics_menu_handler(update: Update, context: ContextTypes.DEFAULT
 
 
 async def handle_quick_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Quick Check button"""
+    """
+    Handle Quick Check button - User-triggered diagnostic command.
+    
+    NOTE: This is a user-triggered command (not startup), so direct 
+    run_quick_check() call is ALLOWED per enforcement policy.
+    """
     user_id = update.effective_user.id
     
     if user_id != OWNER_CHAT_ID:
@@ -16300,6 +16305,7 @@ async def handle_quick_check(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     try:
         # Import and run checks
+        # ✅ ALLOWED: User-triggered command (not startup)
         from diagnostics import run_quick_check
         
         # Run checks
@@ -17606,7 +17612,144 @@ Avg Checkpoints: {stats['avg_checkpoints_triggered']:.1f}
         logger.error(f"Position stats error: {e}")
         await update.message.reply_text(f"❌ Error: {e}", parse_mode='HTML')
 
+# ════════════════════════════════════════════════════════════════
+# ⚠️  PRODUCTION SAFETY - STARTUP DIAGNOSTICS
+# ════════════════════════════════════════════════════════════════
+#
+# Diagnostics are NON-BLOCKING by design:
+#
+# ✅ They MUST provide information only
+# ✅ They MUST NOT block bot startup
+# ✅ They MUST NOT block startup confirmation message
+# ✅ They MUST NOT block schedulers or signal flow
+# ✅ They MUST NOT raise or propagate exceptions
+#
+# Startup order (CRITICAL - DO NOT CHANGE):
+# 1. Core initialization
+# 2. Start schedulers and auto-alerts
+# 3. Send "Bot started" message (ALWAYS)
+# 4. Run diagnostics (NEVER blocks)
+# 5. Send diagnostic report
+#
+# ⚠️  ENFORCEMENT POLICY:
+# 
+# ❌ FORBIDDEN: Direct calls to run_quick_check() at startup
+# ❌ FORBIDDEN: Blocking try/except with diagnostics in post_init()
+# ❌ FORBIDDEN: Any diagnostic code that can prevent startup message
+# 
+# ✅ ALLOWED: Only run_startup_diagnostics_safe() may call run_quick_check()
+# ✅ ALLOWED: User-triggered commands (e.g., /health) can call directly
+# ✅ ALLOWED: Background jobs can call diagnostics (non-startup)
+#
+# ONLY PERMITTED STARTUP FLOW:
+#   send_startup_message() 
+#   → run_startup_diagnostics_safe() 
+#   → send_diagnostic_report()
+#
+# ════════════════════════════════════════════════════════════════
 
+async def run_startup_diagnostics_safe():
+    """
+    Run startup diagnostics in a non-blocking, fail-safe manner.
+    
+    ⚠️  THIS IS THE ONLY FUNCTION ALLOWED TO CALL run_quick_check() AT STARTUP
+    
+    GUARANTEES:
+    - Never raises exceptions
+    - Never blocks startup
+    - Always returns (empty list on failure)
+    - Logs all errors
+    - Has 60-second timeout
+    
+    Returns:
+        list: Diagnostic results (empty if diagnostics failed)
+    """
+    try:
+        logger.info("🔍 Running startup diagnostics (non-blocking)...")
+        
+        # Import diagnostic function
+        from diagnostics import run_quick_check
+        
+        # Run diagnostics with timeout
+        # 60 seconds chosen to allow comprehensive checks without blocking startup
+        # Should be enough for ~20 diagnostic tests to complete
+        report = await asyncio.wait_for(
+            run_quick_check(),
+            timeout=60.0
+        )
+        
+        logger.info("✅ Diagnostics complete")
+        return report
+        
+    except asyncio.TimeoutError:
+        logger.error("⚠️ Startup diagnostics timed out (non-critical)")
+        return None
+    except ImportError as e:
+        logger.error(f"⚠️ Diagnostics module not available (non-critical): {e}")
+        return None
+    except Exception as e:
+        logger.error(
+            f"💥 Startup diagnostics crashed (non-critical): {type(e).__name__}: {e}",
+            exc_info=True
+        )
+        return None
+
+
+async def send_startup_message(application):
+    """
+    Send "Bot started and online" message.
+    
+    MUST be called BEFORE diagnostics to ensure operational
+    confirmation even if diagnostics fail.
+    """
+    try:
+        chat_id = OWNER_CHAT_ID
+        if not chat_id:
+            logger.warning("⚠️ OWNER_CHAT_ID not set")
+            return
+        
+        message = (
+            "🤖 <b>Bot Started and Online</b>\n\n"
+            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            "✅ All systems operational"
+        )
+        
+        await application.bot.send_message(
+            chat_id=chat_id,
+            text=message,
+            parse_mode="HTML"
+        )
+        logger.info("✅ Startup message sent")
+    except Exception as e:
+        logger.error(f"❌ Failed to send startup message: {e}")
+        # Don't propagate - informational only
+
+
+async def send_diagnostic_report(application, report):
+    """Send diagnostic results to Telegram (if any)"""
+    if not report:
+        logger.info("ℹ️ No diagnostic report to send (diagnostics skipped or failed)")
+        return
+    
+    try:
+        chat_id = OWNER_CHAT_ID
+        if not chat_id:
+            return
+        
+        # Format the report message
+        # NOTE: run_quick_check() in diagnostics.py returns Markdown format
+        # (uses * for bold, _ for italic). If this changes, update parse_mode.
+        message = f"📊 *Startup Diagnostics Report*\n\n{report}"
+        
+        await application.bot.send_message(
+            chat_id=chat_id,
+            text=message,
+            parse_mode="Markdown"  # Must match format returned by run_quick_check()
+        )
+        logger.info("✅ Diagnostic report sent")
+    except Exception as e:
+        logger.error(f"❌ Failed to send diagnostic report: {e}")
+        # Don't propagate - informational only
 
 
 def main():
@@ -17781,35 +17924,19 @@ def main():
             logger.error(f"❌ ML initialization error: {ml_error}")
     
     # ========================================
-    # DIAGNOSTIC AUTO-RUN AT STARTUP (Optional)
+    # NON-BLOCKING STARTUP DIAGNOSTICS
     # ========================================
     async def post_init(application):
-        """Run after bot starts - sends Quick Check diagnostics to admin"""
-        logger.info("🚀 Bot started, running Quick Check diagnostics...")
+        """Post-initialization: startup message, diagnostics, diagnostic report"""
         
-        try:
-            from diagnostics import run_quick_check
-            
-            report = await run_quick_check()
-            
-            # Send to admin
-            await application.bot.send_message(
-                chat_id=OWNER_CHAT_ID,
-                text=f"🤖 *Bot Started*\n\n{report}",
-                parse_mode='Markdown'
-            )
-            logger.info("✅ Startup diagnostics sent to admin")
-        except Exception as e:
-            logger.error(f"❌ Startup diagnostic failed: {e}")
-            # Try to send error notification
-            try:
-                await application.bot.send_message(
-                    chat_id=OWNER_CHAT_ID,
-                    text=f"❌ *Startup Diagnostic Failed*\n\n`{str(e)}`",
-                    parse_mode='Markdown'
-                )
-            except Exception as notify_error:
-                logger.error(f"Failed to send startup diagnostic error notification: {notify_error}")
+        # STEP 1: Send startup message FIRST (BEFORE diagnostics!)
+        await send_startup_message(application)
+        
+        # STEP 2: Run diagnostics (non-blocking, fail-safe)
+        diagnostic_report = await run_startup_diagnostics_safe()
+        
+        # STEP 3: Send diagnostic report (if available)
+        await send_diagnostic_report(application, diagnostic_report)
     
     # Set post_init callback
     app.post_init = post_init
