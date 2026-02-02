@@ -36,6 +36,11 @@ async def post_init(application):
     await send_startup_message(application)
     diagnostic_report = await run_startup_diagnostics_safe()  # Safe wrapper
     await send_diagnostic_report(application, diagnostic_report)
+
+# Note: These functions are implemented in bot.py:
+# - send_startup_message() - line ~17698
+# - run_startup_diagnostics_safe() - line ~17651  
+# - send_diagnostic_report() - line ~17728
 ```
 
 #### Rule 2: Startup Message Must Come First
@@ -117,6 +122,12 @@ The guard uses a bash script (`.github/scripts/check_startup_diagnostics.sh`) th
 2. **Checks for violations** using pattern matching and line ordering
 3. **Reports clear, actionable errors** when violations are found
 4. **Exits with code 1** if violations detected (fails the CI check)
+
+**Script Assumptions:**
+- The codebase uses 4-space indentation for class methods
+- `post_init()` is defined as `async def post_init` with 4-space indentation
+- Comments starting with `#` are excluded from detection
+- String literals containing function names may rarely cause false positives (documented limitation)
 
 ### GitHub Actions Workflow
 
@@ -294,9 +305,11 @@ To permanently remove:
 
 ## References
 
-- **Policy Document:** `NON_BLOCKING_DIAGNOSTICS_IMPLEMENTATION.md`
-- **Implementation PR:** #235 (referenced in error messages)
-- **Complete Policy:** `STARTUP_DIAGNOSTICS_ENFORCEMENT_POLICY.md`
+These are existing documents in the repository that provide additional context:
+
+- **Policy Document:** `NON_BLOCKING_DIAGNOSTICS_IMPLEMENTATION.md` - Detailed implementation guide for non-blocking diagnostics
+- **Implementation PR:** #235 - Original PR that implemented the non-blocking diagnostics pattern
+- **Complete Policy:** `STARTUP_DIAGNOSTICS_ENFORCEMENT_POLICY.md` - Full enforcement policy document
 
 ## FAQ
 

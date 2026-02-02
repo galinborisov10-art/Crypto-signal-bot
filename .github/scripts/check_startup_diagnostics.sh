@@ -33,6 +33,16 @@ if [ ! -f "$BOT_FILE" ]; then
     exit 1
 fi
 
+###############################################################################
+# Helper Function: Extract post_init function
+###############################################################################
+
+extract_post_init() {
+    # Extract post_init function (from its definition to the next top-level async def)
+    # Assumes 4-space indentation for class methods
+    sed -n '/^    async def post_init/,/^    async def \|^async def /p' "$BOT_FILE" | head -n -1
+}
+
 echo "🔍 Startup Diagnostics Guard - Checking for violations..."
 echo ""
 
@@ -41,9 +51,8 @@ echo ""
 ###############################################################################
 echo "📋 Rule 1: Checking for direct run_quick_check() in post_init()..."
 
-# Extract post_init function (from its definition to the next top-level async def)
-# We need to be careful to get the entire function
-POST_INIT_CONTENT=$(sed -n '/^    async def post_init/,/^    async def \|^async def /p' "$BOT_FILE" | head -n -1)
+# Extract post_init function using helper
+POST_INIT_CONTENT=$(extract_post_init)
 
 # Check if post_init contains direct run_quick_check call
 # We're looking for "run_quick_check()" that's NOT inside a comment or string
@@ -96,8 +105,8 @@ fi
 ###############################################################################
 echo "📋 Rule 2: Checking startup message order..."
 
-# Extract post_init function again
-POST_INIT_LINES=$(sed -n '/^    async def post_init/,/^    async def \|^async def /p' "$BOT_FILE" | head -n -1 | grep -v "^[[:space:]]*#" | grep -v "^[[:space:]]*$")
+# Extract post_init function using helper (removes comments and empty lines)
+POST_INIT_LINES=$(extract_post_init | grep -v "^[[:space:]]*#" | grep -v "^[[:space:]]*$")
 
 # Find line numbers within post_init for send_startup_message and run_startup_diagnostics_safe
 MESSAGE_LINE=$(echo "$POST_INIT_LINES" | grep -n "send_startup_message" | head -1 | cut -d: -f1)
