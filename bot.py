@@ -17901,18 +17901,10 @@ def main():
             logger.error(f"❌ ML initialization error: {ml_error}")
     
     # ========================================
-    # STARTUP FLOW WITH NON-BLOCKING DIAGNOSTICS
+    # NON-BLOCKING STARTUP DIAGNOSTICS
     # ========================================
     async def post_init(application):
-        """
-        Post-initialization callback - runs after bot starts.
-        
-        CRITICAL ORDER (DO NOT CHANGE):
-        1. Send startup message (ALWAYS, even if diagnostics fail)
-        2. Run diagnostics (non-blocking, fail-safe)
-        3. Send diagnostic report (optional, only if diagnostics succeeded)
-        """
-        logger.info("🚀 Bot post-initialization starting...")
+        """Post-initialization: startup message, diagnostics, diagnostic report"""
         
         # STEP 1: Send startup message FIRST (BEFORE diagnostics!)
         await send_startup_message(application)
@@ -17922,8 +17914,6 @@ def main():
         
         # STEP 3: Send diagnostic report (if available)
         await send_diagnostic_report(application, diagnostic_report)
-        
-        logger.info("✅ Bot post-initialization complete")
     
     # Set post_init callback
     app.post_init = post_init
