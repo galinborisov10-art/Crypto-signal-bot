@@ -16,16 +16,16 @@ jobs:
   check-startup-diagnostics:
     name: Enforce Non-Blocking Startup Diagnostics
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Run startup diagnostics guard
         run: |
           chmod +x .github/scripts/check_startup_diagnostics.sh
           .github/scripts/check_startup_diagnostics.sh
-      
+
       - name: Upload results as artifact (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
