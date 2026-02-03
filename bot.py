@@ -15253,6 +15253,7 @@ async def health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [
                     InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
                     InlineKeyboardButton("🧠 Deep", callback_data="health_deep"),
+                    InlineKeyboardButton("🔄 Replay", callback_data="health_replay"),
                 ],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -15275,6 +15276,25 @@ async def health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(report, parse_mode='HTML', reply_markup=reply_markup)
+            
+    
+        elif action == "health_replay":
+            await query.edit_message_text("🔄 Running replay diagnostics...\n⏳ Please wait...")
+            
+            from system_diagnostics import get_replay_report
+            
+            report = await get_replay_report()
+            
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            keyboard = [
+                [
+                    InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
+                    InlineKeyboardButton("📊 Summary", callback_data="health_refresh"),
+                ],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(report, parse_mode='HTML', reply_markup=reply_markup)
+            
             
     except Exception as e:
         logger.error(f"Health callback error: {e}", exc_info=True)
@@ -17007,6 +17027,7 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [
                         InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
                         InlineKeyboardButton("🧠 Deep", callback_data="health_deep"),
+                    InlineKeyboardButton("🔄 Replay", callback_data="health_replay"),
                     ],
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)

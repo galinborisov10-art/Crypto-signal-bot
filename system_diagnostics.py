@@ -1738,3 +1738,48 @@ async def run_meta_diagnostic() -> dict:
         'timestamp': datetime.now().isoformat()
     }
 
+
+
+# ============================================================================
+# REPLAY DIAGNOSTICS INTEGRATION
+# ============================================================================
+
+async def run_replay_diagnostics(base_path: Path) -> Dict[str, Any]:
+    """Run replay diagnostics and return results"""
+    try:
+        from replay_diagnostics import ReplayDiagnostics, format_replay_report
+        
+        diagnostics = ReplayDiagnostics(base_path)
+        results = await diagnostics.run_all_checks()
+        
+        # Format report
+        report = await format_replay_report(results)
+        
+        return {
+            "status": "OK",
+            "results": results,
+            "report": report,
+        }
+    except Exception as e:
+        logger.error(f"Replay diagnostics failed: {e}", exc_info=True)
+        return {
+            "status": "ERROR",
+            "error": str(e),
+        }
+
+
+async def get_replay_report() -> str:
+    """Get formatted replay diagnostics report"""
+    try:
+        BASE_PATH = Path(__file__).parent
+        result = await run_replay_diagnostics(BASE_PATH)
+        
+        if result.get("status") == "ERROR":
+            return f"❌ Replay Diagnostics Error: {result.get('error')}"
+        
+        return result.get("report", "No report generated")
+        
+    except Exception as e:
+        logger.error(f"Failed to get replay report: {e}", exc_info=True)
+        return f"❌ Error: {str(e)}"
+
