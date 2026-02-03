@@ -930,6 +930,147 @@ async def diagnose_real_time_monitor_issue(base_path: str = None) -> List[Dict[s
     return issues
 
 
+
+# ==================== 🆕 PHASE 1: ENHANCED DIAGNOSTICS ====================
+
+async def diagnose_runtime_exceptions(base_path: str = None) -> List[Dict[str, Any]]:
+    """Detect Python runtime exceptions in logs"""
+    issues = []
+    if base_path is None:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    exception_patterns = ['AttributeError', 'KeyError', 'TypeError', 'ValueError', 'IndexError',
+                         'ZeroDivisionError', 'FileNotFoundError', 'ConnectionError', 'TimeoutError']
+    
+    for exc_type in exception_patterns:
+        errors = await grep_logs_cached(exc_type, hours=24, base_path=base_path)
+        if errors:
+            latest = errors[-1]
+            file_match = re.search(r'File "([^"]+)", line (\d+)', latest)
+            severity = 'CRITICAL' if exc_type in ['AttributeError', 'TypeError', 'KeyError'] else 'HIGH'
+            issues.append({
+                'problem': f'{len(errors)} {exc_type} exceptions in 24h',
+                'severity': severity,
+                'evidence': latest[:300],
+                'location': f"{file_match.group(1)}:{file_match.group(2)}" if file_match else "Unknown",
+                'commands': [f'grep -B 3 -A 10 "{exc_type}" {base_path}/bot.log | tail -n 50']
+            })
+    return issues
+
+
+async def diagnose_logger_crashes(base_path: str = None) -> List[Dict[str, Any]]:
+    """Detect if logging system is broken"""
+    issues = []
+    if base_path is None:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    log_errors = await grep_logs_cached('Error in logging|Failed to write log', hours=6, base_path=base_path)
+    if log_errors:
+        issues.append({'problem': 'Logger is crashing', 'severity': 'CRITICAL', 'evidence': log_errors[-1]})
+    
+    log_file = f'{base_path}/bot.log'
+    if os.path.exists(log_file):
+        size_mb = os.path.getsize(log_file) / (1024 * 1024)
+        if size_mb > 100:
+            issues.append({'problem': f'Log file too large: {size_mb:.1f}MB', 'severity': 'MEDIUM'})
+    
+    recent_logs = await grep_logs_cached('.', hours=0.083, base_path=base_path)
+    if not recent_logs:
+        issues.append({'problem': 'No log entries in last 5 minutes', 'severity': 'CRITICAL'})
+    
+    return issues
+
+
+async def diagnose_config_errors(base_path: str = None) -> List[Dict[str, Any]]:
+    """Check for configuration errors"""
+    issues = []
+    if base_path is None:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    env_errors = await grep_logs_cached('environment variable.*not set|Missing required config', hours=24, base_path=base_path)
+    if env_errors:
+        issues.append({'problem': 'Missing environment variables', 'severity': 'HIGH', 'evidence': env_errors[-1]})
+    
+    for file in ['config.json', 'trading_journal.json']:
+        if not os.path.exists(f'{base_path}/{file}'):
+            issues.append({'problem': f'Required file missing: {file}', 'severity': 'HIGH' if file == 'config.json' else 'MEDIUM'})
+    
+    config_errors = await grep_logs_cached('Failed to parse config|Invalid configuration', hours=24, base_path=base_path)
+    if config_errors:
+        issues.append({'problem': 'Configuration parsing failed', 'severity': 'CRITICAL', 'evidence': config_errors[-1]})
+    
+    return issues
+
+
+async def diagnose_import_errors(base_path: str = None) -> List[Dict[str, Any]]:
+    """Detect import failures"""
+    issues = []
+    if base_path is None:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    import_errors = await grep_logs_cached('ImportError|ModuleNotFoundError|cannot import name', hours=24, base_path=base_path)
+    for error_log in import_errors[-3:]:
+        module_match = re.search(r"No module named '([^']+)'", error_log)
+        if module_match:
+            issues.append({'problem': f'Missing dependency: {module_match.group(1)}', 'severity': 'CRITICAL',
+                          'fix': f'pip install {module_match.group(1)}', 'evidence': error_log[:200]})
+    return issues
+
+
+async def diagnose_silent_failures(base_path: str = None) -> List[Dict[str, Any]]:
+    """Detect silent failures (warnings indicating problems)"""
+    issues = []
+    if base_path is None:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    warnings = await grep_logs_cached('WARNING.*[Ff]ailed|WARNING.*[Cc]ould not', hours=6, base_path=base_path)
+    for pattern in ['Failed to send', 'Could not save', 'Failed to write', 'Could not update']:
+        matches = [w for w in warnings if pattern.lower() in w.lower()]
+        if matches:
+            issues.append({'problem': f'{len(matches)} "{pattern}" warnings in 6h', 'severity': 'WARNING', 'evidence': matches[-1]})
+    return issues
+
+
+async def diagnose_data_quality(base_path: str = None) -> List[Dict[str, Any]]:
+    """Validate trading signal data quality"""
+    issues = []
+    if base_path is None:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    journal = load_journal_safe(base_path)
+    if not journal or 'trades' not in journal:
+        return issues
+    
+    import math
+    for trade in journal['trades'][-20:]:
+        entry = trade.get('entry_price')
+        if entry is not None:
+            if entry <= 0:
+                issues.append({'problem': f'Invalid entry price: {entry}', 'severity': 'CRITICAL', 'symbol': trade.get('symbol')})
+            if isinstance(entry, float) and (math.isnan(entry) or math.isinf(entry)):
+                issues.append({'problem': 'Entry price is NaN/Inf', 'severity': 'CRITICAL', 'symbol': trade.get('symbol')})
+        
+        direction = trade.get('direction')
+        sl = trade.get('stop_loss')
+        tp = trade.get('take_profit')
+        if all([direction, entry, sl, tp]):
+            if direction == 'LONG' and sl >= entry:
+                issues.append({'problem': 'LONG signal with SL above entry!', 'severity': 'CRITICAL',
+                              'evidence': {'symbol': trade.get('symbol'), 'entry': entry, 'sl': sl}})
+            if direction == 'SHORT' and sl <= entry:
+                issues.append({'problem': 'SHORT signal with SL below entry!', 'severity': 'CRITICAL',
+                              'evidence': {'symbol': trade.get('symbol'), 'entry': entry, 'sl': sl}})
+            
+            risk = abs(entry - sl)
+            reward = abs(tp - entry)
+            if risk > 0:
+                rr = reward / risk
+                if rr < 1.5:
+                    issues.append({'problem': f'Low RR ratio: {rr:.2f}', 'severity': 'HIGH',
+                                  'evidence': {'symbol': trade.get('symbol'), 'rr': rr}})
+    return issues
+
+
 # ==================== COMPREHENSIVE HEALTH CHECK ====================
 
 async def run_full_health_check(base_path: str = None) -> Dict[str, Any]:
@@ -998,6 +1139,14 @@ async def run_full_health_check(base_path: str = None) -> Dict[str, Any]:
     disk_issues = await run_diagnostic("Disk Space", diagnose_disk_space_issue, timeout=5.0)
     realtime_issues = await run_diagnostic("Real-Time Monitor", diagnose_real_time_monitor_issue, timeout=5.0)
     
+    # ==================== 🆕 PHASE 1: NEW DIAGNOSTICS ====================
+    runtime_exception_issues = await run_diagnostic("Runtime Exceptions", diagnose_runtime_exceptions, timeout=5.0)
+    logger_crash_issues = await run_diagnostic("Logger Health", diagnose_logger_crashes, timeout=5.0)
+    config_issues = await run_diagnostic("Configuration", diagnose_config_errors, timeout=5.0)
+    import_issues = await run_diagnostic("Dependencies", diagnose_import_errors, timeout=5.0)
+    silent_failure_issues = await run_diagnostic("Silent Failures", diagnose_silent_failures, timeout=5.0)
+    data_quality_issues = await run_diagnostic("Data Quality", diagnose_data_quality, timeout=5.0)
+    
     # Compile results with explicit severity
     health_report['components']['Trading Journal'] = {
         'status': 'CRITICAL' if any('missing' in str(i.get('problem', '')) for i in journal_issues) else 'WARNING' if journal_issues else 'HEALTHY',
@@ -1032,6 +1181,37 @@ async def run_full_health_check(base_path: str = None) -> Dict[str, Any]:
     health_report['components']['Real-Time Monitor'] = {
         'status': 'CRITICAL' if any('asyncio' in str(i.get('problem', '')) or 'fails to start' in str(i.get('problem', '')) for i in realtime_issues) else 'WARNING' if realtime_issues else 'HEALTHY',
         'issues': realtime_issues
+    }
+    
+    # ==================== 🆕 PHASE 1: NEW COMPONENTS ====================
+    health_report['components']['Runtime Exceptions'] = {
+        'status': 'CRITICAL' if runtime_exception_issues else 'HEALTHY',
+        'issues': runtime_exception_issues
+    }
+    
+    health_report['components']['Logger Health'] = {
+        'status': 'CRITICAL' if any('crashing' in str(i).lower() or 'no logs' in str(i).lower() for i in logger_crash_issues) else 'WARNING' if logger_crash_issues else 'HEALTHY',
+        'issues': logger_crash_issues
+    }
+    
+    health_report['components']['Configuration'] = {
+        'status': 'CRITICAL' if any('missing' in str(i).lower() for i in config_issues) else 'WARNING' if config_issues else 'HEALTHY',
+        'issues': config_issues
+    }
+    
+    health_report['components']['Dependencies'] = {
+        'status': 'CRITICAL' if import_issues else 'HEALTHY',
+        'issues': import_issues
+    }
+    
+    health_report['components']['Silent Failures'] = {
+        'status': 'WARNING' if silent_failure_issues else 'HEALTHY',
+        'issues': silent_failure_issues
+    }
+    
+    health_report['components']['Data Quality'] = {
+        'status': 'CRITICAL' if any('SL above entry' in str(i) or 'SL below entry' in str(i) for i in data_quality_issues) else 'WARNING' if data_quality_issues else 'HEALTHY',
+        'issues': data_quality_issues
     }
     
     # PLACEHOLDER COMPONENTS - Not yet implemented with full diagnostics
