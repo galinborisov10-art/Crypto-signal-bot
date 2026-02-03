@@ -1,0 +1,189 @@
+{
+  "metadata": {
+    "version": "2.0.0",
+    "created": "2026-02-03T09:45:00Z",
+    "last_updated": "2026-02-03T16:22:36.458063Z",
+    "total_errors_tracked": 1,
+    "total_functions_monitored": 0,
+    "self_checks_passed": true,
+    "system_mode": "READ_ONLY"
+  },
+  "past_errors": [
+    {
+      "id": "ERR-001",
+      "timestamp": "2026-02-03T16:22:36.457614Z",
+      "problem": "Trading journal not updated for 69 hours",
+      "root_cause": {
+        "description": "Data source or quality problem",
+        "confidence": 0,
+        "evidence": [
+          {
+            "test": "check_data_sources",
+            "result": "not_implemented",
+            "message": "Test check_data_sources not yet implemented"
+          },
+          {
+            "test": "validate_data_schema",
+            "result": "not_implemented",
+            "message": "Test validate_data_schema not yet implemented"
+          }
+        ]
+      },
+      "fix_suggestions": [
+        {
+          "strategy": "consult_docs",
+          "description": "Review error details and documentation",
+          "priority": 3,
+          "auto_applicable": false,
+          "user_action_required": true
+        }
+      ],
+      "status": "pending_user_action"
+    }
+  ],
+  "pattern_library": {
+    "common_patterns": [
+      {
+        "pattern_id": "PTN-001",
+        "name": "scheduler_context_missing",
+        "signature_regex": "AttributeError.*'NoneType'.*job_queue",
+        "typical_cause": "Scheduler job missing context parameter",
+        "typical_fix": "Remove context dependency or use partial()",
+        "severity": "HIGH",
+        "seen_count": 0,
+        "files_typically_affected": [
+          "bot.py"
+        ]
+      },
+      {
+        "pattern_id": "PTN-002",
+        "name": "json_key_missing",
+        "signature_regex": "KeyError: '[^']*'",
+        "typical_cause": "Schema change or missing key in JSON file",
+        "typical_fix": "Add schema validation or backward compatibility layer",
+        "severity": "MEDIUM",
+        "seen_count": 0,
+        "files_typically_affected": [
+          "journal_backtest.py",
+          "daily_reports.py"
+        ]
+      },
+      {
+        "pattern_id": "PTN-003",
+        "name": "api_rate_limit",
+        "signature_regex": "429.*Too Many Requests|Rate limit exceeded",
+        "typical_cause": "Binance API rate limit hit",
+        "typical_fix": "Add rate limiting or increase request delay",
+        "severity": "MEDIUM",
+        "seen_count": 0,
+        "files_typically_affected": [
+          "bot.py"
+        ]
+      },
+      {
+        "pattern_id": "PTN-004",
+        "name": "file_not_found",
+        "signature_regex": "FileNotFoundError|No such file",
+        "typical_cause": "Required file missing or wrong path",
+        "typical_fix": "Check file path or create missing file",
+        "severity": "HIGH",
+        "seen_count": 0,
+        "files_typically_affected": [
+          "*"
+        ]
+      },
+      {
+        "pattern_id": "PTN-005",
+        "name": "import_error",
+        "signature_regex": "ImportError|ModuleNotFoundError",
+        "typical_cause": "Missing Python package",
+        "typical_fix": "Install missing dependency with pip",
+        "severity": "CRITICAL",
+        "seen_count": 0,
+        "files_typically_affected": [
+          "*"
+        ]
+      }
+    ]
+  },
+  "function_registry": {
+    "last_scan": "2026-02-03T09:45:00Z",
+    "total_functions": 0,
+    "monitored_functions": []
+  },
+  "ict_knowledge": {
+    "concepts": {
+      "order_blocks": {
+        "description": "Last bullish/bearish candle before impulse move",
+        "required_for_signal": true,
+        "detection_function": "detect_order_blocks",
+        "typical_issues": [
+          "Not enough candle data",
+          "Threshold too strict"
+        ]
+      },
+      "fair_value_gaps": {
+        "description": "Price gaps that need to be filled",
+        "required_for_signal": true,
+        "detection_function": "detect_fvg",
+        "typical_issues": [
+          "Gap too small to detect",
+          "Already filled"
+        ]
+      },
+      "liquidity_sweeps": {
+        "description": "Stop hunts before reversal",
+        "required_for_signal": true,
+        "detection_function": "detect_liquidity",
+        "typical_issues": [
+          "Low volume data",
+          "Liquidity pool not clear"
+        ]
+      },
+      "market_structure": {
+        "description": "MSS/BOS - trend change confirmation",
+        "required_for_signal": true,
+        "detection_function": "detect_mss_bos",
+        "typical_issues": [
+          "Choppy market",
+          "No clear structure"
+        ]
+      },
+      "confluence_scoring": {
+        "description": "Combined score from all ICT concepts",
+        "required_for_signal": true,
+        "min_threshold": 65,
+        "typical_issues": [
+          "Market consolidation",
+          "Low volatility",
+          "Threshold too strict"
+        ]
+      }
+    },
+    "signal_pipeline": [
+      "fetch_klines",
+      "detect_order_blocks",
+      "detect_fvg",
+      "detect_liquidity",
+      "detect_mss_bos",
+      "calculate_confluence",
+      "filter_by_confidence",
+      "check_cooldown",
+      "generate_signal",
+      "send_to_telegram"
+    ]
+  },
+  "self_diagnostic_results": {
+    "last_check": "2026-02-03T09:45:00Z",
+    "checks_performed": [],
+    "improvements_suggested": []
+  },
+  "system_rules": {
+    "AUTO_FIX_ENABLED": false,
+    "AUTO_MODIFY_CODE": false,
+    "AUTO_CHANGE_SETTINGS": false,
+    "READ_ONLY_MODE": true,
+    "REQUIRE_USER_APPROVAL": true,
+    "enforcement": "STRICT - System will NEVER modify anything automatically"
+  }
+}

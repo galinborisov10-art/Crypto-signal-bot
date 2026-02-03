@@ -15221,6 +15221,66 @@ async def deep_dive_symbol_callback(update: Update, context: ContextTypes.DEFAUL
 
 @require_access()
 @rate_limited(calls=10, period=60)
+
+
+# ============================================================================
+# HEALTH CHECK CALLBACK HANDLERS
+# ============================================================================
+
+async def health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle health check button callbacks"""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        action = query.data
+        
+        if action == "health_refresh":
+            await query.edit_message_text("🔄 Refreshing health check...\n⏳ Please wait...")
+            
+            from system_diagnostics import run_full_health_check
+            from diagnostic_messages import format_health_summary
+            
+            health_report = await asyncio.wait_for(
+                run_full_health_check(BASE_PATH),
+                timeout=90.0
+            )
+            
+            message = format_health_summary(health_report)
+            
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            keyboard = [
+                [
+                    InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
+                    InlineKeyboardButton("🧠 Deep", callback_data="health_deep"),
+                ],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
+            
+        elif action == "health_deep":
+            await query.edit_message_text("🧠 Running intelligent diagnostics...\n⏳ Please wait...")
+            
+            from system_diagnostics import get_intelligent_report
+            
+            report = await get_intelligent_report()
+            
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            keyboard = [
+                [
+                    InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
+                    InlineKeyboardButton("📊 Summary", callback_data="health_refresh"),
+                ],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(report, parse_mode='HTML', reply_markup=reply_markup)
+            
+    except Exception as e:
+        logger.error(f"Health callback error: {e}", exc_info=True)
+        await query.edit_message_text(f"❌ Error: {str(e)}")
+
+
 async def verify_alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Admin command to verify alert systems
@@ -16942,7 +17002,15 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if i < len(chunks) - 1:
                         await asyncio.sleep(0.5)  # Avoid rate limits
             else:
-                await update.message.reply_text(message, parse_mode='HTML')
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                keyboard = [
+                    [
+                        InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
+                        InlineKeyboardButton("🧠 Deep", callback_data="health_deep"),
+                    ],
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(message, parse_mode="HTML", reply_markup=reply_markup)
             
         except asyncio.TimeoutError:
             # Fallback to quick health check
@@ -17261,7 +17329,94 @@ Avg Checkpoints: {stats['avg_checkpoints_triggered']:.1f}
 
 
 
+
+# ============================================================================
+# INTELLIGENT HEALTH CHECK COMMANDS (Phase 1.5)
+# ============================================================================
+
+async def deep_health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    🧠 Deep intelligent health analysis
+    
+    Uses AI-like reasoning to diagnose problems and suggest fixes.
+    Command: /deep_health
+    """
+    chat_id = update.effective_chat.id
+    
+    try:
+        await update.message.reply_text("🧠 Running intelligent diagnostics...\n⏳ Please wait...")
+        
+        # Import intelligent diagnostics
+        from system_diagnostics import diagnose_with_intelligence, get_intelligent_report
+        
+        # Run analysis
+        report_text = await get_intelligent_report(format='telegram')
+        
+        # Send report
+        await update.message.reply_text(report_text, parse_mode='HTML')
+        
+        logger.info(f"Deep health check completed for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Deep health check failed: {e}", exc_info=True)
+        await update.message.reply_text(
+            f"❌ Deep diagnostics failed: {e}\n\n"
+            f"Please check logs or try /health for basic diagnostics."
+        )
+
+
+async def meta_diagnostic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    🔄 System self-check
+    
+    The diagnostic system checks itself.
+    Command: /self_check
+    """
+    chat_id = update.effective_chat.id
+    
+    try:
+        await update.message.reply_text("🔄 Running self-diagnostic...\n⏳ Checking intelligence system...")
+        
+        from system_diagnostics import run_meta_diagnostic
+        
+        result = await run_meta_diagnostic()
+        
+        # Format output
+        lines = []
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("🔄 INTELLIGENCE SYSTEM SELF-CHECK")
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("")
+        
+        for check in result.get('checks', []):
+            status_emoji = "✅" if check['status'] == 'pass' else "⚠️" if check['status'] == 'warning' else "❌"
+            lines.append(f"{status_emoji} {check['name']}")
+            lines.append(f"   {check['message']}")
+            lines.append("")
+        
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        
+        overall = result.get('overall_status', 'unknown')
+        if overall == 'pass':
+            lines.append("✅ Intelligence system is healthy")
+        elif overall == 'error':
+            lines.append(f"❌ Self-check error: {result.get('error')}")
+        else:
+            lines.append("���️ Intelligence system has warnings")
+        
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        
+        await update.message.reply_text('\n'.join(lines))
+        
+        logger.info(f"Meta-diagnostic completed for chat {chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Meta-diagnostic failed: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Self-check failed: {e}")
+
+
 def main():
+
     # HTTPx клиент с persistent connection и retry логика
     from httpx import Limits
     
@@ -17317,6 +17472,8 @@ def main():
     app.add_handler(CommandHandler("debug", debug_mode_cmd))  # 🔍 Toggle debug mode (admin)
     app.add_handler(CommandHandler("health", health_cmd))  # 🏥 System health diagnostic (PR #10)
     app.add_handler(CommandHandler("quick_health", quick_health_cmd))  # 🏥 Quick health check (5s)
+    app.add_handler(CommandHandler("deep_health", deep_health_cmd))  # 🧠 Intelligent diagnostics (Phase 1.5)
+    app.add_handler(CommandHandler("self_check", meta_diagnostic_cmd))  # 🔄 Self-diagnostic
     
     # Active Trades Management Commands
     app.add_handler(CommandHandler("close_trade", close_trade_cmd))  # 🔒 Manually close a trade
@@ -17393,6 +17550,7 @@ def main():
     app.add_handler(CallbackQueryHandler(backtest_all_callback, pattern='^backtest_all'))
     app.add_handler(CallbackQueryHandler(backtest_deep_dive_callback, pattern='^backtest_deep_dive$'))
     app.add_handler(CallbackQueryHandler(deep_dive_symbol_callback, pattern='^deep_dive_'))
+    app.add_handler(CallbackQueryHandler(health_callback, pattern='^health_'))
     
     # Message handler за текстови бутони от клавиатурата
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
@@ -18588,3 +18746,12 @@ if __name__ == "__main__":
     
     
     
+
+
+# ============================================================================
+# INTELLIGENT HEALTH CHECK COMMAND
+# ============================================================================
+
+# application.add_handler(CommandHandler("deep_health", deep_health_cmd))
+# application.add_handler(CommandHandler("self_check", meta_diagnostic_cmd))
+
