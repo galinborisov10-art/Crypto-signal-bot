@@ -991,9 +991,9 @@ async def diagnose_config_errors(base_path: str = None) -> List[Dict[str, Any]]:
     if env_errors:
         issues.append({'problem': 'Missing environment variables', 'severity': 'HIGH', 'evidence': env_errors[-1]})
     
-    for file in ['config.json', 'trading_journal.json']:
+    for file in ['risk_config.json', 'trading_journal.json']:
         if not os.path.exists(f'{base_path}/{file}'):
-            issues.append({'problem': f'Required file missing: {file}', 'severity': 'HIGH' if file == 'config.json' else 'MEDIUM'})
+            issues.append({'problem': f'Required file missing: {file}', 'severity': 'MEDIUM'})  # Both files are important but not critical (analysis bot)
     
     config_errors = await grep_logs_cached('Failed to parse config|Invalid configuration', hours=24, base_path=base_path)
     if config_errors:
