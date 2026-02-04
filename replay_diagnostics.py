@@ -1,362 +1,438 @@
 """
-🔄 REPLAY DIAGNOSTICS - Signal Flow & Stuck Detection
-Tracks: created → sent → logged → executed
-Detects: stuck positions, retry storms, hung jobs
+Replay Diagnostics Module
+Records and replays operations for debugging
+
+PR #117: Replay diagnostics for troubleshooting
+Author: System Diagnostics Team
 """
 
+import asyncio
 import json
-import sqlite3
-import re
+import time
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Any, Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class ReplayDiagnostics:
-    """Diagnose signal flow and detect stuck/hung states"""
+class ReplayRecorder:
+    """Records operations for later replay"""
     
-    def __init__(self, base_path: Path):
-        self.base_path = Path(base_path)
-        self.journal_file = self.base_path / "trading_journal.json"
-        self.cache_file = self.base_path / "sent_signals_cache.json"
-        self.positions_db = self.base_path / "positions.db"
-        self.log_file = self.base_path / "bot.log"
+    def __init__(self, storage_path: str = "diagnostic_replays"):
+        self.storage_path = Path(storage_path)
+        self.storage_path.mkdir(exist_ok=True)
+        self.max_recordings = 100  # Keep last 100 operations
         
-    async def run_all_checks(self) -> Dict[str, Any]:
-        """Run all replay diagnostics"""
-        results = {
-            "signal_flow": await self.check_signal_flow(),
-            "stuck_positions": await self.detect_stuck_positions(),
-            "retry_storms": await self.detect_retry_storms(),
-            "hung_jobs": await self.detect_hung_jobs(),
-            "runtime_exceptions": await self.check_runtime_exceptions(),
-            "duplicate_signals": await self.check_duplicate_signals(),
+    def record_operation(
+        self,
+        operation_type: str,
+        operation_name: str,
+        input_data: Dict[str, Any],
+        output_data: Dict[str, Any],
+        status: str,
+        execution_time: float,
+        error: Optional[str] = None
+    ) -> str:
+        """
+        Record an operation for replay
+        
+        Args:
+            operation_type: Type (command, signal, ml_prediction, etc.)
+            operation_name: Name (e.g., /signal, generate_ict_signal)
+            input_data: Input parameters
+            output_data: Output/result
+            status: SUCCESS, ERROR, TIMEOUT
+            execution_time: Execution time in seconds
+            error: Error message if failed
+            
+        Returns:
+            Recording ID
+        """
+        recording_id = f"{operation_type}_{int(time.time())}_{id(self)}"
+        
+        recording = {
+            'id': recording_id,
+            'timestamp': datetime.now().isoformat(),
+            'operation_type': operation_type,
+            'operation_name': operation_name,
+            'input_data': input_data,
+            'output_data': output_data,
+            'status': status,
+            'execution_time': execution_time,
+            'error': error
         }
-        return results
-    
-    async def check_signal_flow(self) -> Dict[str, Any]:
-        """Track signal lifecycle: created → sent → logged → executed"""
+        
+        # Save to file
+        filename = self.storage_path / f"{recording_id}.json"
         try:
-            # Load sent signals cache
-            if not self.cache_file.exists():
-                return {"status": "WARNING", "reason": "No cache file"}
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(recording, f, indent=2, default=str)
             
-            with open(self.cache_file, 'r') as f:
-                cache = json.load(f)
+            # Cleanup old recordings
+            self._cleanup_old_recordings()
             
-            # Check for stale signals (>24h old)
-            stale_signals = []
-            now = datetime.now()
+            logger.info(f"Recorded operation: {recording_id}")
+            return recording_id
             
-            for signal_id, data in cache.items():
-                timestamp = datetime.fromisoformat(data.get('timestamp', '2000-01-01'))
-                age_hours = (now - timestamp).total_seconds() / 3600
+        except Exception as e:
+            logger.error(f"Failed to record operation: {e}")
+            return ""
+    
+    def _cleanup_old_recordings(self):
+        """Remove old recordings to save space"""
+        try:
+            recordings = sorted(
+                self.storage_path.glob("*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
+            
+            # Keep only max_recordings
+            for old_file in recordings[self.max_recordings:]:
+                old_file.unlink()
                 
-                if age_hours > 24:
-                    stale_signals.append({
-                        "id": signal_id,
-                        "age_hours": round(age_hours, 1),
-                        "timestamp": data.get('timestamp'),
-                    })
+        except Exception as e:
+            logger.error(f"Failed to cleanup recordings: {e}")
+    
+    def get_recent_recordings(
+        self,
+        operation_type: Optional[str] = None,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Get recent recordings
+        
+        Args:
+            operation_type: Filter by type (optional)
+            limit: Max number of recordings
             
-            if stale_signals:
-                return {
-                    "status": "WARNING",
-                    "stale_count": len(stale_signals),
-                    "oldest": max(s['age_hours'] for s in stale_signals),
-                    "signals": stale_signals[:5],  # Show first 5
-                    "reason": f"{len(stale_signals)} stale signals in cache (>24h old)",
-                }
+        Returns:
+            List of recordings
+        """
+        try:
+            recordings = []
             
+            for file in sorted(
+                self.storage_path.glob("*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            ):
+                if len(recordings) >= limit:
+                    break
+                
+                with open(file, 'r', encoding='utf-8') as f:
+                    recording = json.load(f)
+                
+                # Filter by type if specified
+                if operation_type and recording.get('operation_type') != operation_type:
+                    continue
+                
+                recordings.append(recording)
+            
+            return recordings
+            
+        except Exception as e:
+            logger.error(f"Failed to get recordings: {e}")
+            return []
+    
+    def get_recording(self, recording_id: str) -> Optional[Dict[str, Any]]:
+        """Get specific recording by ID"""
+        try:
+            filename = self.storage_path / f"{recording_id}.json"
+            if filename.exists():
+                with open(filename, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to get recording {recording_id}: {e}")
+        
+        return None
+
+
+class ReplayEngine:
+    """Replays recorded operations"""
+    
+    def __init__(self, recorder: ReplayRecorder):
+        self.recorder = recorder
+        
+    async def replay_operation(
+        self,
+        recording_id: str,
+        compare_output: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Replay a recorded operation
+        
+        Args:
+            recording_id: Recording to replay
+            compare_output: Compare with original output
+            
+        Returns:
+            Replay result with comparison
+        """
+        # Get original recording
+        original = self.recorder.get_recording(recording_id)
+        if not original:
             return {
-                "status": "OK",
-                "cache_size": len(cache),
-                "reason": "Signal flow normal",
+                'status': 'ERROR',
+                'error': f'Recording {recording_id} not found'
             }
-            
-        except Exception as e:
-            return {"status": "ERROR", "reason": str(e)}
-    
-    async def detect_stuck_positions(self) -> Dict[str, Any]:
-        """Detect positions stuck in processing"""
+        
+        start_time = time.time()
+        result = {
+            'recording_id': recording_id,
+            'original_timestamp': original['timestamp'],
+            'replay_timestamp': datetime.now().isoformat(),
+            'operation_type': original['operation_type'],
+            'operation_name': original['operation_name'],
+            'status': 'UNKNOWN',
+            'execution_time': 0.0,
+            'error': None,
+            'output_matches': None,
+            'original_status': original['status'],
+            'replay_status': None
+        }
+        
         try:
-            # Check positions.db
-            if not self.positions_db.exists():
-                return {"status": "WARNING", "reason": "No positions.db"}
-            
-            conn = sqlite3.connect(self.positions_db)
-            cursor = conn.cursor()
-            
-            # Try to find stuck positions
-            try:
-                cursor.execute("""
-                    SELECT symbol, status, entry_time 
-                    FROM positions 
-                    WHERE status NOT IN ('closed', 'cancelled')
-                    ORDER BY entry_time DESC
-                    LIMIT 20
-                """)
-                rows = cursor.fetchall()
-                
-                if not rows:
-                    conn.close()
-                    return {"status": "OK", "reason": "No open positions"}
-                
-                # Check for positions stuck >24h
-                stuck = []
-                now = datetime.now()
-                
-                for symbol, status, entry_time in rows:
-                    entry_dt = datetime.fromisoformat(entry_time)
-                    age_hours = (now - entry_dt).total_seconds() / 3600
-                    
-                    if age_hours > 24:
-                        stuck.append({
-                            "symbol": symbol,
-                            "status": status,
-                            "age_hours": round(age_hours, 1),
-                            "entry_time": entry_time,
-                        })
-                
-                conn.close()
-                
-                if stuck:
-                    return {
-                        "status": "WARNING",
-                        "stuck_count": len(stuck),
-                        "positions": stuck,
-                        "reason": f"{len(stuck)} positions stuck >24h",
-                    }
-                
-                return {"status": "OK", "open_positions": len(rows)}
-                
-            except sqlite3.OperationalError as e:
-                conn.close()
-                if "no such table" in str(e):
-                    return {"status": "WARNING", "reason": "positions table missing"}
-                raise
-                
-        except Exception as e:
-            return {"status": "ERROR", "reason": str(e)}
-    
-    async def detect_retry_storms(self) -> Dict[str, Any]:
-        """Detect infinite retry loops"""
-        try:
-            if not self.log_file.exists():
-                return {"status": "WARNING", "reason": "No log file"}
-            
-            # Read last 1000 lines
-            with open(self.log_file, 'r') as f:
-                lines = f.readlines()[-1000:]
-            
-            # Count repeated error patterns
-            error_counts = {}
-            
-            for line in lines:
-                if 'ERROR' in line or 'Exception' in line:
-                    # Extract error message (simplified)
-                    match = re.search(r'ERROR - (.+)$', line)
-                    if match:
-                        error_msg = match.group(1)[:100]  # First 100 chars
-                        error_counts[error_msg] = error_counts.get(error_msg, 0) + 1
-            
-            # Find retry storms (same error >10 times)
-            storms = []
-            for msg, count in error_counts.items():
-                if count > 10:
-                    storms.append({"message": msg, "count": count})
-            
-            if storms:
-                # Sort by count
-                storms.sort(key=lambda x: x['count'], reverse=True)
-                return {
-                    "status": "WARNING",
-                    "storm_count": len(storms),
-                    "storms": storms[:3],  # Top 3
-                    "reason": f"{len(storms)} retry storms detected",
+            # Replay based on operation type
+            if original['operation_type'] == 'command':
+                replay_output = await self._replay_command(
+                    original['operation_name'],
+                    original['input_data']
+                )
+            elif original['operation_type'] == 'signal':
+                replay_output = await self._replay_signal(
+                    original['input_data']
+                )
+            elif original['operation_type'] == 'ml_prediction':
+                replay_output = await self._replay_ml_prediction(
+                    original['input_data']
+                )
+            else:
+                replay_output = {
+                    'error': f"Unknown operation type: {original['operation_type']}"
                 }
             
-            return {"status": "OK", "reason": "No retry storms"}
+            result['replay_output'] = replay_output
+            result['replay_status'] = 'SUCCESS' if 'error' not in replay_output else 'ERROR'
+            
+            # Compare outputs
+            if compare_output:
+                result['output_matches'] = self._compare_outputs(
+                    original['output_data'],
+                    replay_output
+                )
+            
+            result['status'] = 'OK'
             
         except Exception as e:
-            return {"status": "ERROR", "reason": str(e)}
+            result['status'] = 'ERROR'
+            result['error'] = str(e)
+            result['replay_status'] = 'ERROR'
+            logger.error(f"Replay failed for {recording_id}: {e}")
+            
+        finally:
+            result['execution_time'] = round(time.time() - start_time, 3)
+        
+        return result
     
-    async def detect_hung_jobs(self) -> Dict[str, Any]:
-        """Detect jobs that haven't run in expected interval"""
-        try:
-            if not self.log_file.exists():
-                return {"status": "WARNING", "reason": "No log file"}
-            
-            # Check for scheduled job logs
-            with open(self.log_file, 'r') as f:
-                lines = f.readlines()[-5000:]  # Last 5000 lines
-            
-            # Track last run times
-            job_last_run = {}
-            
-            for line in lines:
-                # Look for job execution patterns
-                if 'auto_signal_job' in line:
-                    match = re.search(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
-                    if match:
-                        timestamp = datetime.strptime(match.group(1), '%Y-%m-%d %H:%M:%S')
-                        job_last_run['auto_signal_job'] = timestamp
-            
-            # Check if jobs are hung (>6h since last run)
-            hung_jobs = []
-            now = datetime.now()
-            
-            for job_name, last_run in job_last_run.items():
-                hours_since = (now - last_run).total_seconds() / 3600
-                if hours_since > 6:
-                    hung_jobs.append({
-                        "job": job_name,
-                        "hours_since_run": round(hours_since, 1),
-                        "last_run": last_run.isoformat(),
-                    })
-            
-            if hung_jobs:
-                return {
-                    "status": "WARNING",
-                    "hung_count": len(hung_jobs),
-                    "jobs": hung_jobs,
-                    "reason": f"{len(hung_jobs)} jobs haven't run in >6h",
-                }
-            
-            return {"status": "OK", "jobs_tracked": len(job_last_run)}
-            
-        except Exception as e:
-            return {"status": "ERROR", "reason": str(e)}
+    async def _replay_command(
+        self,
+        command_name: str,
+        input_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Replay a bot command"""
+        # Simulate command execution
+        # In production, this would call the actual command function
+        return {
+            'simulated': True,
+            'command': command_name,
+            'note': 'Command replay simulation (not executed)'
+        }
     
-    async def check_runtime_exceptions(self) -> Dict[str, Any]:
-        """Check for recent runtime exceptions"""
+    async def _replay_signal(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Replay signal generation"""
         try:
-            if not self.log_file.exists():
-                return {"status": "WARNING", "reason": "No log file"}
+            # Import signal engine
+            from ict_signal_engine import generate_ict_signal
             
-            # Read last 2000 lines
-            with open(self.log_file, 'r') as f:
-                lines = f.readlines()[-2000:]
+            symbol = input_data.get('symbol', 'BTCUSDT')
+            timeframe = input_data.get('timeframe', '1h')
             
-            # Find exceptions in last hour
-            now = datetime.now()
-            recent_exceptions = []
+            # Regenerate signal
+            signal = await asyncio.wait_for(
+                generate_ict_signal(symbol, timeframe),
+                timeout=30.0
+            )
             
-            for line in lines:
-                if 'Traceback' in line or 'Exception' in line:
-                    # Try to extract timestamp
-                    match = re.search(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
-                    if match:
-                        timestamp = datetime.strptime(match.group(1), '%Y-%m-%d %H:%M:%S')
-                        hours_ago = (now - timestamp).total_seconds() / 3600
-                        
-                        if hours_ago < 1:  # Last hour
-                            recent_exceptions.append({
-                                "time": timestamp.isoformat(),
-                                "hours_ago": round(hours_ago, 2),
-                                "excerpt": line.strip()[:150],
-                            })
-            
-            if recent_exceptions:
-                return {
-                    "status": "WARNING",
-                    "exception_count": len(recent_exceptions),
-                    "exceptions": recent_exceptions[:5],
-                    "reason": f"{len(recent_exceptions)} exceptions in last hour",
-                }
-            
-            return {"status": "OK", "reason": "No recent exceptions"}
+            return {'signal': signal, 'replayed': True}
             
         except Exception as e:
-            return {"status": "ERROR", "reason": str(e)}
+            return {'error': str(e)}
     
-    async def check_duplicate_signals(self) -> Dict[str, Any]:
-        """Check for duplicate signals sent within short timeframe"""
+    async def _replay_ml_prediction(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Replay ML prediction"""
         try:
-            if not self.cache_file.exists():
-                return {"status": "WARNING", "reason": "No cache file"}
+            # Import ML predictor
+            from ml_predictor import predict_confidence_adjustment
             
-            with open(self.cache_file, 'r') as f:
-                cache = json.load(f)
+            # Replay prediction
+            adjustment = predict_confidence_adjustment(input_data)
             
-            # Group signals by symbol+action
-            signal_groups = {}
-            
-            for signal_id, data in cache.items():
-                # Extract symbol and action from ID (e.g., "BTCUSDT_BUY_4h")
-                parts = signal_id.split('_')
-                if len(parts) >= 2:
-                    key = f"{parts[0]}_{parts[1]}"  # symbol_action
-                    
-                    if key not in signal_groups:
-                        signal_groups[key] = []
-                    
-                    signal_groups[key].append({
-                        "id": signal_id,
-                        "timestamp": data.get('timestamp'),
-                        "price": data.get('entry_price'),
-                    })
-            
-            # Find duplicates (same symbol+action with multiple entries)
-            duplicates = []
-            for key, signals in signal_groups.items():
-                if len(signals) > 1:
-                    duplicates.append({
-                        "symbol_action": key,
-                        "count": len(signals),
-                        "signals": signals,
-                    })
-            
-            if duplicates:
-                return {
-                    "status": "WARNING",
-                    "duplicate_groups": len(duplicates),
-                    "duplicates": duplicates[:3],
-                    "reason": f"{len(duplicates)} potential duplicate signals",
-                }
-            
-            return {"status": "OK", "reason": "No duplicates detected"}
+            return {'adjustment': adjustment, 'replayed': True}
             
         except Exception as e:
-            return {"status": "ERROR", "reason": str(e)}
+            return {'error': str(e)}
+    
+    def _compare_outputs(
+        self,
+        original: Dict[str, Any],
+        replay: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Compare original and replay outputs
+        
+        Returns:
+            Comparison result with differences
+        """
+        comparison = {
+            'identical': original == replay,
+            'differences': []
+        }
+        
+        # Find differences
+        all_keys = set(original.keys()) | set(replay.keys())
+        
+        for key in all_keys:
+            if key not in original:
+                comparison['differences'].append({
+                    'key': key,
+                    'type': 'missing_in_original',
+                    'replay_value': replay[key]
+                })
+            elif key not in replay:
+                comparison['differences'].append({
+                    'key': key,
+                    'type': 'missing_in_replay',
+                    'original_value': original[key]
+                })
+            elif original[key] != replay[key]:
+                comparison['differences'].append({
+                    'key': key,
+                    'type': 'value_changed',
+                    'original_value': original[key],
+                    'replay_value': replay[key]
+                })
+        
+        return comparison
+    
+    async def replay_last_n_operations(
+        self,
+        n: int = 5,
+        operation_type: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Replay last N operations
+        
+        Args:
+            n: Number of operations to replay
+            operation_type: Filter by type (optional)
+            
+        Returns:
+            List of replay results
+        """
+        recordings = self.recorder.get_recent_recordings(
+            operation_type=operation_type,
+            limit=n
+        )
+        
+        results = []
+        for recording in recordings:
+            result = await self.replay_operation(recording['id'])
+            results.append(result)
+        
+        return results
 
 
-async def format_replay_report(results: Dict[str, Any]) -> str:
-    """Format replay diagnostics into readable report"""
+async def get_replay_diagnostics_report(
+    replay_count: int = 5
+) -> Dict[str, Any]:
+    """
+    Get replay diagnostics report
     
-    lines = []
-    lines.append("🔄 REPLAY DIAGNOSTICS REPORT")
-    lines.append("━" * 50)
+    Args:
+        replay_count: Number of recent operations to replay
+        
+    Returns:
+        Replay diagnostics report
+    """
+    recorder = ReplayRecorder()
+    engine = ReplayEngine(recorder)
     
-    for check_name, result in results.items():
-        status = result.get('status', 'UNKNOWN')
-        reason = result.get('reason', 'No details')
-        
-        emoji = "✅" if status == "OK" else "⚠️" if status == "WARNING" else "❌"
-        
-        lines.append(f"\n{emoji} {check_name.replace('_', ' ').title()}")
-        lines.append(f"   Status: {status}")
-        lines.append(f"   {reason}")
-        
-        # Add details based on check type
-        if check_name == "stuck_positions" and result.get('positions'):
-            lines.append(f"   Stuck positions:")
-            for pos in result['positions'][:3]:
-                lines.append(f"     • {pos['symbol']} ({pos['age_hours']}h old)")
-        
-        elif check_name == "retry_storms" and result.get('storms'):
-            lines.append(f"   Top storms:")
-            for storm in result['storms']:
-                lines.append(f"     • {storm['count']}x: {storm['message'][:60]}...")
-        
-        elif check_name == "hung_jobs" and result.get('jobs'):
-            lines.append(f"   Hung jobs:")
-            for job in result['jobs']:
-                lines.append(f"     • {job['job']} ({job['hours_since_run']}h ago)")
+    # Get recent recordings
+    recordings = recorder.get_recent_recordings(limit=replay_count)
     
-    lines.append("\n" + "━" * 50)
-    return "\n".join(lines)
+    # Replay them
+    replay_results = []
+    for recording in recordings:
+        result = await engine.replay_operation(recording['id'], compare_output=False)
+        replay_results.append(result)
+    
+    # Aggregate
+    total = len(replay_results)
+    success_count = sum(1 for r in replay_results if r['status'] == 'OK')
+    
+    report = {
+        'timestamp': datetime.now().isoformat(),
+        'summary': {
+            'total_replays': total,
+            'successful': success_count,
+            'failed': total - success_count,
+            'success_rate': round((success_count / total * 100) if total > 0 else 0, 1)
+        },
+        'replay_results': replay_results,
+        'recent_recordings': recordings
+    }
+    
+    return report
 
+
+if __name__ == "__main__":
+    # Test the module
+    async def main():
+        print("\n🔄 TESTING REPLAY DIAGNOSTICS")
+        print("=" * 60)
+        
+        # Create test recording
+        recorder = ReplayRecorder()
+        
+        recording_id = recorder.record_operation(
+            operation_type='signal',
+            operation_name='generate_ict_signal',
+            input_data={'symbol': 'BTCUSDT', 'timeframe': '1h'},
+            output_data={'signal': 'BUY', 'confidence': 0.85},
+            status='SUCCESS',
+            execution_time=1.234
+        )
+        
+        print(f"✅ Created test recording: {recording_id}")
+        
+        # Get replay report
+        report = await get_replay_diagnostics_report(replay_count=3)
+        
+        print("\n📊 REPLAY SUMMARY")
+        print("━" * 60)
+        print(f"Total Replays: {report['summary']['total_replays']}")
+        print(f"✅ Successful: {report['summary']['successful']}")
+        print(f"❌ Failed: {report['summary']['failed']}")
+        print(f"Success Rate: {report['summary']['success_rate']}%")
+        
+        print("\n📋 RECENT RECORDINGS")
+        print("━" * 60)
+        for rec in report['recent_recordings']:
+            print(f"  {rec['operation_type']:15} {rec['operation_name']:30} {rec['status']}")
+        
+        print("\n" + "=" * 60)
+    
+    asyncio.run(main())

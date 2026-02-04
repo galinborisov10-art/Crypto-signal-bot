@@ -1783,3 +1783,16 @@ async def get_replay_report() -> str:
         logger.error(f"Failed to get replay report: {e}", exc_info=True)
         return f"❌ Error: {str(e)}"
 
+
+# ============================================================================
+# COMPREHENSIVE DIAGNOSTICS INTEGRATION
+# ============================================================================
+
+async def get_comprehensive_diagnostic_report() -> str:
+    """Run all 20 comprehensive diagnostics"""
+    try:
+        from comprehensive_diagnostics import run_comprehensive_diagnostics
+        return await run_comprehensive_diagnostics()
+    except Exception as e:
+        logger.error(f"Comprehensive diagnostics failed: {e}", exc_info=True)
+        return f"❌ Comprehensive Diagnostics Error:\n{str(e)}"

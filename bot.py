@@ -15230,12 +15230,73 @@ async def deep_dive_symbol_callback(update: Update, context: ContextTypes.DEFAUL
 async def health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle health check button callbacks"""
     query = update.callback_query
+    # Import references for proper scope
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    
     await query.answer()
     
     try:
         action = query.data
         
-        if action == "health_refresh":
+        # Smoke Test Handler
+        if action == "health_smoke":
+            await query.answer()
+            await query.edit_message_text("⚡ Running smoke tests...\n⏳ This will take 5-10 seconds...")
+            
+            try:
+                from comprehensive_diagnostics import ComprehensiveDiagnostics
+                diag = ComprehensiveDiagnostics(os.getcwd())
+                results = await diag.run_smoke_tests()
+                
+                # Format results
+                passed = sum(1 for r in results if r.get('status') == 'OK')
+                errors = sum(1 for r in results if r.get('status') == 'ERROR')
+                warnings = sum(1 for r in results if r.get('status') == 'WARNING')
+                
+                message = "⚡ SMOKE TEST RESULTS\n"
+                message += "━━━━━━━━━━━━━━━━━━━━━━\n"
+                message += f"📊 Tests: {len(results)}/6 critical\n"
+                message += f"❌ Errors: {errors}\n"
+                message += f"⚠️ Warnings: {warnings}\n"
+                message += f"✅ Passed: {passed}\n\n"
+                
+                if errors > 0:
+                    message += "❌ CRITICAL ISSUES:\n\n"
+                    for r in results:
+                        if r.get('status') == 'ERROR':
+                            message += f"#{r['test_number']}: {r['test_name']}\n"
+                            message += f"  {r.get('issue', 'Unknown error')}\n\n"
+                
+                if warnings > 0:
+                    message += "⚠️ WARNINGS:\n\n"
+                    for r in results:
+                        if r.get('status') == 'WARNING':
+                            message += f"#{r['test_number']}: {r['test_name']}\n"
+                            message += f"  {r.get('issue', 'Unknown warning')}\n\n"
+                
+                if errors == 0 and warnings == 0:
+                    message += "✅ All critical systems operational!\n"
+                
+                message += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+                message += "For detailed diagnostics, use 🔬 Run All"
+                
+                # Buttons
+                keyboard = [
+                    [
+                        InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
+                        InlineKeyboardButton("🔬 Run All", callback_data="health_run_all"),
+                    ],
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.edit_message_text(message, reply_markup=reply_markup)
+                
+            except Exception as e:
+                logger.error(f"Smoke test error: {e}")
+                await query.edit_message_text(f"❌ Smoke test failed: {str(e)}")
+            return
+        
+        elif action == "health_refresh":
             await query.edit_message_text("🔄 Refreshing health check...\n⏳ Please wait...")
             
             from system_diagnostics import run_full_health_check
@@ -15253,7 +15314,9 @@ async def health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [
                     InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
                     InlineKeyboardButton("🧠 Deep", callback_data="health_deep"),
-                    InlineKeyboardButton("🔄 Replay", callback_data="health_replay"),
+                ],
+                [
+                    InlineKeyboardButton("🔬 Run All", callback_data="health_run_all"),
                 ],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -15276,26 +15339,24 @@ async def health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(report, parse_mode='HTML', reply_markup=reply_markup)
+        
+        
+        elif action == "health_run_all":
+            await query.edit_message_text("🔬 Running all 20 diagnostic tests...\n⏳ This may take 30-60 seconds...\n\nPlease wait...")
             
-    
-        elif action == "health_replay":
-            await query.edit_message_text("🔄 Running replay diagnostics...\n⏳ Please wait...")
-            
-            from system_diagnostics import get_replay_report
-            
-            report = await get_replay_report()
+            from system_diagnostics import get_comprehensive_diagnostic_report
+            report = await get_comprehensive_diagnostic_report()
             
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             keyboard = [
                 [
-                    InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
-                    InlineKeyboardButton("📊 Summary", callback_data="health_refresh"),
+                    InlineKeyboardButton("��� Refresh", callback_data="health_refresh"),
+                    InlineKeyboardButton("🧠 Deep", callback_data="health_deep"),
                 ],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
+            
             await query.edit_message_text(report, parse_mode='HTML', reply_markup=reply_markup)
-            
-            
     except Exception as e:
         logger.error(f"Health callback error: {e}", exc_info=True)
         await query.edit_message_text(f"❌ Error: {str(e)}")
@@ -17027,7 +17088,8 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [
                         InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
                         InlineKeyboardButton("🧠 Deep", callback_data="health_deep"),
-                    InlineKeyboardButton("🔄 Replay", callback_data="health_replay"),
+                        InlineKeyboardButton("⚡ Smoke Test", callback_data="health_smoke"),
+                        InlineKeyboardButton("🔬 Run All", callback_data="health_run_all"),
                     ],
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -17929,7 +17991,7 @@ def main():
                     from system_diagnostics import grep_logs_cached, DIAGNOSTIC_CACHE
                     
                     # Log cache state BEFORE refresh
-                    cache_size_before = len(DIAGNOSTIC_CACHE)
+                    cache_size_before = len(DIAGNOSTIC_CACHE, get_comprehensive_diagnostic_report)
                     logger.info(f"📊 Cache state before refresh: {cache_size_before} entries")
                     
                     base_path = os.path.dirname(os.path.abspath(__file__))
@@ -18337,7 +18399,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                     from system_diagnostics import diagnose_journal_issue
                     from diagnostic_messages import format_issue_alert
                     
-                    logger.info("🏥 Running journal health check...")
+                    logger.info("🏥 Running journal health check...", get_comprehensive_diagnostic_report)
                     issues = await diagnose_journal_issue(BASE_PATH)
                     
                     if issues:
@@ -18375,7 +18437,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                     from system_diagnostics import diagnose_ml_issue
                     from diagnostic_messages import format_issue_alert
                     
-                    logger.info("🏥 Running ML health check...")
+                    logger.info("🏥 Running ML health check...", get_comprehensive_diagnostic_report)
                     issues = await diagnose_ml_issue(BASE_PATH)
                     
                     if issues:
@@ -18412,7 +18474,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                     from system_diagnostics import diagnose_daily_report_issue
                     from diagnostic_messages import format_issue_alert
                     
-                    logger.info("🏥 Running daily report health check...")
+                    logger.info("🏥 Running daily report health check...", get_comprehensive_diagnostic_report)
                     issues = await diagnose_daily_report_issue(BASE_PATH)
                     
                     if issues:
@@ -18449,7 +18511,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                     from system_diagnostics import diagnose_scheduler_issue
                     from diagnostic_messages import format_issue_alert
                     
-                    logger.info("🏥 Running scheduler health check...")
+                    logger.info("🏥 Running scheduler health check...", get_comprehensive_diagnostic_report)
                     issues = await diagnose_scheduler_issue(BASE_PATH)
                     
                     if issues:
@@ -18486,7 +18548,7 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                     from system_diagnostics import diagnose_disk_space_issue
                     from diagnostic_messages import format_issue_alert
                     
-                    logger.info("🏥 Running disk space check...")
+                    logger.info("🏥 Running disk space check...", get_comprehensive_diagnostic_report)
                     issues = await diagnose_disk_space_issue(BASE_PATH)
                     
                     if issues:
