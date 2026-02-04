@@ -15362,6 +15362,231 @@ async def health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"❌ Error: {str(e)}")
 
 
+
+
+async def health_function_test_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Callback: Function Health Test
+    Tests all bot commands and modules
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Show loading message
+        await query.edit_message_text(
+            "🧪 **Running Function Health Tests...**\n\n"
+            "Testing all bot commands and modules...\n"
+            "⏳ Please wait...",
+            parse_mode='Markdown'
+        )
+        
+        # Import and run function health check
+        from function_health import get_function_health_report
+        
+        report = await asyncio.wait_for(
+            get_function_health_report(),
+            timeout=30.0
+        )
+        
+        # Build response
+        summary = report.get('summary', {})
+        
+        response = f"🧪 **Function Health Report**\n\n"
+        response += f"📊 **Summary**\n"
+        response += f"  Total Tests: {summary.get('total_tests', 0)}\n"
+        response += f"  ✅ OK: {summary.get('ok', 0)}\n"
+        response += f"  ⚠️ Warnings: {summary.get('warnings', 0)}\n"
+        response += f"  ❌ Errors: {summary.get('errors', 0)}\n"
+        response += f"  Success Rate: {summary.get('success_rate', 0)}%\n\n"
+        
+        # Show failed tests
+        if report.get('failed_tests'):
+            response += f"❌ **Failed Tests** ({len(report['failed_tests'])}):\n"
+            for test in report['failed_tests'][:5]:  # First 5
+                response += f"  • {test.get('command', test.get('module', 'Unknown'))}\n"
+            if len(report['failed_tests']) > 5:
+                response += f"  ... and {len(report['failed_tests']) - 5} more\n"
+            response += "\n"
+        
+        # Show warnings
+        if report.get('warnings'):
+            response += f"⚠️ **Warnings** ({len(report['warnings'])}):\n"
+            for warning in report['warnings'][:3]:  # First 3
+                response += f"  • {warning.get('command', warning.get('module', 'Unknown'))}\n"
+            if len(report['warnings']) > 3:
+                response += f"  ... and {len(report['warnings']) - 3} more\n"
+        
+        # Add buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data="health_function_test"),
+                InlineKeyboardButton("◀️ Back", callback_data="health_refresh")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            response,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+        
+    except asyncio.TimeoutError:
+        await query.edit_message_text(
+            "⏱️ **Function health test timed out**\n\n"
+            "Tests took too long to complete.\n"
+            "Try again later.",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.error(f"Function health test failed: {e}")
+        await query.edit_message_text(
+            f"❌ **Function health test failed**\n\n"
+            f"Error: `{str(e)}`",
+            parse_mode='Markdown'
+        )
+
+
+async def health_replay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Callback: Replay Diagnostics
+    Shows last 5 recorded operations
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Import replay diagnostics
+        from replay_diagnostics import get_replay_diagnostics_report
+        
+        report = await asyncio.wait_for(
+            get_replay_diagnostics_report(replay_count=5),
+            timeout=15.0
+        )
+        
+        # Build response
+        summary = report.get('summary', {})
+        recordings = report.get('recent_recordings', [])
+        
+        response = f"🔄 **Replay Diagnostics**\n\n"
+        response += f"📊 **Summary**\n"
+        response += f"  Total Replays: {summary.get('total_replays', 0)}\n"
+        response += f"  ✅ Successful: {summary.get('successful', 0)}\n"
+        response += f"  ❌ Failed: {summary.get('failed', 0)}\n"
+        response += f"  Success Rate: {summary.get('success_rate', 0)}%\n\n"
+        
+        # Show recent operations
+        if recordings:
+            response += f"📋 **Recent Operations** (Last {len(recordings)}):\n"
+            for rec in recordings[:5]:
+                op_type = rec.get('operation_type', 'unknown')
+                op_name = rec.get('operation_name', 'unknown')
+                status = rec.get('status', 'unknown')
+                
+                status_icon = {'SUCCESS': '✅', 'ERROR': '❌', 'TIMEOUT': '⏱️'}.get(status, '❓')
+                
+                response += f"{status_icon} `{op_type}`: {op_name}\n"
+        else:
+            response += "📋 No recorded operations yet.\n"
+        
+        # Add buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data="health_replay"),
+                InlineKeyboardButton("◀️ Back", callback_data="health_refresh")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            response,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Replay diagnostics failed: {e}")
+        await query.edit_message_text(
+            f"❌ **Replay diagnostics failed**\n\n"
+            f"Error: `{str(e)}`",
+            parse_mode='Markdown'
+        )
+
+
+async def health_performance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Callback: Performance Monitoring
+    Shows performance metrics and bottlenecks
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Import performance monitor
+        from performance_monitor import get_performance_report
+        
+        report = await asyncio.wait_for(
+            get_performance_report(),
+            timeout=15.0
+        )
+        
+        # Build response
+        summary = report.get('summary', {})
+        system = report.get('system_performance', {})
+        
+        response = f"⚡ **Performance Report**\n\n"
+        
+        # System performance
+        cpu = system.get('cpu', {})
+        memory = system.get('memory', {})
+        
+        response += f"💻 **System**\n"
+        response += f"  CPU: {cpu.get('process_percent', 0)}%\n"
+        response += f"  Memory: {memory.get('process_mb', 0)} MB\n"
+        response += f"  System RAM: {memory.get('system_percent', 0)}%\n\n"
+        
+        # Performance summary
+        response += f"📊 **Operations Tracked**\n"
+        response += f"  Total: {summary.get('total_operations_tracked', 0)}\n"
+        response += f"  Unique: {summary.get('unique_operations', 0)}\n"
+        response += f"  Health: {summary.get('system_health', 'UNKNOWN')}\n\n"
+        
+        # Bottlenecks
+        bottlenecks = report.get('bottlenecks', [])
+        if bottlenecks:
+            response += f"🐌 **Bottlenecks Detected** ({len(bottlenecks)}):\n"
+            for b in bottlenecks[:3]:
+                response += f"  • {b.get('operation', 'Unknown')}\n"
+                response += f"    Issue: {b.get('issue', 'Unknown')}\n"
+            if len(bottlenecks) > 3:
+                response += f"  ... and {len(bottlenecks) - 3} more\n"
+        else:
+            response += "✅ **No bottlenecks detected**\n"
+        
+        # Add buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data="health_performance"),
+                InlineKeyboardButton("◀️ Back", callback_data="health_refresh")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            response,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Performance monitoring failed: {e}")
+        await query.edit_message_text(
+            f"❌ **Performance monitoring failed**\n\n"
+            f"Error: `{str(e)}`",
+            parse_mode='Markdown'
+        )
+
 async def verify_alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Admin command to verify alert systems
@@ -17085,6 +17310,14 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
                 keyboard = [
+        [
+            InlineKeyboardButton("🧪 Function Health", callback_data="health_function_test"),
+            InlineKeyboardButton("⚡ Performance", callback_data="health_performance")
+        ],
+        [
+            InlineKeyboardButton("🔄 Replay Last 5", callback_data="health_replay"),
+            InlineKeyboardButton("🔬 Deep Analysis", callback_data="health_deep")
+        ],
                     [
                         InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
                         InlineKeyboardButton("🧠 Deep", callback_data="health_deep"),
@@ -17634,6 +17867,9 @@ def main():
     app.add_handler(CallbackQueryHandler(backtest_deep_dive_callback, pattern='^backtest_deep_dive$'))
     app.add_handler(CallbackQueryHandler(deep_dive_symbol_callback, pattern='^deep_dive_'))
     app.add_handler(CallbackQueryHandler(health_callback, pattern='^health_'))
+    app.add_handler(CallbackQueryHandler(health_function_test_callback, pattern="^health_function_test$"))
+    app.add_handler(CallbackQueryHandler(health_performance_callback, pattern="^health_performance$"))
+    app.add_handler(CallbackQueryHandler(health_replay_callback, pattern="^health_replay$"))
     
     # Message handler за текстови бутони от клавиатурата
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
