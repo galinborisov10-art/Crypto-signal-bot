@@ -3,12 +3,13 @@
 20+ sequential READ-ONLY tests with detailed error reporting
 """
 from error_localization import ErrorLocalizer
+from ai_suggestions import AISuggestionEngine
+from unit_test_runner import UnitTestRunner
 from diagnostic_config import DiagnosticConfig
 from auto_fix import AutoFixer
 import asyncio
 import json
 import os
-from error_localization import ErrorLocalizer
 import sys
 import sqlite3
 import importlib
@@ -24,12 +25,18 @@ logger = logging.getLogger(__name__)
 class ComprehensiveDiagnostics:
     """Comprehensive diagnostic test suite - READ-ONLY"""
     
-    def __init__(self, base_path: Path):
+    def __init__(self, base_path: Path = Path("/root/Crypto-signal-bot")):
         self.base_path = Path(base_path)
         self.results = []
         self.start_time = None
         self.current_test = 0
         self.total_tests = 20
+
+        # Enhanced diagnostic tools
+        self.error_localizer = ErrorLocalizer(str(self.base_path))
+        self.ai_engine = AISuggestionEngine()
+        self.test_runner = UnitTestRunner()
+
     
     async def run_all_tests(self) -> List[Dict[str, Any]]:
         """Run all 20 tests sequentially"""
@@ -66,6 +73,58 @@ class ComprehensiveDiagnostics:
         
         return self.results
     
+
+    def format_detailed_error(self, test_num: int, name: str, severity: str,
+                            issue: str, location: str = None, impact: str = None,
+                            solution: str = None, error_type: str = None) -> str:
+        """
+        Format error with enhanced details:
+        - Location (file + line)
+        - Current vs Expected state
+        - Fix commands
+        - Documentation links
+        - AI suggestions
+        """
+        
+        output = f"#{test_num}: {name}\n"
+        output += f"  Severity: {severity}\n"
+        output += f"  Issue: {issue}\n"
+        
+        if location:
+            output += f"  Location: {location}\n"
+        
+        if impact:
+            output += f"  Impact: {impact}\n"
+        
+        if solution:
+            output += f"  Solution: {solution}\n"
+        
+        # Add documentation
+        if location and ('API_KEY' in location or 'TOKEN' in location):
+            doc_key = location.split('_')[0] + '_API_KEY' if 'API_KEY' in location else 'TELEGRAM_BOT_TOKEN'
+            try:
+                from documentation_links import format_documentation
+                docs = format_documentation(doc_key)
+                if docs:
+                    output += f"\n{docs}"
+            except:
+                pass
+        
+        # Add AI suggestion
+        try:
+            suggestion = self.ai_engine.get_suggestion(
+                error_type or name,
+                issue,
+                {'location': location, 'severity': severity}
+            )
+            if suggestion:
+                output += f"\n{suggestion}\n"
+        except:
+            pass
+        
+        return output
+
+
 
     async def run_smoke_tests(self) -> Dict[str, Any]:
         """Run quick smoke tests (critical checks only) - 5-10 seconds"""

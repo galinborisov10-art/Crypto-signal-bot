@@ -1,142 +1,150 @@
-"""Enhanced error localization for diagnostics"""
+"""
+Enhanced Error Localization Module
+Provides detailed error formatting with location, context, and fix suggestions
+"""
+
 import os
 import re
-from typing import Dict, Any, Optional, List
+from pathlib import Path
+from typing import Dict, Optional, List
 
 class ErrorLocalizer:
-    """Provides detailed location information for errors"""
+    """Enhanced error localization with detailed formatting"""
     
-    def __init__(self, base_path: str):
-        self.base_path = base_path
-    
-    def locate_env_var(self, var_name: str) -> Dict[str, Any]:
-        """Find exact location of env var in .env file"""
-        env_file = os.path.join(self.base_path, '.env')
+    def __init__(self, base_path: str = "/root/Crypto-signal-bot"):
+        self.base_path = Path(base_path)
         
-        result = {
-            "file": env_file,
-            "exists": os.path.exists(env_file),
-            "line_number": None,
-            "current_value": None,
-            "is_commented": False,
-            "context": []
+    def format_error(self, 
+                    error_type: str,
+                    message: str,
+                    file_path: Optional[str] = None,
+                    line_number: Optional[int] = None,
+                    current_value: Optional[str] = None,
+                    expected_value: Optional[str] = None,
+                    fix_command: Optional[str] = None,
+                    severity: str = "ERROR") -> str:
+        """
+        Format error with detailed information
+        
+        Args:
+            error_type: Type of error (e.g., "Configuration Error")
+            message: Error message
+            file_path: Path to file with error
+            line_number: Line number (if applicable)
+            current_value: Current (wrong) value
+            expected_value: Expected (correct) value
+            fix_command: Manual fix command
+            severity: ERROR, WARNING, or INFO
+        """
+        
+        icon = "❌" if severity == "ERROR" else "⚠️" if severity == "WARNING" else "ℹ️"
+        
+        output = f"{icon} {severity}: {error_type}\n"
+        output += "━" * 45 + "\n"
+        output += f"📋 Issue: {message}\n\n"
+        
+        # Location information
+        if file_path:
+            output += "📍 Location:\n"
+            output += f"  File: {file_path}\n"
+            if line_number:
+                output += f"  Line: {line_number}\n"
+            output += "\n"
+        
+        # Current state
+        if current_value:
+            output += "📋 Current state:\n"
+            output += f"  {current_value}\n\n"
+        
+        # Expected state
+        if expected_value:
+            output += "✅ Expected:\n"
+            output += f"  {expected_value}\n\n"
+        
+        # Fix command
+        if fix_command:
+            output += "🔧 Fix command:\n"
+            output += f"  {fix_command}\n\n"
+        
+        return output
+    
+    def locate_config_error(self, missing_key: str, file_path: str = ".env") -> Dict:
+        """Locate configuration error in file"""
+        
+        full_path = self.base_path / file_path
+        line_number = None
+        current_value = "Not found"
+        
+        if full_path.exists():
+            with open(full_path, 'r') as f:
+                for i, line in enumerate(f, 1):
+                    if missing_key in line:
+                        line_number = i
+                        current_value = line.strip()
+                        if line.strip().startswith('#'):
+                            current_value += "  ← Commented out"
+                        break
+        
+        return {
+            'file': str(full_path),
+            'line': line_number,
+            'current': current_value,
+            'expected': f"{missing_key}=YOUR_VALUE_HERE"
         }
-        
-        if not result["exists"]:
-            return result
-        
-        try:
-            with open(env_file, 'r') as f:
-                lines = f.readlines()
-            
-            for i, line in enumerate(lines, 1):
-                # Check for exact match or commented
-                if var_name in line:
-                    result["line_number"] = i
-                    result["current_value"] = line.strip()
-                    result["is_commented"] = line.strip().startswith('#')
-                    
-                    # Get context (3 lines before, 3 after)
-                    start = max(0, i-4)
-                    end = min(len(lines), i+3)
-                    result["context"] = [
-                        {"line": j+1, "content": lines[j].rstrip(), "is_target": j+1 == i}
-                        for j in range(start, end)
-                    ]
-                    break
-        except Exception as e:
-            result["error"] = str(e)
-        
-        return result
     
-    def locate_json_error(self, file_path: str) -> Dict[str, Any]:
-        """Find exact location of JSON syntax error"""
-        result = {
-            "file": file_path,
-            "exists": os.path.exists(file_path),
-            "error_line": None,
-            "error_column": None,
-            "error_message": None,
-            "context": None
-        }
+    def locate_import_error(self, module_name: str) -> Dict:
+        """Locate import/dependency error"""
         
-        if not result["exists"]:
-            return result
+        # Try to find where module is imported
+        import_locations = []
         
-        try:
-            import json
-            with open(file_path, 'r') as f:
-                content = f.read()
-                json.loads(content)  # Try to parse
-                result["valid"] = True
-        except json.JSONDecodeError as e:
-            result["valid"] = False
-            result["error_line"] = e.lineno
-            result["error_column"] = e.colno
-            result["error_message"] = e.msg
-            
-            # Get context around error
+        for py_file in self.base_path.glob("*.py"):
             try:
-                lines = content.split('\n')
-                start = max(0, e.lineno - 3)
-                end = min(len(lines), e.lineno + 2)
-                result["context"] = [
-                    {
-                        "line": i+1,
-                        "content": lines[i],
-                        "is_error": i+1 == e.lineno,
-                        "marker": " " * (e.colno - 1) + "^" if i+1 == e.lineno else ""
-                    }
-                    for i in range(start, end)
-                ]
+                with open(py_file, 'r') as f:
+                    for i, line in enumerate(f, 1):
+                        if f"import {module_name}" in line or f"from {module_name}" in line:
+                            import_locations.append({
+                                'file': str(py_file),
+                                'line': i,
+                                'code': line.strip()
+                            })
             except:
                 pass
-        except Exception as e:
-            result["error_message"] = str(e)
         
-        return result
+        return {
+            'module': module_name,
+            'locations': import_locations,
+            'pip_command': f"pip install {module_name}"
+        }
     
-    def format_error_location(self, error_type: str, location_data: Dict[str, Any]) -> str:
-        """Format location data into readable string"""
+    def locate_file_error(self, file_path: str) -> Dict:
+        """Locate file-related error"""
         
-        if error_type == "env_var":
-            if not location_data["exists"]:
-                return f"📍 File not found: {location_data['file']}\n   Create it first!"
-            
-            if location_data["line_number"]:
-                status = "commented out ❌" if location_data["is_commented"] else "found ✅"
-                msg = f"📍 {location_data['file']}:{location_data['line_number']}\n"
-                msg += f"   Status: {status}\n"
-                msg += f"   Current: {location_data['current_value']}\n"
-                
-                if location_data.get("context"):
-                    msg += "\n📋 Context:\n"
-                    for ctx in location_data["context"]:
-                        prefix = ">>>" if ctx["is_target"] else "   "
-                        msg += f"{prefix} {ctx['line']:3d} | {ctx['content']}\n"
-                
-                return msg
-            else:
-                return f"📍 Not found in {location_data['file']}\n   ✅ Expected: Add this line to .env file"
+        full_path = self.base_path / file_path
         
-        elif error_type == "json":
-            if not location_data["exists"]:
-                return f"📍 File not found: {location_data['file']}"
-            
-            if location_data.get("valid"):
-                return f"✅ JSON valid: {location_data['file']}"
-            
-            msg = f"📍 {location_data['file']}:{location_data['error_line']}:{location_data['error_column']}\n"
-            msg += f"   Error: {location_data['error_message']}\n"
-            
-            if location_data.get("context"):
-                msg += "\n📋 Context:\n"
-                for ctx in location_data["context"]:
-                    prefix = ">>>" if ctx["is_error"] else "   "
-                    msg += f"{prefix} {ctx['line']:3d} | {ctx['content']}\n"
-                    if ctx.get("marker"):
-                        msg += f"       {ctx['marker']}\n"
-            
-            return msg
+        return {
+            'file': str(full_path),
+            'exists': full_path.exists(),
+            'parent_exists': full_path.parent.exists(),
+            'permissions': oct(os.stat(full_path).st_mode)[-3:] if full_path.exists() else None
+        }
+    
+    def get_code_snippet(self, file_path: str, line_number: int, context: int = 3) -> str:
+        """Get code snippet around error line"""
         
-        return str(location_data)
+        try:
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+            
+            start = max(0, line_number - context - 1)
+            end = min(len(lines), line_number + context)
+            
+            snippet = ""
+            for i in range(start, end):
+                marker = "→ " if i == line_number - 1 else "  "
+                snippet += f"{marker}{i+1:4d} | {lines[i]}"
+            
+            return snippet
+        except:
+            return "Could not read file"
+

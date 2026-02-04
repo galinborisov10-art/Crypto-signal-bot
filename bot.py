@@ -15324,22 +15324,85 @@ async def health_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(message, parse_mode='HTML', reply_markup=reply_markup)
             
         elif action == "health_deep":
-            await query.edit_message_text("🧠 Running intelligent diagnostics...\n⏳ Please wait...")
+            """🧠 Deep Analysis - Comprehensive Diagnostics with Enhanced Errors"""
+            await query.edit_message_text(
+                "🧠 Running comprehensive diagnostics...\n⏳ Please wait...",
+                parse_mode='HTML'
+            )
             
-            from system_diagnostics import get_intelligent_report
+            try:
+                from comprehensive_diagnostics import ComprehensiveDiagnostics
+                
+                # Run comprehensive diagnostics
+                diag = ComprehensiveDiagnostics()
+                results = await diag.run_all_tests()
+                
+                # Format results
+                total = len(results)
+                errors = [r for r in results if r.get('status') == 'ERROR']
+                warnings = [r for r in results if r.get('status') == 'WARNING']
+                passed = [r for r in results if r.get('status') == 'OK']
+                
+                message = "🧠 <b>COMPREHENSIVE DIAGNOSTIC REPORT</b>\n"
+                message += "━" * 45 + "\n\n"
+                message += f"📊 <b>Summary:</b>\n"
+                message += f"  Total Tests: {total}\n"
+                message += f"  ✅ Passed: {len(passed)} ({len(passed)/total*100:.1f}%)\n"
+                message += f"  ⚠️ Warnings: {len(warnings)}\n"
+                message += f"  ❌ Errors: {len(errors)}\n\n"
+                
+                # Show errors with enhanced formatting
+                if errors:
+                    message += f"❌ <b>Errors ({len(errors)}):</b>\n\n"
+                    for err in errors[:5]:
+                        message += f"  <b>#{err.get('test_number', '?')}: {err.get('test_name', 'Unknown')}</b>\n"
+                        if err.get('issue'):
+                            message += f"    📋 {err.get('issue')}\n"
+                        if err.get('location'):
+                            message += f"    📍 {err.get('location')}\n"
+                        if err.get('solution'):
+                            message += f"    🔧 {err.get('solution')}\n"
+                        message += "\n"
+                    
+                    if len(errors) > 5:
+                        message += f"  ...and {len(errors) - 5} more errors\n\n"
+                
+                # Show warnings
+                if warnings:
+                    message += f"⚠️ <b>Warnings ({len(warnings)}):</b>\n"
+                    for warn in warnings[:3]:
+                        message += f"  • {warn.get('test_name', 'Unknown')}\n"
+                    message += "\n"
+                
+                if not errors and not warnings:
+                    message += "✅ <b>ALL SYSTEMS OPERATIONAL!</b>\n\n"
+                
+                message += "━" * 45 + "\n"
+                message += f"⏱ Analysis completed\n"
+                
+                # Buttons
+                keyboard = [
+                    [InlineKeyboardButton("🔄 Refresh", callback_data="health_deep")],
+                    [InlineKeyboardButton("◀️ Back", callback_data="health_refresh")]
+                ]
+                
+                await query.edit_message_text(
+                    message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='HTML'
+                )
+                
+            except Exception as e:
+                logger.error(f"Deep analysis error: {e}")
+                import traceback
+                traceback.print_exc()
+                
+                await query.edit_message_text(
+                    f"❌ <b>Deep analysis failed:</b>\n{str(e)}",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Back", callback_data="health_refresh")]]),
+                    parse_mode='HTML'
+                )
             
-            report = await get_intelligent_report()
-            
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            keyboard = [
-                [
-                    InlineKeyboardButton("🔄 Refresh", callback_data="health_refresh"),
-                    InlineKeyboardButton("📊 Summary", callback_data="health_refresh"),
-                ],
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(report, parse_mode='HTML', reply_markup=reply_markup)
-        
         
         elif action == "health_run_all":
             await query.edit_message_text("🔬 Running all 20 diagnostic tests...\n⏳ This may take 30-60 seconds...\n\nPlease wait...")
@@ -15375,10 +15438,10 @@ async def health_function_test_callback(update: Update, context: ContextTypes.DE
     try:
         # Show loading message
         await query.edit_message_text(
-            "🧪 **Running Function Health Tests...**\n\n"
+            "🧪 <b>Running Function Health Tests...</b>\n\n"
             "Testing all bot commands and modules...\n"
             "⏳ Please wait...",
-            parse_mode='Markdown'
+            parse_mode='HTML'
         )
         
         # Import and run function health check
@@ -15392,8 +15455,8 @@ async def health_function_test_callback(update: Update, context: ContextTypes.DE
         # Build response
         summary = report.get('summary', {})
         
-        response = f"🧪 **Function Health Report**\n\n"
-        response += f"📊 **Summary**\n"
+        response = "🧪 <b>Function Health Report</b>\n\n"
+        response += "📊 <b>Summary</b>\n"
         response += f"  Total Tests: {summary.get('total_tests', 0)}\n"
         response += f"  ✅ OK: {summary.get('ok', 0)}\n"
         response += f"  ⚠️ Warnings: {summary.get('warnings', 0)}\n"
@@ -15402,18 +15465,20 @@ async def health_function_test_callback(update: Update, context: ContextTypes.DE
         
         # Show failed tests
         if report.get('failed_tests'):
-            response += f"❌ **Failed Tests** ({len(report['failed_tests'])}):\n"
+            response += f"❌ <b>Failed Tests</b> ({len(report['failed_tests'])}):\n"
             for test in report['failed_tests'][:5]:  # First 5
-                response += f"  • {test.get('command', test.get('module', 'Unknown'))}\n"
+                cmd = test.get('command', test.get('module', 'Unknown'))
+                response += f"  • {cmd}\n"
             if len(report['failed_tests']) > 5:
                 response += f"  ... and {len(report['failed_tests']) - 5} more\n"
             response += "\n"
         
         # Show warnings
         if report.get('warnings'):
-            response += f"⚠️ **Warnings** ({len(report['warnings'])}):\n"
+            response += f"⚠️ <b>Warnings</b> ({len(report['warnings'])}):\n"
             for warning in report['warnings'][:3]:  # First 3
-                response += f"  • {warning.get('command', warning.get('module', 'Unknown'))}\n"
+                cmd = warning.get('command', warning.get('module', 'Unknown'))
+                response += f"  • {cmd}\n"
             if len(report['warnings']) > 3:
                 response += f"  ... and {len(report['warnings']) - 3} more\n"
         
@@ -15428,25 +15493,25 @@ async def health_function_test_callback(update: Update, context: ContextTypes.DE
         
         await query.edit_message_text(
             response,
-            parse_mode='Markdown',
+            parse_mode='HTML',
             reply_markup=reply_markup
         )
         
     except asyncio.TimeoutError:
         await query.edit_message_text(
-            "⏱️ **Function health test timed out**\n\n"
+            "⏱️ <b>Function health test timed out</b>\n\n"
             "Tests took too long to complete.\n"
             "Try again later.",
-            parse_mode='Markdown'
+            parse_mode='HTML'
         )
     except Exception as e:
         logger.error(f"Function health test failed: {e}")
+        error_msg = str(e).replace('<', '&lt;').replace('>', '&gt;')
         await query.edit_message_text(
-            f"❌ **Function health test failed**\n\n"
-            f"Error: `{str(e)}`",
-            parse_mode='Markdown'
+            f"❌ <b>Function health test failed</b>\n\n"
+            f"Error: <code>{error_msg}</code>",
+            parse_mode='HTML'
         )
-
 
 async def health_replay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -17866,10 +17931,10 @@ def main():
     app.add_handler(CallbackQueryHandler(backtest_all_callback, pattern='^backtest_all'))
     app.add_handler(CallbackQueryHandler(backtest_deep_dive_callback, pattern='^backtest_deep_dive$'))
     app.add_handler(CallbackQueryHandler(deep_dive_symbol_callback, pattern='^deep_dive_'))
-    app.add_handler(CallbackQueryHandler(health_callback, pattern='^health_'))
     app.add_handler(CallbackQueryHandler(health_function_test_callback, pattern="^health_function_test$"))
     app.add_handler(CallbackQueryHandler(health_performance_callback, pattern="^health_performance$"))
     app.add_handler(CallbackQueryHandler(health_replay_callback, pattern="^health_replay$"))
+    app.add_handler(CallbackQueryHandler(health_callback, pattern='^health_'))
     
     # Message handler за текстови бутони от клавиатурата
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
