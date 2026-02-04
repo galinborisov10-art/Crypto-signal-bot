@@ -780,7 +780,7 @@ class ICTSignalEngine:
         
         # СТЪПКА 1: HTF BIAS (1D → 4H fallback)
         logger.info("📊 Step 1: HTF Bias")
-        htf_bias = self._get_htf_bias_with_fallback(symbol, mtf_data)
+        htf_bias = self._get_htf_bias_with_fallback(symbol, mtf_data, timeframe)
         
         # СТЪПКА 2: MTF STRUCTURE (4H)
         logger.info("📊 Step 2: MTF Structure")
@@ -2357,10 +2357,27 @@ class ICTSignalEngine:
         ict_components: Dict,
         mtf_analysis: Optional[Dict]
     ) -> MarketBias:
-        """Determine overall market bias"""
+        """
+        Determine market bias from HTF (Higher Timeframe)
+        
+        ✅ ICT Rule: Bias = HTF structure direction
+        - HTF bias has ABSOLUTE priority
+        - Local OB/FVG are for entry validation, NOT bias determination
+        """
+        
+        # ✅ PRIORITY 1: HTF Bias (return directly if available)
+        if mtf_analysis and 'htf_bias' in mtf_analysis:
+            htf_bias = mtf_analysis.get('htf_bias', 'NEUTRAL')
+            
+            if 'BULLISH' in htf_bias.upper():
+                return MarketBias.BULLISH
+            elif 'BEARISH' in htf_bias.upper():
+                return MarketBias.BEARISH
+            # If HTF is NEUTRAL, continue to fallback logic
+        
+        # ✅ FALLBACK: Calculate from local components (when HTF unavailable)
         bullish_score = 0
         bearish_score = 0
-        
         
         # Order blocks
         bullish_obs = [ob for ob in ict_components.get('order_blocks', []) 
@@ -2384,27 +2401,16 @@ class ICTSignalEngine:
         elif len(bearish_fvgs) > len(bullish_fvgs):
             bearish_score += 1
         
-        # MTF bias
-        if mtf_analysis:
-            htf_bias = mtf_analysis.get('htf_bias', 'NEUTRAL')
-            if 'BULLISH' in htf_bias:
-                bullish_score += 2
-            elif 'BEARISH' in htf_bias:
-                bearish_score += 2
-        
-        # Determine bias
-        # ✅ FIX #2: LOWERED THRESHOLD: 2 → 1 (easier to get directional bias)
+        # Determine bias from local components
         if bullish_score >= 1 and bullish_score > bearish_score:
             return MarketBias.BULLISH
         elif bearish_score >= 1 and bearish_score > bullish_score:
             return MarketBias.BEARISH
         elif bullish_score == bearish_score > 0:
-            # Equal scores but directional components exist
-            return MarketBias.NEUTRAL  # Less severe than RANGING
+            return MarketBias.NEUTRAL
         else:
-            # No directional components or conflicting signals
             return MarketBias.RANGING
-    
+
     def _check_structure_break(self, df: pd.DataFrame) -> bool:
         """Check for recent structure break (BOS/CHOCH)"""
         # Simple check: look for break of recent swing high/low
@@ -4273,16 +4279,44 @@ class ICTSignalEngine:
             logger.error(f"❌ ML optimization error: {e}")
             return entry_price, stop_loss, take_profit
     
-    def _get_htf_bias_with_fallback(self, symbol: str, mtf_data: Optional[Dict]) -> str:
+    def _get_htf_bias_with_fallback(self, symbol: str, mtf_data: Optional[Dict], entry_timeframe: str) -> str:
         """
-        ЗАДЪЛЖИТЕЛНО: Получава HTF bias от 1D → 4H fallback
-        """
+Get HTF bias based on entry timeframe hierarchy
+
+✅ Uses timeframe_hierarchy.json:
+- 1H/2H entries → HTF bias from 1D
+- 4H/1D entries → HTF bias from 1W
+"""
         if mtf_data is None or not isinstance(mtf_data, dict):
             logger.warning("No MTF data available, using NEUTRAL bias")
             return 'NEUTRAL'
         
         try:
-            # Опит 1: 1D timeframe (HTF)
+            # ✅ Get HTF bias timeframe from hierarchy config
+            entry_tf_normalized = entry_timeframe.lower()
+            hierarchy = self.tf_hierarchy.get('hierarchies', {}).get(entry_tf_normalized, {})
+            
+            if hierarchy:
+                htf_bias_tf = hierarchy.get('htf_bias_tf', '1d')
+                logger.info(f"✅ Using HTF bias TF: {htf_bias_tf} for {entry_timeframe} entry")
+            else:
+                # Fallback: 1H/2H→1D, 4H/1D→1W
+                htf_bias_tf = '1w' if entry_tf_normalized in ['4h', '1d'] else '1d'
+                logger.warning(f"⚠️ {entry_timeframe} not in config, using: {htf_bias_tf}")
+            
+            # Try to get data for the HTF bias timeframe
+            for tf_variant in [htf_bias_tf, htf_bias_tf.upper(), htf_bias_tf.replace('w', 'W').replace('d', 'D').replace('h', 'H')]:
+                if tf_variant in mtf_data:
+                    df_htf = mtf_data[tf_variant]
+                    if df_htf is not None and not df_htf.empty and len(df_htf) >= 20:
+                        bias_components = self._detect_ict_components(df_htf, htf_bias_tf)
+                        htf_bias = self._determine_market_bias(df_htf, bias_components, None)
+                        htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
+                        logger.info(f"✅ HTF Bias from {htf_bias_tf.upper()}: {htf_bias_str}")
+                        return htf_bias_str
+            
+            # Fallback: try 1D then 4H
+            logger.warning(f"⚠️ {htf_bias_tf} not available, trying 1D fallback...")
             if '1d' in mtf_data or '1D' in mtf_data:
                 df_1d = mtf_data.get('1d') if mtf_data.get('1d') is not None else mtf_data.get('1D')
                 if df_1d is not None and not df_1d.empty and len(df_1d) >= 20:
