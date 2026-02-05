@@ -1161,7 +1161,7 @@ class ICTSignalEngine:
                 symbol=symbol,
                 timeframe=timeframe,
                 reason=f"Risk/Reward под минимум ({risk_reward_ratio:.2f})",
-                details=f"Необходими: RR ≥{self.config['min_risk_reward']}. Намерени: {risk_reward_ratio:.2f}",
+                details=f"Необходими: RR >={self.config['min_risk_reward']}. Намерени: {risk_reward_ratio:.2f}",
                 mtf_breakdown={},
                 current_price=context['current_price'],
                 price_change_24h=context['price_change_24h'],
@@ -1170,7 +1170,7 @@ class ICTSignalEngine:
                 confidence=None
             )
         
-        logger.info(f"✅ PASSED Step 10: RR validated ({risk_reward_ratio:.2f} ≥ {self.config['min_risk_reward']:.2f} → 1:{risk_reward_ratio:.1f} ≥ 1:{self.config['min_risk_reward']:.0f})")
+        logger.info(f"✅ PASSED Step 10: RR validated ({risk_reward_ratio:.2f} >= {self.config['min_risk_reward']:.2f} → 1:{risk_reward_ratio:.1f} >= 1:{self.config['min_risk_reward']:.0f})")
         
         # BASE CONFIDENCE
         logger.info("🔍 Step 11: Confidence Calculation")
@@ -1414,7 +1414,7 @@ class ICTSignalEngine:
                 symbol=symbol,
                 timeframe=timeframe,
                 reason=f"Липса на MTF consensus ({mtf_consensus_data['consensus_pct']:.1f}%)",
-                details=f"Необходими: ≥50% aligned TFs. Намерени: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}",
+                details=f"Необходими: >=50% aligned TFs. Намерени: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}",
                 mtf_breakdown=mtf_consensus_data['breakdown'],
                 current_price=context['current_price'],
                 price_change_24h=context['price_change_24h'],
@@ -1423,7 +1423,7 @@ class ICTSignalEngine:
                 confidence=confidence
             )
         
-        logger.info(f"✅ PASSED Step 11.5: MTF consensus validated ({mtf_consensus_data['consensus_pct']:.1f}% ≥ 50%)")
+        logger.info(f"✅ PASSED Step 11.5: MTF consensus validated ({mtf_consensus_data['consensus_pct']:.1f}% >= 50%)")
         
         # Confidence check (dynamic based on auto vs manual)
         logger.info("🔍 Step 11.6: Final Confidence Check")
@@ -1443,7 +1443,7 @@ class ICTSignalEngine:
                 symbol=symbol,
                 timeframe=timeframe,
                 reason=f"Ниска увереност ({confidence:.1f}%) за {mode} сигнал",
-                details=f"Необходими: ≥{min_confidence}%. Намерени: {confidence:.1f}%",
+                details=f"Необходими: >={min_confidence}%. Намерени: {confidence:.1f}%",
                 mtf_breakdown=mtf_consensus_data['breakdown'],
                 current_price=context['current_price'],
                 price_change_24h=context['price_change_24h'],
@@ -1452,7 +1452,7 @@ class ICTSignalEngine:
                 confidence=confidence
             )
         
-        logger.info(f"✅ PASSED Step 11.6: Confidence validated ({confidence:.1f}% ≥ {min_confidence}% - {mode} mode)")
+        logger.info(f"✅ PASSED Step 11.6: Confidence validated ({confidence:.1f}% >= {min_confidence}% - {mode} mode)")
         
         # СТЪПКА 12: FINAL SIGNAL GENERATION
         logger.info("🔍 Step 12: Final Signal Generation")
@@ -3198,8 +3198,8 @@ class ICTSignalEngine:
         """
         ЗАДЪЛЖИТЕЛНО: Валидира че SL е под/над валиден Order Block (STRICT ICT)
         
-        BULLISH: SL ТРЯБВА да е ПОД Order Block bottom (buffer ≥ 0.2-0.3%)
-        BEARISH: SL ТРЯБВА да е НАД Order Block top (buffer ≥ 0.2-0.3%)
+        BULLISH: SL ТРЯБВА да е ПОД Order Block bottom (buffer >= 0.2-0.3%)
+        BEARISH: SL ТРЯБВА да е НАД Order Block top (buffer >= 0.2-0.3%)
         
         Returns:
             Tuple[float, bool]: (validated_sl_price, is_valid)
