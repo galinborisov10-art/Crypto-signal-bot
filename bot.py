@@ -5897,43 +5897,36 @@ async def check_news_impact_on_positions(article, impact):
                     current_price = pos.get('entry_price', 0)
                 
                 # Generate alert message
-                if NARRATIVES_AVAILABLE:
-                    news_data = {
-                        'headline': article.get('title', 'Breaking market news'),
-                        'sentiment_label': sentiment,
-                        'priority': 'critical' if impact_level == 'CRITICAL' else 'important',
-                        'impact_assessment': impact_assessment
-                    }
-                    
-                    alert_message = SwingTraderNarrative.critical_news_alert(
-                        pos, news_data, current_price, impact_assessment
-                    )
-                else:
+                # DISABLED: if NARRATIVES_AVAILABLE:
+                    # DISABLED: news_data = {
+                        # DISABLED: 'headline': article.get('title', 'Breaking market news'),
+                        # DISABLED: 'sentiment_label': sentiment,
+                        # DISABLED: 'priority': 'critical' if impact_level == 'CRITICAL' else 'important',
+                        # DISABLED: 'impact_assessment': impact_assessment
+                    # DISABLED: }
+                     # DISABLED:                     # DISABLED: alert_message = SwingTraderNarrative.critical_news_alert(
+                        # DISABLED: pos, news_data, current_price, impact_assessment
+                    # DISABLED: )
+                # DISABLED: else:
                     # Fallback simple alert
-                    alert_message = f"""
-🔴 BREAKING NEWS ALERT - {symbol}
-
-📰 {article.get('title', 'Market news')}
-
-Impact: {impact_assessment}
-
-Current price: {current_price:.2f}
-Position: {'LONG' if is_long else 'SHORT'}
-
-IMMEDIATE ACTION MAY BE REQUIRED!
-"""
-                
-                # Send via Telegram
-                from telegram import Bot
-                bot = Bot(token=TELEGRAM_BOT_TOKEN)
-                await bot.send_message(
-                    chat_id=OWNER_CHAT_ID,
-                    text=alert_message,
-                    parse_mode='HTML',
-                    disable_notification=False  # WITH sound!
-                )
-                
-                logger.info(f"✅ Critical news alert sent for {symbol}")
+                    # DISABLED: alert_message = f"""
+# DISABLED: 🔴 BREAKING NEWS ALERT - {symbol}
+ # DISABLED: # DISABLED: 📰 {article.get('title', 'Market news')}
+ # DISABLED: # DISABLED: Impact: {impact_assessment}
+ # DISABLED: # DISABLED: Current price: {current_price:.2f}
+# DISABLED: Position: {'LONG' if is_long else 'SHORT'}
+ # DISABLED: # DISABLED: IMMEDIATE ACTION MAY BE REQUIRED!
+# DISABLED: """
+                 # DISABLED:                 # Send via Telegram
+                # DISABLED: from telegram import Bot
+                # DISABLED: bot = Bot(token=TELEGRAM_BOT_TOKEN)
+                # DISABLED: await bot.send_message(
+                    # DISABLED: chat_id=OWNER_CHAT_ID,
+                    # DISABLED: text=alert_message,
+                    # DISABLED: parse_mode='HTML',
+                    # DISABLED: disable_notification=False  # WITH sound!
+                # DISABLED: )
+                 # DISABLED:                 # DISABLED: logger.info(f"✅ Critical news alert sent for {symbol}")
         
     except Exception as e:
         logger.error(f"Грешка при проверка на новини срещу позиции: {e}")
@@ -18051,19 +18044,47 @@ def main():
                 # Add startup check for missed daily report
                 async def check_missed_daily_report():
                     """Check if daily report was missed today and send it"""
+                    # DISABLED: Don't check/send daily report on restart
+                    # Daily report will ONLY send at scheduled 08:00 BG time
+                    logger.info("ℹ️ Startup missed report check disabled - daily report sends only at 08:00")
+                    return
+                    
                     try:
                         bg_tz = pytz.timezone('Europe/Sofia')
                         now = datetime.now(bg_tz)
+                        today_str = now.strftime('%Y-%m-%d')
                         
-                        # If after 08:00 and before 23:59, check if report needs to be sent
-                        if now.hour > 8:
-                            logger.info("⚠️ Bot started after 08:00 - checking for missed daily report...")
-                            # Send the report now if we're within the grace period
-                            if now.hour < 20:  # Within 12 hours of scheduled time (08:00 + 12h = 20:00)
-                                logger.warning("⚠️ Daily report was missed - sending now...")
-                                await send_daily_auto_report()
-                            else:
-                                logger.info("ℹ️ Outside grace period - daily report will send tomorrow")
+                        # Check if report already sent today
+                        reports_file = f'{BASE_PATH}/daily_reports.json'
+                        already_sent = False
+                        
+                        try:
+                            if os.path.exists(reports_file):
+                                with open(reports_file, 'r') as f:
+                                    data = json.load(f)
+                                    reports = data.get('reports', [])
+                                    # Check if any report exists for today
+                                    for report in reports:
+                                        if report.get('date') == today_str:
+                                            already_sent = True
+                                            logger.info(f"✅ Daily report already sent today ({today_str})")
+                                            break
+                        except Exception as check_error:
+                            logger.warning(f"Could not check daily reports file: {check_error}")
+                        
+                        # Only send if not already sent today
+                        if not already_sent:
+                            # If after 08:00 and before 23:59, check if report needs to be sent
+                            if now.hour > 8:
+                                logger.info("⚠️ Bot started after 08:00 - checking for missed daily report...")
+                                # Send the report now if we're within the grace period
+                                if now.hour < 20:  # Within 12 hours of scheduled time (08:00 + 12h = 20:00)
+                                    logger.warning("⚠️ Daily report was missed - sending now...")
+                                    await send_daily_auto_report()
+                                else:
+                                    logger.info("ℹ️ Outside grace period - daily report will send tomorrow")
+                        else:
+                            logger.info("ℹ️ Daily report already sent today - skipping")
                     except Exception as e:
                         logger.error(f"Error in missed report check: {e}")
                 
