@@ -6827,28 +6827,62 @@ async def generate_swing_trading_analysis(symbol: str, language: str = 'bg') -> 
         resistance_dist = ((resistance_level - current_price) / current_price) * 100
         support_dist = ((current_price - support_level) / current_price) * 100
         
-        # Generate swing setup based on alignment
-        if alignment == "BULLISH_ALIGNED":
+        # Generate swing setup based on REAL DATA (not just ICT alignment)
+        # Smart determination using price action, volume, and momentum
+        
+        # Calculate momentum score
+        momentum_score = 0
+        if change_24h > 3:
+            momentum_score += 1
+        elif change_24h < -3:
+            momentum_score -= 1
+            
+        if change_7d > 10:
+            momentum_score += 2
+        elif change_7d > 5:
+            momentum_score += 1
+        elif change_7d < -10:
+            momentum_score -= 2
+        elif change_7d < -5:
+            momentum_score -= 1
+        
+        # Volume confirms momentum
+        if volume_trend == "INCREASING" and change_24h > 0:
+            momentum_score += 1
+        elif volume_trend == "DECREASING" and change_24h < 0:
+            momentum_score -= 1
+        
+        # Distance to resistance/support
+        near_support = support_dist < 5  # Within 5% of support
+        near_resistance = resistance_dist < 5  # Within 5% of resistance
+        
+        # Determine setup type intelligently
+        if alignment == "BULLISH_ALIGNED" or (momentum_score >= 2 and not near_resistance):
+            # Strong bullish: alignment OR strong momentum + room to grow
             setup_type = "BULLISH"
-            entry_price = resistance_level
+            entry_price = current_price * 0.99  # Slight pullback entry
             tp1 = entry_price * 1.025  # 2.5%
             tp2 = entry_price * 1.04   # 4%
-            sl = entry_price * 0.997   # 0.3%
+            sl = entry_price * 0.97    # 3% stop loss
             rr_ratio = (tp1 - entry_price) / (entry_price - sl) if (entry_price - sl) > 0 else 0
-        elif alignment == "BEARISH_ALIGNED":
+            
+        elif alignment == "BEARISH_ALIGNED" or (momentum_score <= -2):
+            # Strong bearish: alignment OR strong negative momentum
             setup_type = "BEARISH"
-            entry_price = support_level
+            entry_price = current_price * 1.01  # Slight rally to short
             tp1 = entry_price * 0.975  # -2.5%
             tp2 = entry_price * 0.96   # -4%
-            sl = entry_price * 1.003   # 0.3%
+            sl = entry_price * 1.03    # 3% stop loss
             rr_ratio = (entry_price - tp1) / (sl - entry_price) if (sl - entry_price) > 0 else 0
+            
         else:
+            # Ranging/Mixed: unclear direction or weak momentum
             setup_type = "RANGING"
             entry_price = resistance_level
             tp1 = entry_price * 1.038
             tp2 = entry_price * 1.062
             sl = entry_price * 0.997
-            rr_ratio = DEFAULT_SWING_RR_RATIO  # Use constant instead of hardcoded value
+            rr_ratio = DEFAULT_SWING_RR_RATIO
         
         # Format message based on language
         if language == 'bg':
@@ -7320,35 +7354,83 @@ def format_comprehensive_swing_message(symbol, display_name, price, change_24h, 
     msg += "📈 ПАЗАРЕН КОНТЕКСТ:\n"
     
     if setup_type == "RANGING":
-        msg += f"{symbol} в момента се търгува в консолидация между "
-        msg += f"${support:,.2f} подкрепа и ${resistance:,.2f} съпротива. "
-        msg += f"4-часовата и дневната времеви рамки показват {align_label.lower()} сигнали, "
-        msg += f"създавайки неясна посока преди значително движение.\n\n"
+        # Dynamic narrative based on actual price performance
+        msg += "📈 ПАЗАРЕН КОНТЕКСТ:\n"
         
-        msg += f"Анализът на обема показва {volume_trend.lower()} активност ({volume_ratio:.2f}x), "
-        msg += f"което е типично по време на консолидация. "
-        if fear_greed:
-            msg += f"Fear & Greed на {fear_greed['value']} потвърждава пазарната нерешителност.\n\n"
+        # Price performance analysis
+        if change_7d < -20:
+            msg += f"{symbol} преживява значителна седмична корекция от {change_7d:+.1f}%, "
+            msg += f"с цената спаднала драстично от наскоро достигнатите нива. "
+        elif change_7d < -10:
+            msg += f"{symbol} е в корекционна фаза с {change_7d:+.1f}% спад седмично, "
+            msg += f"показвайки временна слабост след по-ранно покачване. "
+        elif change_7d < -5:
+            msg += f"{symbol} показва умерен спад от {change_7d:+.1f}% за седмицата, "
+            msg += f"консолидирайки се в по-тесен диапазон. "
+        elif change_7d > 10:
+            msg += f"{symbol} показва силен momentum с {change_7d:+.1f}% растеж седмично, "
+            msg += f"но сега влиза в консолидация преди следващо движение. "
+        elif change_7d > 5:
+            msg += f"{symbol} е с {change_7d:+.1f}% покачване седмично, "
+            msg += f"консолидирайки печалбите в текущ range. "
         else:
-            msg += "\n\n"
+            msg += f"{symbol} се търгува относително стабилно ({change_7d:+.1f}% ��едмично), "
+            msg += f"показвайки балансирана консолидация. "
+        
+        msg += f"Текущо движение между ${support:,.2f} подкрепа и ${resistance:,.2f} съпротива. "
+        msg += f"Структурата е {align_label.lower()}.\n\n"
+        
+        # Volume analysis - dynamic interpretation
+        if volume_ratio < 0.7:
+            msg += f"Обемът е значително под средния ({volume_ratio:.2f}x), което сигнализира "                   f"намаляващ интерес и ниска убеденост от пазара. "
+        elif volume_ratio < 0.9:
+            msg += f"Обемът е леко под средния ({volume_ratio:.2f}x), типично за консолидационни периоди. "
+        elif volume_ratio > 1.2:
+            msg += f"Обемът е над средния ({volume_ratio:.2f}x), показвайки активен интерес въпреки консолидацията. "
+        else:
+            msg += f"Обемът е около средния ({volume_ratio:.2f}x), показвайки балансирана активност. "
+        
+        # Fear & Greed context
+        if fear_greed:
+            if fear_greed['value'] < 25:
+                msg += f"Fear & Greed индексът на {fear_greed['value']} показва екстремен страх - "                       f"потенциална buying opportunity за contrarian traders."
+            elif fear_greed['value'] < 45:
+                msg += f"Fear & Greed на {fear_greed['value']} отразява предпазливост в пазара."
+            else:
+                msg += f"Fear & Greed на {fear_greed['value']} показва относително неутрален sentiment."
+        msg += "\n\n"
         
         msg += "🎯 SWING TRADER ПЕРСПЕКТИВА:\n\n"
-        msg += "Настоящата конфигурация представлява класическа range-bound среда. "
-        msg += "Като опитен swing trader наблюдавам решителен пробив с потвърждение чрез обем.\n\n"
         
-        if change_24h > 0 and change_7d > 0:
-            msg += f"БИЧИ СЛУЧАЙ (Предпочитан):\n"
-            msg += f"Покачването с {change_24h:+.1f}% дневно и {change_7d:+.1f}% седмично показва основен бичи momentum. "
-            msg += f"Пробив над ${resistance:,.2f} би потвърдил продължение на uptrend. "
-            msg += f"R:R от {rr:.1f}:1 предлага добро съотношение.\n\n"
+        # Dynamic perspective based on momentum
+        if change_24h < -5 and change_7d < -15:
+            msg += f"Силната корекция (-{abs(change_7d):.1f}% седмично) създава потенциална зона за дългосрочен вход, "                   f"НО момента изисква ТЕРПЕНИЕ. Изчакай първи признаци на стабилизация:\n"
+            msg += f"• Обемът да започне да расте при покачване\n"
+            msg += f"• Цената да спре да прави нови дъна\n"
+            msg += f"• Пробив над ${resistance:,.2f} би потвърдил край на спада.\n\n"
+        elif change_7d < -5 and volume_ratio < 0.8:
+            msg += f"Комбинацията от спад ({change_7d:+.1f}%) и нисък обем ({volume_ratio:.2f}x) показва "                   f"липса на убеждение. Swing traders трябва да ИЗЧАКАТ:\n"
+            msg += f"• Ясен breakout с висок обем\n"
+            msg += f"• Потвърждение на посока (над ${resistance:,.2f} или под ${support:,.2f})\n"
+            msg += f"• За сега - НАБЛЮДАВАЙ, не влизай.\n\n"
+        elif change_24h > 0 and change_7d > 0:
+            msg += f"Положителният momentum ({change_24h:+.1f}% дневно, {change_7d:+.1f}% седмично) показва "                   f"основна бича тенденция. Консолидацията е ЗДРАВОСЛОВНА пауза.\n"
+            msg += f"• Breakout над ${resistance:,.2f} би потвърдил продължение\n"
+            msg += f"• R:R от {rr:.1f}:1 предлага добро съотношение\n"
+            msg += f"• Влез при breakout с потвърждение, НЕ в средата на range.\n\n"
         else:
-            msg += f"Чакай ясна посока преди вход. Пробив над ${resistance:,.2f} или под ${support:,.2f} "
-            msg += f"ще покаже следващото движение.\n\n"
+            msg += f"Текущата неяснота изисква ТЪРПЕНИЕ. Като опитен swing trader изчаквам:\n"
+            msg += f"• Решителен пробив с обем над ${resistance:,.2f} (bullish)\n"
+            msg += f"• Или breakdown под ${support:,.2f} (bearish)\n"
+            msg += f"• НЕ влизай в средата на range - лош риск/награда.\n\n"
         
         msg += "⚠️ КЛЮЧОВИ РИСКОВЕ:\n"
-        msg += "1. Пробиви с нисък обем са склонни към провал (фалшиви пробиви)\n"
-        msg += "2. Уикенд търговията може да произведе gap-ове\n"
-        msg += "3. Макро новини могат да заобиколят техническия анализ\n\n"
+        if volume_ratio < 0.8:
+            msg += f"1. КРИТИЧНО: Нисък обем ({volume_ratio:.2f}x) прави всеки breakout подозрителен - "                   f"висок риск от фалшив пробив\n"
+        else:
+            msg += "1. Фалшиви пробиви са чести в range-bound пазар - изисквай обемно потвърждение\n"
+        msg += "2. Уикенд gap-ове могат да объркат техническия анализ\n"
+        msg += "3. Макро новини (регулации, глобални пазари) могат да надделеят над техниката\n\n"
         
     elif setup_type == "BULLISH":
         msg += f"{symbol} показва силна бича структура с подравнени 4H и 1D таймфреймове. "
