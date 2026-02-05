@@ -227,17 +227,28 @@ class ComprehensiveDiagnostics:
         # Check environment variables
         required_env = {
             "TELEGRAM_BOT_TOKEN": "Telegram bot authentication",
-            "BINANCE_API_KEY": "Exchange trading",
-            "BINANCE_API_SECRET": "Exchange trading",
         }
         
-        missing_env = []
+        optional_env = {
+            "BINANCE_API_KEY": "Exchange trading (optional - for automated trading)",
+            "BINANCE_API_SECRET": "Exchange trading (optional - for automated trading)",
+        }
+        
+        missing_required = []
         for var, purpose in required_env.items():
             if not os.getenv(var):
-                missing_env.append(f"{var} ({purpose})")
+                missing_required.append(f"{var} ({purpose})")
         
-        if missing_env:
-            issues.append(f"Missing env vars: {', '.join(missing_env)}")
+        missing_optional = []
+        for var, purpose in optional_env.items():
+            if not os.getenv(var):
+                missing_optional.append(f"{var} ({purpose})")
+        
+        if missing_required:
+            issues.append(f"Missing required env vars: {', '.join(missing_required)}")
+        
+        if missing_optional:
+            issues.append(f"Optional env vars not set: {', '.join(missing_optional)}")
         
         # Check config files
         config_files = ["risk_config.json", "allowed_users.json"]
@@ -260,14 +271,24 @@ class ComprehensiveDiagnostics:
         if corrupt_files:
             issues.append(f"Corrupt JSON: {', '.join(corrupt_files)}")
         
-        if issues:
+        # Determine severity based on what's missing
+        if missing_required or missing_files or corrupt_files:
             return {
                 "status": "ERROR",
                 "severity": "CRITICAL",
                 "issue": "Configuration errors detected",
                 "location": "; ".join(issues),
-                "impact": "Bot cannot authenticate or trade",
+                "impact": "Bot cannot function properly",
                 "solution": "Add missing env vars to .env file and fix JSON files",
+            }
+        elif missing_optional:
+            return {
+                "status": "WARNING",
+                "severity": "LOW",
+                "issue": "Optional configuration not set",
+                "location": "; ".join(issues),
+                "impact": "Automated trading features unavailable",
+                "solution": "Add BINANCE_API_KEY and BINANCE_API_SECRET to .env if you need automated trading",
             }
         
         return {
@@ -530,17 +551,24 @@ class ComprehensiveDiagnostics:
             with open(journal_file, 'r') as f:
                 data = json.load(f)
             
-            if not isinstance(data, list):
+            # Accept both formats: simple array OR enhanced dict with 'trades' key
+            if isinstance(data, list):
+                # Simple array format (legacy)
+                trade_count = len(data)
+            elif isinstance(data, dict) and 'trades' in data:
+                # Enhanced format with metadata (current)
+                trade_count = len(data.get('trades', []))
+            else:
                 return {
                     "status": "ERROR",
                     "severity": "HIGH",
-                    "issue": "Journal corrupted (not an array)",
+                    "issue": "Journal corrupted (invalid format)",
                     "location": str(journal_file),
                     "impact": "Cannot read trade history",
-                    "solution": "Restore from backup"
+                    "solution": "Restore from backup or recreate journal structure"
                 }
             
-            return {"status": "OK", "severity": "HIGH", "message": f"Data OK ({len(data)} entries)"}
+            return {"status": "OK", "severity": "HIGH", "message": f"Data OK ({trade_count} trades)"}
             
         except json.JSONDecodeError:
             return {

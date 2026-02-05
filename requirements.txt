@@ -44,3 +44,4 @@ cryptography==44.0.0
 # HTTP & Networking
 httpx==0.28.1
 urllib3==2.5.0
+ccxt>=4.0.0
