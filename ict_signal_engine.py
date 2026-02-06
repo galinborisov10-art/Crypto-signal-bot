@@ -559,36 +559,47 @@ class ICTSignalEngine:
         """
         return {
             "hierarchies": {
+                "15m": {
+                    "entry_tf": "15m",
+                    "confirmation_tf": "30m",
+                    "structure_tf": "1h",
+                    "htf_bias_tf": "1h"
+                },
+                "30m": {
+                    "entry_tf": "30m",
+                    "confirmation_tf": "1h",
+                    "structure_tf": "1h",
+                    "htf_bias_tf": "1h"
+                },
                 "1h": {
                     "entry_tf": "1h",
                     "confirmation_tf": "2h",
                     "structure_tf": "4h",
-                    "htf_bias_tf": "1d"
+                    "htf_bias_tf": "4h"
                 },
                 "2h": {
                     "entry_tf": "2h",
                     "confirmation_tf": "4h",
-                    "structure_tf": "1d",
-                    "htf_bias_tf": "1d"
+                    "structure_tf": "4h",
+                    "htf_bias_tf": "4h"
                 },
-                "3h": {  # ← NEW: 3h hierarchy for manual signals
+                "3h": {
                     "entry_tf": "3h",
                     "confirmation_tf": "4h",
                     "structure_tf": "1d",
-                    "htf_bias_tf": "1d",
-                    "description": "3h entry with 4h confirmation and daily structure (manual analysis only)"
+                    "htf_bias_tf": "1d"
                 },
                 "4h": {
                     "entry_tf": "4h",
                     "confirmation_tf": "4h",
                     "structure_tf": "1d",
-                    "htf_bias_tf": "1w"
+                    "htf_bias_tf": "1d"
                 },
                 "1d": {
                     "entry_tf": "1d",
                     "confirmation_tf": "1d",
-                    "structure_tf": "1w",
-                    "htf_bias_tf": "1w"
+                    "structure_tf": "1d",
+                    "htf_bias_tf": "1d"
                 }
             },
             "validation_rules": {
@@ -779,6 +790,9 @@ class ICTSignalEngine:
         # ═══════ УНИФИЦИРАНА ПОСЛЕДОВАТЕЛНОСТ (12 СТЪПКИ) ═══════
         
         # СТЪПКА 1: HTF BIAS (1D → 4H fallback)
+        # ✅ FIX: Define entry_tf from parameter
+        entry_tf = timeframe
+
         logger.info("📊 Step 1: HTF Bias")
         htf_bias = self._get_htf_bias_with_fallback(symbol, mtf_data, timeframe)
         
@@ -831,7 +845,9 @@ class ICTSignalEngine:
         logger.info("🔍 Step 7: Bias Determination")
         
         # Calculate bias with diagnostic details
-        bias = self._determine_market_bias(df, ict_components, mtf_analysis)
+        # ✅ FIX: Use PURE structure-only bias (no OB/displacement)
+        bias_str, bias_confidence = self._calculate_pure_ict_bias_for_tf(df, symbol, entry_tf)
+        bias = MarketBias[bias_str]  # Convert string to enum
         structure_broken = self._check_structure_break(df)
         displacement_detected = self._check_displacement(df)
         
@@ -862,60 +878,17 @@ class ICTSignalEngine:
         confidence_penalty = 0.0  # Track penalty for Step 11 confidence calculation
         
         if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-            logger.warning(f"⚠️ Step 7b: {symbol} bias is {bias.value} - checking mitigation options")
+            logger.warning(f"⚠️ Step 7b: {symbol} bias is {bias.value} - applying RANGING penalty")
             
-            # Check ALT-independent mode
-            if symbol in self.ALT_INDEPENDENT_SYMBOLS:
-                logger.info(f"⚠️ {symbol} using ALT-independent mode - analyzing own structure")
-                
-                # Re-analyze with own ICT components (ignore HTF)
-                own_bias = self._determine_market_bias(df, ict_components, mtf_analysis=None)
-                
-                if own_bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-                    # Even own structure is non-directional - must generate NO_TRADE
-                    logger.warning(f"❌ {symbol} own bias still {own_bias.value} - cannot generate directional signal")
-                    logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7b, reason: No directional bias)")
-                    
-                    context = self._extract_context_data(df, own_bias, symbol)
-                    mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, own_bias, mtf_data)
-                    
-                    return self._create_no_trade_message(
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        reason=f"{symbol} bias is {own_bias.value} (no directional structure)",
-                        details=f"Both HTF ({bias.value}) and own structure ({own_bias.value}) are non-directional. Waiting for clearer setup.",
-                        mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
-                        current_price=context['current_price'],
-                        price_change_24h=context['price_change_24h'],
-                        rsi=context['rsi'],
-                        signal_direction=context['signal_direction'],
-                        confidence=None
-                    )
-                else:
-                    logger.info(f"✅ {symbol} own bias is {own_bias.value} (improved from HTF {bias.value})")
-                    confidence_penalty = 0.20  # 20% penalty (HTF was unclear, but own structure is clear)
-                    bias = own_bias  # Use improved own bias
-                    logger.info(f"   → Continuing with {bias.value} bias and -20% confidence penalty")
-            else:
-                # Non-ALT symbols with NEUTRAL/RANGING - convert to NO_TRADE
-                logger.warning(f"❌ Non-ALT symbol {symbol} with {bias.value} bias - cannot generate directional signal")
-                logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7b, reason: Non-directional bias)")
-                
-                context = self._extract_context_data(df, bias, symbol)
-                mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
-                
-                return self._create_no_trade_message(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    reason=f"Market bias is {bias.value}",
-                    details=f"HTF analysis shows {bias.value} conditions. Waiting for directional structure.",
-                    mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
-                    current_price=context['current_price'],
-                    price_change_24h=context['price_change_24h'],
-                    rsi=context['rsi'],
-                    signal_direction=context['signal_direction'],
-                    confidence=None
-                )
+            # RANGING bias = no clear structure direction
+            # → Apply 25% confidence penalty
+            # → Mark as "RANGE" setup type
+            # → Continue with signal generation (may not reach threshold)
+            
+            confidence_penalty = 0.25  # 25% penalty for ranging market
+            logger.info(f"   → Applying 25% confidence penalty for RANGING bias")
+            logger.info(f"   → Setup will be marked as 'RANGE' type")
+            logger.info(f"   → Signal may not reach 60%/70% threshold (expected)")
         else:
             # Directional bias (BULLISH/BEARISH) - no penalty
             confidence_penalty = 0.0
@@ -2085,7 +2058,7 @@ class ICTSignalEngine:
                 - conflicting_tfs: списък с конфликтни TF
                 - neutral_tfs: списък с неутрални TF
         """
-        all_timeframes = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d', '3d', '1w']
+        all_timeframes = ['15m', '30m', '1h', '2h', '4h', '1d']
         
         breakdown = {}
         aligned_count = 0
@@ -2190,135 +2163,103 @@ class ICTSignalEngine:
             'total_count': total_count
         }
     
-    def _calculate_pure_ict_bias_for_tf(
-        self, 
-        df: pd.DataFrame
-    ) -> Tuple[MarketBias, float]:
+    def _calculate_pure_ict_bias_for_tf(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Tuple[str, float]:
         """
-        ✅ PURE ICT Bias Calculation for MTF Timeframes - NO MA/EMA!
+        Calculate pure ICT bias based ONLY on market structure (HH/HL vs LH/LL).
         
-        Uses:
-        1. Market Structure (HH+HL vs LH+LL) - 50 points
-        2. Order Block direction - 30 points
-        3. Price Displacement - 20 points
+        NO Order Blocks, NO Displacement - PURE structure analysis.
         
         Args:
-            df: DataFrame with OHLCV data
+            df: DataFrame with OHLCV data for the specific timeframe
+            symbol: Trading symbol
+            timeframe: Timeframe being analyzed
             
         Returns:
-            Tuple of (MarketBias, confidence_score)
+            Tuple of (bias_direction, bias_score)
+            - bias_direction: "BULLISH", "BEARISH", or "RANGING"
+            - bias_score: 0-50 confidence score (structure only)
         """
-        if len(df) < 20:
-            return MarketBias.NEUTRAL, 0.0
+        logger.info(f"🔍 Calculating PURE structure bias for {symbol} {timeframe}")
         
         bullish_score = 0
         bearish_score = 0
-        max_score = 100
+        max_score = 50  # Only structure (was 100 with OB+Displacement)
         
         # ═══════════════════════════════════════════════════════════
-        # 1. MARKET STRUCTURE (50 points)
+        # STRUCTURE ANALYSIS (ONLY SOURCE OF BIAS)
         # ═══════════════════════════════════════════════════════════
+        
         try:
-            highs = df['high'].values
-            lows = df['low'].values
-            
-            # Find swing points (simple method - last 10 candles)
             swing_highs = []
             swing_lows = []
+            window = 5
             
-            for i in range(5, len(df) - 5):
-                # Swing high: higher than 5 candles before and after
-                if all(highs[i] > highs[i-j] for j in range(1, 6)) and \
-                   all(highs[i] > highs[i+j] for j in range(1, 6)):
-                    swing_highs.append(highs[i])
+            for i in range(window, len(df) - window):
+                # Swing high
+                if df['high'].iloc[i] == df['high'].iloc[i-window:i+window+1].max():
+                    swing_highs.append({
+                        'price': df['high'].iloc[i],
+                        'index': i,
+                        'time': df.index[i]
+                    })
                 
-                # Swing low: lower than 5 candles before and after
-                if all(lows[i] < lows[i-j] for j in range(1, 6)) and \
-                   all(lows[i] < lows[i+j] for j in range(1, 6)):
-                    swing_lows.append(lows[i])
+                # Swing low
+                if df['low'].iloc[i] == df['low'].iloc[i-window:i+window+1].min():
+                    swing_lows.append({
+                        'price': df['low'].iloc[i],
+                        'index': i,
+                        'time': df.index[i]
+                    })
             
-            # Analyze structure
-            if len(swing_highs) >= 2 and len(swing_lows) >= 2:
-                # Higher Highs + Higher Lows = BULLISH
-                if swing_highs[-1] > swing_highs[-2] and swing_lows[-1] > swing_lows[-2]:
-                    bullish_score += 50
-                # Lower Highs + Lower Lows = BEARISH
-                elif swing_highs[-1] < swing_highs[-2] and swing_lows[-1] < swing_lows[-2]:
-                    bearish_score += 50
-                # Mixed structure = ranging (no points)
+            # Analyze last 2 swing points
+            if len(swing_highs) >= 2:
+                last_high = swing_highs[-1]['price']
+                prev_high = swing_highs[-2]['price']
+                
+                if last_high > prev_high:
+                    bullish_score += 25  # HH (Higher High)
+                    logger.info(f"  ✅ HH detected: {prev_high:.2f} → {last_high:.2f} (+25 bullish)")
+                else:
+                    bearish_score += 25  # LH (Lower High)
+                    logger.info(f"  ✅ LH detected: {prev_high:.2f} → {last_high:.2f} (+25 bearish)")
+            
+            if len(swing_lows) >= 2:
+                last_low = swing_lows[-1]['price']
+                prev_low = swing_lows[-2]['price']
+                
+                if last_low > prev_low:
+                    bullish_score += 25  # HL (Higher Low)
+                    logger.info(f"  ✅ HL detected: {prev_low:.2f} → {last_low:.2f} (+25 bullish)")
+                else:
+                    bearish_score += 25  # LL (Lower Low)
+                    logger.info(f"  ✅ LL detected: {prev_low:.2f} → {last_low:.2f} (+25 bearish)")
+            
+            logger.info(f"  📊 Structure scores: Bullish={bullish_score}, Bearish={bearish_score}")
+            
         except Exception as e:
-            logger.debug(f"Market structure analysis error: {e}")
+            logger.warning(f"⚠️ Structure analysis failed: {e}")
         
         # ═══════════════════════════════════════════════════════════
-        # 2. ORDER BLOCKS (30 points)
-        # ═══════════════════════════════════════════════════════════
-        try:
-            bullish_obs = 0
-            bearish_obs = 0
-            
-            # Check last 15 candles for order block patterns
-            for i in range(len(df) - 15, len(df) - 1):
-                if i < 1:
-                    continue
-                
-                candle = df.iloc[i]
-                next_candle = df.iloc[i + 1]
-                
-                # Bullish OB: Down candle followed by break of high
-                if candle['close'] < candle['open']:
-                    if next_candle['close'] > candle['high']:
-                        bullish_obs += 1
-                
-                # Bearish OB: Up candle followed by break of low
-                if candle['close'] > candle['open']:
-                    if next_candle['close'] < candle['low']:
-                        bearish_obs += 1
-            
-            if bullish_obs > bearish_obs:
-                bullish_score += 30
-            elif bearish_obs > bullish_obs:
-                bearish_score += 30
-        except Exception as e:
-            logger.debug(f"Order block analysis error: {e}")
-        
-        # ═══════════════════════════════════════════════════════════
-        # 3. DISPLACEMENT (20 points)
-        # ═══════════════════════════════════════════════════════════
-        try:
-            # Check last 5 candles for strong directional move
-            last_5 = df.tail(5)
-            
-            total_bullish_body = 0
-            total_bearish_body = 0
-            
-            for idx, candle in last_5.iterrows():
-                body = abs(candle['close'] - candle['open'])
-                
-                if candle['close'] > candle['open']:  # Bullish
-                    total_bullish_body += body
-                else:  # Bearish
-                    total_bearish_body += body
-            
-            # Require 60% dominance for displacement
-            if total_bullish_body > total_bearish_body * 1.6:
-                bullish_score += 20
-            elif total_bearish_body > total_bullish_body * 1.6:
-                bearish_score += 20
-        except Exception as e:
-            logger.debug(f"Displacement analysis error: {e}")
-        
-        # ═══════════════════════════════════════════════════════════
-        # DETERMINE BIAS
+        # DETERMINE BIAS (STRUCTURE ONLY)
         # ═══════════════════════════════════════════════════════════
         
-        if bullish_score >= 60 and bullish_score > bearish_score:
-            return MarketBias.BULLISH, bullish_score
-        elif bearish_score >= 60 and bearish_score > bullish_score:
-            return MarketBias.BEARISH, bearish_score
-        elif abs(bullish_score - bearish_score) <= 20:
-            return MarketBias.RANGING, max(bullish_score, bearish_score)
+        threshold = 50  # Need full structure score (both HH+HL or LH+LL)
+        
+        if bullish_score >= threshold and bullish_score > bearish_score:
+            bias = "BULLISH"
+            score = bullish_score
+            logger.info(f"  ✅ BIAS: BULLISH (HH + HL confirmed)")
+        elif bearish_score >= threshold and bearish_score > bullish_score:
+            bias = "BEARISH"
+            score = bearish_score
+            logger.info(f"  ✅ BIAS: BEARISH (LH + LL confirmed)")
         else:
-            return MarketBias.NEUTRAL, 50.0
+            bias = "RANGING"
+            score = max(bullish_score, bearish_score)
+            logger.info(f"  ⚠️ BIAS: RANGING (mixed structure, score={score})")
+        
+        return bias, score
+
     
     def _determine_bias_from_components(self, components: Dict) -> str:
         """
