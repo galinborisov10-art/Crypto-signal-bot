@@ -878,17 +878,20 @@ class ICTSignalEngine:
         confidence_penalty = 0.0  # Track penalty for Step 11 confidence calculation
         
         if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-            logger.warning(f"⚠️ Step 7b: {symbol} bias is {bias.value} - applying RANGING penalty")
+            logger.warning(f"⚠️ Step 7b: {symbol} bias is {bias.value} - RANGING market detected")
+            logger.info(f"   → RANGING market = no clear directional bias")
+            logger.info(f"   → Returning HOLD signal (no trade setup)")
             
-            # RANGING bias = no clear structure direction
-            # → Apply 25% confidence penalty
-            # → Mark as "RANGE" setup type
-            # → Continue with signal generation (may not reach threshold)
-            
-            confidence_penalty = 0.25  # 25% penalty for ranging market
-            logger.info(f"   → Applying 25% confidence penalty for RANGING bias")
-            logger.info(f"   → Setup will be marked as 'RANGE' type")
-            logger.info(f"   → Signal may not reach 60%/70% threshold (expected)")
+            # ✅ EARLY EXIT: RANGING = HOLD (no trade)
+            return {
+                'action': 'HOLD',
+                'confidence': 0,
+                'reason': 'RANGING_MARKET',
+                'message': f'{symbol} market is RANGING on {timeframe}. No clear directional bias. Wait for breakout.',
+                'bias': bias.value,
+                'timeframe': timeframe,
+                'symbol': symbol
+            }
         else:
             # Directional bias (BULLISH/BEARISH) - no penalty
             confidence_penalty = 0.0
@@ -2043,60 +2046,87 @@ class ICTSignalEngine:
         mtf_data: Optional[Dict[str, pd.DataFrame]] = None
     ) -> Dict:
         """
-        ✅ FIX #3: Calculate Multi-Timeframe Consensus (REALISTIC)
-        
-        Only EXACT bias match counts as aligned
-        NEUTRAL = not aligned, not conflicting (excluded from calculation)
-        
-        Проверява bias на всички timeframes: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d, 3d, 1w
-        
-        Returns:
-            Dict с:
-                - consensus_pct: процент съгласни timeframes (0-100)
-                - breakdown: детайлен breakdown по TF
-                - aligned_tfs: списък със съгласни TF
-                - conflicting_tfs: списък с конфликтни TF
-                - neutral_tfs: списък с неутрални TF
+        ✅ IMPROVED MTF Consensus:
+        1. RANGING/NEUTRAL = ignored (not counted as conflicting)
+        2. Dynamic TF selection based on entry TF
+        3. Correct formula: aligned / (bullish + bearish) * 100
         """
-        all_timeframes = ['15m', '30m', '1h', '2h', '4h', '1d']
+        
+        # Dynamic MTF hierarchy based on entry timeframe
+        MTF_HIERARCHY = {
+            '5m':  ['5m', '15m', '30m', '1h'],
+            '15m': ['15m', '30m', '1h', '4h'],
+            '30m': ['30m', '1h', '2h', '4h'],
+            '1h':  ['1h', '2h', '4h', '1d'],
+            '2h':  ['2h', '4h', '1d'],
+            '4h':  ['4h', '1d'],
+            '1d':  ['1d', '1w']
+        }
+        
+        # Get relevant timeframes for this entry TF
+        relevant_tfs = MTF_HIERARCHY.get(primary_timeframe, ['1h', '4h', '1d'])
+        
+        # ✅ NORMALIZE target_bias to MarketBias enum
+        if isinstance(target_bias, str):
+            target_bias = MarketBias[target_bias.upper()]
         
         breakdown = {}
         aligned_count = 0
-        conflicting_count = 0
-        neutral_count = 0
-        total_count = 0
+        bullish_votes = 0
+        bearish_votes = 0
         
-        # Проверка на първичния timeframe
+        # Primary timeframe is always 100% aligned
         breakdown[primary_timeframe] = {
             'bias': target_bias.value if hasattr(target_bias, 'value') else str(target_bias),
-            'confidence': 100,  # Първичният TF е 100% сигурен
+            'confidence': 100,
             'aligned': True
         }
         aligned_count += 1
-        total_count += 1
+        if target_bias == MarketBias.BULLISH:
+            bullish_votes += 1
+        elif target_bias == MarketBias.BEARISH:
+            bearish_votes += 1
         
-        # Проверка на други timeframes (ако има данни)
+        # Check other relevant timeframes
         if mtf_data is not None and isinstance(mtf_data, dict):
-            for tf in all_timeframes:
+            for tf in relevant_tfs:
                 if tf == primary_timeframe:
-                    continue  # Вече е добавен
+                    continue  # Already added
                 
                 tf_df = mtf_data.get(tf)
                 if tf_df is not None and not tf_df.empty and len(tf_df) >= 20:
-                    # ✅ PURE ICT BIAS CALCULATION (no MA/EMA)
                     try:
-                        tf_bias, confidence = self._calculate_pure_ict_bias_for_tf(tf_df)
+                        tf_bias, confidence = self._calculate_pure_ict_bias_for_tf(tf_df, symbol, tf)
                         
-                        # ✅ FIX #3: Only exact match counts as aligned
-                        if tf_bias == target_bias:
-                            is_aligned = True
+                        # ✅ NORMALIZE tf_bias to enum immediately
+                        if isinstance(tf_bias, str):
+                            tf_bias = MarketBias[tf_bias.upper()]
+                        
+                        # ✅ FIX: RANGING/NEUTRAL = ignored (not counted)
+                        if tf_bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
+                            breakdown[tf] = {
+                                'bias': tf_bias.value if hasattr(tf_bias, 'value') else str(tf_bias),
+                                'confidence': round(confidence, 1),
+                                'aligned': None  # Not counted
+                            }
+                            continue  # Skip, don't count as vote
+                        
+                        # Count directional votes only (AFTER RANGING filter)
+                        if tf_bias == MarketBias.BULLISH:
+                            bullish_votes += 1
+                        elif tf_bias == MarketBias.BEARISH:
+                            bearish_votes += 1
+                        
+                        # Check alignment AFTER we know it's directional
+                        # ✅ NORMALIZE both to enum for comparison
+                        tf_bias_enum = tf_bias if isinstance(tf_bias, MarketBias) else MarketBias[str(tf_bias).upper()]
+                        target_bias_enum = target_bias if isinstance(target_bias, MarketBias) else MarketBias[str(target_bias).upper()]
+                        
+                        is_aligned = (tf_bias_enum == target_bias_enum)
+                        logger.info(f"   → MTF {tf}: bias={tf_bias_enum.value}, target={target_bias_enum.value}, aligned={is_aligned}")
+                        
+                        if is_aligned:
                             aligned_count += 1
-                        elif tf_bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-                            is_aligned = False  # Not aligned (but also not conflicting)
-                            neutral_count += 1
-                        else:
-                            is_aligned = False  # Opposite bias
-                            conflicting_count += 1
                         
                         breakdown[tf] = {
                             'bias': tf_bias.value if hasattr(tf_bias, 'value') else str(tf_bias),
@@ -2104,65 +2134,35 @@ class ICTSignalEngine:
                             'aligned': is_aligned
                         }
                         
-                        total_count += 1
-                        
                     except Exception as e:
                         logger.warning(f"MTF consensus analysis failed for {tf}: {e}")
-                        breakdown[tf] = {
-                            'bias': 'NEUTRAL',
-                            'confidence': 0,
-                            'aligned': False
-                        }
-                        neutral_count += 1
-                        total_count += 1
-                else:
-                    # Няма данни за този TF - не се брои
-                    breakdown[tf] = {
-                        'bias': 'NO_DATA',
-                        'confidence': 0,
-                        'aligned': False
-                    }
-                    # Don't increment counters for missing data
+        
+        # ✅ CORRECT FORMULA: aligned / (bullish + bearish) * 100
+        total_directional_votes = bullish_votes + bearish_votes
+        if total_directional_votes > 0:
+            consensus_pct = (aligned_count / total_directional_votes) * 100
         else:
-            # Няма MTF data - само primary TF
-            pass
+            consensus_pct = 0
         
-        # ✅ FIX #3: Consensus = aligned / (aligned + conflicting)
-        # NEUTRAL timeframes excluded from calculation
-        consensus_denominator = aligned_count + conflicting_count
+        aligned_tfs = [tf for tf, data in breakdown.items() if data.get('aligned') == True]
+        conflicting_tfs = [tf for tf, data in breakdown.items() if data.get('aligned') == False]
+        neutral_tfs = [tf for tf, data in breakdown.items() if data.get('aligned') is None]
         
-        if consensus_denominator > 0:
-            consensus_pct = (aligned_count / consensus_denominator * 100)
-        elif aligned_count > 0:
-            # All timeframes are aligned (no conflicts, no neutrals) - 100%
-            consensus_pct = 100.0
-        else:
-            # All timeframes are NEUTRAL/RANGING - undefined consensus, use 0%
-            # This indicates market indecision across all timeframes
-            consensus_pct = 0.0
-            logger.warning("All MTF timeframes are NEUTRAL/RANGING - market indecision")
-        
-        # Подготви списъци
-        aligned_tfs = [tf for tf, data in breakdown.items() if data.get('aligned', False)]
-        conflicting_tfs = [tf for tf, data in breakdown.items() 
-                          if not data.get('aligned', False) and data.get('bias') not in ['NEUTRAL', 'RANGING', 'NO_DATA']]
-        neutral_tfs = [tf for tf, data in breakdown.items() 
-                      if data.get('bias') in ['NEUTRAL', 'RANGING']]
-        
-        logger.info(f"📊 MTF Consensus: {consensus_pct:.1f}% ({aligned_count} aligned, {neutral_count} neutral, {conflicting_count} conflicting)")
+        logger.info(f"📊 MTF Consensus: {consensus_pct:.1f}% ({aligned_count} aligned, {len(neutral_tfs)} neutral, {len(conflicting_tfs)} conflicting)")
         
         return {
             'consensus_pct': round(consensus_pct, 1),
             'breakdown': breakdown,
             'aligned_tfs': aligned_tfs,
             'conflicting_tfs': conflicting_tfs,
-            'neutral_tfs': neutral_tfs,  # ✅ NEW
+            'neutral_tfs': neutral_tfs,
             'aligned_count': aligned_count,
-            'conflicting_count': conflicting_count,  # ✅ NEW
-            'neutral_count': neutral_count,  # ✅ NEW
-            'total_count': total_count
+            'total_count': total_directional_votes,
+            'total_votes': total_directional_votes,
+            'bullish_votes': bullish_votes,
+            'bearish_votes': bearish_votes
         }
-    
+
     def _calculate_pure_ict_bias_for_tf(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Tuple[str, float]:
         """
         Calculate pure ICT bias based ONLY on market structure (HH/HL vs LH/LL).

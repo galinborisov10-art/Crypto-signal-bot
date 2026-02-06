@@ -8201,7 +8201,10 @@ async def market_full_report(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     # Add ICT insights to message
                     coin_msg += f"<b>🎯 ICT Анализ ({timeframe}):</b>\n"
                     
-                    if ict_signal and isinstance(ict_signal, dict) and ict_signal.get('type') != 'NO_TRADE':
+                    # ✅ Handle HOLD signals
+                    if ict_signal and isinstance(ict_signal, dict) and ict_signal.get('action') == 'HOLD':
+                        coin_msg += f"⚠️ RANGING пазар - няма ясна посока\n"
+                    elif ict_signal and isinstance(ict_signal, dict) and ict_signal.get('type') != 'NO_TRADE':
                         # Valid ICT signal found
                         signal_type = ict_signal.get('type', 'N/A')
                         confidence = ict_signal.get('confidence', 0)
@@ -8539,6 +8542,21 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mtf_data=mtf_data,  # ✅ FIXED: Now passing MTF data!
                 is_auto=False  # ← Mark as manual signal
             )
+            
+            # ✅ Handle HOLD signals first
+            if isinstance(ict_signal, dict) and ict_signal.get('action') == 'HOLD':
+                hold_msg = f"""⚠️ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>
+
+💰 <b>Символ:</b> {ict_signal.get('symbol', symbol)}
+⏰ <b>Таймфрейм:</b> {ict_signal.get('timeframe', timeframe)}
+
+🚫 <b>Причина:</b> {ict_signal.get('reason', 'RANGING_MARKET')}
+📋 <b>Детайли:</b> {ict_signal.get('message', 'Пазарът е в ranging фаза.')}
+
+💡 <b>Препоръка:</b> Изчакайте по-добри условия или проверете друг таймфрейм.
+"""
+                await processing_msg.edit_text(hold_msg, parse_mode='HTML')
+                return
             
             # Check for NO_TRADE or None
             if not ict_signal or (isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE'):
@@ -8913,6 +8931,24 @@ async def ict_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             no_trade_msg = format_no_trade_message(result)
             await processing_msg.edit_text(
                 no_trade_msg,
+                parse_mode='HTML'
+            )
+            return
+        
+        # ✅ NEW: Handle HOLD signals (Dict with action='HOLD')
+        if isinstance(result, dict) and result.get('action') == 'HOLD':
+            hold_msg = f"""⚠️ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>
+
+💰 <b>Символ:</b> {result.get('symbol', symbol)}
+⏰ <b>Таймфрейм:</b> {result.get('timeframe', timeframe)}
+
+🚫 <b>Причина:</b> {result.get('reason', 'RANGING_MARKET')}
+📋 <b>Детайли:</b> {result.get('message', 'Пазарът е в ranging фаза. Няма ясна посока.')}
+
+💡 <b>Препоръка:</b> Изчакайте по-добри условия или проверете друг таймфрейм.
+"""
+            await processing_msg.edit_text(
+                hold_msg,
                 parse_mode='HTML'
             )
             return
@@ -12910,6 +12946,23 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     is_auto=False  # ← Mark as manual signal (callback)
                 )
                 logger.info(f"✅ ICT signal generated: {type(ict_signal)}")
+                
+                # ✅ Handle HOLD signals FIRST (RANGING market)
+                if isinstance(ict_signal, dict) and ict_signal.get("action") == "HOLD":
+                    logger.info(f"⚠️ HOLD signal detected (RANGING market)")
+                    hold_msg = f"""⚠️ <b>НЯМА ПОДХОДЯЩ ТРЕЙД</b>
+
+💰 <b>Символ:</b> {ict_signal.get("symbol", symbol)}
+⏰ <b>Таймфрейм:</b> {ict_signal.get("timeframe", timeframe)}
+
+🚫 <b>Причина:</b> {ict_signal.get("reason", "RANGING_MARKET")}
+📋 <b>Детайли:</b> {ict_signal.get("message", "Пазарът е в ranging фаза.")}
+
+💡 <b>Препоръка:</b> Изчакайте по-добри условия или проверете друг таймфрейм.
+"""
+                    await processing_msg.edit_text(hold_msg, parse_mode="HTML")
+                    logger.info(f"✅ HOLD message sent")
+                    return
                 
                 # Check for NO_TRADE or None
                 logger.info(f"🔍 Checking signal type...")
