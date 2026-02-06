@@ -3029,7 +3029,26 @@ class ICTSignalEngine:
         entry_price: float,
         bias: MarketBias
     ) -> float:
-        """Calculate stop loss using ICT invalidation levels"""
+        """
+        ✅ ICT-COMPLIANT Stop Loss using invalidation levels (NOT volatility-based)
+        
+        Priority (LONG):
+          1. Bullish Order Block low
+          2. FVG low
+          3. Liquidity sweep low
+          4. Last swing low (structure)
+          5. ATR fallback
+        
+        Priority (SHORT):
+          1. Bearish Order Block high
+          2. FVG high
+          3. Liquidity sweep high
+          4. Last swing high (structure)
+          5. ATR fallback
+        
+        Returns:
+            float: Stop loss price
+        """
         # ✅ GUARD: Raise exception for HOLD/RANGING
         if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
             raise ValueError(
@@ -3037,56 +3056,148 @@ class ICTSignalEngine:
                 f"HOLD/RANGING must use early exit. Pipeline violation."
             )
         
+        # Get timeframe (backwards compatible)
+        timeframe = entry_setup.get('timeframe', '1h')
+        
+        # ✅ TIMEFRAME-BASED minimum SL distance (NOT fixed 3%!)
+        MIN_SL_DISTANCE = {
+            '15m': 0.005,   # 0.5%
+            '30m': 0.0075,  # 0.75%
+            '1h': 0.010,    # 1.0%
+            '2h': 0.0125,   # 1.25%
+            '4h': 0.020,    # 2.0%
+            '1d': 0.030     # 3.0%
+        }
+        min_sl_pct = MIN_SL_DISTANCE.get(timeframe, 0.015)
+        
+        # ✅ ICT Buffer (small, structure-based - NOT 1.5 ATR!)
         atr = df['atr'].iloc[-1]
+        buffer_pct = 0.002 if timeframe in ['15m', '30m', '1h'] else 0.003
+        buffer = max(atr * 0.25, entry_price * buffer_pct)
+        
+        sl_price = None
+        sl_reason = "UNKNOWN"
         
         if bias == MarketBias.BULLISH:
-            # SL below last swing low OR below OB/FVG zone
-            lookback = 20
-            recent_low = df['low'].iloc[-lookback: ].min()
+            # Priority 1: Order Block low
+            order_block = entry_setup.get('order_block')
+            if order_block:
+                if isinstance(order_block, dict):
+                    ob_low = order_block.get('zone_low') or order_block.get('bottom')
+                else:
+                    ob_low = getattr(order_block, 'zone_low', None) or getattr(order_block, 'bottom', None)
+                
+                if ob_low:
+                    sl_price = ob_low - buffer
+                    sl_reason = "OB_INVALIDATION"
+                    logger.info(f"✅ LONG SL: OB invalidation @ {sl_price:.2f} (OB low: {ob_low:.2f})")
             
-            # Use entry zone bottom if available
-            price_zone = entry_setup.get('price_zone', (entry_price, entry_price))
-            zone_low = min(price_zone)
+            # Priority 2: FVG low
+            if not sl_price:
+                fvg_zone = entry_setup.get('fvg_zone')
+                if fvg_zone:
+                    fvg_low = fvg_zone.get('low') if isinstance(fvg_zone, dict) else getattr(fvg_zone, 'low', None)
+                    if fvg_low:
+                        sl_price = fvg_low - buffer
+                        sl_reason = "FVG_INVALIDATION"
+                        logger.info(f"✅ LONG SL: FVG invalidation @ {sl_price:.2f}")
             
-            # SL = lower of:  zone bottom - buffer OR recent swing low
-            buffer = atr * 1.5  # ✅ INCREASED: 1.5 ATR buffer for volatility protection
-            sl_from_zone = zone_low - buffer
-            sl_from_swing = recent_low - buffer
+            # Priority 3: Liquidity sweep level
+            if not sl_price:
+                sweep_level = entry_setup.get('liquidity_sweep_level')
+                if sweep_level:
+                    sl_price = sweep_level - buffer
+                    sl_reason = "LIQUIDITY_SWEEP_PROTECTION"
+                    logger.info(f"✅ LONG SL: Sweep protection @ {sl_price:.2f}")
             
-            sl_price = max(sl_from_zone, sl_from_swing)  # ✅ Takes highest (closest to entry for buy orders)
+            # Priority 4: Last swing low
+            if not sl_price:
+                lookback = 30
+                swing_low = df['low'].iloc[-lookback:].min()
+                sl_price = swing_low - buffer
+                sl_reason = "SWING_LOW_STRUCTURE"
+                logger.info(f"✅ LONG SL: Swing low @ {sl_price:.2f}")
             
-            # Ensure minimum distance (3% from entry for volatility protection)
-            # ✅ BULLISH: SL MUST be BELOW entry
-            min_sl_distance = entry_price * 0.03
-            if abs(sl_price - entry_price) < min_sl_distance:
-                sl_price = entry_price * 0.97  # At least 3% below for BUY
+            # Priority 5: ATR fallback
+            if not sl_price:
+                sl_price = entry_price - (atr * 2.0)
+                sl_reason = "ATR_FALLBACK"
+                logger.warning(f"⚠️ LONG SL: ATR fallback @ {sl_price:.2f}")
             
-            return sl_price
+            # ✅ Ensure SL is BELOW entry
+            if sl_price >= entry_price:
+                sl_price = entry_price * (1 - min_sl_pct)
+                sl_reason = f"{sl_reason}_CORRECTED"
+                logger.warning(f"⚠️ SL corrected to {min_sl_pct*100:.1f}% below entry: {sl_price:.2f}")
+            
+            # ✅ Ensure minimum distance
+            sl_distance_pct = (entry_price - sl_price) / entry_price
+            if sl_distance_pct < min_sl_pct:
+                sl_price = entry_price * (1 - min_sl_pct)
+                sl_reason = f"{sl_reason}_MIN_DISTANCE"
+                logger.warning(f"⚠️ SL expanded to min {min_sl_pct*100:.1f}%: {sl_price:.2f}")
         
-        else:  # BEARISH
-            # SL above last swing high OR above OB/FVG zone
-            lookback = 20
-            recent_high = df['high'].iloc[-lookback:].max()
+        else:
+            # Priority 1: Order Block high
+            order_block = entry_setup.get('order_block')
+            if order_block:
+                if isinstance(order_block, dict):
+                    ob_high = order_block.get('zone_high') or order_block.get('top')
+                else:
+                    ob_high = getattr(order_block, 'zone_high', None) or getattr(order_block, 'top', None)
+                
+                if ob_high:
+                    sl_price = ob_high + buffer
+                    sl_reason = "OB_INVALIDATION"
+                    logger.info(f"✅ SHORT SL: OB invalidation @ {sl_price:.2f} (OB high: {ob_high:.2f})")
             
-            # Use entry zone top if available
-            price_zone = entry_setup.get('price_zone', (entry_price, entry_price))
-            zone_high = max(price_zone)
+            # Priority 2: FVG high
+            if not sl_price:
+                fvg_zone = entry_setup.get('fvg_zone')
+                if fvg_zone:
+                    fvg_high = fvg_zone.get('high') if isinstance(fvg_zone, dict) else getattr(fvg_zone, 'high', None)
+                    if fvg_high:
+                        sl_price = fvg_high + buffer
+                        sl_reason = "FVG_INVALIDATION"
+                        logger.info(f"✅ SHORT SL: FVG invalidation @ {sl_price:.2f}")
             
-            # SL = higher of: zone top + buffer OR recent swing high
-            buffer = atr * 1.5  # ✅ INCREASED: 1.5 ATR buffer for volatility protection
-            sl_from_zone = zone_high + buffer
-            sl_from_swing = recent_high + buffer
+            # Priority 3: Liquidity sweep level
+            if not sl_price:
+                sweep_level = entry_setup.get('liquidity_sweep_level')
+                if sweep_level:
+                    sl_price = sweep_level + buffer
+                    sl_reason = "LIQUIDITY_SWEEP_PROTECTION"
+                    logger.info(f"✅ SHORT SL: Sweep protection @ {sl_price:.2f}")
             
-            sl_price = min(sl_from_zone, sl_from_swing)  # ✅ Takes lowest (closest to entry for sell orders)
+            # Priority 4: Last swing high
+            if not sl_price:
+                lookback = 30
+                swing_high = df['high'].iloc[-lookback:].max()
+                sl_price = swing_high + buffer
+                sl_reason = "SWING_HIGH_STRUCTURE"
+                logger.info(f"✅ SHORT SL: Swing high @ {sl_price:.2f}")
             
-            # ✅ REMOVED 1% CAP - Now using minimum 3% distance for volatility protection
-            # Ensure minimum distance (3% from entry for volatility protection)
-            # ✅ BEARISH: SL MUST be ABOVE entry
-            min_sl_distance = entry_price * 0.03
-            if abs(sl_price - entry_price) < min_sl_distance:
-                sl_price = entry_price * 1.03  # At least 3% above for SELL
+            # Priority 5: ATR fallback
+            if not sl_price:
+                sl_price = entry_price + (atr * 2.0)
+                sl_reason = "ATR_FALLBACK"
+                logger.warning(f"⚠️ SHORT SL: ATR fallback @ {sl_price:.2f}")
             
-            return sl_price
+            # ✅ Ensure SL is ABOVE entry
+            if sl_price <= entry_price:
+                sl_price = entry_price * (1 + min_sl_pct)
+                sl_reason = f"{sl_reason}_CORRECTED"
+                logger.warning(f"⚠️ SL corrected to {min_sl_pct*100:.1f}% above entry: {sl_price:.2f}")
+            
+            # ✅ Ensure minimum distance
+            sl_distance_pct = (sl_price - entry_price) / entry_price
+            if sl_distance_pct < min_sl_pct:
+                sl_price = entry_price * (1 + min_sl_pct)
+                sl_reason = f"{sl_reason}_MIN_DISTANCE"
+                logger.warning(f"⚠️ SL expanded to min {min_sl_pct*100:.1f}%: {sl_price:.2f}")
+        
+        logger.info(f"🎯 Final SL: {sl_price:.2f} | Reason: {sl_reason} | Distance: {abs(sl_price - entry_price) / entry_price * 100:.2f}%")
+        return sl_price
 
     def _validate_entry_timing(
         self,
