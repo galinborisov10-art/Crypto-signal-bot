@@ -4296,7 +4296,6 @@ def format_no_trade_message(no_trade_data: dict) -> str:
     
     if rsi is not None:
         rsi_emoji = "🔥" if rsi > 70 else "❄️" if rsi < 30 else "📊"
-        msg += f"\n{rsi_emoji} <b>RSI(14):</b> {rsi:.1f}"
     
     if signal_direction:
         direction_emoji = "🟢" if signal_direction == 'BUY' else "🔴" if signal_direction == 'SELL' else "⚪"
