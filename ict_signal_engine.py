@@ -314,6 +314,9 @@ class ICTSignal:
     entry_zone: Dict = field(default_factory=dict)  # NEW: Entry zone details
     entry_status: str = "UNKNOWN"  # NEW: Entry zone status (VALID_WAIT/VALID_NEAR/etc)
     
+    # ✅ NEW ICT ENTRY SYSTEM: Scenario Information
+    scenario: Dict = field(default_factory=dict)  # NEW: Entry scenario (ROLLBACK/PULLBACK/CONTINUATION)
+    
     # Distance Penalty (Soft Constraint)
     distance_penalty: bool = False  # NEW: Whether confidence was reduced due to distance out of range
     
@@ -1029,9 +1032,73 @@ class ICTSignalEngine:
         # Log successful entry zone validation
         logger.info(f"✅ PASSED Step 8: Entry zone validated ({entry_status})")
         
+        # ═══════════════════════════════════════════════════════════════
+        # СТЪПКА 8.1: ENTRY SCENARIO SELECTION (NEW ICT SYSTEM)
+        # ═══════════════════════════════════════════════════════════════
+        logger.info("=" * 60)
+        logger.info("STEP 8.1: ENTRY SCENARIO SELECTION (ICT Entry Model)")
+        logger.info("=" * 60)
+        
+        # Detect BOS/MSS and get break level
+        has_bos_mss, break_level = self._detect_bos_mss(df, bias)
+        logger.info(f"   → BOS/MSS: {has_bos_mss}")
+        if break_level:
+            logger.info(f"   → Break level: ${break_level:.2f}")
+        
+        # Calculate triggers
+        triggers = self._calculate_triggers(df, ict_components, bias, has_bos_mss)
+        logger.info(f"   → Triggers: {triggers['trigger_count']} detected")
+        logger.info(f"   → Trigger list: {', '.join(triggers['triggers']) if triggers['triggers'] else 'None'}")
+        logger.info(f"   → Confidence level: {triggers['confidence_level']}")
+        
+        # Select entry scenario using decision tree
+        scenario = self._select_entry_scenario(
+            df=df,
+            current_price=current_price,
+            ict_components=ict_components,
+            bias=bias,
+            has_bos_mss=has_bos_mss,
+            break_level=break_level,
+            triggers=triggers
+        )
+        
+        # If no valid scenario, return NO TRADE
+        if scenario is None:
+            logger.info("❌ BLOCKED at Step 8.1: No valid entry scenario found")
+            logger.info("✅ Generating NO_TRADE (blocked_at_step: 8.1, reason: No valid entry model)")
+            context = self._extract_context_data(df, bias)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason="Няма валиден ICT entry scenario",
+                details=(
+                    f"Не са изпълнени условията за ROLLBACK, PULLBACK или CONTINUATION. "
+                    f"Triggers: {triggers['trigger_count']}, BOS/MSS: {has_bos_mss}. "
+                    f"Изчакайте по-добър setup."
+                ),
+                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=None
+            )
+        
+        # Scenario selected successfully
+        logger.info(f"✅ PASSED Step 8.1: Entry scenario selected")
+        logger.info(f"   → Scenario type: {scenario['type']}")
+        logger.info(f"   → Reason: {scenario['reason']}")
+        
+        # Override entry_zone with scenario entry zone (if provided)
+        if 'entry_zone' in scenario and scenario['entry_zone']:
+            entry_zone = scenario['entry_zone']
+            logger.info(f"   → Entry zone updated from scenario: ${entry_zone['center']:.2f}")
+        
         # Extract entry price from entry zone for Step 9
         entry_price = entry_zone.get('center', current_price)
-        logger.info(f"   → Entry Price: ${entry_price:.2f} (from entry zone)")
+        logger.info(f"   → Entry Price: ${entry_price:.2f} (from scenario)")
         
         # Keep existing entry setup for SL calculation (fallback)
         entry_setup = self._identify_entry_setup(df, ict_components, bias)
@@ -1685,6 +1752,12 @@ class ICTSignalEngine:
             mtf_consensus_data=mtf_consensus_data,
             entry_zone=entry_zone,  # NEW: Entry zone details (with distance metadata)
             entry_status=entry_status,  # NEW: Entry zone status
+            scenario={  # ✅ NEW ICT ENTRY SYSTEM: Scenario information
+                'type': scenario['type'],
+                'reason': scenario['reason'],
+                'triggers': triggers['triggers'],
+                'trigger_count': triggers['trigger_count']
+            },
             distance_penalty=distance_penalty_applied,  # ✅ NEW: Distance penalty tracking
             timeframe_hierarchy=hierarchy_info,  # ✅ PR #4: TF hierarchy info
             reasoning=reasoning,
@@ -1695,12 +1768,14 @@ class ICTSignalEngine:
         logger.info("=" * 60)
         logger.info("✅ SIGNAL GENERATION COMPLETE")
         logger.info(f"   Signal Type: {signal_type.value}")
+        logger.info(f"   Entry Scenario: {scenario['type']}")
         logger.info(f"   Entry: ${entry_price:.2f}")
         logger.info(f"   SL: ${sl_price:.2f}")
         logger.info(f"   TP1: ${tp_prices[0]:.2f}")
         logger.info(f"   RR: {risk_reward_ratio:.2f}")
         logger.info(f"   Confidence: {confidence:.1f}%")
         logger.info(f"   MTF Consensus: {mtf_consensus_data['consensus_pct']:.1f}%")
+        logger.info(f"   Triggers: {triggers['trigger_count']} ({', '.join(triggers['triggers'])})")
         logger.info("=" * 60)
         logger.info(f"✅ Generated {signal_type.value} signal (UNIFIED)")
         
@@ -3319,6 +3394,629 @@ class ICTSignalEngine:
         
         logger.info(f"✅ SL validated: {sl_price:.2f} (ICT-compliant)")
         return sl_price, True
+
+    # ═══════════════════════════════════════════════════════════════
+    # NEW ICT ENTRY SYSTEM - HELPER FUNCTIONS
+    # ═══════════════════════════════════════════════════════════════
+    
+    def _detect_bos_mss(
+        self,
+        df: pd.DataFrame,
+        bias: MarketBias
+    ) -> Tuple[bool, Optional[float]]:
+        """
+        Detect BOS/MSS (Break of Structure / Market Structure Shift) and extract break level.
+        
+        Args:
+            df: OHLCV DataFrame
+            bias: Current market bias
+            
+        Returns:
+            (has_bos_mss, break_level)
+            - has_bos_mss: True if BOS/MSS detected
+            - break_level: Price level that was broken (or None)
+        """
+        if len(df) < 20:
+            return False, None
+            
+        lookback = 20
+        recent_high = df['high'].iloc[-lookback:].max()
+        recent_low = df['low'].iloc[-lookback:].min()
+        
+        # Check last 5 candles for structure break
+        threshold_pct = self.config.get('structure_break_threshold', 0.5) / 100
+        
+        for i in range(-5, 0):
+            # Bullish break (BOS)
+            if df['high'].iloc[i] > recent_high * (1 + threshold_pct):
+                break_level = recent_high
+                logger.info(f"   → BOS detected: Break above {break_level:.2f}")
+                return True, break_level
+                
+            # Bearish break (MSS)
+            if df['low'].iloc[i] < recent_low * (1 - threshold_pct):
+                break_level = recent_low
+                logger.info(f"   → MSS detected: Break below {break_level:.2f}")
+                return True, break_level
+        
+        return False, None
+    
+    def _validate_poi(
+        self,
+        poi: Any,
+        poi_type: str,  # 'OB', 'FVG', 'BSL', 'SSL'
+        current_price: float,
+        bias: MarketBias,
+        max_candles: int = 120
+    ) -> Tuple[bool, Dict]:
+        """
+        Validate POI (Point of Interest) based on ICT rules.
+        
+        Validation rules:
+        1. POI must be in correct direction vs bias
+        2. POI must be unmitigated (if applicable)
+        3. POI must be at correct distance (0.5% - 5%)
+        4. POI must be fresh (within max_candles)
+        
+        Args:
+            poi: POI object (OB, FVG, LiquidityZone, etc.)
+            poi_type: Type of POI
+            current_price: Current market price
+            bias: Current bias
+            max_candles: Maximum age in candles
+            
+        Returns:
+            (is_valid, validation_info)
+        """
+        validation_info = {
+            'direction_valid': False,
+            'distance_valid': False,
+            'fresh': False,
+            'unmitigated': False,
+            'distance_pct': 0.0
+        }
+        
+        # Extract POI price level
+        poi_price = None
+        if poi_type in ['OB', 'FVG']:
+            if hasattr(poi, 'zone_low'):
+                poi_price = (poi.zone_low + poi.zone_high) / 2
+            elif hasattr(poi, 'bottom'):
+                poi_price = (poi.bottom + poi.top) / 2
+            elif isinstance(poi, dict):
+                low = poi.get('low', poi.get('bottom', 0))
+                high = poi.get('high', poi.get('top', 0))
+                if low and high:
+                    poi_price = (low + high) / 2
+        elif poi_type in ['BSL', 'SSL']:
+            if hasattr(poi, 'price_level'):
+                poi_price = poi.price_level
+            elif isinstance(poi, dict):
+                poi_price = poi.get('price_level', 0)
+        
+        if not poi_price or poi_price <= 0:
+            return False, validation_info
+        
+        # 1. Direction validation
+        bias_str = bias.value if hasattr(bias, 'value') else str(bias)
+        
+        if bias_str == 'BULLISH':
+            # Bullish: POI should be below current price
+            validation_info['direction_valid'] = poi_price < current_price
+        elif bias_str == 'BEARISH':
+            # Bearish: POI should be above current price
+            validation_info['direction_valid'] = poi_price > current_price
+        else:
+            validation_info['direction_valid'] = False
+        
+        # 2. Distance validation (0.5% - 5%)
+        distance_pct = abs(poi_price - current_price) / current_price
+        validation_info['distance_pct'] = distance_pct * 100
+        validation_info['distance_valid'] = 0.005 <= distance_pct <= 0.05
+        
+        # 3. Freshness check (POI age)
+        # For now, we'll use unmitigated status as proxy for freshness
+        if hasattr(poi, 'is_valid'):
+            validation_info['fresh'] = poi.is_valid()
+        elif hasattr(poi, 'swept'):
+            validation_info['fresh'] = not poi.swept
+        elif isinstance(poi, dict):
+            validation_info['fresh'] = poi.get('is_valid', True)
+        else:
+            validation_info['fresh'] = True  # Assume fresh if we can't determine
+        
+        # 4. Unmitigated status
+        if hasattr(poi, 'is_valid'):
+            validation_info['unmitigated'] = poi.is_valid()
+        elif hasattr(poi, 'mitigated'):
+            validation_info['unmitigated'] = not poi.mitigated
+        elif isinstance(poi, dict):
+            validation_info['unmitigated'] = not poi.get('mitigated', False)
+        else:
+            validation_info['unmitigated'] = True
+        
+        # POI is valid only if ALL checks pass
+        is_valid = (
+            validation_info['direction_valid'] and
+            validation_info['distance_valid'] and
+            validation_info['fresh'] and
+            validation_info['unmitigated']
+        )
+        
+        return is_valid, validation_info
+    
+    def _calculate_triggers(
+        self,
+        df: pd.DataFrame,
+        ict_components: Dict,
+        bias: MarketBias,
+        has_bos_mss: bool
+    ) -> Dict[str, Any]:
+        """
+        Calculate ICT triggers and scoring.
+        
+        Triggers:
+        - MSS/BOS (structure break)
+        - Liquidity sweep
+        - Displacement candle
+        - Breaker/Mitigation confirmation
+        
+        Scoring:
+        - 2+ triggers → HIGH confidence
+        - 1 trigger → MEDIUM
+        - 0 triggers → LOW / reject
+        
+        Args:
+            df: OHLCV DataFrame
+            ict_components: ICT components detected
+            bias: Current market bias
+            has_bos_mss: Whether BOS/MSS was detected
+            
+        Returns:
+            {
+                'triggers': List[str],
+                'trigger_count': int,
+                'confidence_level': str  # 'HIGH', 'MEDIUM', 'LOW'
+            }
+        """
+        triggers = []
+        
+        # 1. MSS/BOS trigger
+        if has_bos_mss:
+            triggers.append('MSS/BOS')
+            logger.info(f"   ✅ Trigger: MSS/BOS structure break")
+        
+        # 2. Liquidity sweep trigger
+        liquidity_sweeps = ict_components.get('liquidity_sweeps', [])
+        if liquidity_sweeps:
+            # Check for recent sweeps (last 4 hours / recent candles)
+            recent_sweeps = []
+            for sweep in liquidity_sweeps:
+                sweep_timestamp = sweep.timestamp if hasattr(sweep, 'timestamp') else sweep.get('timestamp')
+                if sweep_timestamp and (df.index[-1] - sweep_timestamp).total_seconds() < 3600 * 4:
+                    recent_sweeps.append(sweep)
+            
+            if recent_sweeps:
+                triggers.append('LIQUIDITY_SWEEP')
+                logger.info(f"   ✅ Trigger: Liquidity sweep ({len(recent_sweeps)} recent)")
+        
+        # 3. Displacement trigger
+        displacement_detected = self._check_displacement(df)
+        if displacement_detected:
+            triggers.append('DISPLACEMENT')
+            logger.info(f"   ✅ Trigger: Displacement candle")
+        
+        # 4. Breaker/Mitigation trigger (if we have breaker blocks)
+        breaker_blocks = ict_components.get('breaker_blocks', [])
+        if breaker_blocks:
+            # Check for recent mitigation
+            for breaker in breaker_blocks:
+                if hasattr(breaker, 'is_valid') and breaker.is_valid():
+                    triggers.append('BREAKER_MITIGATION')
+                    logger.info(f"   ✅ Trigger: Breaker/Mitigation confirmation")
+                    break
+        
+        # Calculate confidence level based on trigger count
+        trigger_count = len(triggers)
+        if trigger_count >= 2:
+            confidence_level = 'HIGH'
+        elif trigger_count == 1:
+            confidence_level = 'MEDIUM'
+        else:
+            confidence_level = 'LOW'
+        
+        logger.info(f"   → Total triggers: {trigger_count} ({confidence_level} confidence)")
+        
+        return {
+            'triggers': triggers,
+            'trigger_count': trigger_count,
+            'confidence_level': confidence_level
+        }
+    
+    def _check_rollback_scenario(
+        self,
+        current_price: float,
+        has_bos_mss: bool,
+        break_level: Optional[float],
+        ict_components: Dict,
+        bias: MarketBias
+    ) -> Tuple[bool, Optional[Dict]]:
+        """
+        Check for ROLLBACK scenario (structural retest).
+        
+        Conditions:
+        1. Has BOS/MSS
+        2. Has break_level
+        3. Distance from current price to break_level >= 1%
+        4. Distance <= 10% (hard reject)
+        5. Price hasn't returned to break_level yet
+        
+        Returns:
+            (is_rollback, scenario_info)
+        """
+        if not has_bos_mss or break_level is None:
+            return False, None
+        
+        # Check distance to break level
+        distance_to_break = abs(break_level - current_price) / current_price
+        
+        # Must be at least 1% away
+        if distance_to_break < 0.01:
+            logger.info(f"   ❌ Rollback rejected: Distance {distance_to_break*100:.1f}% < 1%")
+            return False, None
+        
+        # Must not exceed 10% (hard reject)
+        if distance_to_break > 0.10:
+            logger.info(f"   ❌ Rollback rejected: Distance {distance_to_break*100:.1f}% > 10%")
+            return False, None
+        
+        # Check if price has already returned to break level
+        bias_str = bias.value if hasattr(bias, 'value') else str(bias)
+        
+        if bias_str == 'BULLISH':
+            # For bullish, break_level should be below current price
+            # If current price is already at or below break level, rollback is invalid
+            if current_price <= break_level * 1.01:  # 1% buffer
+                logger.info(f"   ❌ Rollback rejected: Price already at break level")
+                return False, None
+        else:  # BEARISH
+            # For bearish, break_level should be above current price
+            if current_price >= break_level * 0.99:  # 1% buffer
+                logger.info(f"   ❌ Rollback rejected: Price already at break level")
+                return False, None
+        
+        # Check if there's a POI near break_level (optional refinement)
+        poi_near_break = False
+        poi_info = None
+        
+        # Check OBs near break level
+        for ob in ict_components.get('order_blocks', []):
+            ob_center = None
+            if hasattr(ob, 'zone_low'):
+                ob_center = (ob.zone_low + ob.zone_high) / 2
+            elif hasattr(ob, 'bottom'):
+                ob_center = (ob.bottom + ob.top) / 2
+            
+            if ob_center and abs(ob_center - break_level) / break_level < 0.01:  # Within 1%
+                poi_near_break = True
+                poi_info = {'type': 'OB', 'price': ob_center}
+                break
+        
+        # Check FVGs near break level
+        if not poi_near_break:
+            for fvg in ict_components.get('fvgs', []):
+                fvg_center = None
+                if hasattr(fvg, 'bottom'):
+                    fvg_center = (fvg.bottom + fvg.top) / 2
+                elif isinstance(fvg, dict):
+                    low = fvg.get('low', fvg.get('bottom', 0))
+                    high = fvg.get('high', fvg.get('top', 0))
+                    if low and high:
+                        fvg_center = (low + high) / 2
+                
+                if fvg_center and abs(fvg_center - break_level) / break_level < 0.01:
+                    poi_near_break = True
+                    poi_info = {'type': 'FVG', 'price': fvg_center}
+                    break
+        
+        scenario_info = {
+            'type': 'ROLLBACK',
+            'break_level': break_level,
+            'distance_pct': distance_to_break * 100,
+            'poi_near_break': poi_near_break,
+            'poi_info': poi_info,
+            'entry_zone': {
+                'center': break_level,
+                'low': break_level * 0.995,
+                'high': break_level * 1.005,
+                'source': 'ROLLBACK_BREAK_LEVEL'
+            }
+        }
+        
+        logger.info(f"   ✅ ROLLBACK scenario detected:")
+        logger.info(f"      • Break level: ${break_level:.2f}")
+        logger.info(f"      • Distance: {distance_to_break*100:.1f}%")
+        if poi_near_break:
+            logger.info(f"      • POI near break: {poi_info['type']} at ${poi_info['price']:.2f}")
+        
+        return True, scenario_info
+    
+    def _check_pullback_scenario(
+        self,
+        current_price: float,
+        ict_components: Dict,
+        bias: MarketBias
+    ) -> Tuple[bool, Optional[Dict]]:
+        """
+        Check for PULLBACK scenario (toward POI).
+        
+        Conditions:
+        1. Has valid POI (OB/FVG)
+        2. Distance 0.5% - 5%
+        3. POI is unmitigated
+        4. POI is in correct direction vs bias
+        
+        Returns:
+            (is_pullback, scenario_info)
+        """
+        valid_pois = []
+        
+        # Check Order Blocks
+        for ob in ict_components.get('order_blocks', []):
+            is_valid, validation_info = self._validate_poi(ob, 'OB', current_price, bias)
+            if is_valid:
+                ob_center = None
+                if hasattr(ob, 'zone_low'):
+                    ob_center = (ob.zone_low + ob.zone_high) / 2
+                    ob_low = ob.zone_low
+                    ob_high = ob.zone_high
+                elif hasattr(ob, 'bottom'):
+                    ob_center = (ob.bottom + ob.top) / 2
+                    ob_low = ob.bottom
+                    ob_high = ob.top
+                
+                if ob_center:
+                    valid_pois.append({
+                        'type': 'OB',
+                        'price': ob_center,
+                        'low': ob_low,
+                        'high': ob_high,
+                        'distance_pct': validation_info['distance_pct'],
+                        'strength': getattr(ob, 'strength', 70)
+                    })
+        
+        # Check FVGs
+        for fvg in ict_components.get('fvgs', []):
+            is_valid, validation_info = self._validate_poi(fvg, 'FVG', current_price, bias)
+            if is_valid:
+                fvg_center = None
+                if hasattr(fvg, 'bottom'):
+                    fvg_center = (fvg.bottom + fvg.top) / 2
+                    fvg_low = fvg.bottom
+                    fvg_high = fvg.top
+                elif isinstance(fvg, dict):
+                    low = fvg.get('low', fvg.get('bottom', 0))
+                    high = fvg.get('high', fvg.get('top', 0))
+                    if low and high:
+                        fvg_center = (low + high) / 2
+                        fvg_low = low
+                        fvg_high = high
+                
+                if fvg_center:
+                    valid_pois.append({
+                        'type': 'FVG',
+                        'price': fvg_center,
+                        'low': fvg_low,
+                        'high': fvg_high,
+                        'distance_pct': validation_info['distance_pct'],
+                        'strength': getattr(fvg, 'strength', 70) if hasattr(fvg, 'strength') else 70
+                    })
+        
+        if not valid_pois:
+            return False, None
+        
+        # Select best POI (closest with highest strength)
+        best_poi = min(valid_pois, key=lambda x: (x['distance_pct'], -x['strength']))
+        
+        scenario_info = {
+            'type': 'PULLBACK',
+            'poi': best_poi,
+            'entry_zone': {
+                'center': best_poi['price'],
+                'low': best_poi['low'],
+                'high': best_poi['high'],
+                'source': f"PULLBACK_{best_poi['type']}"
+            }
+        }
+        
+        logger.info(f"   ✅ PULLBACK scenario detected:")
+        logger.info(f"      • POI: {best_poi['type']} at ${best_poi['price']:.2f}")
+        logger.info(f"      • Distance: {best_poi['distance_pct']:.1f}%")
+        logger.info(f"      • Strength: {best_poi['strength']}")
+        
+        return True, scenario_info
+    
+    def _check_continuation_scenario(
+        self,
+        current_price: float,
+        ict_components: Dict,
+        bias: MarketBias,
+        triggers: Dict
+    ) -> Tuple[bool, Optional[Dict]]:
+        """
+        Check for CONTINUATION scenario (last resort).
+        
+        Conditions (ALL required):
+        1. NO POI in next 2-3% (in bias direction)
+        2. 2+ triggers active
+        3. At least 1 trigger is displacement OR LTF structure
+        
+        Returns:
+            (is_continuation, scenario_info)
+        """
+        # 1. Check for POI ahead (in bias direction)
+        bias_str = bias.value if hasattr(bias, 'value') else str(bias)
+        search_range_pct = 0.03  # 3%
+        
+        pois_ahead = []
+        
+        # Check OBs ahead
+        for ob in ict_components.get('order_blocks', []):
+            ob_center = None
+            if hasattr(ob, 'zone_low'):
+                ob_center = (ob.zone_low + ob.zone_high) / 2
+            elif hasattr(ob, 'bottom'):
+                ob_center = (ob.bottom + ob.top) / 2
+            
+            if ob_center:
+                distance_pct = abs(ob_center - current_price) / current_price
+                
+                # Check if POI is in bias direction and within search range
+                if bias_str == 'BULLISH' and ob_center < current_price and distance_pct <= search_range_pct:
+                    pois_ahead.append(ob_center)
+                elif bias_str == 'BEARISH' and ob_center > current_price and distance_pct <= search_range_pct:
+                    pois_ahead.append(ob_center)
+        
+        # Check FVGs ahead
+        for fvg in ict_components.get('fvgs', []):
+            fvg_center = None
+            if hasattr(fvg, 'bottom'):
+                fvg_center = (fvg.bottom + fvg.top) / 2
+            elif isinstance(fvg, dict):
+                low = fvg.get('low', fvg.get('bottom', 0))
+                high = fvg.get('high', fvg.get('top', 0))
+                if low and high:
+                    fvg_center = (low + high) / 2
+            
+            if fvg_center:
+                distance_pct = abs(fvg_center - current_price) / current_price
+                
+                if bias_str == 'BULLISH' and fvg_center < current_price and distance_pct <= search_range_pct:
+                    pois_ahead.append(fvg_center)
+                elif bias_str == 'BEARISH' and fvg_center > current_price and distance_pct <= search_range_pct:
+                    pois_ahead.append(fvg_center)
+        
+        # If POIs found ahead, continuation is NOT valid
+        if pois_ahead:
+            logger.info(f"   ❌ Continuation rejected: {len(pois_ahead)} POIs ahead in next 3%")
+            return False, None
+        
+        # 2. Check trigger count (need 2+)
+        if triggers['trigger_count'] < 2:
+            logger.info(f"   ❌ Continuation rejected: Only {triggers['trigger_count']} trigger(s) (need 2+)")
+            return False, None
+        
+        # 3. Check for displacement OR LTF structure
+        has_displacement = 'DISPLACEMENT' in triggers['triggers']
+        has_structure = 'MSS/BOS' in triggers['triggers']
+        
+        if not (has_displacement or has_structure):
+            logger.info(f"   ❌ Continuation rejected: No displacement or structure trigger")
+            return False, None
+        
+        # Continuation valid - create scenario
+        # Entry at current price with small buffer (0.5-1%)
+        entry_buffer_pct = 0.005  # 0.5%
+        
+        if bias_str == 'BULLISH':
+            entry_center = current_price * (1 - entry_buffer_pct)
+        else:  # BEARISH
+            entry_center = current_price * (1 + entry_buffer_pct)
+        
+        scenario_info = {
+            'type': 'CONTINUATION',
+            'triggers': triggers['triggers'],
+            'position_size_modifier': 0.65,  # Reduce to 65%
+            'entry_zone': {
+                'center': entry_center,
+                'low': entry_center * 0.995,
+                'high': entry_center * 1.005,
+                'source': 'CONTINUATION_MARKET'
+            }
+        }
+        
+        logger.info(f"   ✅ CONTINUATION scenario detected:")
+        logger.info(f"      • Triggers: {', '.join(triggers['triggers'])}")
+        logger.info(f"      • No POIs ahead in next 3%")
+        logger.info(f"      • Entry near market: ${entry_center:.2f}")
+        logger.info(f"      • Position size: 65% (reduced)")
+        
+        return True, scenario_info
+    
+    def _select_entry_scenario(
+        self,
+        df: pd.DataFrame,
+        current_price: float,
+        ict_components: Dict,
+        bias: MarketBias,
+        has_bos_mss: bool,
+        break_level: Optional[float],
+        triggers: Dict
+    ) -> Optional[Dict]:
+        """
+        Select entry scenario using decision tree.
+        
+        Decision Tree:
+        1. ROLLBACK: Has BOS/MSS + distance >= 1% → ROLLBACK
+        2. PULLBACK: Has valid POI + distance 0.5-5% → PULLBACK
+        3. CONTINUATION: No POI + 2+ triggers + displacement/LTF → CONTINUATION
+        4. Otherwise → NO ENTRY
+        
+        Returns:
+            scenario dict or None
+        """
+        logger.info("🎯 Step 8.1: Entry Scenario Selection")
+        logger.info("=" * 60)
+        
+        # Priority 1: ROLLBACK
+        is_rollback, rollback_info = self._check_rollback_scenario(
+            current_price, has_bos_mss, break_level, ict_components, bias
+        )
+        if is_rollback:
+            rollback_info['reason'] = (
+                f"Структурен retest след BOS/MSS. "
+                f"Очакваме цената да се върне към break level {rollback_info['break_level']:.2f} "
+                f"(разстояние {rollback_info['distance_pct']:.1f}%). "
+                f"Класически ICT rollback setup."
+            )
+            return rollback_info
+        
+        # Priority 2: PULLBACK
+        is_pullback, pullback_info = self._check_pullback_scenario(
+            current_price, ict_components, bias
+        )
+        if is_pullback:
+            poi_type = pullback_info['poi']['type']
+            poi_distance = pullback_info['poi']['distance_pct']
+            pullback_info['reason'] = (
+                f"Pullback към {poi_type} зона. "
+                f"Очакваме цената да достигне POI на {pullback_info['poi']['price']:.2f} "
+                f"(разстояние {poi_distance:.1f}%). "
+                f"Оптимален ICT entry setup с валидна POI."
+            )
+            return pullback_info
+        
+        # Priority 3: CONTINUATION
+        is_continuation, continuation_info = self._check_continuation_scenario(
+            current_price, ict_components, bias, triggers
+        )
+        if is_continuation:
+            trigger_list = ', '.join(continuation_info['triggers'])
+            continuation_info['reason'] = (
+                f"Continuation setup без POI в следващите 3%. "
+                f"Активни triggers: {trigger_list}. "
+                f"Агресивен entry близо до market ({continuation_info['entry_zone']['center']:.2f}). "
+                f"ВНИМАНИЕ: Намален position size до 65%."
+            )
+            return continuation_info
+        
+        # No valid scenario
+        logger.info("   ❌ NO VALID ENTRY SCENARIO")
+        logger.info(f"      • Rollback: Not detected")
+        logger.info(f"      • Pullback: No valid POI")
+        logger.info(f"      • Continuation: Conditions not met")
+        
+        return None
 
     def _calculate_signal_confidence(
         self,
