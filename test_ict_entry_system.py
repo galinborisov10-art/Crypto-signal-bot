@@ -11,6 +11,9 @@ from ict_signal_engine import ICTSignalEngine, MarketBias
 
 def create_test_dataframe(num_candles=100):
     """Create a test DataFrame with OHLCV data"""
+    # Use fixed random seed for reproducible tests
+    np.random.seed(42)
+    
     dates = pd.date_range(end=datetime.now(), periods=num_candles, freq='1h')
     
     # Create a simple uptrend

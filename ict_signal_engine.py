@@ -3592,9 +3592,15 @@ class ICTSignalEngine:
             # Check for recent sweeps (last 4 hours / recent candles)
             recent_sweeps = []
             for sweep in liquidity_sweeps:
-                sweep_timestamp = sweep.timestamp if hasattr(sweep, 'timestamp') else sweep.get('timestamp')
-                if sweep_timestamp and (df.index[-1] - sweep_timestamp).total_seconds() < 3600 * 4:
-                    recent_sweeps.append(sweep)
+                sweep_timestamp = sweep.timestamp if hasattr(sweep, 'timestamp') else sweep.get('timestamp', None)
+                # Only process if we have a valid timestamp
+                if sweep_timestamp and isinstance(sweep_timestamp, datetime):
+                    try:
+                        if (df.index[-1] - sweep_timestamp).total_seconds() < 3600 * 4:
+                            recent_sweeps.append(sweep)
+                    except (TypeError, AttributeError):
+                        # Skip if timestamp calculation fails
+                        continue
             
             if recent_sweeps:
                 triggers.append('LIQUIDITY_SWEEP')
@@ -3816,6 +3822,10 @@ class ICTSignalEngine:
             return False, None
         
         # Select best POI (closest with highest strength)
+        # NOTE: Distance takes priority over strength because:
+        # 1. Closer POI = higher probability of price reaching it
+        # 2. ICT methodology emphasizes proximity for entry timing
+        # 3. Secondary sort by strength ensures quality when distances are similar
         best_poi = min(valid_pois, key=lambda x: (x['distance_pct'], -x['strength']))
         
         scenario_info = {
@@ -3926,6 +3936,10 @@ class ICTSignalEngine:
         scenario_info = {
             'type': 'CONTINUATION',
             'triggers': triggers['triggers'],
+            # NOTE: position_size_modifier is advisory metadata for risk management.
+            # It can be used by position_manager or risk_management modules to adjust
+            # position size for CONTINUATION scenarios (recommended: 65% of normal size).
+            # This is stored in the signal but not automatically enforced by this module.
             'position_size_modifier': 0.65,  # Reduce to 65%
             'entry_zone': {
                 'center': entry_center,
