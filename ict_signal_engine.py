@@ -1687,7 +1687,7 @@ class ICTSignalEngine:
         else:
             logger.info(f"   → {reason}")
         
-        reasoning = self._generate_reasoning(ict_components, bias, entry_setup, mtf_analysis)
+        reasoning = self._generate_reasoning(ict_components, bias, entry_setup, mtf_analysis, entry_scenario_result)
         warnings = self._generate_warnings(ict_components, risk_reward_ratio, df)
         
         # ✅ ADD CONTEXT WARNINGS (if any)
@@ -3780,7 +3780,8 @@ class ICTSignalEngine:
         ict_components: Dict,
         bias: MarketBias,
         entry_setup: Optional[Dict],
-        mtf_analysis: Optional[Dict]
+        mtf_analysis: Optional[Dict],
+        entry_scenario_result: Optional[Dict] = None
     ) -> str:
         """Generate human-readable reasoning"""
         lines = []
@@ -3797,6 +3798,19 @@ class ICTSignalEngine:
         if entry_setup:
             setup_type = entry_setup.get('type', 'unknown')
             lines.append(f"Entry Setup: {setup_type.replace('_', ' ').title()}")
+        
+        # Entry scenario (if available)
+        if entry_scenario_result:
+            scenario = entry_scenario_result.get('scenario', 'UNKNOWN')
+            score = entry_scenario_result.get('score', 0)
+            reasoning = entry_scenario_result.get('reasoning', '')
+            triggers = entry_scenario_result.get('triggers', [])
+            
+            lines.append(f"Entry Scenario: {scenario} ({score}/100)")
+            if reasoning:
+                lines.append(f"  └─ {reasoning}")
+            if triggers:
+                lines.append(f"  └─ Triggers: {', '.join(triggers)}")
         
         # ICT components
         whale_count = len(ict_components.get('whale_blocks', []))
