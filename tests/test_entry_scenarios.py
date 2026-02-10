@@ -1,0 +1,250 @@
+"""
+Unit Tests for Entry Scenario Scoring System
+Deterministic tests with mock ICT components
+
+Author: galinborisov10-art
+Date: 2026-02-10
+"""
+
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from entry_scenarios import select_best_entry_scenario
+
+
+def test_rollback_scenario():
+    """Test ROLLBACK scenario scoring"""
+    print("=" * 60)
+    print("TEST 1: ROLLBACK Scenario")
+    print("=" * 60)
+    
+    ict_components = {
+        'structure_break': {
+            'type': 'BOS',
+            'break_level': 49500.0,
+            'strength': 85,
+            'retested': False,
+            'direction': 'BULLISH'
+        },
+        'displacement': {
+            'detected': True,
+            'strength': 0.75
+        },
+        'order_blocks': [],
+        'fvgs': [],
+        'liquidity_zones': [],
+        'liquidity_sweeps': [
+            {'candles_ago': 4, 'type': 'BSL'}
+        ],
+        'breaker_blocks': None,
+        'mitigation_blocks': None
+    }
+    
+    entry_zone_step8 = {'center': 50000.0, 'quality': 80}
+    
+    result = select_best_entry_scenario(
+        current_price=50000.0,
+        bias='BULLISH',
+        ict_components=ict_components,
+        entry_zone=entry_zone_step8,
+        timeframe='1h'
+    )
+    
+    assert result is not None, "❌ Expected ROLLBACK scenario"
+    assert result['scenario'] == 'ROLLBACK'
+    print(f"✅ Scenario: {result['scenario']} (score: {result['score']})")
+    print("✅ TEST 1 PASSED\n")
+
+
+def test_pullback_scenario():
+    """Test PULLBACK scenario scoring"""
+    print("=" * 60)
+    print("TEST 2: PULLBACK Scenario")
+    print("=" * 60)
+    
+    ict_components = {
+        'structure_break': None,
+        'order_blocks': [
+            {
+                'type': 'BULLISH',
+                'zone_low': 49000.0,
+                'zone_high': 49200.0
+            }
+        ],
+        'fvgs': [],
+        'liquidity_zones': [],
+        'displacement': {'detected': False},
+        'liquidity_sweeps': [
+            {'candles_ago': 3, 'type': 'BSL'}
+        ],
+        'breaker_blocks': ['block1'],
+        'mitigation_blocks': None
+    }
+    
+    entry_zone_step8 = {'center': 50000.0, 'quality': 80}
+    
+    result = select_best_entry_scenario(
+        current_price=50000.0,
+        bias='BULLISH',
+        ict_components=ict_components,
+        entry_zone=entry_zone_step8,
+        timeframe='1h'
+    )
+    
+    assert result is not None, "❌ Expected PULLBACK scenario"
+    assert result['scenario'] == 'PULLBACK'
+    print(f"✅ Scenario: {result['scenario']} (score: {result['score']})")
+    print("✅ TEST 2 PASSED\n")
+
+
+def test_continuation_scenario():
+    """Test CONTINUATION scenario scoring"""
+    print("=" * 60)
+    print("TEST 3: CONTINUATION Scenario")
+    print("=" * 60)
+    
+    ict_components = {
+        'structure_break': {
+            'type': 'MSS',
+            'break_level': 51000.0,
+            'strength': 90,
+            'retested': False
+        },
+        'order_blocks': [],
+        'fvgs': [],
+        'liquidity_zones': [],
+        'displacement': {
+            'detected': True,
+            'strength': 0.85
+        },
+        'liquidity_sweeps': [
+            {'candles_ago': 2, 'type': 'BSL'}
+        ],
+        'breaker_blocks': ['block1'],
+        'mitigation_blocks': None
+    }
+    
+    entry_zone_step8 = {'center': 50000.0, 'quality': 80}
+    
+    result = select_best_entry_scenario(
+        current_price=50000.0,
+        bias='BULLISH',
+        ict_components=ict_components,
+        entry_zone=entry_zone_step8,
+        timeframe='1h'
+    )
+    
+    assert result is not None, "❌ Expected CONTINUATION scenario"
+    assert result['scenario'] == 'CONTINUATION'
+    print(f"✅ Scenario: {result['scenario']} (score: {result['score']})")
+    print("✅ TEST 3 PASSED\n")
+
+
+def test_reversal_scenario():
+    """Test REVERSAL scenario scoring"""
+    print("=" * 60)
+    print("TEST 4: REVERSAL Scenario")
+    print("=" * 60)
+    
+    # Mock REVERSAL: Current bias BULLISH, but seeing BEARISH reversal signs
+    ict_components = {
+        'structure_break': {
+            'type': 'CHOCH',
+            'break_level': 49800.0,
+            'strength': 80,
+            'retested': False,
+            'direction': 'BEARISH'  # Reversal direction (opposite to BULLISH bias)
+        },
+        'order_blocks': [
+            {
+                'type': 'BEARISH',  # Reversal POI
+                'zone_low': 49700.0,
+                'zone_high': 49900.0
+            }
+        ],
+        'fvgs': [],
+        'liquidity_zones': [],
+        'displacement': {
+            'detected': True,
+            'strength': 0.70
+        },
+        'liquidity_sweeps': [
+            {'candles_ago': 1, 'type': 'BSL'}  # Recent sweep
+        ],
+        'breaker_blocks': None,
+        'mitigation_blocks': None
+    }
+    
+    entry_zone_step8 = {'center': 50000.0, 'quality': 80}
+    
+    result = select_best_entry_scenario(
+        current_price=50000.0,
+        bias='BULLISH',  # Current bias (will reverse)
+        ict_components=ict_components,
+        entry_zone=entry_zone_step8,
+        timeframe='1h'
+    )
+    
+    assert result is not None, "❌ Expected REVERSAL scenario"
+    assert result['scenario'] == 'REVERSAL', f"❌ Expected REVERSAL, got {result.get('scenario') if result else None}"
+    print(f"✅ Scenario: {result['scenario']} (score: {result['score']})")
+    print("✅ TEST 4 PASSED\n")
+
+
+def test_no_scenario_fallback():
+    """Test fallback when no scenario is valid"""
+    print("=" * 60)
+    print("TEST 5: No Valid Scenario")
+    print("=" * 60)
+    
+    ict_components = {
+        'structure_break': None,
+        'order_blocks': [],
+        'fvgs': [],
+        'liquidity_zones': [],
+        'displacement': {'detected': False},
+        'liquidity_sweeps': [],
+        'breaker_blocks': None,
+        'mitigation_blocks': None
+    }
+    
+    entry_zone_step8 = {'center': 50000.0, 'quality': 80}
+    
+    result = select_best_entry_scenario(
+        current_price=50000.0,
+        bias='BULLISH',
+        ict_components=ict_components,
+        entry_zone=entry_zone_step8,
+        timeframe='1h'
+    )
+    
+    assert result is None, f"❌ Expected None, got {result}"
+    print("✅ Correctly returned None")
+    print("✅ TEST 5 PASSED\n")
+
+
+if __name__ == "__main__":
+    print("\n" + "=" * 60)
+    print("🧪 ENTRY SCENARIO SCORING - UNIT TESTS")
+    print("=" * 60 + "\n")
+    
+    try:
+        test_rollback_scenario()
+        test_pullback_scenario()
+        test_continuation_scenario()
+        test_reversal_scenario()
+        test_no_scenario_fallback()
+        
+        print("=" * 60)
+        print("✅ ALL 5 TESTS PASSED!")
+        print("=" * 60)
+        
+    except AssertionError as e:
+        print(f"\n❌ TEST FAILED: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n❌ ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
