@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 import logging
+from entry_scenarios import select_best_entry_scenario
 import json
 
 # Import Entry Gating and Confidence Threshold evaluators (ESB v1.0 §2.1-2.2)
@@ -320,6 +321,12 @@ class ICTSignal:
     # ✅ PR #4: Timeframe Hierarchy
     timeframe_hierarchy: Dict = field(default_factory=dict)  # NEW: TF hierarchy info (Structure/Confirmation/Entry)
     
+    # ✅ Entry Scenario Detection (NEW)
+    entry_scenario: Optional[str] = None  # ROLLBACK/PULLBACK/CONTINUATION/REVERSAL
+    entry_scenario_score: int = 0  # 0-100 score
+    entry_scenario_reasoning: str = ""  # Why this scenario was selected
+    entry_scenario_triggers: List[str] = field(default_factory=list)  # Detected triggers
+    
     # Explanation
     reasoning: str = ""
     warnings: List[str] = field(default_factory=list)
@@ -346,6 +353,10 @@ class ICTSignal:
             'structure_broken': self.structure_broken,
             'displacement_detected': self.displacement_detected,
             'mtf_confluence': self.mtf_confluence,
+            'entry_scenario': self.entry_scenario,
+            'entry_scenario_score': self.entry_scenario_score,
+            'entry_scenario_reasoning': self.entry_scenario_reasoning,
+            'entry_scenario_triggers': self.entry_scenario_triggers,
             'htf_bias': self.htf_bias,
             'mtf_structure': self.mtf_structure,
             'mtf_consensus_data': self.mtf_consensus_data,
@@ -781,7 +792,7 @@ class ICTSignalEngine:
             except Exception as e:
                 logger.warning(f"Cache error: {e}")
         
-        if len(df) < 50:
+        if len(df) < 200:
             logger.warning("Insufficient data")
             return None
         
@@ -849,13 +860,20 @@ class ICTSignalEngine:
         bias_str, bias_confidence = self._calculate_pure_ict_bias_for_tf(df, symbol, entry_tf)
         bias = MarketBias[bias_str]  # Convert string to enum
         structure_broken = self._check_structure_break(df)
-        displacement_detected = self._check_displacement(df)
+        displacement_detected, displacement_strength = self._check_displacement(df)
+        ict_components["displacement"] = {"detected": displacement_detected, "strength": displacement_strength}
+        ict_components["structure_break"] = {"type": "MSS" if structure_broken else None}
+
+        # Add structure_break and displacement to ict_components for Entry Scenarios
         
         # Log bias calculation breakdown
+        # Filter only MEDIUM-STRONG order blocks for bias (strength >= 40)
         bullish_obs = [ob for ob in ict_components.get('order_blocks', []) 
-                       if hasattr(ob, 'type') and 'BULLISH' in str(ob.type.value)]
+                       if hasattr(ob, 'type') and 'BULLISH' in str(ob.type.value) 
+                       and hasattr(ob, 'strength') and ob.strength >= 40]
         bearish_obs = [ob for ob in ict_components.get('order_blocks', []) 
-                       if hasattr(ob, 'type') and 'BEARISH' in str(ob.type.value)]
+                       if hasattr(ob, 'type') and 'BEARISH' in str(ob.type.value)
+                       and hasattr(ob, 'strength') and ob.strength >= 40]
         bullish_fvgs = [fvg for fvg in ict_components.get('fvgs', []) 
                         if hasattr(fvg, 'is_bullish') and fvg.is_bullish]
         bearish_fvgs = [fvg for fvg in ict_components.get('fvgs', []) 
@@ -1043,6 +1061,40 @@ class ICTSignalEngine:
                 'source': entry_zone['source']
             }
         
+        
+        # =========================================================================
+        # СТЪПКА 8.1: ENTRY SCENARIO SELECTION (ICT Scoring System)
+        # =========================================================================
+        logger.info("=" * 60)
+        logger.info("🎯 Step 8.1: Entry Scenario Selection (ICT Scoring System)")
+        logger.info("=" * 60)
+        
+        scenario_result = select_best_entry_scenario(
+            current_price=current_price,
+            bias=bias_str,
+            ict_components=ict_components,
+            entry_zone=entry_zone,
+            timeframe=timeframe
+        )
+        
+        if scenario_result:
+            logger.info(f"✅ Selected Scenario: {scenario_result['scenario']}")
+            logger.info(f"   Score: {scenario_result['score']}/100")
+            logger.info(f"   Entry Price: ${scenario_result['entry_zone']['center']:.4f}")
+            logger.info(f"   Entry Range: ${scenario_result['entry_zone']['low']:.4f} - ${scenario_result['entry_zone']['high']:.4f}")
+            logger.info(f"   Distance: {scenario_result['entry_zone']['distance_pct']:.1f}%")
+            logger.info(f"   Triggers: {', '.join(scenario_result['triggers'])} ({scenario_result['trigger_strength']})")
+            logger.info(f"   Position Size Advisory: {scenario_result['position_size_advisory']}%")
+            logger.info(f"   Reasoning: {scenario_result['reasoning']}")
+            
+            # Override entry_zone with scenario result
+            entry_zone = scenario_result['entry_zone']
+            
+            logger.info(f"✅ Entry zone updated with {scenario_result['scenario']} logic")
+        else:
+            logger.warning("⚠️ No valid scenario scored above minimum - using Step 8 entry_zone")
+        
+        logger.info("=" * 60)
         # СТЪПКА 9: SL/TP + VALIDATION
         logger.info("🔍 Step 9: SL/TP Calculation & Validation")
         sl_price = self._calculate_sl_price(df, entry_setup, entry_price, bias)
@@ -1652,6 +1704,43 @@ class ICTSignalEngine:
                 logger.error(f"Zone explanations error: {e}")
         
         # CREATE SIGNAL
+        # ✅ NEW: Entry Scenario Detection
+        entry_scenario_result = None
+        try:
+            # Prepare ICT components for scenario detection
+            ict_components_for_scenario = {
+                'structure_break': ict_components.get('structure_break'),
+                'order_blocks': ict_components.get('order_blocks', []),
+                'fvgs': ict_components.get('fvgs', []),
+                'liquidity_zones': ict_components.get('liquidity_zones', []),
+                'liquidity_sweeps': ict_components.get('liquidity_sweeps', []),
+                'displacement': {
+                    'detected': displacement_detected,
+                    'strength': ict_components.get('displacement_strength', 0.0)
+                },
+                'breaker_blocks': ict_components.get('breaker_blocks'),
+                'mitigation_blocks': ict_components.get('mitigation_blocks')
+            }
+            
+            entry_scenario_result = select_best_entry_scenario(
+                current_price=current_price,
+                bias=bias.value if hasattr(bias, 'value') else str(bias),
+                ict_components=ict_components_for_scenario,
+                entry_zone=entry_zone,
+                timeframe=timeframe
+            )
+            
+            if entry_scenario_result:
+                logger.info(f"🎯 Entry Scenario: {entry_scenario_result['scenario']} "
+                          f"(score: {entry_scenario_result['score']}, "
+                          f"triggers: {', '.join(entry_scenario_result.get('triggers', []))})")
+            else:
+                logger.info("⚠️ No valid entry scenario detected (score < 60)")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Entry scenario detection failed: {e}")
+            entry_scenario_result = None
+        
         signal = ICTSignal(
             timestamp=datetime.now(),
             symbol=symbol,
@@ -1689,6 +1778,10 @@ class ICTSignalEngine:
             timeframe_hierarchy=hierarchy_info,  # ✅ PR #4: TF hierarchy info
             reasoning=reasoning,
             warnings=warnings,
+            entry_scenario=entry_scenario_result["scenario"] if entry_scenario_result else None,
+            entry_scenario_score=entry_scenario_result["score"] if entry_scenario_result else 0,
+            entry_scenario_reasoning=entry_scenario_result["reasoning"] if entry_scenario_result else "",
+            entry_scenario_triggers=entry_scenario_result.get("triggers", []) if entry_scenario_result else [],
             zone_explanations=zone_explanations
         )
         
@@ -2321,10 +2414,13 @@ class ICTSignalEngine:
         bearish_score = 0
         
         # Order blocks
+        # Filter only MEDIUM-STRONG order blocks for bias (strength >= 40)
         bullish_obs = [ob for ob in ict_components.get('order_blocks', []) 
-                       if hasattr(ob, 'type') and 'BULLISH' in str(ob.type.value)]
+                       if hasattr(ob, 'type') and 'BULLISH' in str(ob.type.value) 
+                       and hasattr(ob, 'strength') and ob.strength >= 40]
         bearish_obs = [ob for ob in ict_components.get('order_blocks', []) 
-                       if hasattr(ob, 'type') and 'BEARISH' in str(ob.type.value)]
+                       if hasattr(ob, 'type') and 'BEARISH' in str(ob.type.value)
+                       and hasattr(ob, 'strength') and ob.strength >= 40]
         
         if len(bullish_obs) > len(bearish_obs):
             bullish_score += 1
@@ -2353,41 +2449,60 @@ class ICTSignalEngine:
             return MarketBias.RANGING
 
     def _check_structure_break(self, df: pd.DataFrame) -> bool:
-        """Check for recent structure break (BOS/CHOCH)"""
-        # Simple check: look for break of recent swing high/low
-        lookback = 20
+        """Check for recent structure break (BOS/CHOCH/MSS)
         
-        if len(df) < lookback:
+        Logic:
+        - Get swing high/low from candles -150 to -3 (PAST)
+        - Check if last 3 candles (PRESENT) broke those levels
+        """
+        lookback = 150
+        recent = 3
+        
+        if len(df) < lookback + recent:
             return False
         
-        recent_high = df['high'].iloc[-lookback:].max()
-        recent_low = df['low'].iloc[-lookback:].min()
-        current_price = df['close'].iloc[-1]
+        # IMPORTANT: Swing points from PAST candles (exclude last 3)
+        start_idx = -(lookback + recent)
+        end_idx = -recent
         
-        # Check if recent candles broke structure
-        threshold_pct = self.config['structure_break_threshold'] / 100
-        for i in range(-5, 0):
-            if df['high'].iloc[i] > recent_high * (1 + threshold_pct):
-                return True  # Bullish break
-            if df['low'].iloc[i] < recent_low * (1 - threshold_pct):
-                return True  # Bearish break
+        swing_high = df['high'].iloc[start_idx:end_idx].max()
+        swing_low = df['low'].iloc[start_idx:end_idx].min()
+        
+        # Check if last 3 candles broke structure
+        threshold_pct = self.config.get('structure_break_threshold', 0.1) / 100
+        
+        for i in range(-recent, 0):
+            # Bullish break: close above swing high
+            if df['close'].iloc[i] > swing_high * (1 + threshold_pct):
+                return True
+            
+            # Bearish break: close below swing low  
+            if df['close'].iloc[i] < swing_low * (1 - threshold_pct):
+                return True
         
         return False
-    
-    def _check_displacement(self, df: pd.DataFrame) -> bool:
-        """Check for recent displacement"""
+    def _check_displacement(self, df: pd.DataFrame) -> tuple:
+        """Check for recent displacement
+        
+        Returns:
+            (detected: bool, strength: float)
+        """
         if len(df) < 5:
-            return False
+            return False, 0.0
+        
+        max_strength = 0.0
+        detected = False
         
         # Check last 3 candles for displacement
         for i in range(-3, 0):
             price_change = abs(df['close'].iloc[i] - df['open'].iloc[i])
             price_change_pct = (price_change / df['open'].iloc[i]) * 100
+            max_strength = max(max_strength, price_change_pct)
             
             if price_change_pct >= self.config['min_displacement_pct']:
-                return True
+                detected = True
         
-        return False
+        return detected, max_strength
     
     def _identify_entry_setup(
         self,
@@ -3550,6 +3665,43 @@ class ICTSignalEngine:
                 logger.error(f"Zone explanations error: {e}")
         
         # Create HOLD signal
+        # ✅ NEW: Entry Scenario Detection
+        entry_scenario_result = None
+        try:
+            # Prepare ICT components for scenario detection
+            ict_components_for_scenario = {
+                'structure_break': ict_components.get('structure_break'),
+                'order_blocks': ict_components.get('order_blocks', []),
+                'fvgs': ict_components.get('fvgs', []),
+                'liquidity_zones': ict_components.get('liquidity_zones', []),
+                'liquidity_sweeps': ict_components.get('liquidity_sweeps', []),
+                'displacement': {
+                    'detected': displacement_detected,
+                    'strength': ict_components.get('displacement_strength', 0.0)
+                },
+                'breaker_blocks': ict_components.get('breaker_blocks'),
+                'mitigation_blocks': ict_components.get('mitigation_blocks')
+            }
+            
+            entry_scenario_result = select_best_entry_scenario(
+                current_price=current_price,
+                bias=bias.value if hasattr(bias, 'value') else str(bias),
+                ict_components=ict_components_for_scenario,
+                entry_zone=entry_zone,
+                timeframe=timeframe
+            )
+            
+            if entry_scenario_result:
+                logger.info(f"🎯 Entry Scenario: {entry_scenario_result['scenario']} "
+                          f"(score: {entry_scenario_result['score']}, "
+                          f"triggers: {', '.join(entry_scenario_result.get('triggers', []))})")
+            else:
+                logger.info("⚠️ No valid entry scenario detected (score < 60)")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Entry scenario detection failed: {e}")
+            entry_scenario_result = None
+        
         signal = ICTSignal(
             timestamp=datetime.now(),
             symbol=symbol,
@@ -3582,6 +3734,10 @@ class ICTSignalEngine:
             mtf_structure=mtf_analysis.get('mtf_structure', 'NEUTRAL') if mtf_analysis else 'NEUTRAL',
             mtf_consensus_data=mtf_consensus_data,
             entry_zone=None,  # ✅ None for HOLD (not empty dict)
+            entry_scenario=entry_scenario_result["scenario"] if entry_scenario_result else None,
+            entry_scenario_score=entry_scenario_result["score"] if entry_scenario_result else 0,
+            entry_scenario_reasoning=entry_scenario_result["reasoning"] if entry_scenario_result else "",
+            entry_scenario_triggers=entry_scenario_result.get("triggers", []) if entry_scenario_result else [],
             entry_status='HOLD',  # ✅ HOLD status
             distance_penalty=False,
             reasoning=reasoning,
