@@ -38,6 +38,16 @@ logger = logging.getLogger(__name__)
 # PUBLIC API (единствена функция която се извиква отвън)
 # ============================================================
 
+
+def _safe_get(obj, attr, default=None):
+    """Safely get attribute from object or dict"""
+    if hasattr(obj, attr):
+        return getattr(obj, attr)
+    elif isinstance(obj, dict):
+        return obj.get(attr, default)
+    else:
+        return default
+
 def select_best_entry_scenario(
     current_price: float,
     bias: str,
@@ -160,13 +170,21 @@ def _detect_triggers_weighted(
     # 2. Liquidity sweep (with recency check)
     sweeps = ict_components.get('liquidity_sweeps', [])
     if sweeps:
+        sweep = sweeps[0]
+        # Handle both dict and object
+        if hasattr(sweep, 'candles_ago'):
+            candles_ago = sweep.candles_ago
+        elif isinstance(sweep, dict):
+            candles_ago = sweep.candles_ago if hasattr(sweep, "candles_ago") else (sweep.get("candles_ago", 999) if isinstance(sweep, dict) else 999)
+        else:
+            candles_ago = 999
         recency_candles = TRIGGER_SETTINGS['liquidity_sweep_recency_candles'].get(
             timeframe,
             TRIGGER_SETTINGS['liquidity_sweep_recency_candles']['default']
         )
         
         for sweep in sweeps:
-            candles_ago = sweep.get('candles_ago', 999)
+            candles_ago = sweep.candles_ago if hasattr(sweep, "candles_ago") else (sweep.get("candles_ago", 999) if isinstance(sweep, dict) else 999)
             if candles_ago <= recency_candles:
                 triggers.append('LIQUIDITY_SWEEP')
                 total_score += TRIGGER_WEIGHTS['LIQUIDITY_SWEEP']
@@ -337,8 +355,8 @@ def _score_pullback_scenario(
     # 1. Check Order Blocks
     obs = ict_components.get('order_blocks', [])
     for ob in obs:
-        ob_type = ob.get('type', '').upper()
-        ob_center = (ob.get('zone_low', 0) + ob.get('zone_high', 0)) / 2
+        ob_type = str(ob.type if hasattr(ob, "type") else (_safe_get(ob, "type", "") if isinstance(ob, dict) else "")).upper()
+        ob_center = ((ob.zone_low if hasattr(ob, 'zone_low') else (ob.zone_low if hasattr(ob, 'zone_low') else (_safe_get(ob, 'zone_low', 0) if isinstance(ob, dict) else 0) if isinstance(ob, dict) else 0)) + (ob.zone_high if hasattr(ob, 'zone_high') else (ob.zone_high if hasattr(ob, 'zone_high') else (_safe_get(ob, 'zone_high', 0) if isinstance(ob, dict) else 0) if isinstance(ob, dict) else 0))) / 2
         
         if is_bullish and 'BULLISH' in ob_type and ob_center < current_price:
             distance_pct = abs(ob_center - current_price) / current_price * 100
@@ -346,8 +364,8 @@ def _score_pullback_scenario(
                 poi_candidates.append({
                     'type': 'OB',
                     'price': ob_center,
-                    'low': ob.get('zone_low'),
-                    'high': ob.get('zone_high'),
+                    'low': ob.zone_low if hasattr(ob, 'zone_low') else (ob.get('zone_low') if isinstance(ob, dict) else None),
+                    'high': ob.zone_high if hasattr(ob, 'zone_high') else (ob.get('zone_high') if isinstance(ob, dict) else None),
                     'distance_pct': distance_pct,
                     'quality': POI_QUALITY['OB']
                 })
@@ -358,8 +376,8 @@ def _score_pullback_scenario(
                 poi_candidates.append({
                     'type': 'OB',
                     'price': ob_center,
-                    'low': ob.get('zone_low'),
-                    'high': ob.get('zone_high'),
+                    'low': ob.zone_low if hasattr(ob, 'zone_low') else (ob.get('zone_low') if isinstance(ob, dict) else None),
+                    'high': ob.zone_high if hasattr(ob, 'zone_high') else (ob.get('zone_high') if isinstance(ob, dict) else None),
                     'distance_pct': distance_pct,
                     'quality': POI_QUALITY['OB']
                 })
@@ -367,8 +385,8 @@ def _score_pullback_scenario(
     # 2. Check FVGs
     fvgs = ict_components.get('fvgs', [])
     for fvg in fvgs:
-        fvg_type = getattr(fvg, 'type', None) or fvg.get('type', '')
-        fvg_center = (fvg.get('bottom', 0) + fvg.get('top', 0)) / 2
+        fvg_type = getattr(fvg, 'type', None) or _safe_get(fvg, 'type', '')
+        fvg_center = (fvg.bottom if hasattr(fvg, 'bottom') else (_safe_get(fvg, 'bottom', 0) if isinstance(fvg, dict) else 0) + fvg.top if hasattr(fvg, 'top') else (_safe_get(fvg, 'top', 0) if isinstance(fvg, dict) else 0)) / 2
         
         if is_bullish and 'BULLISH' in str(fvg_type).upper() and fvg_center < current_price:
             distance_pct = abs(fvg_center - current_price) / current_price * 100
@@ -376,8 +394,8 @@ def _score_pullback_scenario(
                 poi_candidates.append({
                     'type': 'FVG',
                     'price': fvg_center,
-                    'low': fvg.get('bottom'),
-                    'high': fvg.get('top'),
+                    'low': fvg.bottom if hasattr(fvg, 'bottom') else (_safe_get(fvg, 'bottom') if isinstance(fvg, dict) else None),
+                    'high': fvg.top if hasattr(fvg, 'top') else (_safe_get(fvg, 'top') if isinstance(fvg, dict) else None),
                     'distance_pct': distance_pct,
                     'quality': POI_QUALITY['FVG']
                 })
@@ -388,8 +406,8 @@ def _score_pullback_scenario(
                 poi_candidates.append({
                     'type': 'FVG',
                     'price': fvg_center,
-                    'low': fvg.get('bottom'),
-                    'high': fvg.get('top'),
+                    'low': fvg.bottom if hasattr(fvg, 'bottom') else (_safe_get(fvg, 'bottom') if isinstance(fvg, dict) else None),
+                    'high': fvg.top if hasattr(fvg, 'top') else (_safe_get(fvg, 'top') if isinstance(fvg, dict) else None),
                     'distance_pct': distance_pct,
                     'quality': POI_QUALITY['FVG']
                 })
@@ -397,8 +415,8 @@ def _score_pullback_scenario(
     # 3. Check Liquidity zones (BSL/SSL)
     liq_zones = ict_components.get('liquidity_zones', [])
     for liq in liq_zones:
-        liq_type = liq.get('type', '').upper()
-        liq_price = liq.get('price', 0)
+        liq_type = (liq.type if hasattr(liq, 'type') else (_safe_get(liq, 'type', '') if isinstance(liq, dict) else '')).upper()
+        liq_price = liq.price if hasattr(liq, 'price') else (liq.price if hasattr(liq, 'price') else (_safe_get(liq, 'price', 0) if isinstance(liq, dict) else 0) if isinstance(liq, dict) else 0)
         
         if is_bullish and 'BSL' in liq_type and liq_price < current_price:
             distance_pct = abs(liq_price - current_price) / current_price * 100
@@ -521,7 +539,7 @@ def _score_continuation_scenario(
     
     obs = ict_components.get('order_blocks', [])
     for ob in obs:
-        ob_center = (ob.get('zone_low', 0) + ob.get('zone_high', 0)) / 2
+        ob_center = (ob.zone_low if hasattr(ob, 'zone_low') else (_safe_get(ob, 'zone_low', 0) if isinstance(ob, dict) else 0) + ob.zone_high if hasattr(ob, 'zone_high') else (_safe_get(ob, 'zone_high', 0) if isinstance(ob, dict) else 0)) / 2
         
         if is_bullish and current_price * (1 - check_range) <= ob_center <= current_price:
             logger.debug(f"   CONTINUATION: found OB in path @ ${ob_center:.2f}")
@@ -655,8 +673,8 @@ def _score_reversal_scenario(
         logger.debug(f"   REVERSAL POI search: {len(obs)} OBs, bias={bias.upper()}")
         
         for ob in obs:
-            ob_type = ob.get('type', '').upper()
-            ob_center = (ob.get('zone_low', 0) + ob.get('zone_high', 0)) / 2
+            ob_type = str(ob.type if hasattr(ob, "type") else (_safe_get(ob, "type", "") if isinstance(ob, dict) else "")).upper()
+            ob_center = (ob.zone_low if hasattr(ob, 'zone_low') else (_safe_get(ob, 'zone_low', 0) if isinstance(ob, dict) else 0) + ob.zone_high if hasattr(ob, 'zone_high') else (_safe_get(ob, 'zone_high', 0) if isinstance(ob, dict) else 0)) / 2
             distance_to_ob = abs(ob_center - current_price) / current_price * 100
             
             # Step 2: Correct REVERSAL POI direction logic
@@ -692,8 +710,8 @@ def _score_reversal_scenario(
         logger.debug(f"   REVERSAL POI search: {len(obs)} OBs, bias={bias.upper()}")
         
         for ob in obs:
-            ob_type = ob.get('type', '').upper()
-            ob_center = (ob.get('zone_low', 0) + ob.get('zone_high', 0)) / 2
+            ob_type = str(ob.type if hasattr(ob, "type") else (_safe_get(ob, "type", "") if isinstance(ob, dict) else "")).upper()
+            ob_center = (ob.zone_low if hasattr(ob, 'zone_low') else (_safe_get(ob, 'zone_low', 0) if isinstance(ob, dict) else 0) + ob.zone_high if hasattr(ob, 'zone_high') else (_safe_get(ob, 'zone_high', 0) if isinstance(ob, dict) else 0)) / 2
             distance_to_ob = abs(ob_center - current_price) / current_price * 100
             
             # Step 2: Correct REVERSAL POI direction logic
@@ -729,8 +747,8 @@ def _score_reversal_scenario(
         logger.debug(f"   REVERSAL POI search: {len(obs)} OBs, bias={bias.upper()}")
         
         for ob in obs:
-            ob_type = ob.get('type', '').upper()
-            ob_center = (ob.get('zone_low', 0) + ob.get('zone_high', 0)) / 2
+            ob_type = str(ob.type if hasattr(ob, "type") else (_safe_get(ob, "type", "") if isinstance(ob, dict) else "")).upper()
+            ob_center = (ob.zone_low if hasattr(ob, 'zone_low') else (_safe_get(ob, 'zone_low', 0) if isinstance(ob, dict) else 0) + ob.zone_high if hasattr(ob, 'zone_high') else (_safe_get(ob, 'zone_high', 0) if isinstance(ob, dict) else 0)) / 2
             distance_to_ob = abs(ob_center - current_price) / current_price * 100
             
             # Step 2: Correct REVERSAL POI direction logic
