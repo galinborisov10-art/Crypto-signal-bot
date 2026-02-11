@@ -9339,6 +9339,16 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
 <b>⚖️ RISK/REWARD:</b> 1:{signal.risk_reward_ratio:.2f} {'✅' if signal.risk_reward_ratio >= 3.0 else '⚠️'}
 
 ━━━━━━━━━━━━━━━━━━━━━━
+<b>🎯 ENTRY SCENARIO</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>Scenario:</b> {signal.entry_scenario if getattr(signal, "entry_scenario", None) else "N/A"}
+<b>Score:</b> {signal.entry_scenario_score if getattr(signal, "entry_scenario_score", 0) else 0}/100
+<b>Triggers:</b> {", ".join(signal.entry_scenario_triggers) if getattr(signal, "entry_scenario_triggers", None) else "-"}
+<b>Reasoning:</b> {signal.entry_scenario_reasoning if getattr(signal, "entry_scenario_reasoning", None) else "-"}
+
+
+━━━━━━━━━━━━━━━━━━━━━━
 <b>📊 MULTI-TIMEFRAME CONSENSUS</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 """

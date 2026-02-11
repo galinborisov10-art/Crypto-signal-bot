@@ -1069,7 +1069,7 @@ class ICTSignalEngine:
         logger.info("🎯 Step 8.1: Entry Scenario Selection (ICT Scoring System)")
         logger.info("=" * 60)
         
-        scenario_result = select_best_entry_scenario(
+        entry_scenario_result = select_best_entry_scenario(
             current_price=current_price,
             bias=bias_str,
             ict_components=ict_components,
@@ -1077,20 +1077,24 @@ class ICTSignalEngine:
             timeframe=timeframe
         )
         
-        if scenario_result:
-            logger.info(f"✅ Selected Scenario: {scenario_result['scenario']}")
-            logger.info(f"   Score: {scenario_result['score']}/100")
-            logger.info(f"   Entry Price: ${scenario_result['entry_zone']['center']:.4f}")
-            logger.info(f"   Entry Range: ${scenario_result['entry_zone']['low']:.4f} - ${scenario_result['entry_zone']['high']:.4f}")
-            logger.info(f"   Distance: {scenario_result['entry_zone']['distance_pct']:.1f}%")
-            logger.info(f"   Triggers: {', '.join(scenario_result['triggers'])} ({scenario_result['trigger_strength']})")
-            logger.info(f"   Position Size Advisory: {scenario_result['position_size_advisory']}%")
-            logger.info(f"   Reasoning: {scenario_result['reasoning']}")
+        if entry_scenario_result:
+            logger.info(f"✅ Selected Scenario: {entry_scenario_result['scenario']}")
+            logger.info(f"   Score: {entry_scenario_result['score']}/100")
+            logger.info(f"   Entry Price: ${entry_scenario_result['entry_zone']['center']:.4f}")
+            logger.info(f"   Entry Range: ${entry_scenario_result['entry_zone']['low']:.4f} - ${entry_scenario_result['entry_zone']['high']:.4f}")
+            logger.info(f"   Distance: {entry_scenario_result['entry_zone']['distance_pct']:.1f}%")
+            logger.info(f"   Triggers: {', '.join(entry_scenario_result['triggers'])} ({entry_scenario_result['trigger_strength']})")
+            logger.info(f"   Position Size Advisory: {entry_scenario_result['position_size_advisory']}%")
+            logger.info(f"   Reasoning: {entry_scenario_result['reasoning']}")
             
             # Override entry_zone with scenario result
-            entry_zone = scenario_result['entry_zone']
+            entry_zone = entry_scenario_result['entry_zone']
+            # ✅ IMPORTANT: Update entry_price after scenario override
+            entry_price = entry_zone.get('center', entry_price)
+            logger.info(f"   → Updated Entry Price: ${entry_price:.2f} (from scenario entry zone)")
+
             
-            logger.info(f"✅ Entry zone updated with {scenario_result['scenario']} logic")
+            logger.info(f"✅ Entry zone updated with {entry_scenario_result['scenario']} logic")
         else:
             logger.warning("⚠️ No valid scenario scored above minimum - using Step 8 entry_zone")
         
@@ -1704,43 +1708,12 @@ class ICTSignalEngine:
                 logger.error(f"Zone explanations error: {e}")
         
         # CREATE SIGNAL
-        # ✅ NEW: Entry Scenario Detection
-        entry_scenario_result = None
-        try:
-            # Prepare ICT components for scenario detection
-            ict_components_for_scenario = {
-                'structure_break': ict_components.get('structure_break'),
-                'order_blocks': ict_components.get('order_blocks', []),
-                'fvgs': ict_components.get('fvgs', []),
-                'liquidity_zones': ict_components.get('liquidity_zones', []),
-                'liquidity_sweeps': ict_components.get('liquidity_sweeps', []),
-                'displacement': {
-                    'detected': displacement_detected,
-                    'strength': ict_components.get('displacement_strength', 0.0)
-                },
-                'breaker_blocks': ict_components.get('breaker_blocks'),
-                'mitigation_blocks': ict_components.get('mitigation_blocks')
-            }
-            
-            entry_scenario_result = select_best_entry_scenario(
-                current_price=current_price,
-                bias=bias.value if hasattr(bias, 'value') else str(bias),
-                ict_components=ict_components_for_scenario,
-                entry_zone=entry_zone,
-                timeframe=timeframe
-            )
-            
-            if entry_scenario_result:
-                logger.info(f"🎯 Entry Scenario: {entry_scenario_result['scenario']} "
-                          f"(score: {entry_scenario_result['score']}, "
-                          f"triggers: {', '.join(entry_scenario_result.get('triggers', []))})")
-            else:
-                logger.info("⚠️ No valid entry scenario detected (score < 60)")
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Entry scenario detection failed: {e}")
-            entry_scenario_result = None
-        
+        # ✅ Entry scenario already selected in Step 8.1
+        if entry_scenario_result:
+            logger.info(f"🎯 Using Entry Scenario from Step 8.1: {entry_scenario_result['scenario']} (score: {entry_scenario_result['score']})")
+        else:
+            logger.info("⚠️ No entry scenario from Step 8.1 (score < 60)")
+
         signal = ICTSignal(
             timestamp=datetime.now(),
             symbol=symbol,
@@ -1778,10 +1751,10 @@ class ICTSignalEngine:
             timeframe_hierarchy=hierarchy_info,  # ✅ PR #4: TF hierarchy info
             reasoning=reasoning,
             warnings=warnings,
-            entry_scenario=entry_zone.get('source') if entry_zone else None,
-            entry_scenario_score=entry_zone.get('quality', 0) if entry_zone else 0,
-            entry_scenario_reasoning=entry_zone.get('source', '') if entry_zone else '',
-            entry_scenario_triggers=[],
+            entry_scenario=entry_scenario_result['scenario'] if entry_scenario_result else None,
+            entry_scenario_score=entry_scenario_result['score'] if entry_scenario_result else 0,
+            entry_scenario_reasoning=entry_scenario_result['reasoning'] if entry_scenario_result else "",
+            entry_scenario_triggers=entry_scenario_result.get("triggers", []) if entry_scenario_result else [],
             zone_explanations=zone_explanations
         )
         
@@ -3663,45 +3636,8 @@ class ICTSignalEngine:
                 zone_explanations = self.zone_explainer.generate_all_explanations(ict_components, bias_str)
             except Exception as e:
                 logger.error(f"Zone explanations error: {e}")
-        
         # Create HOLD signal
-        # ✅ NEW: Entry Scenario Detection
-        entry_scenario_result = None
-        try:
-            # Prepare ICT components for scenario detection
-            ict_components_for_scenario = {
-                'structure_break': ict_components.get('structure_break'),
-                'order_blocks': ict_components.get('order_blocks', []),
-                'fvgs': ict_components.get('fvgs', []),
-                'liquidity_zones': ict_components.get('liquidity_zones', []),
-                'liquidity_sweeps': ict_components.get('liquidity_sweeps', []),
-                'displacement': {
-                    'detected': displacement_detected,
-                    'strength': ict_components.get('displacement_strength', 0.0)
-                },
-                'breaker_blocks': ict_components.get('breaker_blocks'),
-                'mitigation_blocks': ict_components.get('mitigation_blocks')
-            }
-            
-            entry_scenario_result = select_best_entry_scenario(
-                current_price=current_price,
-                bias=bias.value if hasattr(bias, 'value') else str(bias),
-                ict_components=ict_components_for_scenario,
-                entry_zone=entry_zone,
-                timeframe=timeframe
-            )
-            
-            if entry_scenario_result:
-                logger.info(f"🎯 Entry Scenario: {entry_scenario_result['scenario']} "
-                          f"(score: {entry_scenario_result['score']}, "
-                          f"triggers: {', '.join(entry_scenario_result.get('triggers', []))})")
-            else:
-                logger.info("⚠️ No valid entry scenario detected (score < 60)")
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Entry scenario detection failed: {e}")
-            entry_scenario_result = None
-        
+        # ✅ Entry scenario already selected in Step 8.1
         signal = ICTSignal(
             timestamp=datetime.now(),
             symbol=symbol,
@@ -3734,9 +3670,9 @@ class ICTSignalEngine:
             mtf_structure=mtf_analysis.get('mtf_structure', 'NEUTRAL') if mtf_analysis else 'NEUTRAL',
             mtf_consensus_data=mtf_consensus_data,
             entry_zone=None,  # ✅ None for HOLD (not empty dict)
-            entry_scenario=entry_scenario_result["scenario"] if entry_scenario_result else None,
-            entry_scenario_score=entry_scenario_result["score"] if entry_scenario_result else 0,
-            entry_scenario_reasoning=entry_scenario_result["reasoning"] if entry_scenario_result else "",
+            entry_scenario=entry_scenario_result['scenario'] if entry_scenario_result else None,
+            entry_scenario_score=entry_scenario_result['score'] if entry_scenario_result else 0,
+            entry_scenario_reasoning=entry_scenario_result['reasoning'] if entry_scenario_result else "",
             entry_scenario_triggers=entry_scenario_result.get("triggers", []) if entry_scenario_result else [],
             entry_status='HOLD',  # ✅ HOLD status
             distance_penalty=False,
