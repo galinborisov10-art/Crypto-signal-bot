@@ -1778,10 +1778,10 @@ class ICTSignalEngine:
             timeframe_hierarchy=hierarchy_info,  # ✅ PR #4: TF hierarchy info
             reasoning=reasoning,
             warnings=warnings,
-            entry_scenario=entry_scenario_result["scenario"] if entry_scenario_result else None,
-            entry_scenario_score=entry_scenario_result["score"] if entry_scenario_result else 0,
-            entry_scenario_reasoning=entry_scenario_result["reasoning"] if entry_scenario_result else "",
-            entry_scenario_triggers=entry_scenario_result.get("triggers", []) if entry_scenario_result else [],
+            entry_scenario=entry_zone.get('source') if entry_zone else None,
+            entry_scenario_score=entry_zone.get('quality', 0) if entry_zone else 0,
+            entry_scenario_reasoning=entry_zone.get('source', '') if entry_zone else '',
+            entry_scenario_triggers=[],
             zone_explanations=zone_explanations
         )
         
