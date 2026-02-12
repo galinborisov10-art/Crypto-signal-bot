@@ -107,3 +107,20 @@ test_no_duplicate_logging.py
 
 # Backup files from refactoring
 *.bak_*
+
+# Logs
+*.log
+*.log.*
+bot.log*
+
+# Backups
+*.backup_*
+*~
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Large files
+*.db-journal
