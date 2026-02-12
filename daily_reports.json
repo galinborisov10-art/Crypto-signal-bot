@@ -2,26 +2,6 @@
   "reports": [
     {
       "date": "2025-11-24",
-      "timestamp": "2025-11-24T09:14:38.222797",
-      "total_signals": 8,
-      "buy_signals": 7,
-      "sell_signals": 1,
-      "completed_trades": 0,
-      "wins": 0,
-      "losses": 0,
-      "win_rate": 0,
-      "avg_confidence": 76.5,
-      "best_trade": null,
-      "worst_trade": null,
-      "ml_signals_count": 0,
-      "symbols_traded": [
-        "BTCUSDT",
-        "XRPUSDT",
-        "SOLUSDT"
-      ]
-    },
-    {
-      "date": "2025-11-24",
       "timestamp": "2025-11-24T09:17:12.359644",
       "total_signals": 8,
       "buy_signals": 7,
@@ -1497,6 +1477,154 @@
       "ml_signals_count": 5,
       "ml_completed": 5,
       "ml_accuracy": 60.0
+    },
+    {
+      "date": "2026-02-11",
+      "timestamp": "2026-02-12T08:01:18.539295+02:00",
+      "total_signals": 3,
+      "buy_signals": 0,
+      "sell_signals": 3,
+      "active_signals": 3,
+      "completed_signals": 0,
+      "wins": 0,
+      "losses": 0,
+      "breakeven": 0,
+      "accuracy": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "avg_win": 0,
+      "avg_loss": 0,
+      "best_trade": null,
+      "worst_trade": null,
+      "profit_factor": 0,
+      "avg_confidence": 67.16666666666667,
+      "confidence_accuracy": {},
+      "symbols_traded": [
+        "XRPUSDT"
+      ],
+      "symbols_stats": {
+        "XRPUSDT": {
+          "total": 3,
+          "completed": 0,
+          "wins": 0,
+          "accuracy": 0,
+          "profit": 0
+        }
+      },
+      "ml_signals_count": 3,
+      "ml_completed": 0,
+      "ml_accuracy": 0
+    },
+    {
+      "date": "2026-02-11",
+      "timestamp": "2026-02-12T08:01:27.641363+02:00",
+      "total_signals": 3,
+      "buy_signals": 0,
+      "sell_signals": 3,
+      "active_signals": 3,
+      "completed_signals": 0,
+      "wins": 0,
+      "losses": 0,
+      "breakeven": 0,
+      "accuracy": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "avg_win": 0,
+      "avg_loss": 0,
+      "best_trade": null,
+      "worst_trade": null,
+      "profit_factor": 0,
+      "avg_confidence": 67.16666666666667,
+      "confidence_accuracy": {},
+      "symbols_traded": [
+        "XRPUSDT"
+      ],
+      "symbols_stats": {
+        "XRPUSDT": {
+          "total": 3,
+          "completed": 0,
+          "wins": 0,
+          "accuracy": 0,
+          "profit": 0
+        }
+      },
+      "ml_signals_count": 3,
+      "ml_completed": 0,
+      "ml_accuracy": 0
+    },
+    {
+      "date": "2026-02-11",
+      "timestamp": "2026-02-12T08:06:22.670641+02:00",
+      "total_signals": 3,
+      "buy_signals": 0,
+      "sell_signals": 3,
+      "active_signals": 3,
+      "completed_signals": 0,
+      "wins": 0,
+      "losses": 0,
+      "breakeven": 0,
+      "accuracy": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "avg_win": 0,
+      "avg_loss": 0,
+      "best_trade": null,
+      "worst_trade": null,
+      "profit_factor": 0,
+      "avg_confidence": 67.16666666666667,
+      "confidence_accuracy": {},
+      "symbols_traded": [
+        "XRPUSDT"
+      ],
+      "symbols_stats": {
+        "XRPUSDT": {
+          "total": 3,
+          "completed": 0,
+          "wins": 0,
+          "accuracy": 0,
+          "profit": 0
+        }
+      },
+      "ml_signals_count": 3,
+      "ml_completed": 0,
+      "ml_accuracy": 0
+    },
+    {
+      "date": "2026-02-11",
+      "timestamp": "2026-02-12T18:17:27.655223+02:00",
+      "total_signals": 3,
+      "buy_signals": 0,
+      "sell_signals": 3,
+      "active_signals": 3,
+      "completed_signals": 0,
+      "wins": 0,
+      "losses": 0,
+      "breakeven": 0,
+      "accuracy": 0,
+      "win_rate": 0,
+      "total_profit": 0,
+      "avg_win": 0,
+      "avg_loss": 0,
+      "best_trade": null,
+      "worst_trade": null,
+      "profit_factor": 0,
+      "avg_confidence": 67.16666666666667,
+      "confidence_accuracy": {},
+      "symbols_traded": [
+        "XRPUSDT"
+      ],
+      "symbols_stats": {
+        "XRPUSDT": {
+          "total": 3,
+          "completed": 0,
+          "wins": 0,
+          "accuracy": 0,
+          "profit": 0
+        }
+      },
+      "ml_signals_count": 3,
+      "ml_completed": 0,
+      "ml_accuracy": 0
     }
   ]
 }

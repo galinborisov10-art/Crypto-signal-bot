@@ -130,7 +130,7 @@ try:
     from ict_80_alert_handler import ICT80AlertHandler
     from order_block_detector import OrderBlockDetector
     from fvg_detector import FVGDetector
-    from real_time_monitor import RealTimePositionMonitor
+# DISABLED:     from real_time_monitor import RealTimePositionMonitor
     ICT_SIGNAL_ENGINE_AVAILABLE = True
     logger.info("✅ ICT Signal Engine loaded")
     ict_engine_global = ICTSignalEngine()  # Global initialization for logs
@@ -11810,7 +11810,8 @@ async def auto_signal_job(timeframe: str, bot_instance):
                         signal=ict_signal,
                         symbol=symbol,
                         timeframe=timeframe,
-                        source='AUTO'
+                        source='AUTO',
+                        journal_id=journal_id
                     )
                     
                     logger.info(f"🔍 DIAGNOSTIC: open_position() returned ID: {position_id}")
@@ -12035,6 +12036,15 @@ async def handle_sl_hit(position: Dict, exit_price: float, bot_instance):
             outcome='SL'
         )
         
+        # Update journal if journal_id exists
+        if position.get("journal_id"):
+            update_trade_outcome(
+                trade_id=position["journal_id"],
+                outcome="LOSS",
+                profit_loss_pct=pl_percent,
+                notes=f"Auto-closed: SL hit at ${exit_price:,.2f}"
+            )
+        
         # Calculate duration
         opened_at = datetime.fromisoformat(position['opened_at'])
         duration = datetime.now(timezone.utc) - opened_at
@@ -12089,6 +12099,15 @@ async def handle_tp_hit(position: Dict, exit_price: float, tp_level: str, bot_in
             outcome=tp_level
         )
         
+        
+        # Update journal if journal_id exists
+        if position.get("journal_id"):
+            update_trade_outcome(
+                trade_id=position["journal_id"],
+                outcome="WIN",
+                profit_loss_pct=pl_percent,
+                notes=f"Auto-closed: {tp_level} hit at ${exit_price:,.2f}"
+            )
         # Calculate duration
         opened_at = datetime.fromisoformat(position['opened_at'])
         duration = datetime.now(timezone.utc) - opened_at
@@ -15835,444 +15854,6 @@ async def verify_alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @require_access()
 @rate_limited(calls=3, period=60)
-async def backtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Изпълнява ICT back-test на стратегията
-    Usage: /backtest [symbol] [timeframe] [days]
-    Examples:
-      /backtest                    # Default: 6 symbols, 3 TF, 30 days
-      /backtest XRPUSDT            # Single symbol, all TF
-      /backtest XRPUSDT 3h         # Single symbol + TF
-      /backtest XRPUSDT 3h 30      # Custom days
-    """
-    # Check for ICT Backtest Engine (preferred)
-    if ICT_BACKTEST_AVAILABLE:
-        try:
-            # Initialize ICT Backtest Engine
-            ict_engine = ICTBacktestEngine()
-            
-            # Parse arguments
-            symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT']
-            timeframes = ['1h', '2h', '4h', '1d']
-            days = 30
-            
-            if context.args:
-                if len(context.args) >= 1:
-                    symbols = [context.args[0].upper()]
-                if len(context.args) >= 2:
-                    timeframes = [context.args[1].lower()]
-                if len(context.args) >= 3:
-                    days = int(context.args[2])
-            
-            # Show progress
-            status_msg = await update.message.reply_text(
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"📊 <b>ICT BACKTEST СТАРТИРА</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"✅ <b>STRATEGY:</b>\n"
-                f"   • Engine: ict_backtest.py ✅\n"
-                f"   • NO EMA used ✅\n"
-                f"   • NO MACD used ✅\n"
-                f"   • Pure ICT Signal Engine ✅\n"
-                f"   • 80% TP re-analysis ACTIVE ✅\n\n"
-                f"📋 <b>TESTING:</b>\n"
-                f"   • Symbols: {len(symbols)} ({', '.join(symbols)})\n"
-                f"   • Timeframes: {len(timeframes)} ({', '.join(timeframes)})\n"
-                f"   • Period: {days} days\n\n"
-                f"⏳ Running backtest...\n"
-                f"<i>This may take 1-3 minutes...</i>",
-                parse_mode='HTML'
-            )
-            
-            # Run backtests
-            all_trades = []
-            total_wins = 0
-            total_losses = 0
-            total_pnl = 0.0
-            alert_80_triggered = 0
-            alert_80_hold = 0
-            alert_80_partial = 0
-            alert_80_close = 0
-            
-            results_by_symbol = {}
-            results_by_tf = {}
-            
-            for symbol in symbols:
-                for tf in timeframes:
-                    # Fetch data and run backtest
-                    df = await ict_engine.fetch_klines(symbol, tf, days)
-                    
-                    if df is None or len(df) < 50:
-                        continue
-                    
-                    df = ict_engine.add_indicators(df)
-                    
-                    # Generate signals using ICT engine
-                    for i in range(50, len(df) - 10):
-                        try:
-                            hist_df = df.iloc[:i+1].copy()
-                            signal = ict_engine.ict_engine.generate_signal(
-                                hist_df, symbol, tf, mtf_data=None, is_auto=True
-                            )
-                            
-                            if signal and signal.confidence >= 60:
-                                # Simulate trade
-                                future_df = df.iloc[i+1:i+11].copy()
-                                bias_str = signal.bias.value if hasattr(signal.bias, 'value') else str(signal.bias)
-                                
-                                # Map string bias to MarketBias enum
-                                if 'BULLISH' in bias_str.upper():
-                                    bias_enum = MarketBias.BULLISH
-                                elif 'BEARISH' in bias_str.upper():
-                                    bias_enum = MarketBias.BEARISH
-                                else:
-                                    continue
-                                
-                                trade_result = ict_engine.simulate_trade(
-                                    signal.entry_price,
-                                    signal.sl_price,
-                                    signal.tp_prices,
-                                    future_df,
-                                    bias_enum
-                                )
-                                
-                                if trade_result:
-                                    all_trades.append(trade_result)
-                                    total_pnl += trade_result['pnl_pct']
-                                    
-                                    if trade_result['result'] != 'LOSS':
-                                        total_wins += 1
-                                    else:
-                                        total_losses += 1
-                                    
-                                    # Track by symbol
-                                    if symbol not in results_by_symbol:
-                                        results_by_symbol[symbol] = {'trades': 0, 'wins': 0}
-                                    results_by_symbol[symbol]['trades'] += 1
-                                    if trade_result['result'] != 'LOSS':
-                                        results_by_symbol[symbol]['wins'] += 1
-                                    
-                                    # Track by TF
-                                    if tf not in results_by_tf:
-                                        results_by_tf[tf] = {'trades': 0, 'wins': 0}
-                                    results_by_tf[tf]['trades'] += 1
-                                    if trade_result['result'] != 'LOSS':
-                                        results_by_tf[tf]['wins'] += 1
-                                    
-                                    # 80% TP alert simulation (simplified)
-                                    if trade_result['result'].startswith('TP'):
-                                        alert_80_triggered += 1
-                                        alert_80_hold += 1  # Simplified: assume HOLD for winners
-                                    
-                        except Exception as e:
-                            logger.error(f"Signal generation error: {e}")
-                            continue
-            
-            # Format results
-            total_trades = len(all_trades)
-            win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
-            
-            message = f"""━━━━━━━━━━━━━━━━━━━━
-📊 <b>ICT BACKTEST RESULTS</b>
-━━━━━━━━━━━━━━━━━━━━
-
-✅ <b>STRATEGY:</b>
-   • Engine: ict_backtest.py ✅
-   • NO EMA used ✅
-   • NO MACD used ✅
-   • Pure ICT Signal Engine ✅
-   • 80% TP re-analysis ACTIVE ✅
-
-📋 <b>TESTED:</b>
-   • Symbols: {len(symbols)} ({', '.join(symbols)})
-   • Timeframes: {len(timeframes)} ({', '.join(timeframes)})
-   • Period: {days} days
-
-━━━ <b>OVERALL RESULTS</b> ━━━
-   📊 Total Trades: {total_trades}
-   🟢 Wins: {total_wins}
-   🔴 Losses: {total_losses}
-   🎯 Win Rate: {win_rate:.1f}%
-   💰 Total P/L: {total_pnl:+.2f}%
-
-━━━ <b>80% TP ALERTS</b> ━━━
-   ⚡ Triggered: {alert_80_triggered}
-   ✅ HOLD: {alert_80_hold} ({alert_80_hold/alert_80_triggered*100 if alert_80_triggered else 0:.0f}%)
-   ⚠️ PARTIAL_CLOSE: {alert_80_partial}
-   🔴 CLOSE_NOW: {alert_80_close}
-"""
-            
-            # Add per-symbol stats
-            if results_by_symbol:
-                message += "\n━━━ <b>BY SYMBOL</b> ━━━\n"
-                for sym, stats in results_by_symbol.items():
-                    sym_wr = (stats['wins'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
-                    message += f"   {sym}: {stats['trades']} trades | {sym_wr:.0f}% WR\n"
-            
-            # Add per-TF stats
-            if results_by_tf:
-                message += "\n━━━ <b>BY TIMEFRAME</b> ━━━\n"
-                for tf, stats in results_by_tf.items():
-                    tf_wr = (stats['wins'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
-                    message += f"   {tf}: {stats['trades']} trades | {tf_wr:.0f}% WR\n"
-            
-            await status_msg.edit_text(message, parse_mode='HTML')
-            
-            # Save results
-            results_data = {
-                'timestamp': datetime.now().isoformat(),
-                'symbols': symbols,
-                'timeframes': timeframes,
-                'days': days,
-                'total_trades': total_trades,
-                'wins': total_wins,
-                'losses': total_losses,
-                'win_rate': win_rate,
-                'total_pnl': total_pnl
-            }
-            
-            try:
-                with open('/home/runner/work/Crypto-signal-bot/Crypto-signal-bot/backtest_results.json', 'w') as f:
-                    json.dump(results_data, f, indent=2)
-            except Exception as e:
-                logger.error(f"Error saving backtest results: {e}")
-            
-            return
-            
-        except Exception as e:
-            logger.error(f"ICT Backtest error: {e}", exc_info=True)
-            await update.message.reply_text(
-                f"❌ <b>ICT BACKTEST ERROR</b>\n\n"
-                f"<code>{str(e)[:300]}</code>",
-                parse_mode='HTML'
-            )
-            return
-    
-    # Fallback to old backtest engine if ICT not available
-    if not BACKTEST_AVAILABLE:
-        await update.message.reply_text(
-            "❌ <b>Back-testing модул не е наличен</b>\n\n"
-            "Модулът не е зареден. Проверете логовете.",
-            parse_mode='HTML'
-        )
-        return
-    
-    try:
-        # Параметри
-        symbol = context.args[0] if context.args else 'BTCUSDT'
-        
-        # Проверка дали е зададен конкретен timeframe или 'all'
-        if len(context.args) > 1 and context.args[1].lower() == BACKTEST_ALL_KEYWORD:
-            test_all_timeframes = True
-            timeframes_to_test = ['1m', '5m', '15m', '1h', '4h', '1d']
-            days = int(context.args[2]) if len(context.args) > 2 else 15
-        else:
-            test_all_timeframes = False
-            timeframe = context.args[1] if len(context.args) > 1 else '4h'
-            timeframes_to_test = [timeframe]
-            days = int(context.args[2]) if len(context.args) > 2 else 30
-        
-        logger.info(f"📊 Backtest started: {symbol} {timeframes_to_test} {days}d by user {update.effective_user.id}")
-        
-        # Progress message
-        if test_all_timeframes:
-            status_msg = await update.message.reply_text(
-                f"📊 <b>MULTI-TIMEFRAME BACKTEST СТАРТИРА...</b>\n\n"
-                f"💰 Символ: {symbol}\n"
-                f"⏰ Timeframes: 1m, 5m, 15m, 1h, 4h, 1d\n"
-                f"📅 Период: {days} дни\n\n"
-                f"⏳ Изтеглям данни от Binance...\n"
-                f"🕒 Може да отнеме 1-2 минути",
-                parse_mode='HTML'
-            )
-        else:
-            status_msg = await update.message.reply_text(
-                f"📊 <b>BACKTEST СТАРТИРА...</b>\n\n"
-                f"💰 Символ: {symbol}\n"
-                f"⏰ Timeframe: {timeframe}\n"
-                f"📅 Период: {days} дни\n\n"
-                f"⏳ Изтеглям данни от Binance...",
-                parse_mode='HTML'
-            )
-        
-        await asyncio.sleep(0.5)
-        
-        # Изпълни back-test за всички timeframes
-        all_results = []
-        total_trades_all = 0
-        total_wins_all = 0
-        total_losses_all = 0
-        total_profit_all = 0  # Сума на профити от всички TF (за индикация)
-        
-        for idx, tf in enumerate(timeframes_to_test):
-            # Update progress
-            if test_all_timeframes:
-                await status_msg.edit_text(
-                    f"📊 <b>MULTI-TIMEFRAME BACKTEST В ХОД...</b>\n\n"
-                    f"💰 Символ: {symbol}\n"
-                    f"📅 Период: {days} дни\n\n"
-                    f"🔄 Обработвам: {tf} ({idx+1}/{len(timeframes_to_test)})\n"
-                    f"⏱️ Моля изчакайте...",
-                    parse_mode='HTML'
-                )
-            else:
-                await status_msg.edit_text(
-                    f"📊 <b>BACKTEST В ХОД...</b>\n\n"
-                    f"💰 Символ: {symbol}\n"
-                    f"⏰ Timeframe: {tf}\n"
-                    f"📅 Период: {days} дни\n\n"
-                    f"🔄 Симулирам трейдове...\n"
-                    f"⏱️ Може да отнеме 20-40 секунди\n\n"
-                    f"<i>Моля изчакайте...</i>",
-                    parse_mode='HTML'
-                )
-            
-            logger.info(f"📥 Fetching {days} days of data for {symbol} {tf}...")
-            
-            # Изпълни back-test с timeout
-            try:
-                results = await asyncio.wait_for(
-                    backtest_engine.run_backtest(symbol, tf, None, days),
-                    timeout=90.0  # 90 секунди максимум
-                )
-                
-                if results:
-                    all_results.append(results)
-                    total_trades_all += results['total_trades']
-                    total_wins_all += results['wins']
-                    total_losses_all += results['losses']
-                    total_profit_all += results['total_profit_pct']
-                    logger.info(f"✅ Backtest {tf} completed: {results['total_trades']} trades, {results['win_rate']:.1f}% win rate")
-                else:
-                    logger.warning(f"⚠️ No results for {tf}")
-                    
-            except asyncio.TimeoutError:
-                logger.error(f"⏱️ Backtest timeout for {symbol} {tf}")
-                if not test_all_timeframes:
-                    await status_msg.edit_text(
-                        "⏱️ <b>TIMEOUT!</b>\n\n"
-                        "Backtest отне твърде дълго време.\n"
-                        "Опитайте с по-кратък период:\n"
-                        "<code>/backtest BTCUSDT 4h 15</code>",
-                        parse_mode='HTML'
-                    )
-                    return
-            except Exception as fetch_error:
-                logger.error(f"❌ Backtest fetch error for {tf}: {fetch_error}", exc_info=True)
-                if not test_all_timeframes:
-                    await status_msg.edit_text(
-                        f"❌ <b>ГРЕШКА ПРИ ИЗТЕГЛЯНЕ:</b>\n\n"
-                        f"<code>{str(fetch_error)[:200]}</code>\n\n"
-                        f"Binance API може да не отговаря.",
-                        parse_mode='HTML'
-                    )
-                    return
-        
-        if not all_results:
-            logger.warning(f"⚠️ Backtest returned no results for {symbol}")
-            await status_msg.edit_text(
-                "❌ <b>НЯМА РЕЗУЛТАТИ</b>\n\n"
-                "Възможни причини:\n"
-                "• Невалиден символ или timeframe\n"
-                "• Няма достатъчно данни от Binance\n"
-                "• API грешка\n\n"
-                "Опитайте:\n"
-                "<code>/backtest BTCUSDT 4h 15</code>\n"
-                "<code>/backtest BTCUSDT all 15</code> (всички timeframes)\n"
-                "<code>/backtest ETHUSDT 1h 20</code>",
-                parse_mode='HTML'
-            )
-            return
-        
-        # Формирай съобщението с резултати
-        if test_all_timeframes:
-            # Multi-timeframe резултати
-            overall_win_rate = (total_wins_all / total_trades_all * 100) if total_trades_all > 0 else 0
-            overall_avg = (total_profit_all / total_trades_all) if total_trades_all > 0 else 0
-            
-            message = f"""📊 <b>MULTI-TIMEFRAME BACKTEST</b>
-
-💰 <b>Символ:</b> {symbol}
-📅 <b>Период:</b> {days} дни
-
-<b>━━━ ОБЩА СТАТИСТИКА ━━━</b>
-   📈 Общо trades: {total_trades_all}
-   🟢 Печеливши: {total_wins_all}
-   🔴 Загубени: {total_losses_all}
-   🎯 Win Rate: {overall_win_rate:.1f}%
-   💰 Обща печалба: {total_profit_all:+.2f}%
-   📊 Средно/trade: {overall_avg:+.2f}%
-
-<b>━━━ ПО TIMEFRAME ━━━</b>
-"""
-            
-            # Добави статистика за всеки timeframe
-            for res in all_results:
-                tf_emoji = {
-                    '1m': '⚡', '5m': '🔥', '15m': '💨',
-                    '1h': '⏰', '4h': '📊', '1d': '🌅'
-                }.get(res['timeframe'], '📈')
-                
-                message += f"\n{tf_emoji} <b>{res['timeframe']}</b>: {res['total_trades']} trades | "
-                message += f"{res['win_rate']:.0f}% WR | "
-                message += f"{res['total_profit_pct']:+.1f}% profit"
-            
-            message += "\n\n⚠️ <i>Симулация базирана на исторически данни</i>"
-            
-        else:
-            # Single timeframe резултати
-            results = all_results[0]
-            message = f"""📊 <b>BACK-TEST РЕЗУЛТАТИ</b>
-
-💰 <b>Символ:</b> {results['symbol']}
-⏰ <b>Таймфрейм:</b> {results['timeframe']}
-📅 <b>Период:</b> {results['period_days']} дни
-
-<b>Резултати:</b>
-   Общо trades: {results['total_trades']}
-   🟢 Печеливши: {results['wins']}
-   🔴 Загубени: {results['losses']}
-   🎯 Win Rate: {results['win_rate']:.1f}%
-   💰 Обща печалба: {results['total_profit_pct']:+.2f}%
-   📊 Средно на trade: {results['avg_profit_per_trade']:+.2f}%
-
-⚠️ <i>Симулация базирана на исторически данни</i>
-"""
-        
-        await status_msg.edit_text(message, parse_mode='HTML')
-        
-        # Оптимизирай параметри (само за single timeframe)
-        if not test_all_timeframes:
-            try:
-                results = all_results[0]
-                optimized = backtest_engine.optimize_parameters(results)
-                
-                if optimized:
-                    opt_msg = f"""✅ <b>ПАРАМЕТРИ ОПТИМИЗИРАНИ</b>
-
-🎯 Препоръчан TP: {optimized['optimized_tp_pct']:.2f}%
-🛡️ Препоръчан SL: {optimized['optimized_sl_pct']:.2f}%
-⚖️ Risk/Reward: 1:{optimized['recommended_rr']}
-
-💡 <i>Използвай тези параметри за по-добри резултати!</i>
-"""
-                    await update.message.reply_text(opt_msg, parse_mode='HTML')
-            except Exception as e:
-                logger.error(f"Optimization error: {e}")
-                # Don't fail the whole command if optimization fails
-    
-    except Exception as e:
-        logger.error(f"❌ Backtest error: {e}")
-        await status_msg.edit_text(
-            f"❌ <b>ГРЕШКА!</b>\n\n"
-            f"<code>{str(e)[:200]}</code>\n\n"
-            f"Опитайте отново или с различни параметри.",
-            parse_mode='HTML'
-        )
-
-
-@require_access()
-@rate_limited(calls=10, period=60)
 async def ml_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📈 Детайлен ML отчет с точност и performance"""
     if not ML_AVAILABLE:
@@ -18022,7 +17603,6 @@ def main():
     app.add_handler(CommandHandler("users", list_users_cmd))  # Списък с потребители
     
     # ML, Back-testing, Reports команди
-    app.add_handler(CommandHandler("backtest", backtest_cmd))  # Run back-testing
     app.add_handler(CommandHandler("backtest_results", backtest_results_cmd))  # Show saved backtest results
     app.add_handler(CommandHandler("verify_alerts", verify_alerts_cmd))  # Verify alert systems
     app.add_handler(CommandHandler("backup_settings", backup_settings_cmd))  # Backup backtest settings
@@ -18457,7 +18037,7 @@ def main():
                     from system_diagnostics import grep_logs_cached, DIAGNOSTIC_CACHE
                     
                     # Log cache state BEFORE refresh
-                    cache_size_before = len(DIAGNOSTIC_CACHE, get_comprehensive_diagnostic_report)
+                    cache_size_before = len(DIAGNOSTIC_CACHE)
                     logger.info(f"📊 Cache state before refresh: {cache_size_before} entries")
                     
                     base_path = os.path.dirname(os.path.abspath(__file__))
@@ -18637,10 +18217,45 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             scheduler.add_job(
                 send_scheduled_backtest_report,
                 'cron',
-                hour=20,
-                minute=0
+                hour=8,
+                minute=5,
+                id="daily_backtest_summary",
+                replace_existing=True,
+                misfire_grace_time=43200,
+                coalesce=True,
+                max_instances=1
             )
+
+              # 📊 WEEKLY BACKTEST SUMMARY - every Monday at 08:05 BG time
+            scheduler.add_job(
+                send_scheduled_backtest_report,
+                "cron",
+                day_of_week="mon",
+                hour=8,
+                minute=5,
+                id="weekly_backtest_summary",
+                replace_existing=True,
+                misfire_grace_time=43200,
+                coalesce=True,
+                max_instances=1
+            )
+
+              # 📊 MONTHLY BACKTEST SUMMARY - 1st day of month at 08:05 BG time
+            scheduler.add_job(
+                send_scheduled_backtest_report,
+                "cron",
+                day=1,
+                hour=8,
+                minute=5,
+                id="monthly_backtest_summary",
+                replace_existing=True,
+                misfire_grace_time=43200,
+                coalesce=True,
+                max_instances=1
+            )
+
             
+
             # 📊 АВТОМАТИЧЕН СЕДМИЧЕН BACKTEST - всеки понеделник в 09:00 UTC (11:00 BG)
             if BACKTEST_AVAILABLE:
                 @safe_job("weekly_backtest", max_retries=3, retry_delay=120)
@@ -19055,32 +18670,32 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
             logger.info("🤖 ML: Auto-training (weekly), Auto Signals (1H, 2H, 4H, 1D)")
             logger.info("📊 Position Monitoring (PR #7) + 🏥 Health Monitoring (PR #10)")
             
-            # 🎯 INITIALIZE AND START REAL-TIME POSITION MONITOR (v2.1.0)
-            global real_time_monitor_global
-            if ICT_SIGNAL_ENGINE_AVAILABLE and ict_80_handler_global:
-                try:
-                    real_time_monitor_global = RealTimePositionMonitor(
-                        bot=application.bot,
-                        ict_80_handler=ict_80_handler_global,
-                        owner_chat_id=OWNER_CHAT_ID,
-                        binance_price_url=BINANCE_PRICE_URL,
-                        binance_klines_url=BINANCE_KLINES_URL
-                    )
-                    
-                    # Start monitoring as a background task and store reference
-                    # Fix: Use get_running_loop() for nested scope compatibility
-                    loop = asyncio.get_running_loop()
-                    monitor_task = loop.create_task(real_time_monitor_global.start_monitoring())
-                    monitor_task.set_name("real_time_position_monitor")
-                    
-                    logger.info("🎯 Real-time Position Monitor STARTED (30s interval)")
-                    logger.info("✅ 80% TP alerts and WIN/LOSS notifications enabled")
-                except Exception as monitor_error:
-                    logger.error(f"❌ Failed to start real-time monitor: {monitor_error}")
-                    real_time_monitor_global = None
-            else:
-                logger.warning("⚠️ Real-time monitor not available (ICT engine required)")
-        
+# DISABLED: # DISABLED:             # 🎯 INITIALIZE AND START REAL-TIME POSITION MONITOR (v2.1.0)
+# DISABLED: # DISABLED:             global real_time_monitor_global
+# DISABLED: # DISABLED:             if ICT_SIGNAL_ENGINE_AVAILABLE and ict_80_handler_global:
+# DISABLED: # DISABLED:                 try:
+# DISABLED: # DISABLED:                     real_time_monitor_global = RealTimePositionMonitor(
+# DISABLED: # DISABLED:                         bot=application.bot,
+# DISABLED: # DISABLED:                         ict_80_handler=ict_80_handler_global,
+# DISABLED: # DISABLED:                         owner_chat_id=OWNER_CHAT_ID,
+# DISABLED: # DISABLED:                         binance_price_url=BINANCE_PRICE_URL,
+# DISABLED: # DISABLED:                         binance_klines_url=BINANCE_KLINES_URL
+# DISABLED: # DISABLED:                     )
+# DISABLED: # DISABLED:                     
+# DISABLED: # DISABLED:                     # Start monitoring as a background task and store reference
+# DISABLED: # DISABLED:                     # Fix: Use get_running_loop() for nested scope compatibility
+# DISABLED: # DISABLED:                     loop = asyncio.get_running_loop()
+# DISABLED: # DISABLED:                     monitor_task = loop.create_task(real_time_monitor_global.start_monitoring())
+# DISABLED: # DISABLED:                     monitor_task.set_name("real_time_position_monitor")
+# DISABLED: # DISABLED:                     
+# DISABLED: # DISABLED:                     logger.info("🎯 Real-time Position Monitor STARTED (30s interval)")
+# DISABLED: # DISABLED:                     logger.info("✅ 80% TP alerts and WIN/LOSS notifications enabled")
+# DISABLED: # DISABLED:                 except Exception as monitor_error:
+# DISABLED: # DISABLED:                     logger.error(f"❌ Failed to start real-time monitor: {monitor_error}")
+# DISABLED: # DISABLED:                     real_time_monitor_global = None
+# DISABLED: # DISABLED:             else:
+# DISABLED: # DISABLED:                 logger.warning("⚠️ Real-time monitor not available (ICT engine required)")
+# DISABLED: # DISABLED:         
         async def enable_auto_alerts():
             """Автоматично активиране на alerts за owner при стартиране"""
             settings = get_user_settings(app.bot_data, OWNER_CHAT_ID)

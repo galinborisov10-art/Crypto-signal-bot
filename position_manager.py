@@ -148,6 +148,7 @@ class PositionManager:
         signal: Any,
         symbol: str,
         timeframe: str,
+        journal_id: int = None,
         source: str = 'AUTO'
     ) -> int:
         """
@@ -198,12 +199,13 @@ class PositionManager:
                 INSERT INTO open_positions (
                     symbol, timeframe, signal_type,
                     entry_price, tp1_price, tp2_price, tp3_price, sl_price,
-                    original_signal_json, source, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
+                    original_signal_json, source, status, journal_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
             """, (
                 symbol, timeframe, signal_type,
                 entry_price, tp1_price, tp2_price, tp3_price, sl_price,
-                signal_json, source
+                signal_json, source,
+                journal_id
             ))
             
             position_id = cursor.lastrowid
