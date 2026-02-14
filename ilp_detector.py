@@ -83,7 +83,7 @@ class InternalLiquidityPoolDetector:
     def __init__(
         self,
         swing_period: int = 5,
-        equal_price_tolerance: float = 0.001,  # 0.1% tolerance for equal prices
+        equal_price_tolerance: float = 0.002,  # 0.1% tolerance for equal prices
         min_pool_count: int = 2,
         min_swing_strength: int = 2
     ):
@@ -531,6 +531,7 @@ class InternalLiquidityPoolDetector:
             'swing_highs': swing_highs,
             'swing_lows': swing_lows,
             'liquidity_pools': pools,
+            'pools': pools,  # For ict_signal_engine compatibility
             'active_pools': self.get_active_pools(),
             'swept_pools': self.get_swept_pools(),
             'summary': summary

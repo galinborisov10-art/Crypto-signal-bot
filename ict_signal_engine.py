@@ -2127,6 +2127,32 @@ class ICTSignalEngine:
                 ilp_analysis = self.ilp_detector.analyze(df)
                 components['internal_liquidity'] = ilp_analysis.get('pools', [])
                 logger.info(f"Detected {len(components['internal_liquidity'])} ILPs")
+                
+                # Add ILP sweeps to liquidity_sweeps (quality filter)
+                ilp_swept_pools = ilp_analysis.get('swept_pools', [])
+                if ilp_swept_pools:
+                    quality_ilp_sweeps = []
+                    for pool in ilp_swept_pools:
+                        # Get attributes safely
+                        candles_ago = getattr(pool, 'candles_ago', 999)
+                        strength = getattr(pool, 'strength_score', 0)
+                        
+                        # Quality filter: recent (< 20 candles) and strong (> 0.5)
+                        if candles_ago <= 20 and strength >= 0.5:
+                            quality_ilp_sweeps.append({
+                                'type': pool.pool_type.value,  # IBSL or ISSL
+                                'price': pool.price,
+                                'candles_ago': candles_ago,
+                                'strength': strength,
+                                'source': 'ILP'
+                            })
+                    
+                    # Merge with existing liquidity_sweeps
+                    if quality_ilp_sweeps:
+                        existing_sweeps = components.get('liquidity_sweeps', [])
+                        existing_sweeps.extend(quality_ilp_sweeps)
+                        components['liquidity_sweeps'] = existing_sweeps
+                        logger.info(f"Added {len(quality_ilp_sweeps)} quality ILP sweeps (recent & strong)")
             except Exception as e:
                 logger.error(f"ILP detection error: {e}")
         
