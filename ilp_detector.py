@@ -194,7 +194,8 @@ class InternalLiquidityPoolDetector:
     
     def _group_equal_swings(self, swings: List[SwingPoint]) -> List[List[SwingPoint]]:
         """
-        Group swing points with equal prices together.
+        Group swing points with equal prices into clusters.
+        Uses clustering approach instead of sequential grouping to catch all equal swings.
         
         Parameters:
         -----------
@@ -204,32 +205,37 @@ class InternalLiquidityPoolDetector:
         Returns:
         --------
         List[List[SwingPoint]]
-            Groups of swing points with equal prices
+            List of groups, each containing swings with equal prices
         """
         if not swings:
             return []
         
         groups = []
-        current_group = [swings[0]]
+        ungrouped = set(range(len(swings)))
         
-        for i in range(1, len(swings)):
-            # Check if current swing is equal to any swing in the current group
-            is_equal = any(self._are_prices_equal(swings[i].price, s.price) 
-                          for s in current_group)
+        while ungrouped:
+            # Start new cluster with first ungrouped swing
+            seed_idx = min(ungrouped)
+            cluster = [swings[seed_idx]]
+            ungrouped.remove(seed_idx)
             
-            if is_equal:
-                current_group.append(swings[i])
-            else:
-                if len(current_group) >= self.min_pool_count:
-                    groups.append(current_group)
-                current_group = [swings[i]]
-        
-        # Add the last group if it meets criteria
-        if len(current_group) >= self.min_pool_count:
-            groups.append(current_group)
+            # Find ALL swings with equal price to seed (not just consecutive ones)
+            matching_indices = [
+                i for i in ungrouped 
+                if self._are_prices_equal(swings[i].price, swings[seed_idx].price)
+            ]
+            
+            # Add all matching swings to cluster
+            for idx in matching_indices:
+                cluster.append(swings[idx])
+                ungrouped.remove(idx)
+            
+            # Only add cluster if it meets minimum count requirement
+            if len(cluster) >= self.min_pool_count:
+                groups.append(cluster)
         
         return groups
-    
+
     def _calculate_pool_strength(self, pool_swings: List[SwingPoint], df: pd.DataFrame) -> float:
         """
         Calculate the strength score of a liquidity pool.
