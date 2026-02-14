@@ -62,8 +62,8 @@ class LiquidityMapper:
         
     def _get_default_config(self) -> Dict[str, Any]:
         return {
-            'touch_threshold': 3,
-            'price_tolerance': 0.001,
+            'touch_threshold': 2,
+            'price_tolerance': 0.005,
             'volume_threshold': 1.5,
             'sweep_reversal_candles': 5,
             'min_sweep_strength': 0.6
@@ -82,7 +82,7 @@ class LiquidityMapper:
         
         # Calculate confidence
         zones = self._calculate_zone_confidence(zones, df)
-        zones = [z for z in zones if z.confidence >= 0.5]
+        zones = [z for z in zones if z.confidence >= 0.2]
         
         self.liquidity_zones.extend(zones)
         logger.info(f"Detected {len(zones)} liquidity zones")
