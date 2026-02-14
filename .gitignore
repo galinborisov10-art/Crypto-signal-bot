@@ -124,3 +124,32 @@ __pycache__/
 
 # Large files
 *.db-journal
+
+# Backup files
+*.backup-*
+*.pre-fix
+*_fix.py
+test_*.py
+
+# Backup files
+*.backup
+*.backup-*
+*.backup.*
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime files
+bot.log*
+news_cache.json
+sent_signals_cache.json
+signals_state.db
+signals_state.db-*
+
+# System files
+.DS_Store
+*.swp
+*.swo
+

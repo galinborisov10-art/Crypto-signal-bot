@@ -517,12 +517,12 @@ class ICTSignalEngine:
     def _get_default_config(self) -> Dict:
         """Get default configuration"""
         return {
-            'min_confidence': 60,          # Min 60% confidence (STRICT ICT)
+            'min_confidence': 50,          # Min 60% confidence (STRICT ICT)
             'min_risk_reward': 3.0,        # Min 1:3 R:R (STRICT ICT)
             'max_sl_distance_pct': 3.0,    # Max 3% SL distance
             'tp_multipliers': [3, 5, 8],   # TP at 3R, 5R, 8R (STRICT ICT)
             'require_mtf_confluence': True, # Require MTF alignment (STRICT ICT)
-            'min_mtf_confluence': 0.5,     # Min 50% MTF consensus (STRICT ICT)
+            'min_mtf_confluence': 0.33,     # Min 50% MTF consensus (STRICT ICT)
             'use_whale_blocks': True,      # Use whale detection
             'use_liquidity': True,         # Use liquidity mapping
             'use_order_blocks': True,      # Use order blocks
@@ -792,10 +792,10 @@ class ICTSignalEngine:
                         entry_price = cached_signal.entry_price
                         distance_pct = abs(entry_price - current_price) / current_price
                         
-                        MAX_ENTRY_DISTANCE_PCT = 0.05  # 5% max (universal limit, consistent with line 2578)
+                        MAX_ENTRY_DISTANCE_PCT = 0.07  # 5% max (universal limit, consistent with line 2578)
                         if distance_pct > MAX_ENTRY_DISTANCE_PCT:
                             logger.warning(
-                                f"⚠️ Cached signal entry too far: {distance_pct*100:.1f}% > 5.0% MAX "
+                                f"⚠️ Cached signal entry too far: {distance_pct*100:.1f}% > 7.0% MAX "
                                 f"(entry: ${entry_price:.4f}, current: ${current_price:.4f}) "
                                 f"- invalidating cache and re-analyzing"
                             )
@@ -998,7 +998,7 @@ class ICTSignalEngine:
         # ✅ NEW: Reject signals with entry zones too far (exceeds universal 5% max)
         if entry_status == 'TOO_FAR':
             logger.info(f"❌ BLOCKED at Step 8: Entry zone too far from current price")
-            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 8, reason: Entry distance exceeds 5% universal maximum)")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 8, reason: Entry distance exceeds 7% universal maximum)")
             context = self._extract_context_data(df, bias)
             mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
             
@@ -1006,7 +1006,7 @@ class ICTSignalEngine:
                 symbol=symbol,
                 timeframe=timeframe,
                 reason=f"Entry zone validation failed: {entry_status}",
-                details=f"Entry zone too far from current price (exceeds universal 5% maximum for all timeframes).",
+                details=f"Entry zone too far from current price (exceeds universal 7% maximum for all timeframes).",
                 mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
                 current_price=context['current_price'],
                 price_change_24h=context['price_change_24h'],
@@ -1019,7 +1019,7 @@ class ICTSignalEngine:
         if entry_status == 'NO_ZONE' or entry_zone is None:
             logger.info(f"⚠️ Step 8 Warning: No ICT zone in optimal range, using fallback")
             # ✅ NON-INVASIVE DIAGNOSTIC LOGGING
-            logger.warning(f"⚠️ No ICT zone found in optimal range (0.5-5%) for {symbol}")
+            logger.warning(f"⚠️ No ICT zone found in optimal range (0.5-7%) for {symbol}")
             logger.info(f"   → Creating fallback entry zone at current price ${current_price:.2f}")
             logger.debug(f"   → Fallback zone: ±1% from current price")
             
@@ -1519,7 +1519,7 @@ class ICTSignalEngine:
         logger.info("🔍 Step 11.6: Final Confidence Check")
         
         # Determine min confidence based on signal type
-        min_confidence = 60 if is_auto else 70
+        min_confidence = 50 if is_auto else 55
         mode = "Auto" if is_auto else "Manual"
         
         logger.info(f"   → Final Confidence: {confidence:.1f}%")
