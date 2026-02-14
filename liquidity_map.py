@@ -85,7 +85,9 @@ class LiquidityMapper:
         zones = [z for z in zones if z.confidence >= 0.2]
         
         self.liquidity_zones.extend(zones)
-        logger.info(f"Detected {len(zones)} liquidity zones")
+        bsl_count = sum(1 for z in zones if z.zone_type == 'BSL')
+        ssl_count = sum(1 for z in zones if z.zone_type == 'SSL')
+        logger.info(f"Detected {len(zones)} liquidity zones: {bsl_count} BSL, {ssl_count} SSL")
         return zones
     
     def _detect_bsl_zones(self, df: pd.DataFrame, timeframe: str) -> List[LiquidityZone]:
