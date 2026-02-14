@@ -6,7 +6,7 @@ Author: galinborisov10-art
 Date: 2026-02-10
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 import logging
 from datetime import datetime
@@ -54,11 +54,14 @@ def select_best_entry_scenario(
     ict_components: Dict,
     entry_zone: Dict,
     timeframe: str
-) -> Optional[Dict]:
+) -> Tuple[Optional[Dict], Any]:
     """
     Evaluate all 4 ICT entry scenarios and select the best one.
     
-    Returns dict with scenario details OR None if no scenario scores above minimum.
+    Returns:
+        Tuple[Optional[Dict], Any]:
+            - Dict: JSON-safe scenario data (or None)
+            - Any: POI reference object for internal use (or None)
     
     Return structure:
     {
@@ -76,7 +79,10 @@ def select_best_entry_scenario(
         'triggers': ['MSS/BOS', 'DISPLACEMENT'],
         'trigger_strength': 'HIGH',
         'reasoning': 'Rollback to BOS break level @ $49500 (1.0% away, 2 triggers)',
-        'position_size_advisory': 100
+        'position_size_advisory': 100,
+        'poi_type': 'OB',
+        'poi_data': {...},
+        'invalidation_anchor': {...}
     }
     """
     logger.info("=" * 60)
@@ -92,55 +98,62 @@ def select_best_entry_scenario(
     
     # Score all 4 scenarios
     scenarios = {}
+    poi_refs = {}
     
     # 1. ROLLBACK
-    rollback = _score_rollback_scenario(
+    rollback_dict, rollback_ref = _score_rollback_scenario(
         current_price, bias, ict_components, triggers, trigger_score
     )
-    if rollback:
-        scenarios['ROLLBACK'] = rollback
-        logger.info(f"ROLLBACK score: {rollback['score']}")
+    if rollback_dict:
+        scenarios['ROLLBACK'] = rollback_dict
+        poi_refs['ROLLBACK'] = rollback_ref
+        logger.info(f"ROLLBACK score: {rollback_dict['score']}")
     
     # 2. PULLBACK
-    pullback = _score_pullback_scenario(
+    pullback_dict, pullback_ref = _score_pullback_scenario(
         current_price, bias, ict_components, triggers, trigger_score, entry_zone
     )
-    if pullback:
-        scenarios['PULLBACK'] = pullback
-        logger.info(f"PULLBACK score: {pullback['score']}")
+    if pullback_dict:
+        scenarios['PULLBACK'] = pullback_dict
+        poi_refs['PULLBACK'] = pullback_ref
+        logger.info(f"PULLBACK score: {pullback_dict['score']}")
     
     # 3. CONTINUATION
-    continuation = _score_continuation_scenario(
+    continuation_dict, continuation_ref = _score_continuation_scenario(
         current_price, bias, ict_components, triggers, trigger_score, trigger_strength
     )
-    if continuation:
-        scenarios['CONTINUATION'] = continuation
-        logger.info(f"CONTINUATION score: {continuation['score']}")
+    if continuation_dict:
+        scenarios['CONTINUATION'] = continuation_dict
+        poi_refs['CONTINUATION'] = continuation_ref
+        logger.info(f"CONTINUATION score: {continuation_dict['score']}")
     
     # 4. REVERSAL
-    reversal = _score_reversal_scenario(
+    reversal_dict, reversal_ref = _score_reversal_scenario(
         current_price, bias, ict_components, triggers, trigger_score
     )
-    if reversal:
-        scenarios['REVERSAL'] = reversal
-        logger.info(f"REVERSAL score: {reversal['score']}")
+    if reversal_dict:
+        scenarios['REVERSAL'] = reversal_dict
+        poi_refs['REVERSAL'] = reversal_ref
+        logger.info(f"REVERSAL score: {reversal_dict['score']}")
     
     # Filter by minimum score
     valid_scenarios = {k: v for k, v in scenarios.items() if v['score'] >= MIN_SCENARIO_SCORE}
     
     if not valid_scenarios:
         logger.warning(f"⚠️ No scenario scored above {MIN_SCENARIO_SCORE} minimum")
-        return None
+        return None, None
     
     # Select best scenario (highest score)
-    best_scenario_name, best_scenario = max(valid_scenarios.items(), key=lambda x: x[1]['score'])
+    best_scenario_name = max(valid_scenarios, key=lambda k: valid_scenarios[k]['score'])
+    best_scenario_dict = valid_scenarios[best_scenario_name]
+    best_poi_ref = poi_refs.get(best_scenario_name)
     
     logger.info("=" * 60)
-    logger.info(f"🏆 BEST SCENARIO: {best_scenario_name} (score: {best_scenario['score']})")
-    logger.info(f"   Reasoning: {best_scenario['reasoning']}")
+    logger.info(f"🏆 BEST SCENARIO: {best_scenario_name} (score: {best_scenario_dict['score']})")
+    logger.info(f"   Reasoning: {best_scenario_dict['reasoning']}")
     logger.info("=" * 60)
     
-    return best_scenario
+    return best_scenario_dict, best_poi_ref
 
 
 # ============================================================
@@ -226,6 +239,106 @@ def _evaluate_trigger_strength(trigger_score: int) -> str:
         return "LOW"
 
 
+def _create_safe_poi_data(poi_type: str, poi_object: Any) -> Dict:
+    """Create JSON-safe poi_data dict from Python object."""
+    poi_data = {'type': poi_type}
+    
+    if poi_type == 'OB' and poi_object:
+        zone_low = float(poi_object.zone_low if hasattr(poi_object, 'zone_low') else poi_object.get('zone_low', 0))
+        zone_high = float(poi_object.zone_high if hasattr(poi_object, 'zone_high') else poi_object.get('zone_high', 0))
+        poi_data.update({
+            'zone_low': zone_low,
+            'zone_high': zone_high,
+            'center': float((zone_low + zone_high) / 2),
+            'strength': float(poi_object.strength if hasattr(poi_object, 'strength') else 0.0),
+            'timeframe': str(poi_object.timeframe if hasattr(poi_object, 'timeframe') else 'unknown')
+        })
+    elif poi_type == 'FVG' and poi_object:
+        bottom = float(poi_object.bottom if hasattr(poi_object, 'bottom') else poi_object.get('bottom', 0))
+        top = float(poi_object.top if hasattr(poi_object, 'top') else poi_object.get('top', 0))
+        poi_data.update({
+            'bottom': bottom,
+            'top': top,
+            'center': float((bottom + top) / 2),
+            'timeframe': str(poi_object.timeframe if hasattr(poi_object, 'timeframe') else 'unknown')
+        })
+    elif poi_type == 'LIQUIDITY' and poi_object:
+        poi_data.update({
+            'sweep_type': str(poi_object.sweep_type if hasattr(poi_object, 'sweep_type') else 'unknown'),
+            'price': float(poi_object.price if hasattr(poi_object, 'price') else 0.0),
+            'raid_low': float(poi_object.raid_low) if hasattr(poi_object, 'raid_low') and poi_object.raid_low else None,
+            'raid_high': float(poi_object.raid_high) if hasattr(poi_object, 'raid_high') and poi_object.raid_high else None
+        })
+    
+    return poi_data
+
+
+def _create_invalidation_anchor(poi_type: str, poi_object: Any, best_poi: Dict, bias: str) -> Dict:
+    """
+    Create invalidation anchor based on POI type.
+    
+    Returns JSON-safe dict:
+    {
+        'type': 'OB_LOW' | 'FVG_LOW' | 'LIQUIDITY_LOW' | 'POI_BOUNDARY',
+        'price': float,
+        'source_type': str,
+        'source_data': dict
+    }
+    """
+    is_bullish = bias.upper() == "BULLISH"
+    
+    # OB anchor
+    if poi_type == 'OB' and poi_object:
+        # Extract both zone_low and zone_high safely
+        zone_low = float(poi_object.zone_low if hasattr(poi_object, 'zone_low') else best_poi.get('low', 0))
+        zone_high = float(poi_object.zone_high if hasattr(poi_object, 'zone_high') else best_poi.get('high', 0))
+        anchor_price = zone_low if is_bullish else zone_high
+        return {
+            'type': 'OB_LOW' if is_bullish else 'OB_HIGH',
+            'price': anchor_price,
+            'source_type': 'OB',
+            'source_data': {
+                'zone_low': zone_low,
+                'zone_high': zone_high
+            }
+        }
+    
+    # FVG anchor
+    elif poi_type == 'FVG' and poi_object:
+        # Extract both bottom and top safely
+        bottom = float(poi_object.bottom if hasattr(poi_object, 'bottom') else best_poi.get('low', 0))
+        top = float(poi_object.top if hasattr(poi_object, 'top') else best_poi.get('high', 0))
+        anchor_price = bottom if is_bullish else top
+        return {
+            'type': 'FVG_LOW' if is_bullish else 'FVG_HIGH',
+            'price': anchor_price,
+            'source_type': 'FVG',
+            'source_data': {
+                'bottom': bottom,
+                'top': top
+            }
+        }
+    
+    # BSL/SSL anchor
+    elif poi_type in ['BSL', 'SSL']:
+        anchor_price = float(best_poi.get('price', 0)) * (0.999 if is_bullish else 1.001)
+        return {
+            'type': 'LIQUIDITY_LOW' if is_bullish else 'LIQUIDITY_HIGH',
+            'price': anchor_price,
+            'source_type': 'LIQUIDITY',
+            'source_data': {'price': float(best_poi.get('price', 0))}
+        }
+    
+    # Fallback
+    else:
+        return {
+            'type': 'POI_BOUNDARY',
+            'price': float(best_poi.get('low' if is_bullish else 'high', best_poi.get('price', 0))),
+            'source_type': poi_type,
+            'source_data': {}
+        }
+
+
 # ============================================================
 # ROLLBACK SCENARIO SCORING
 # ============================================================
@@ -236,35 +349,35 @@ def _score_rollback_scenario(
     ict_components: Dict,
     triggers: List[str],
     trigger_score: int
-) -> Optional[Dict]:
+) -> Tuple[Optional[Dict], Any]:
     """
     Score ROLLBACK scenario: retest to structure break level
     
-    Returns scenario dict with score OR None if invalid
+    Returns tuple: (scenario_dict, poi_ref) OR (None, None) if invalid
     """
     sb = ict_components.get('structure_break')
     if not sb or sb.get('type') not in ['MSS', 'BOS', 'CHOCH']:
-        return None
+        return None, None
     
     break_level = sb.get('break_level')
     if not break_level:
-        return None
+        return None, None
     
     # Distance check
     distance_pct = abs(break_level - current_price) / current_price * 100
     
     if distance_pct < ROLLBACK_DISTANCE['min_pct'] * 100:
         logger.debug(f"   ROLLBACK: too close ({distance_pct:.1f}% < {ROLLBACK_DISTANCE['min_pct']*100:.0f}%)")
-        return None
+        return None, None
     
     if distance_pct > ROLLBACK_DISTANCE['max_pct'] * 100:
         logger.debug(f"   ROLLBACK: too far ({distance_pct:.1f}% > {ROLLBACK_DISTANCE['max_pct']*100:.0f}%)")
-        return None
+        return None, None
     
     # Already retested check
     if sb.get('retested', False):
         logger.debug(f"   ROLLBACK: break_level already retested")
-        return None
+        return None, None
     
     # Bias alignment check
     is_bullish = bias.upper() == "BULLISH"
@@ -272,16 +385,16 @@ def _score_rollback_scenario(
     
     if is_bullish and break_level >= current_price:
         logger.debug(f"   ROLLBACK: BULLISH but break_level above current")
-        return None
+        return None, None
     
     if is_bearish and break_level <= current_price:
         logger.debug(f"   ROLLBACK: BEARISH but break_level below current")
-        return None
+        return None, None
     
     # Trigger requirement check
     if len(triggers) < MIN_TRIGGERS['ROLLBACK']:
         logger.debug(f"   ROLLBACK: insufficient triggers ({len(triggers)} < {MIN_TRIGGERS['ROLLBACK']})")
-        return None
+        return None, None
     
     # ============================================================
     # SCORE CALCULATION
@@ -322,15 +435,30 @@ def _score_rollback_scenario(
         'distance_price': abs(break_level - current_price)
     }
     
-    return {
+    # Create invalidation anchor (for ROLLBACK, use swing structure)
+    is_bullish = bias.upper() == "BULLISH"
+    anchor_price = break_level * (0.995 if is_bullish else 1.005)
+    invalidation_anchor = {
+        'type': 'SWING_LOW' if is_bullish else 'SWING_HIGH',
+        'price': float(anchor_price),
+        'source_type': 'STRUCTURE_BREAK',
+        'source_data': {'break_level': float(break_level), 'type': sb.get('type')}
+    }
+    
+    scenario_dict = {
         'scenario': 'ROLLBACK',
         'entry_zone': entry_zone,
         'score': int(score),
         'triggers': triggers,
         'trigger_strength': _evaluate_trigger_strength(trigger_score),
         'reasoning': f"Rollback to {sb.get('type')} break level @ ${break_level:.2f} ({distance_pct:.1f}% away, {len(triggers)} triggers)",
-        'position_size_advisory': POSITION_SIZE['ROLLBACK']
+        'position_size_advisory': POSITION_SIZE['ROLLBACK'],
+        'poi_type': 'NONE',
+        'poi_data': {},
+        'invalidation_anchor': invalidation_anchor
     }
+    
+    return scenario_dict, None
 
 
 # ============================================================
@@ -344,9 +472,11 @@ def _score_pullback_scenario(
     triggers: List[str],
     trigger_score: int,
     entry_zone: Dict
-) -> Optional[Dict]:
+) -> Tuple[Optional[Dict], Any]:
     """
     Score PULLBACK scenario: retracement to POI (OB/FVG/BSL/SSL)
+    
+    Returns tuple: (scenario_dict, poi_ref) OR (None, None) if invalid
     """
     poi_candidates = []
     is_bullish = bias.upper() == "BULLISH"
@@ -367,7 +497,8 @@ def _score_pullback_scenario(
                     'low': ob.zone_low if hasattr(ob, 'zone_low') else (ob.get('zone_low') if isinstance(ob, dict) else None),
                     'high': ob.zone_high if hasattr(ob, 'zone_high') else (ob.get('zone_high') if isinstance(ob, dict) else None),
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['OB']
+                    'quality': POI_QUALITY['OB'],
+                    '_ref': ob  # ← NEW: Store reference
                 })
         
         if is_bearish and 'BEARISH' in ob_type and ob_center > current_price:
@@ -379,7 +510,8 @@ def _score_pullback_scenario(
                     'low': ob.zone_low if hasattr(ob, 'zone_low') else (ob.get('zone_low') if isinstance(ob, dict) else None),
                     'high': ob.zone_high if hasattr(ob, 'zone_high') else (ob.get('zone_high') if isinstance(ob, dict) else None),
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['OB']
+                    'quality': POI_QUALITY['OB'],
+                    '_ref': ob  # ← NEW: Store reference
                 })
     
     # 2. Check FVGs
@@ -397,7 +529,8 @@ def _score_pullback_scenario(
                     'low': fvg.bottom if hasattr(fvg, 'bottom') else (_safe_get(fvg, 'bottom') if isinstance(fvg, dict) else None),
                     'high': fvg.top if hasattr(fvg, 'top') else (_safe_get(fvg, 'top') if isinstance(fvg, dict) else None),
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['FVG']
+                    'quality': POI_QUALITY['FVG'],
+                    '_ref': fvg  # ← NEW: Store reference
                 })
         
         if is_bearish and 'BEARISH' in str(fvg_type).upper() and fvg_center > current_price:
@@ -409,7 +542,8 @@ def _score_pullback_scenario(
                     'low': fvg.bottom if hasattr(fvg, 'bottom') else (_safe_get(fvg, 'bottom') if isinstance(fvg, dict) else None),
                     'high': fvg.top if hasattr(fvg, 'top') else (_safe_get(fvg, 'top') if isinstance(fvg, dict) else None),
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['FVG']
+                    'quality': POI_QUALITY['FVG'],
+                    '_ref': fvg  # ← NEW: Store reference
                 })
     
     # 3. Check Liquidity zones (BSL/SSL)
@@ -427,7 +561,8 @@ def _score_pullback_scenario(
                     'low': liq_price * 0.999,
                     'high': liq_price * 1.001,
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['BSL']
+                    'quality': POI_QUALITY['BSL'],
+                    '_ref': liq  # ← NEW: Store reference
                 })
         
         if is_bearish and 'SSL' in liq_type and liq_price > current_price:
@@ -439,18 +574,19 @@ def _score_pullback_scenario(
                     'low': liq_price * 0.999,
                     'high': liq_price * 1.001,
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['SSL']
+                    'quality': POI_QUALITY['SSL'],
+                    '_ref': liq  # ← NEW: Store reference
                 })
     
     if not poi_candidates:
-        return None
+        return None, None
     
     # Filter by minimum quality
     poi_candidates = [p for p in poi_candidates if p['quality'] >= POI_QUALITY['min_acceptable']]
     
     if not poi_candidates:
         logger.debug("   PULLBACK: no POI with acceptable quality")
-        return None
+        return None, None
     
     # Select best POI (highest quality, then closest)
     best_poi = max(poi_candidates, key=lambda x: (x['quality'], -x['distance_pct']))
@@ -459,7 +595,7 @@ def _score_pullback_scenario(
     if len(triggers) < MIN_TRIGGERS['PULLBACK']:
         if best_poi['quality'] < PULLBACK_HIGH_QUALITY_THRESHOLD:
             logger.debug(f"   PULLBACK: insufficient triggers and POI quality < {PULLBACK_HIGH_QUALITY_THRESHOLD}")
-            return None
+            return None, None
         else:
             logger.info(f"   ⚠️ PULLBACK accepted with 1 trigger (POI quality {best_poi['quality']})")
     
@@ -484,27 +620,47 @@ def _score_pullback_scenario(
     # Cap score
     score = min(100, max(0, score))
     
+    # ✅ Extract poi_ref (remove from dict)
+    poi_ref = best_poi.pop('_ref', None)
+    
+    # ✅ Create safe poi_data
+    poi_data = _create_safe_poi_data(best_poi['type'], poi_ref)
+    
+    # ✅ Create invalidation anchor
+    invalidation_anchor = _create_invalidation_anchor(
+        poi_type=best_poi['type'],
+        poi_object=poi_ref,
+        best_poi=best_poi,
+        bias=bias
+    )
+    
     # Build entry zone
     buffer = PULLBACK_DISTANCE['buffer_pct']
     entry_zone = {
         'center': best_poi['price'],
-        'low': best_poi['low'] * (1 - buffer),
-        'high': best_poi['high'] * (1 + buffer),
+        'low': best_poi['low'] * (1 - buffer) if best_poi['low'] else best_poi['price'] * (1 - buffer),
+        'high': best_poi['high'] * (1 + buffer) if best_poi['high'] else best_poi['price'] * (1 + buffer),
         'source': f"PULLBACK_{best_poi['type']}",
         'quality': best_poi['quality'],
         'distance_pct': best_poi['distance_pct'],
         'distance_price': abs(best_poi['price'] - current_price)
     }
     
-    return {
+    # ✅ Return tuple (safe_dict, poi_ref)
+    scenario_dict = {
         'scenario': 'PULLBACK',
         'entry_zone': entry_zone,
         'score': int(score),
         'triggers': triggers,
         'trigger_strength': _evaluate_trigger_strength(trigger_score),
         'reasoning': f"Pullback to {best_poi['type']} @ ${best_poi['price']:.2f} ({best_poi['distance_pct']:.1f}% away, quality {best_poi['quality']})",
-        'position_size_advisory': POSITION_SIZE['PULLBACK']
+        'position_size_advisory': POSITION_SIZE['PULLBACK'],
+        'poi_type': best_poi['type'],
+        'poi_data': poi_data,
+        'invalidation_anchor': invalidation_anchor
     }
+    
+    return scenario_dict, poi_ref
 
 
 # ============================================================
@@ -518,20 +674,22 @@ def _score_continuation_scenario(
     triggers: List[str],
     trigger_score: int,
     trigger_strength: str
-) -> Optional[Dict]:
+) -> Tuple[Optional[Dict], Any]:
     """
     Score CONTINUATION scenario: minimal retracement, high momentum
+    
+    Returns tuple: (scenario_dict, None) OR (None, None) if invalid
     """
     # Strict trigger requirement
     if len(triggers) < MIN_TRIGGERS['CONTINUATION']:
         logger.debug(f"   CONTINUATION: insufficient triggers ({len(triggers)} < {MIN_TRIGGERS['CONTINUATION']})")
-        return None
+        return None, None
     
     # Must have displacement OR structure trigger
     has_momentum = 'DISPLACEMENT' in triggers or 'MSS/BOS' in triggers
     if not has_momentum:
         logger.debug("   CONTINUATION: no displacement or structure trigger")
-        return None
+        return None, None
     
     # Check for POI in path (reject if found)
     is_bullish = bias.upper() == "BULLISH"
@@ -543,11 +701,11 @@ def _score_continuation_scenario(
         
         if is_bullish and current_price * (1 - check_range) <= ob_center <= current_price:
             logger.debug(f"   CONTINUATION: found OB in path @ ${ob_center:.2f}")
-            return None
+            return None, None
         
         if not is_bullish and current_price <= ob_center <= current_price * (1 + check_range):
             logger.debug(f"   CONTINUATION: found OB in path @ ${ob_center:.2f}")
-            return None
+            return None, None
     
     # ============================================================
     # SCORE CALCULATION
@@ -594,15 +752,30 @@ def _score_continuation_scenario(
     else:
         position_size = POSITION_SIZE['CONTINUATION']['2_triggers']
     
-    return {
+    # Create invalidation anchor (for CONTINUATION, use swing structure)
+    is_bullish = bias.upper() == "BULLISH"
+    swing_price = entry_price * (0.98 if is_bullish else 1.02)
+    invalidation_anchor = {
+        'type': 'SWING_LOW' if is_bullish else 'SWING_HIGH',
+        'price': float(swing_price),
+        'source_type': 'SWING',
+        'source_data': {}
+    }
+    
+    scenario_dict = {
         'scenario': 'CONTINUATION',
         'entry_zone': entry_zone,
         'score': int(score),
         'triggers': triggers,
         'trigger_strength': trigger_strength,
         'reasoning': f"Continuation with {len(triggers)} triggers (minimal retracement {retracement*100:.1f}%)",
-        'position_size_advisory': position_size
+        'position_size_advisory': position_size,
+        'poi_type': 'NONE',
+        'poi_data': {},
+        'invalidation_anchor': invalidation_anchor
     }
+    
+    return scenario_dict, None
 
 
 # ============================================================
@@ -615,27 +788,29 @@ def _score_reversal_scenario(
     ict_components: Dict,
     triggers: List[str],
     trigger_score: int
-) -> Optional[Dict]:
+) -> Tuple[Optional[Dict], Any]:
     """
     Score REVERSAL scenario: market structure flip with liquidity sweep
+    
+    Returns tuple: (scenario_dict, None) OR (None, None) if invalid
     """
     # Strict trigger requirement
     if len(triggers) < MIN_TRIGGERS['REVERSAL']:
         logger.debug(f"   REVERSAL: insufficient triggers ({len(triggers)} < {MIN_TRIGGERS['REVERSAL']})")
-        return None
+        return None, None
     
     # Check for liquidity sweep (required)
     if REVERSAL_SETTINGS['require_sweep']:
         if 'LIQUIDITY_SWEEP' not in triggers:
             logger.debug("   REVERSAL: no liquidity sweep detected")
-            return None
+            return None, None
     
     # Check for structure flip (MSS/CHOCH in opposite direction)
     sb = ict_components.get('structure_break')
     if REVERSAL_SETTINGS['require_structure_flip']:
         if not sb or sb.get('type') not in ['MSS', 'CHOCH']:
             logger.debug("   REVERSAL: no structure flip (MSS/CHOCH) detected")
-            return None
+            return None, None
         
         # Check if structure flip is in opposite direction to current bias
         sb_direction = sb.get('direction', '').upper()
@@ -646,10 +821,10 @@ def _score_reversal_scenario(
             bias_upper = bias.upper()
             if bias_upper == 'BULLISH' and sb_direction == 'BULLISH':
                 logger.debug("   REVERSAL: same direction as bias")
-                return None
+                return None, None
             if bias_upper == 'BEARISH' and sb_direction == 'BEARISH':
                 logger.debug("   REVERSAL: same direction as bias")
-                return None
+                return None, None
     
     # Entry can be either rollback to break_level OR pullback to first POI
     break_level = sb.get('break_level') if sb else None
@@ -779,7 +954,7 @@ def _score_reversal_scenario(
                 else:
                     logger.debug(f"      ❌ Distance out of range: {distance_to_ob:.2f}% not in [{REVERSAL_DISTANCE['min_pct']*100:.1f}%, {REVERSAL_DISTANCE['max_pct']*100:.1f}%]")
         logger.debug("   REVERSAL: no valid entry point found")
-        return None
+        return None, None
     
     # ============================================================
     # SCORE CALCULATION
@@ -821,12 +996,27 @@ def _score_reversal_scenario(
         'distance_price': abs(entry_price - current_price)
     }
     
-    return {
+    # Create invalidation anchor (for REVERSAL, use swing structure)
+    is_bullish = bias.upper() == "BULLISH"
+    swing_price = entry_price * (0.98 if is_bullish else 1.02)
+    invalidation_anchor = {
+        'type': 'SWING_LOW' if is_bullish else 'SWING_HIGH',
+        'price': float(swing_price),
+        'source_type': 'REVERSAL',
+        'source_data': {'entry_type': entry_type}
+    }
+    
+    scenario_dict = {
         'scenario': 'REVERSAL',
         'entry_zone': entry_zone,
         'score': int(score),
         'triggers': triggers,
         'trigger_strength': _evaluate_trigger_strength(trigger_score),
         'reasoning': f"Reversal setup with sweep + {sb.get('type')} @ ${entry_price:.2f} ({distance_pct:.1f}% away)",
-        'position_size_advisory': POSITION_SIZE['REVERSAL']
+        'position_size_advisory': POSITION_SIZE['REVERSAL'],
+        'poi_type': 'NONE',
+        'poi_data': {},
+        'invalidation_anchor': invalidation_anchor
     }
+    
+    return scenario_dict, None

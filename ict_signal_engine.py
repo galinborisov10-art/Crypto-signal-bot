@@ -178,6 +178,23 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# SL/TP CALCULATION CONSTANTS
+# ============================================================
+
+ATR_FALLBACK_PCT = 0.02  # 2% fallback when ATR calculation fails
+
+TIMEFRAME_MIN_SL_DISTANCE = {
+    '15m': 0.003, '30m': 0.004, '1h': 0.005,
+    '2h': 0.007, '4h': 0.010, '1d': 0.015,
+}
+
+TIMEFRAME_BUFFER_PCT = {
+    '15m': 0.001, '30m': 0.0015, '1h': 0.002,
+    '2h': 0.0025, '4h': 0.003, '1d': 0.005,
+}
+
+
 class SignalType(Enum):
     """Signal types"""
     BUY = "BUY"
@@ -1069,7 +1086,7 @@ class ICTSignalEngine:
         logger.info("🎯 Step 8.1: Entry Scenario Selection (ICT Scoring System)")
         logger.info("=" * 60)
         
-        entry_scenario_result = select_best_entry_scenario(
+        entry_scenario_result, poi_ref = select_best_entry_scenario(
             current_price=current_price,
             bias=bias_str,
             ict_components=ict_components,
@@ -1078,6 +1095,10 @@ class ICTSignalEngine:
         )
         
         if entry_scenario_result:
+            # Store poi_ref if available
+            if poi_ref:
+                entry_setup['poi_ref'] = poi_ref
+            
             logger.info(f"✅ Selected Scenario: {entry_scenario_result['scenario']}")
             logger.info(f"   Score: {entry_scenario_result['score']}/100")
             logger.info(f"   Entry Price: ${entry_scenario_result['entry_zone']['center']:.4f}")
@@ -1086,6 +1107,12 @@ class ICTSignalEngine:
             logger.info(f"   Triggers: {', '.join(entry_scenario_result['triggers'])} ({entry_scenario_result['trigger_strength']})")
             logger.info(f"   Position Size Advisory: {entry_scenario_result['position_size_advisory']}%")
             logger.info(f"   Reasoning: {entry_scenario_result['reasoning']}")
+            logger.info(f"   POI Type: {entry_scenario_result.get('poi_type', 'NONE')}")
+            
+            # Log invalidation anchor info
+            anchor = entry_scenario_result.get('invalidation_anchor', {})
+            if anchor:
+                logger.info(f"   Anchor: {anchor.get('type')} @ ${anchor.get('price', 0):.4f}")
             
             # Override entry_zone with scenario result
             entry_zone = entry_scenario_result['entry_zone']
@@ -1101,29 +1128,60 @@ class ICTSignalEngine:
         logger.info("=" * 60)
         # СТЪПКА 9: SL/TP + VALIDATION
         logger.info("🔍 Step 9: SL/TP Calculation & Validation")
-        sl_price = self._calculate_sl_price(df, entry_setup, entry_price, bias)
-        logger.info(f"   → Calculated SL: ${sl_price:.2f}")
+        logger.info("=" * 60)
         
-        # ✅ VALIDATE SL (STRICT ICT)
-        order_block = entry_setup.get('ob') or (ict_components['order_blocks'][0] if ict_components.get('order_blocks') else None)
-        if order_block:
-            logger.info(f"   → Validating SL against Order Block")
-            if hasattr(order_block, 'zone_low'):
-                logger.info(f"      • OB Range: ${order_block.zone_low:.2f} - ${order_block.zone_high:.2f}")
+        # Get invalidation_anchor (or create fallback)
+        invalidation_anchor = None
+        
+        if entry_scenario_result:
+            invalidation_anchor = entry_scenario_result.get('invalidation_anchor')
+        
+        if not invalidation_anchor:
+            logger.warning("⚠️ No anchor from Step 8.1 - creating fallback")
             
-            sl_price, sl_valid = self._validate_sl_position(sl_price, order_block, bias, entry_price)
+            swing_price = self._find_recent_swing_for_sl(df, bias, entry_price)
             
-            if not sl_valid or sl_price is None:
-                logger.info(f"❌ BLOCKED at Step 9: SL cannot be ICT-compliant")
-                logger.info(f"   → SL validation failed - signal rejected")
-                logger.error("❌ SL не може да бъде ICT-compliant - сигналът НЕ СЕ ИЗПРАЩА")
-                return None
-            
-            logger.info(f"   → SL validated: ${sl_price:.2f}")
-        else:
-            logger.info(f"❌ BLOCKED at Step 9: No Order Block for SL validation")
-            logger.error("❌ Няма Order Block за SL валидация - сигналът НЕ СЕ ИЗПРАЩА")
+            if swing_price:
+                invalidation_anchor = {
+                    'type': 'SWING_LOW' if bias == MarketBias.BULLISH else 'SWING_HIGH',
+                    'price': float(swing_price),
+                    'source_type': 'SWING_FALLBACK',
+                    'source_data': {}
+                }
+                logger.info(f"   → Fallback: SWING @ ${swing_price:.2f}")
+            else:
+                # Use ATR fallback
+                if 'atr' in df.columns and len(df) > 0:
+                    atr = df['atr'].iloc[-1]
+                    if pd.isna(atr) or atr == 0:
+                        atr = entry_price * 0.02
+                else:
+                    atr = entry_price * 0.02
+                
+                anchor_price = entry_price - (atr * 1.5) if bias == MarketBias.BULLISH else entry_price + (atr * 1.5)
+                invalidation_anchor = {
+                    'type': 'ATR',
+                    'price': float(anchor_price),
+                    'source_type': 'ATR_FALLBACK',
+                    'source_data': {'atr': float(atr)}
+                }
+                logger.info(f"   → Fallback: ATR @ ${anchor_price:.2f}")
+        
+        # Calculate SL from anchor (SINGLE SOURCE)
+        sl_price = self._calculate_sl_from_anchor(
+            invalidation_anchor=invalidation_anchor,
+            bias=bias,
+            entry_price=entry_price,
+            timeframe=timeframe,
+            df=df
+        )
+        
+        if sl_price is None:
+            logger.error("❌ BLOCKED at Step 9: SL calculation failed")
+            logger.error("❌ SL не може да бъде изчислен - сигналът НЕ СЕ ИЗПРАЩА")
             return None
+        
+        logger.info(f"✅ SL calculated: ${sl_price:.2f}")
         
         # ✅ TP calculation (PR #8 Enhanced: Structure-aware vs Mathematical)
         logger.info("🔍 Step 9b: Take Profit Calculation")
@@ -1862,21 +1920,138 @@ class ICTSignalEngine:
         return df
     
     def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
-        """Calculate Average True Range"""
-        high = df['high']
-        low = df['low']
-        close = df['close']
+        """Calculate ATR with safe defaults."""
+        try:
+            if df is None or len(df) == 0:
+                return pd.Series(dtype=float)
+            
+            if len(df) < period:
+                logger.warning(f"⚠️ Insufficient data for ATR (need {period} bars, have {len(df)})")
+                fallback_atr = df['close'].iloc[-1] * ATR_FALLBACK_PCT
+                logger.info(f"   → Using {ATR_FALLBACK_PCT*100:.0f}% fallback ATR: ${fallback_atr:.2f}")
+                # Return a Series with the same index
+                return pd.Series([fallback_atr] * len(df), index=df.index, dtype=float)
+            
+            high = df['high']
+            low = df['low']
+            close = df['close']
+            
+            tr1 = high - low
+            tr2 = abs(high - close.shift())
+            tr3 = abs(low - close.shift())
+            
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            # Note: .mean() here is legitimate - it's part of the standard ATR formula,
+            # not a moving average for trading signals (ICT compliant)
+            atr = tr.rolling(window=period).mean()
+            
+            # Check for NaN or 0 values at the end
+            if pd.isna(atr.iloc[-1]) or atr.iloc[-1] == 0:
+                logger.warning(f"⚠️ ATR is {atr.iloc[-1]} - using {ATR_FALLBACK_PCT*100:.0f}% fallback")
+                fallback_atr = df['close'].iloc[-1] * ATR_FALLBACK_PCT
+                atr = atr.fillna(fallback_atr)
+                atr = atr.replace(0, fallback_atr)
+            
+            return atr
+            
+        except Exception as e:
+            logger.error(f"❌ ATR calculation error: {e}")
+            if df is not None and len(df) > 0:
+                fallback_atr = df['close'].iloc[-1] * ATR_FALLBACK_PCT
+                return pd.Series([fallback_atr] * len(df), index=df.index, dtype=float)
+            return pd.Series(dtype=float)
+    
+    def _find_recent_swing_for_sl(self, df: pd.DataFrame, bias: MarketBias, entry_price: float, lookback: int = 50) -> Optional[float]:
+        """Find recent swing low/high for SL fallback."""
+        try:
+            if df is None or len(df) < 10:
+                return None
+            
+            lookback = min(lookback, len(df) - 5)
+            recent_df = df.iloc[-lookback:]
+            
+            if bias == MarketBias.BULLISH:
+                swing_low = recent_df['low'].min()
+                if swing_low < entry_price:
+                    logger.info(f"   → Found swing low @ ${swing_low:.2f}")
+                    return float(swing_low)
+            else:
+                swing_high = recent_df['high'].max()
+                if swing_high > entry_price:
+                    logger.info(f"   → Found swing high @ ${swing_high:.2f}")
+                    return float(swing_high)
+            
+            return None
+        except Exception as e:
+            logger.error(f"❌ Swing detection error: {e}")
+            return None
+    
+    def _calculate_sl_from_anchor(
+        self,
+        invalidation_anchor: Dict,
+        bias: MarketBias,
+        entry_price: float,
+        timeframe: str,
+        df: pd.DataFrame
+    ) -> Optional[float]:
+        """Calculate SL from invalidation anchor - SINGLE SOURCE OF TRUTH."""
         
-        tr1 = high - low
-        tr2 = abs(high - close.shift())
-        tr3 = abs(low - close.shift())
+        anchor_price = invalidation_anchor.get('price')
+        anchor_type = invalidation_anchor.get('type')
         
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        # Note: .mean() here is legitimate - it's part of the standard ATR formula,
-        # not a moving average for trading signals (ICT compliant)
-        atr = tr.rolling(window=period).mean()
+        if anchor_price is None:
+            logger.error(f"❌ Invalid anchor price")
+            return None
         
-        return atr
+        is_bullish = bias == MarketBias.BULLISH
+        
+        # Sanity check 1: Anchor on correct side
+        if is_bullish and anchor_price >= entry_price:
+            logger.error(f"❌ Anchor ${anchor_price:.2f} >= entry ${entry_price:.2f} for LONG")
+            return None
+        if not is_bullish and anchor_price <= entry_price:
+            logger.error(f"❌ Anchor ${anchor_price:.2f} <= entry ${entry_price:.2f} for SHORT")
+            return None
+        
+        # Sanity check 2: Minimum distance
+        distance_pct = abs(anchor_price - entry_price) / entry_price
+        min_distance = TIMEFRAME_MIN_SL_DISTANCE.get(timeframe, 0.005)
+        
+        if distance_pct < min_distance:
+            logger.warning(f"⚠️ Anchor too close ({distance_pct*100:.2f}% < {min_distance*100:.1f}%)")
+            if is_bullish:
+                anchor_price = entry_price * (1 - min_distance)
+            else:
+                anchor_price = entry_price * (1 + min_distance)
+            logger.info(f"   → Extended anchor to ${anchor_price:.2f}")
+        
+        # Calculate buffer
+        # Ensure ATR column exists (calculate if missing)
+        if df is not None and len(df) > 0 and 'atr' not in df.columns:
+            df['atr'] = self._calculate_atr(df)
+        
+        if 'atr' in df.columns and len(df) > 0:
+            atr_value = df['atr'].iloc[-1]
+            if pd.isna(atr_value) or atr_value == 0:
+                atr_value = entry_price * ATR_FALLBACK_PCT
+        else:
+            atr_value = entry_price * ATR_FALLBACK_PCT
+        
+        atr_buffer = atr_value * 0.25
+        pct_buffer = entry_price * TIMEFRAME_BUFFER_PCT.get(timeframe, 0.002)
+        buffer = max(atr_buffer, pct_buffer)
+        
+        # Apply buffer
+        if is_bullish:
+            sl_price = anchor_price - buffer
+        else:
+            sl_price = anchor_price + buffer
+        
+        logger.info(f"   → Anchor: {anchor_type} @ ${anchor_price:.2f}")
+        logger.info(f"   → Buffer: ${buffer:.2f} (ATR: ${atr_buffer:.2f}, TF%: ${pct_buffer:.2f})")
+        logger.info(f"   → SL: ${sl_price:.2f} ({abs(sl_price - entry_price) / entry_price * 100:.2f}% from entry)")
+        
+        return float(sl_price)
     
     def _detect_ict_components(
         self,
