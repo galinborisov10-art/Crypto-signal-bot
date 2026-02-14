@@ -8397,9 +8397,13 @@ async def market_full_report(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode='HTML'
     )
 
-
 def add_signal_to_monitor(ict_signal, symbol: str, timeframe: str, chat_id: int):
     """Helper function to add ICT signal to real-time monitor"""
+    # Skip if ict_signal is dict (HOLD/NO_TRADE/RANGING)
+    if isinstance(ict_signal, dict):
+        logger.debug(f"Skipping monitor add for {symbol}: signal is dict (likely HOLD/NO_TRADE)")
+        return
+    
     if real_time_monitor_global and ict_signal.signal_type.value in ['BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL']:
         signal_id = f"{symbol}_{ict_signal.signal_type.value}_{int(datetime.now(timezone.utc).timestamp())}"
         
@@ -8416,6 +8420,7 @@ def add_signal_to_monitor(ict_signal, symbol: str, timeframe: str, chat_id: int)
         )
         
         logger.info(f"✅ Signal {signal_id} added to real-time monitor")
+
 
 
 
