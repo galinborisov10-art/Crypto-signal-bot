@@ -144,7 +144,7 @@ POSITION_SIZE = {
 # ============================================================
 # MINIMUM SCENARIO SCORE
 # ============================================================
-MIN_SCENARIO_SCORE = 60  # Scenarios below this are rejected
+MIN_SCENARIO_SCORE = 70  # Scenarios below this are rejected
 
 # ============================================================
 # MINIMUM TRIGGERS PER SCENARIO

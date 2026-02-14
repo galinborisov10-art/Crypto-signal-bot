@@ -522,7 +522,7 @@ class ICTSignalEngine:
             'max_sl_distance_pct': 3.0,    # Max 3% SL distance
             'tp_multipliers': [3, 5, 8],   # TP at 3R, 5R, 8R (STRICT ICT)
             'require_mtf_confluence': True, # Require MTF alignment (STRICT ICT)
-            'min_mtf_confluence': 0.33,     # Min 50% MTF consensus (STRICT ICT)
+            'min_mtf_confluence': 0.50,     # Min 50% MTF consensus (STRICT ICT)
             'use_whale_blocks': True,      # Use whale detection
             'use_liquidity': True,         # Use liquidity mapping
             'use_order_blocks': True,      # Use order blocks
@@ -1514,6 +1514,40 @@ class ICTSignalEngine:
             )
         
         logger.info(f"✅ PASSED Step 11.5: MTF consensus validated ({mtf_consensus_data['consensus_pct']:.1f}% >= 50%)")
+
+        # ✅ NEW: HTF Bias Direction Validation (CRITICAL ICT PRINCIPLE)
+        logger.info("🔍 Step 11.5b: HTF Bias Direction Alignment")
+        
+        # Get HTF bias from earlier analysis
+        htf_bias_value = ict_components.get('htf_bias', 'NEUTRAL')
+        entry_bias_value = bias.value if hasattr(bias, 'value') else str(bias)
+        
+        logger.info(f"   → HTF Bias: {htf_bias_value}")
+        logger.info(f"   → Entry Bias: {entry_bias_value}")
+        
+        # ICT Rule: NEVER trade against HTF bias
+        if htf_bias_value in ['BULLISH', 'BEARISH'] and htf_bias_value != 'NEUTRAL':
+            if (htf_bias_value == 'BEARISH' and entry_bias_value == 'BULLISH') or \
+               (htf_bias_value == 'BULLISH' and entry_bias_value == 'BEARISH'):
+                logger.info(f"❌ BLOCKED at Step 11.5b: Counter-HTF trade detected!")
+                logger.info(f"   HTF ({hierarchy.get('htf_bias_tf', 'unknown')}) is {htf_bias_value}, but entry ({timeframe}) is {entry_bias_value}")
+                logger.error(f"❌ Counter-HTF trade: HTF {htf_bias_value} vs Entry {entry_bias_value} - BLOCKED")
+                
+                context = self._extract_context_data(df, bias)
+                return self._create_no_trade_message(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    reason=f"Counter-trend trade against HTF bias",
+                    details=f"HTF ({hierarchy.get('htf_bias_tf', 'unknown')}): {htf_bias_value}, Entry ({timeframe}): {entry_bias_value}. ICT principle: Never trade against HTF bias.",
+                    mtf_breakdown=mtf_consensus_data['breakdown'],
+                    current_price=context['current_price'],
+                    price_change_24h=context['price_change_24h'],
+                    rsi=context['rsi'],
+                    signal_direction=context['signal_direction'],
+                    confidence=confidence
+                )
+        
+        logger.info(f"✅ PASSED Step 11.5b: HTF bias aligned or neutral ({htf_bias_value})")
         
         # Confidence check (dynamic based on auto vs manual)
         logger.info("🔍 Step 11.6: Final Confidence Check")
