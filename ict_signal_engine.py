@@ -1922,14 +1922,15 @@ class ICTSignalEngine:
     def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """Calculate ATR with safe defaults."""
         try:
-            if df is None or len(df) < period:
-                logger.warning(f"⚠️ Insufficient data for ATR (need {period} bars, have {len(df) if df is not None else 0})")
-                if df is not None and len(df) > 0:
-                    fallback_atr = df['close'].iloc[-1] * ATR_FALLBACK_PCT
-                    logger.info(f"   → Using {ATR_FALLBACK_PCT*100:.0f}% fallback ATR: ${fallback_atr:.2f}")
-                    # Return a Series with the same index
-                    return pd.Series([fallback_atr] * len(df), index=df.index)
-                return pd.Series()
+            if df is None or len(df) == 0:
+                return pd.Series(dtype=float)
+            
+            if len(df) < period:
+                logger.warning(f"⚠️ Insufficient data for ATR (need {period} bars, have {len(df)})")
+                fallback_atr = df['close'].iloc[-1] * ATR_FALLBACK_PCT
+                logger.info(f"   → Using {ATR_FALLBACK_PCT*100:.0f}% fallback ATR: ${fallback_atr:.2f}")
+                # Return a Series with the same index
+                return pd.Series([fallback_atr] * len(df), index=df.index, dtype=float)
             
             high = df['high']
             low = df['low']
@@ -1957,8 +1958,8 @@ class ICTSignalEngine:
             logger.error(f"❌ ATR calculation error: {e}")
             if df is not None and len(df) > 0:
                 fallback_atr = df['close'].iloc[-1] * ATR_FALLBACK_PCT
-                return pd.Series([fallback_atr] * len(df), index=df.index)
-            return pd.Series()
+                return pd.Series([fallback_atr] * len(df), index=df.index, dtype=float)
+            return pd.Series(dtype=float)
     
     def _find_recent_swing_for_sl(self, df: pd.DataFrame, bias: MarketBias, entry_price: float, lookback: int = 50) -> Optional[float]:
         """Find recent swing low/high for SL fallback."""
@@ -2025,6 +2026,10 @@ class ICTSignalEngine:
             logger.info(f"   → Extended anchor to ${anchor_price:.2f}")
         
         # Calculate buffer
+        # Ensure ATR column exists (calculate if missing)
+        if df is not None and len(df) > 0 and 'atr' not in df.columns:
+            df['atr'] = self._calculate_atr(df)
+        
         if 'atr' in df.columns and len(df) > 0:
             atr_value = df['atr'].iloc[-1]
             if pd.isna(atr_value) or atr_value == 0:
