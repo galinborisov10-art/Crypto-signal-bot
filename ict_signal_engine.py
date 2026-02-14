@@ -182,6 +182,8 @@ logger = logging.getLogger(__name__)
 # SL/TP CALCULATION CONSTANTS
 # ============================================================
 
+ATR_FALLBACK_PCT = 0.02  # 2% fallback when ATR calculation fails
+
 TIMEFRAME_MIN_SL_DISTANCE = {
     '15m': 0.003, '30m': 0.004, '1h': 0.005,
     '2h': 0.007, '4h': 0.010, '1d': 0.015,
@@ -1923,8 +1925,8 @@ class ICTSignalEngine:
             if df is None or len(df) < period:
                 logger.warning(f"⚠️ Insufficient data for ATR (need {period} bars, have {len(df) if df is not None else 0})")
                 if df is not None and len(df) > 0:
-                    fallback_atr = df['close'].iloc[-1] * 0.02
-                    logger.info(f"   → Using 2% fallback ATR: ${fallback_atr:.2f}")
+                    fallback_atr = df['close'].iloc[-1] * ATR_FALLBACK_PCT
+                    logger.info(f"   → Using {ATR_FALLBACK_PCT*100:.0f}% fallback ATR: ${fallback_atr:.2f}")
                     # Return a Series with the same index
                     return pd.Series([fallback_atr] * len(df), index=df.index)
                 return pd.Series()
@@ -1944,8 +1946,8 @@ class ICTSignalEngine:
             
             # Check for NaN or 0 values at the end
             if pd.isna(atr.iloc[-1]) or atr.iloc[-1] == 0:
-                logger.warning(f"⚠️ ATR is {atr.iloc[-1]} - using 2% fallback")
-                fallback_atr = df['close'].iloc[-1] * 0.02
+                logger.warning(f"⚠️ ATR is {atr.iloc[-1]} - using {ATR_FALLBACK_PCT*100:.0f}% fallback")
+                fallback_atr = df['close'].iloc[-1] * ATR_FALLBACK_PCT
                 atr = atr.fillna(fallback_atr)
                 atr = atr.replace(0, fallback_atr)
             
@@ -1954,7 +1956,7 @@ class ICTSignalEngine:
         except Exception as e:
             logger.error(f"❌ ATR calculation error: {e}")
             if df is not None and len(df) > 0:
-                fallback_atr = df['close'].iloc[-1] * 0.02
+                fallback_atr = df['close'].iloc[-1] * ATR_FALLBACK_PCT
                 return pd.Series([fallback_atr] * len(df), index=df.index)
             return pd.Series()
     
@@ -2026,9 +2028,9 @@ class ICTSignalEngine:
         if 'atr' in df.columns and len(df) > 0:
             atr_value = df['atr'].iloc[-1]
             if pd.isna(atr_value) or atr_value == 0:
-                atr_value = entry_price * 0.02
+                atr_value = entry_price * ATR_FALLBACK_PCT
         else:
-            atr_value = entry_price * 0.02
+            atr_value = entry_price * ATR_FALLBACK_PCT
         
         atr_buffer = atr_value * 0.25
         pct_buffer = entry_price * TIMEFRAME_BUFFER_PCT.get(timeframe, 0.002)

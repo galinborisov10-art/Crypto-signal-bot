@@ -244,18 +244,22 @@ def _create_safe_poi_data(poi_type: str, poi_object: Any) -> Dict:
     poi_data = {'type': poi_type}
     
     if poi_type == 'OB' and poi_object:
+        zone_low = float(poi_object.zone_low if hasattr(poi_object, 'zone_low') else poi_object.get('zone_low', 0))
+        zone_high = float(poi_object.zone_high if hasattr(poi_object, 'zone_high') else poi_object.get('zone_high', 0))
         poi_data.update({
-            'zone_low': float(poi_object.zone_low if hasattr(poi_object, 'zone_low') else poi_object.get('zone_low', 0)),
-            'zone_high': float(poi_object.zone_high if hasattr(poi_object, 'zone_high') else poi_object.get('zone_high', 0)),
-            'center': float((poi_object.zone_low + poi_object.zone_high) / 2) if hasattr(poi_object, 'zone_low') else 0.0,
+            'zone_low': zone_low,
+            'zone_high': zone_high,
+            'center': float((zone_low + zone_high) / 2),
             'strength': float(poi_object.strength if hasattr(poi_object, 'strength') else 0.0),
             'timeframe': str(poi_object.timeframe if hasattr(poi_object, 'timeframe') else 'unknown')
         })
     elif poi_type == 'FVG' and poi_object:
+        bottom = float(poi_object.bottom if hasattr(poi_object, 'bottom') else poi_object.get('bottom', 0))
+        top = float(poi_object.top if hasattr(poi_object, 'top') else poi_object.get('top', 0))
         poi_data.update({
-            'bottom': float(poi_object.bottom if hasattr(poi_object, 'bottom') else poi_object.get('bottom', 0)),
-            'top': float(poi_object.top if hasattr(poi_object, 'top') else poi_object.get('top', 0)),
-            'center': float((poi_object.bottom + poi_object.top) / 2) if hasattr(poi_object, 'bottom') else 0.0,
+            'bottom': bottom,
+            'top': top,
+            'center': float((bottom + top) / 2),
             'timeframe': str(poi_object.timeframe if hasattr(poi_object, 'timeframe') else 'unknown')
         })
     elif poi_type == 'LIQUIDITY' and poi_object:
@@ -285,27 +289,33 @@ def _create_invalidation_anchor(poi_type: str, poi_object: Any, best_poi: Dict, 
     
     # OB anchor
     if poi_type == 'OB' and poi_object:
-        anchor_price = float(poi_object.zone_low if is_bullish else poi_object.zone_high) if hasattr(poi_object, 'zone_low') else float(best_poi.get('low' if is_bullish else 'high', 0))
+        # Extract both zone_low and zone_high safely
+        zone_low = float(poi_object.zone_low if hasattr(poi_object, 'zone_low') else best_poi.get('low', 0))
+        zone_high = float(poi_object.zone_high if hasattr(poi_object, 'zone_high') else best_poi.get('high', 0))
+        anchor_price = zone_low if is_bullish else zone_high
         return {
             'type': 'OB_LOW' if is_bullish else 'OB_HIGH',
             'price': anchor_price,
             'source_type': 'OB',
             'source_data': {
-                'zone_low': float(poi_object.zone_low if hasattr(poi_object, 'zone_low') else best_poi.get('low', 0)),
-                'zone_high': float(poi_object.zone_high if hasattr(poi_object, 'zone_high') else best_poi.get('high', 0))
+                'zone_low': zone_low,
+                'zone_high': zone_high
             }
         }
     
     # FVG anchor
     elif poi_type == 'FVG' and poi_object:
-        anchor_price = float(poi_object.bottom if is_bullish else poi_object.top) if hasattr(poi_object, 'bottom') else float(best_poi.get('low' if is_bullish else 'high', 0))
+        # Extract both bottom and top safely
+        bottom = float(poi_object.bottom if hasattr(poi_object, 'bottom') else best_poi.get('low', 0))
+        top = float(poi_object.top if hasattr(poi_object, 'top') else best_poi.get('high', 0))
+        anchor_price = bottom if is_bullish else top
         return {
             'type': 'FVG_LOW' if is_bullish else 'FVG_HIGH',
             'price': anchor_price,
             'source_type': 'FVG',
             'source_data': {
-                'bottom': float(poi_object.bottom if hasattr(poi_object, 'bottom') else best_poi.get('low', 0)),
-                'top': float(poi_object.top if hasattr(poi_object, 'top') else best_poi.get('high', 0))
+                'bottom': bottom,
+                'top': top
             }
         }
     
