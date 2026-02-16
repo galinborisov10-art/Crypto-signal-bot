@@ -1151,10 +1151,10 @@ class ICTSignalEngine:
         )
         
         # 🚫 CRITICAL: AUTO mode requires valid entry scenario
-        if not entry_scenario_result and is_auto:
-            logger.info(f"❌ BLOCKED at Step 7: No valid entry scenario and AUTO mode active")
-            logger.info(f"   → AUTO signals require scored entry scenarios (no fallback)")
-            logger.error(f"❌ No valid scenario scored above minimum - AUTO signal BLOCKED")
+        if not entry_scenario_result or (entry_scenario_result.get('scenario') == 'N/A'):
+            logger.info(f"❌ BLOCKED at Step 7: No valid entry scenario (required for all signals)")
+            logger.info(f"   → All signals require scored entry scenarios (no fallback)")
+            logger.error(f"❌ No valid scenario scored above minimum - Signal BLOCKED (no valid scenario)")
             context = self._extract_context_data(df, bias)
             mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
             
