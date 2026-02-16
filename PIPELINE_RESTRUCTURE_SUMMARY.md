@@ -1,9 +1,35 @@
 # 🔄 Pipeline Restructuring - Implementation Summary
 
 ## ✅ Completed: 2026-02-16
+## 🔧 Updated: 2026-02-16 (Blocking Issue Fixes)
 
 ### 🎯 Objective
 Restructure the `analyze_symbol()` pipeline in `ict_signal_engine.py` for better logical flow, component filtering, JSON export, and 10-25% performance improvement while maintaining **100% backward compatibility**.
+
+### 🚨 Critical Fixes Applied (2026-02-16)
+
+#### 1. AUTO Mode Hard Blocks ✅
+- **Problem:** AUTO signals were generating with FALLBACK entries (low quality)
+- **Fix:** Hard blocks in Step 7 & 8 for AUTO mode
+  - No ICT zone → NO_TRADE
+  - No entry scenario → NO_TRADE
+  - No invalidation anchor → NO_TRADE
+- **Impact:** AUTO signals now require valid ICT components (no fallback)
+
+#### 2. Schema-Safe Filtering ✅
+- **Problem:** Aggressive filtering could delete all components if fields missing
+- **Fix:** Safe field access with try/except
+  - Missing field → keep component (don't filter aggressively)
+  - Log warnings for missing fields
+  - Debug logs for first element to validate schemas
+- **Impact:** Robust against schema variations, components preserved
+
+#### 3. Clean Liquidity/Sweeps Flow ✅
+- **Problem:** Nested try/except blocks risked duplicate/missing sweeps
+- **Fix:** Clear 3-step flow
+  - Get/calc zones → Store zones → Calc sweeps ONCE
+  - No nested duplication
+- **Impact:** Sweeps calculated exactly once, cleaner code
 
 ---
 
@@ -32,22 +58,34 @@ def _detect_ict_components(
 - If `liquidity_zones` provided: Uses pre-calculated zones (NEW BEHAVIOR - performance optimization)
 - HTF Bias calls at lines 4691, 4703, 4714 do NOT pass liquidity_zones → backward compatible ✅
 
+**🔧 FIX: Clean Liquidity/Sweeps Flow**
+- Clear 3-step flow: (1) Get/calculate zones, (2) Store zones, (3) Calculate sweeps ONCE
+- No nested try/except duplication
+- Sweeps calculated exactly once
+- No risk of duplicate or missing sweeps
+
 ---
 
-#### `_filter_quality_components()` - NEW Function
+#### `_filter_quality_components()` - NEW Function (Schema-Safe)
 ```python
 def _filter_quality_components(self, raw_components: Dict) -> Dict:
 ```
 
 **Quality Criteria:**
-- **Order Blocks:** MEDIUM+ only (strength >= 40, volume_ratio >= 1.5)
+- **Order Blocks:** MEDIUM+ only (strength >= 40)
 - **FVG Zones:** Unfilled only (fill_percentage < 70%)
 - **Whale Blocks:** Confidence >= 50%
 - **Liquidity Sweeps:** Recent only (candles_ago <= 20)
 - **BSL/SSL:** Strength >= 0.5
 - **Other components:** Pass through unchanged
 
-**Purpose:** Filter out low-quality components to improve signal accuracy.
+**🔧 FIX: Schema-Safe Filtering**
+- Safe field access with try/except for each component type
+- **If field missing → KEEP component** (don't filter aggressively) + log warning
+- Debug logging for first element of OB/FVG/Whale/Sweep to validate schemas
+- Graceful error handling prevents deletion of components due to schema variations
+
+**Purpose:** Filter out low-quality components while being robust to schema variations.
 
 ---
 
@@ -88,11 +126,11 @@ Step 12b: News Sentiment
 Step 1: HTF Bias ✅ (unchanged)
 Step 2: MTF Structure ✅ (unchanged)
 Step 3: Liquidity Map ♻️ (optimized - calculated ONCE)
-Step 4: ICT Component Detection ♻️ (enhanced logging, reuses Step 3 liquidity)
-Step 5: Component Filtering 🆕 (NEW - quality focus)
+Step 4: ICT Component Detection ♻️ (enhanced logging, clean liquidity flow)
+Step 5: Component Filtering 🆕 (NEW - quality focus, schema-safe)
 Step 6: Bias Determination ♻️ (renamed from Step 7)
-Step 7: Entry Scenario Selection ♻️ (merged Step 8 + 8.1)
-Step 8: Stop Loss Positioning ♻️ (renamed from Step 9)
+Step 7: Entry Scenario Selection ♻️ (merged Step 8 + 8.1, AUTO mode hard blocks)
+Step 8: Stop Loss Positioning ♻️ (renamed from Step 9, AUTO mode hard blocks)
 Step 9: Take Profit Calculation ♻️ (renamed from Step 9b)
 Step 10: Risk/Reward Validation ♻️ (renamed from Step 10)
 Step 11: ML Confidence Adjustment ♻️ (consolidated 11, 11a, 11b, 11c, 11.25)
@@ -102,7 +140,45 @@ Step 13: Signal Generation ♻️ (includes 12b news sentiment + JSON export)
 
 ---
 
-### 3. Enhanced Logging
+### 3. AUTO Mode Hard Blocks (Quality Enforcement)
+
+**🔧 FIX: FALLBACK Entry Blocked for AUTO Signals**
+
+AUTO mode (`is_auto=True`) now enforces strict quality standards:
+
+#### Step 7: Entry Scenario Selection
+**Block Condition 1:** No ICT zone found
+```python
+if (entry_status == 'NO_ZONE' or entry_zone is None) and is_auto:
+    return NO_TRADE  # "No ICT entry zone found (AUTO mode)"
+```
+
+**Block Condition 2:** No valid entry scenario
+```python
+if not entry_scenario_result and is_auto:
+    return NO_TRADE  # "No valid entry scenario (AUTO mode)"
+```
+
+#### Step 8: Stop Loss Positioning
+**Block Condition 3:** No invalidation anchor
+```python
+if not invalidation_anchor and is_auto:
+    return NO_TRADE  # "No invalidation anchor (AUTO mode)"
+```
+
+**MANUAL/DEBUG Mode:**
+- FALLBACK entries allowed with clear warnings
+- Fallback SL from swing/ATR allowed
+- Enables testing and debugging
+
+**Impact:**
+- ✅ AUTO signals require valid ICT zones, scenarios, and anchors
+- ✅ No more low-quality fallback signals in production
+- ✅ MANUAL mode unchanged for testing/debugging
+
+---
+
+### 4. Enhanced Logging
 
 #### Step 3: Liquidity Map
 - Logs count of liquidity zones
@@ -126,6 +202,8 @@ Step 13: Signal Generation ♻️ (includes 12b news sentiment + JSON export)
 - Logs before/after counts
 - Logs percentage kept
 - Shows filtering effectiveness
+- **🔧 NEW:** Debug logs first element schema for OB/FVG/Whale/Sweep
+- **🔧 NEW:** Warnings when fields missing (schema-safe)
 
 ---
 
