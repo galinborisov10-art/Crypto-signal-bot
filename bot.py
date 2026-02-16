@@ -11380,10 +11380,16 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             if not ict_signal or (isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE'):
                 return None
             
-            # Guard: Skip HOLD signals (informational only, no entry price)
+            # ✅ Handle HOLD dict (RANGING market)
+            if isinstance(ict_signal, dict) and ict_signal.get('action') == 'HOLD':
+                logger.info(f"⏸️ HOLD signal for {symbol} {timeframe}: {ict_signal.get('reason')}")
+                return None
+            
+            # Guard: Skip HOLD signals (ICTSignal object)
             if hasattr(ict_signal, 'signal_type') and ict_signal.signal_type.value == 'HOLD':
                 return None
             
+            # ✅ At this point, ict_signal is a valid ICTSignal object
             # ✅ PERSISTENT DEDUPLICATION (PR #111 + PR #112)
             if SIGNAL_CACHE_AVAILABLE:
                 is_dup, reason = is_signal_duplicate(
