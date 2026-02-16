@@ -1293,8 +1293,10 @@ class ICTSignalEngine:
         
         logger.info(f"✅ PASSED Step 10: RR validated ({risk_reward_ratio:.2f} >= {self.config['min_risk_reward']:.2f} → 1:{risk_reward_ratio:.1f} >= 1:{self.config['min_risk_reward']:.0f})")
         
-        # BASE CONFIDENCE
-        logger.info("🔍 Step 11: Confidence Calculation")
+        # СТЪПКА 11: ML CONFIDENCE ADJUSTMENT (consolidated from old Step 11*)
+        logger.info("🔍 Step 11: ML Confidence Adjustment")
+        
+        # Calculate base confidence
         base_confidence = self._calculate_signal_confidence(
             ict_components, mtf_analysis, bias, structure_broken, 
             displacement_detected, risk_reward_ratio
@@ -1361,8 +1363,8 @@ class ICTSignalEngine:
         except Exception as e:
             logger.warning(f"⚠️ Liquidity confidence adjustment failed: {e}")
         
-        # ✅ APPLY CONTEXT-AWARE FILTERS (NEW - Enhances confidence accuracy)
-        logger.info("📊 Step 11a: Context-Aware Filtering")
+        # ✅ APPLY CONTEXT-AWARE FILTERS (Enhances confidence accuracy)
+        logger.info("   📊 Context-Aware Filtering")
         context_warnings = []
         try:
             # Extract enhanced context (pass symbol for BTC correlation)
@@ -1375,7 +1377,7 @@ class ICTSignalEngine:
                 ict_components
             )
             
-            logger.info(f"Context-aware confidence: {base_confidence:.1f}% → {confidence_after_context:.1f}%")
+            logger.info(f"   Context-aware confidence: {base_confidence:.1f}% → {confidence_after_context:.1f}%")
             
         except Exception as e:
             logger.warning(f"Context filtering failed, using base confidence: {e}")
@@ -1383,7 +1385,7 @@ class ICTSignalEngine:
             context_warnings = []
         
         # ✅ DISTANCE PENALTY (Soft Constraint - FIX #4)
-        logger.info("📊 Step 11b: Distance Penalty Check")
+        logger.info("   📊 Distance Penalty Check")
         distance_penalty_applied = False
         
         if entry_zone:
@@ -1395,19 +1397,19 @@ class ICTSignalEngine:
                 logger.warning(f"⚠️ Entry very close to current price ({distance_pct:.1f}%) - low risk/reward potential")
                 confidence_after_context = confidence_after_context * 0.9  # Reduce by 10%
                 distance_penalty_applied = True
-                logger.info(f"Distance penalty applied: confidence reduced by 10% → {confidence_after_context:.1f}%")
+                logger.info(f"   Distance penalty applied: confidence reduced by 10% → {confidence_after_context:.1f}%")
                 context_warnings.append(f"⚠️ Entry very close to current price ({distance_pct:.1f}%) - low risk/reward")
             elif distance_pct > 10.0:
                 # Just informational - no penalty
-                logger.info(f"ℹ️ Entry {distance_pct:.1f}% from current price - waiting for retracement")
+                logger.info(f"   ℹ️ Entry {distance_pct:.1f}% from current price - waiting for retracement")
                 context_warnings.append(f"ℹ️ Entry {distance_pct:.1f}% from current price - valid ICT retracement setup")
         
         # ✅ HTF BIAS PENALTY (Soft Constraint - FIX #1)
-        logger.info("📊 Step 11c: HTF Bias Penalty Check")
+        logger.info("   📊 HTF Bias Penalty Check")
         if confidence_penalty > 0:
             logger.warning(f"⚠️ Applying HTF bias penalty: -{confidence_penalty*100:.0f}%")
             confidence_after_context = confidence_after_context * (1 - confidence_penalty)
-            logger.info(f"HTF penalty applied: confidence reduced to {confidence_after_context:.1f}%")
+            logger.info(f"   HTF penalty applied: confidence reduced to {confidence_after_context:.1f}%")
             
             # Add warning about HTF bias
             if confidence_penalty >= 0.40:
@@ -1417,8 +1419,8 @@ class ICTSignalEngine:
             elif confidence_penalty >= 0.20:
                 context_warnings.append("ℹ️ HTF bias unclear, relying on own structure")
         
-        # СТЪПКА 11: ML OPTIMIZATION (ЗАПАЗВАМЕ existing logic)
-        logger.info("📊 Step 11: ML Optimization")
+        # ✅ ML OPTIMIZATION (Existing ML logic)
+        logger.info("   📊 ML Optimization")
 
         ml_confidence_adjustment = 0.0
         ml_features = {}
@@ -1496,8 +1498,8 @@ class ICTSignalEngine:
             # END SHADOW MODE
             # ═══════════════════════════════════════════════════════════════
             
-            # ✅ ML RESTRICTIONS (STRICT ICT) - Step 11.25
-            logger.info("📊 Step 11.25: ML ICT Compliance Check")
+            # ✅ ML RESTRICTIONS (STRICT ICT) - ICT Compliance Check
+            logger.info("   📊 ML ICT Compliance Check")
             
             # 1. ML може само да прави SL по-консервативен (по-далеч от entry), НЕ по-близо
             # (В този код SL не се променя от ML, така че проверката не е необходима)
@@ -1514,10 +1516,14 @@ class ICTSignalEngine:
         confidence = confidence_after_context
         confidence = max(0.0, min(100.0, confidence))
         
-        logger.info(f"   → Confidence (before ML advisory): {confidence:.1f}%")
+        logger.info(f"   → Confidence (after ML adjustments): {confidence:.1f}%")
+        logger.info(f"✅ PASSED Step 11: ML confidence adjustments applied")
         
-        # СТЪПКА 11.5: MTF CONSENSUS CHECK (STRICT ICT)
-        logger.info("🔍 Step 11.5: MTF Consensus Validation")
+        # СТЪПКА 12: FINAL VALIDATION (consolidated from Step 11.5, 11.5b, 11.6)
+        logger.info("🔍 Step 12: Final Validation")
+        
+        # 12a: MTF CONSENSUS CHECK (STRICT ICT)
+        logger.info("   📊 MTF Consensus Validation")
         mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
         
         logger.info(f"   → MTF Consensus: {mtf_consensus_data['consensus_pct']:.1f}%")
@@ -1526,8 +1532,8 @@ class ICTSignalEngine:
         
         # Ако MTF consensus < 50%, confidence = 0 и сигналът НЕ СЕ ИЗПРАЩА
         if mtf_consensus_data['consensus_pct'] < 50.0:
-            logger.info(f"❌ BLOCKED at Step 11.5: MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50%")
-            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 11.5, reason: Insufficient MTF consensus)")
+            logger.info(f"❌ BLOCKED at Step 12: MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50%")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 12, reason: Insufficient MTF consensus)")
             logger.error(f"❌ MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50% - сигналът НЕ СЕ ИЗПРАЩА")
             # Изпрати информативно съобщение
             context = self._extract_context_data(df, bias)
@@ -1544,10 +1550,10 @@ class ICTSignalEngine:
                 confidence=confidence
             )
         
-        logger.info(f"✅ PASSED Step 11.5: MTF consensus validated ({mtf_consensus_data['consensus_pct']:.1f}% >= 50%)")
+        logger.info(f"   ✅ MTF consensus validated ({mtf_consensus_data['consensus_pct']:.1f}% >= 50%)")
 
-        # ✅ NEW: HTF Bias Direction Validation (CRITICAL ICT PRINCIPLE)
-        logger.info("🔍 Step 11.5b: HTF Bias Direction Alignment")
+        # 12b: HTF Bias Direction Validation (CRITICAL ICT PRINCIPLE)
+        logger.info("   📊 HTF Bias Direction Alignment")
         
         # Get HTF bias from earlier analysis
         htf_bias_value = ict_components.get('htf_bias', 'NEUTRAL')
@@ -1560,7 +1566,7 @@ class ICTSignalEngine:
         if htf_bias_value in ['BULLISH', 'BEARISH'] and htf_bias_value != 'NEUTRAL':
             if (htf_bias_value == 'BEARISH' and entry_bias_value == 'BULLISH') or \
                (htf_bias_value == 'BULLISH' and entry_bias_value == 'BEARISH'):
-                logger.info(f"❌ BLOCKED at Step 11.5b: Counter-HTF trade detected!")
+                logger.info(f"❌ BLOCKED at Step 12: Counter-HTF trade detected!")
                 logger.info(f"   HTF ({hierarchy.get('htf_bias_tf', 'unknown')}) is {htf_bias_value}, but entry ({timeframe}) is {entry_bias_value}")
                 logger.error(f"❌ Counter-HTF trade: HTF {htf_bias_value} vs Entry {entry_bias_value} - BLOCKED")
                 
@@ -1578,10 +1584,10 @@ class ICTSignalEngine:
                     confidence=confidence
                 )
         
-        logger.info(f"✅ PASSED Step 11.5b: HTF bias aligned or neutral ({htf_bias_value})")
+        logger.info(f"   ✅ HTF bias aligned or neutral ({htf_bias_value})")
         
-        # Confidence check (dynamic based on auto vs manual)
-        logger.info("🔍 Step 11.6: Final Confidence Check")
+        # 12c: Final Confidence Check
+        logger.info("   📊 Final Confidence Check")
         
         # Determine min confidence based on signal type
         min_confidence = 50 if is_auto else 55
@@ -1591,7 +1597,7 @@ class ICTSignalEngine:
         logger.info(f"   → Minimum Required: {min_confidence}% ({mode} mode)")
         
         if confidence < min_confidence:
-            logger.info(f"❌ BLOCKED at Step 11.6: Confidence {confidence:.1f}% < {min_confidence}% ({mode} mode)")
+            logger.info(f"❌ BLOCKED at Step 12: Confidence {confidence:.1f}% < {min_confidence}% ({mode} mode)")
             logger.error(f"❌ Confidence {confidence:.1f}% < {min_confidence}% - сигналът НЕ СЕ ИЗПРАЩА ({mode})")
             context = self._extract_context_data(df, bias)
             return self._create_no_trade_message(
@@ -1607,10 +1613,10 @@ class ICTSignalEngine:
                 confidence=confidence
             )
         
-        logger.info(f"✅ PASSED Step 11.6: Confidence validated ({confidence:.1f}% >= {min_confidence}% - {mode} mode)")
+        logger.info(f"✅ PASSED Step 12: Final validation complete ({confidence:.1f}% >= {min_confidence}% - {mode} mode)")
         
-        # СТЪПКА 12: FINAL SIGNAL GENERATION
-        logger.info("🔍 Step 12: Final Signal Generation")
+        # СТЪПКА 13: SIGNAL GENERATION (renamed from Step 12)
+        logger.info("🔍 Step 13: Signal Generation")
         signal_strength = self._calculate_signal_strength(confidence, risk_reward_ratio, ict_components)
         signal_type = self._determine_signal_type(bias, signal_strength, confidence)
         
@@ -1959,6 +1965,60 @@ class ICTSignalEngine:
         
         logger.info(f"✅ PASSED Step 12b: News sentiment check ({news_check['sentiment_score']:.0f})")
         
+        # ═══════════════════════════════════════════════════════════
+        # 🆕 SAVE ANALYSIS TO JSON (for debugging and backtesting)
+        # ═══════════════════════════════════════════════════════════
+        try:
+            # Prepare analysis data for JSON export
+            analysis_data = {
+                'timestamp': datetime.now().isoformat(),
+                'symbol': symbol,
+                'timeframe': timeframe,
+                'htf_bias': htf_bias,
+                'mtf_consensus': {
+                    'consensus_pct': mtf_consensus_data.get('consensus_pct', 0),
+                    'aligned_count': mtf_consensus_data.get('aligned_count', 0),
+                    'total_count': mtf_consensus_data.get('total_count', 0),
+                },
+                'liquidity_zones_count': len(liquidity_zones),
+                'raw_components_count': {
+                    k: len(v) if isinstance(v, list) else 0 
+                    for k, v in raw_components.items() 
+                    if k not in ['fibonacci_data', 'luxalgo_sr', 'luxalgo_ict', 'luxalgo_combined']
+                },
+                'filtered_components_count': {
+                    k: len(v) if isinstance(v, list) else 0 
+                    for k, v in ict_components.items() 
+                    if k not in ['fibonacci_data', 'luxalgo_sr', 'luxalgo_ict', 'luxalgo_combined', 'displacement', 'structure_break', 'htf_bias']
+                },
+                'entry_scenario': {
+                    'scenario': entry_scenario_result.get('scenario', 'N/A') if entry_scenario_result else 'N/A',
+                    'score': entry_scenario_result.get('score', 0) if entry_scenario_result else 0,
+                    'entry_price': entry_price,
+                },
+                'risk_management': {
+                    'sl_price': sl_price,
+                    'tp_prices': [float(tp) for tp in tp_prices],
+                    'risk_reward_ratio': risk_reward_ratio,
+                },
+                'confidence': {
+                    'base': base_confidence,
+                    'final': confidence,
+                },
+                'signal': {
+                    'type': signal_type.value if hasattr(signal_type, 'value') else str(signal_type),
+                    'strength': signal_strength.value if hasattr(signal_strength, 'value') else str(signal_strength),
+                    'confidence': confidence,
+                }
+            }
+            
+            # Save to JSON file
+            self._save_analysis_json(symbol, datetime.now(), analysis_data)
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to save analysis JSON (non-critical): {e}")
+        
+        # Return the final signal
+        logger.info(f"✅ PASSED Step 13: Signal generated successfully")
         return signal
     
     def _prepare_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
