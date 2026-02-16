@@ -26,6 +26,7 @@ from enum import Enum
 import logging
 from entry_scenarios import select_best_entry_scenario
 import json
+import os
 
 # Import Entry Gating and Confidence Threshold evaluators (ESB v1.0 §2.1-2.2)
 try:
@@ -857,20 +858,57 @@ class ICTSignalEngine:
         
         logger.info(f"📊 Confidence after TF validation: {validated_confidence:.1f}%")
         
-        # СТЪПКА 3: ENTRY MODEL (текущ TF)
-        logger.info(f"📊 Step 3: Entry Model ({timeframe})")
-        
-        # СТЪПКА 4: LIQUIDITY MAP (с cache fallback)
-        logger.info("📊 Step 4: Liquidity Map")
+        # СТЪПКА 3: LIQUIDITY MAP (с cache fallback) - Calculate ONCE
+        logger.info("📊 Step 3: Liquidity Map")
         liquidity_zones = self._get_liquidity_zones_with_fallback(df, symbol, timeframe)
         
-        # СТЪПКА 5-7: ICT COMPONENTS
-        logger.info("📊 Steps 5-7: ICT Components")
-        ict_components = self._detect_ict_components(df, timeframe)
-        ict_components['liquidity_zones'] = liquidity_zones  # Add liquidity zones
+        # Add detailed logging for liquidity zones
+        logger.info(f"   📍 Detected {len(liquidity_zones)} liquidity zones:")
+        for i, zone in enumerate(liquidity_zones[:5]):  # Log first 5
+            zone_type = zone.get('type', 'N/A') if isinstance(zone, dict) else getattr(zone, 'type', 'N/A')
+            zone_price = zone.get('price', 0) if isinstance(zone, dict) else getattr(zone, 'price', 0)
+            zone_strength = zone.get('strength', 0) if isinstance(zone, dict) else getattr(zone, 'strength', 0)
+            logger.info(f"      • Zone {i+1}: {zone_type} at ${zone_price:,.2f} (strength: {zone_strength:.2f})")
+        if len(liquidity_zones) > 5:
+            logger.info(f"      ... and {len(liquidity_zones) - 5} more zones")
         
-        # STEP 7: Bias Determination - START DIAGNOSTIC LOGGING
-        logger.info("🔍 Step 7: Bias Determination")
+        # СТЪПКА 4: ICT COMPONENT DETECTION (with pre-calculated liquidity)
+        logger.info("📊 Step 4: ICT Component Detection")
+        raw_components = self._detect_ict_components(
+            df, timeframe, 
+            liquidity_zones=liquidity_zones  # ✅ Pass pre-calculated liquidity zones
+        )
+        
+        # Add detailed logging for ALL 11 ICT components
+        logger.info(f"   🔍 Detected ICT components:")
+        logger.info(f"      • Order Blocks: {len(raw_components.get('order_blocks', []))}")
+        logger.info(f"      • FVG Zones: {len(raw_components.get('fvgs', []))}")
+        logger.info(f"      • Whale Blocks: {len(raw_components.get('whale_blocks', []))}")
+        logger.info(f"      • Breaker Blocks: {len(raw_components.get('breaker_blocks', []))}")
+        logger.info(f"      • Mitigation Blocks: {len(raw_components.get('mitigation_blocks', []))}")
+        logger.info(f"      • SIBI/SSIB Zones: {len(raw_components.get('sibi_ssib_zones', []))}")
+        logger.info(f"      • Liquidity Sweeps: {len(raw_components.get('liquidity_sweeps', []))}")
+        logger.info(f"      • Internal Liquidity: {len(raw_components.get('internal_liquidity', []))}")
+        logger.info(f"      • Liquidity Zones: {len(raw_components.get('liquidity_zones', []))}")
+        
+        # Count S/R levels from luxalgo_sr
+        sr_count = 0
+        luxalgo_sr = raw_components.get('luxalgo_sr', {})
+        if luxalgo_sr and isinstance(luxalgo_sr, dict):
+            sr_count = len(luxalgo_sr.get('support_zones', [])) + len(luxalgo_sr.get('resistance_zones', []))
+        logger.info(f"      • LuxAlgo S/R: {sr_count}")
+        
+        # Check fibonacci data
+        fib_data = raw_components.get('fibonacci_data', {})
+        has_fib = bool(fib_data and isinstance(fib_data, dict))
+        logger.info(f"      • Fibonacci Analysis: {'Yes' if has_fib else 'No'}")
+        
+        # СТЪПКА 5: COMPONENT FILTERING (NEW) - Filter for quality
+        logger.info("📊 Step 5: Component Filtering (Quality Focus)")
+        ict_components = self._filter_quality_components(raw_components)
+        
+        # СТЪПКА 6: BIAS DETERMINATION - Market Direction Analysis
+        logger.info("🔍 Step 6: Bias Determination")
         
         # Calculate bias with diagnostic details
         # ✅ FIX: Use PURE structure-only bias (no OB/displacement)
@@ -908,12 +946,12 @@ class ICTSignalEngine:
         logger.info(f"      • Displacement Detected: {displacement_detected}")
         logger.info(f"   → Final Bias: {bias.value}")
         
-        # СТЪПКА 7b: Apply confidence penalty for NEUTRAL/RANGING bias (NO EARLY EXIT)
+        # СТЪПКА 6b: Apply confidence penalty for NEUTRAL/RANGING bias (NO EARLY EXIT)
         # ✅ FIX #1: HTF is now a soft constraint (penalty) instead of hard block
-        confidence_penalty = 0.0  # Track penalty for Step 11 confidence calculation
+        confidence_penalty = 0.0  # Track penalty for Step 10 confidence calculation
         
         if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-            logger.warning(f"⚠️ Step 7b: {symbol} bias is {bias.value} - RANGING market detected")
+            logger.warning(f"⚠️ Step 6b: {symbol} bias is {bias.value} - RANGING market detected")
             logger.info(f"   → RANGING market = no clear directional bias")
             logger.info(f"   → Returning HOLD signal (no trade setup)")
             
@@ -930,14 +968,14 @@ class ICTSignalEngine:
         else:
             # Directional bias (BULLISH/BEARISH) - no penalty
             confidence_penalty = 0.0
-            logger.info(f"✅ Step 7b: Directional bias {bias.value} - no penalty")
+            logger.info(f"✅ Step 6b: Directional bias {bias.value} - no penalty")
         
-        # ✅ CONTINUE TO STEP 8 (NO EARLY EXIT FOR DIRECTIONAL BIAS)
+        # ✅ CONTINUE TO STEP 7 (NO EARLY EXIT FOR DIRECTIONAL BIAS)
         # At this point, bias is guaranteed to be BULLISH or BEARISH
-        logger.info(f"✅ PASSED Step 7: Continuing with bias {bias.value} (penalty: {confidence_penalty*100:.0f}%)")
+        logger.info(f"✅ PASSED Step 6: Continuing with bias {bias.value} (penalty: {confidence_penalty*100:.0f}%)")
         
-        # СТЪПКА 8: ENTRY CALCULATION WITH ICT-COMPLIANT ZONE
-        logger.info("🔍 Step 8: Entry Zone Validation")
+        # СТЪПКА 7: ENTRY SCENARIO SELECTION (merged Step 8 + Step 8.1)
+        logger.info("🎯 Step 7: Entry Scenario Selection")
         
         # Get current price
         current_price = df['close'].iloc[-1]
@@ -949,7 +987,7 @@ class ICTSignalEngine:
         order_blocks = ict_components.get('order_blocks', [])
         sr_levels = ict_components.get('luxalgo_sr', {})
         
-        logger.info(f"   → Available ICT Components:")
+        logger.info(f"   → Available ICT Components (after filtering):")
         logger.info(f"      • Order Blocks: {len(order_blocks)}")
         logger.info(f"      • FVG Zones: {len(fvg_zones)}")
         sr_count = 0
@@ -976,8 +1014,8 @@ class ICTSignalEngine:
         # ✅ UPDATED: Only reject for TOO_LATE (timing issue), not NO_ZONE (distance issue)
         # Validate entry zone timing
         if entry_status == 'TOO_LATE':
-            logger.info(f"❌ BLOCKED at Step 8: Entry zone validation failed (TOO_LATE)")
-            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 8, reason: Price already passed entry zone)")
+            logger.info(f"❌ BLOCKED at Step 7: Entry zone validation failed (TOO_LATE)")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7, reason: Price already passed entry zone)")
             context = self._extract_context_data(df, bias)
             # Calculate MTF consensus for detailed breakdown
             mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
@@ -997,8 +1035,8 @@ class ICTSignalEngine:
         
         # ✅ NEW: Reject signals with entry zones too far (exceeds universal 5% max)
         if entry_status == 'TOO_FAR':
-            logger.info(f"❌ BLOCKED at Step 8: Entry zone too far from current price")
-            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 8, reason: Entry distance exceeds 7% universal maximum)")
+            logger.info(f"❌ BLOCKED at Step 7: Entry zone too far from current price")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7, reason: Entry distance exceeds 7% universal maximum)")
             context = self._extract_context_data(df, bias)
             mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
             
@@ -1017,7 +1055,7 @@ class ICTSignalEngine:
         
         # ✅ SOFT CONSTRAINT: Handle NO_ZONE case with fallback instead of rejection
         if entry_status == 'NO_ZONE' or entry_zone is None:
-            logger.info(f"⚠️ Step 8 Warning: No ICT zone in optimal range, using fallback")
+            logger.info(f"⚠️ Step 7 Warning: No ICT zone in optimal range, using fallback")
             # ✅ NON-INVASIVE DIAGNOSTIC LOGGING
             logger.warning(f"⚠️ No ICT zone found in optimal range (0.5-7%) for {symbol}")
             logger.info(f"   → Creating fallback entry zone at current price ${current_price:.2f}")
@@ -1062,9 +1100,9 @@ class ICTSignalEngine:
             logger.info(f"✅ Fallback entry zone created at ${entry_zone['center']:.2f}")
         
         # Log successful entry zone validation
-        logger.info(f"✅ PASSED Step 8: Entry zone validated ({entry_status})")
+        logger.info(f"✅ Entry zone validated ({entry_status})")
         
-        # Extract entry price from entry zone for Step 9
+        # Extract entry price from entry zone for Step 8
         entry_price = entry_zone.get('center', current_price)
         logger.info(f"   → Entry Price: ${entry_price:.2f} (from entry zone)")
         
@@ -1078,13 +1116,8 @@ class ICTSignalEngine:
                 'source': entry_zone['source']
             }
         
-        
-        # =========================================================================
-        # СТЪПКА 8.1: ENTRY SCENARIO SELECTION (ICT Scoring System)
-        # =========================================================================
-        logger.info("=" * 60)
-        logger.info("🎯 Step 8.1: Entry Scenario Selection (ICT Scoring System)")
-        logger.info("=" * 60)
+        # ✅ Entry Scenario Scoring (merged from old Step 8.1)
+        logger.info("   🎯 Applying Entry Scenario Scoring...")
         
         entry_scenario_result, poi_ref = select_best_entry_scenario(
             current_price=current_price,
@@ -1099,36 +1132,33 @@ class ICTSignalEngine:
             if poi_ref:
                 entry_setup['poi_ref'] = poi_ref
             
-            logger.info(f"✅ Selected Scenario: {entry_scenario_result['scenario']}")
-            logger.info(f"   Score: {entry_scenario_result['score']}/100")
-            logger.info(f"   Entry Price: ${entry_scenario_result['entry_zone']['center']:.4f}")
-            logger.info(f"   Entry Range: ${entry_scenario_result['entry_zone']['low']:.4f} - ${entry_scenario_result['entry_zone']['high']:.4f}")
-            logger.info(f"   Distance: {entry_scenario_result['entry_zone']['distance_pct']:.1f}%")
-            logger.info(f"   Triggers: {', '.join(entry_scenario_result['triggers'])} ({entry_scenario_result['trigger_strength']})")
-            logger.info(f"   Position Size Advisory: {entry_scenario_result['position_size_advisory']}%")
-            logger.info(f"   Reasoning: {entry_scenario_result['reasoning']}")
-            logger.info(f"   POI Type: {entry_scenario_result.get('poi_type', 'NONE')}")
+            logger.info(f"   ✅ Selected Scenario: {entry_scenario_result['scenario']}")
+            logger.info(f"      • Score: {entry_scenario_result['score']}/100")
+            logger.info(f"      • Entry Price: ${entry_scenario_result['entry_zone']['center']:.4f}")
+            logger.info(f"      • Entry Range: ${entry_scenario_result['entry_zone']['low']:.4f} - ${entry_scenario_result['entry_zone']['high']:.4f}")
+            logger.info(f"      • Distance: {entry_scenario_result['entry_zone']['distance_pct']:.1f}%")
+            logger.info(f"      • Triggers: {', '.join(entry_scenario_result['triggers'])} ({entry_scenario_result['trigger_strength']})")
+            logger.info(f"      • Position Size Advisory: {entry_scenario_result['position_size_advisory']}%")
+            logger.info(f"      • Reasoning: {entry_scenario_result['reasoning']}")
+            logger.info(f"      • POI Type: {entry_scenario_result.get('poi_type', 'NONE')}")
             
             # Log invalidation anchor info
             anchor = entry_scenario_result.get('invalidation_anchor', {})
             if anchor:
-                logger.info(f"   Anchor: {anchor.get('type')} @ ${anchor.get('price', 0):.4f}")
+                logger.info(f"      • Anchor: {anchor.get('type')} @ ${anchor.get('price', 0):.4f}")
             
             # Override entry_zone with scenario result
             entry_zone = entry_scenario_result['entry_zone']
             # ✅ IMPORTANT: Update entry_price after scenario override
             entry_price = entry_zone.get('center', entry_price)
             logger.info(f"   → Updated Entry Price: ${entry_price:.2f} (from scenario entry zone)")
-
-            
-            logger.info(f"✅ Entry zone updated with {entry_scenario_result['scenario']} logic")
         else:
-            logger.warning("⚠️ No valid scenario scored above minimum - using Step 8 entry_zone")
+            logger.warning("   ⚠️ No valid scenario scored above minimum - using initial entry_zone")
         
-        logger.info("=" * 60)
-        # СТЪПКА 9: SL/TP + VALIDATION
-        logger.info("🔍 Step 9: SL/TP Calculation & Validation")
-        logger.info("=" * 60)
+        logger.info(f"✅ PASSED Step 7: Entry scenario selected (price: ${entry_price:.2f})")
+        
+        # СТЪПКА 8: SL POSITIONING (renamed from Step 9)
+        logger.info("🔍 Step 8: Stop Loss Positioning")
         
         # Get invalidation_anchor (or create fallback)
         invalidation_anchor = None
@@ -1137,7 +1167,7 @@ class ICTSignalEngine:
             invalidation_anchor = entry_scenario_result.get('invalidation_anchor')
         
         if not invalidation_anchor:
-            logger.warning("⚠️ No anchor from Step 8.1 - creating fallback")
+            logger.warning("   ⚠️ No anchor from Entry Scenario - creating fallback")
             
             swing_price = self._find_recent_swing_for_sl(df, bias, entry_price)
             
@@ -1177,14 +1207,15 @@ class ICTSignalEngine:
         )
         
         if sl_price is None:
-            logger.error("❌ BLOCKED at Step 9: SL calculation failed")
+            logger.error("❌ BLOCKED at Step 8: SL calculation failed")
             logger.error("❌ SL не може да бъде изчислен - сигналът НЕ СЕ ИЗПРАЩА")
             return None
         
-        logger.info(f"✅ SL calculated: ${sl_price:.2f}")
+        logger.info(f"   ✅ SL calculated: ${sl_price:.2f}")
+        logger.info(f"✅ PASSED Step 8: Stop Loss positioned")
         
-        # ✅ TP calculation (PR #8 Enhanced: Structure-aware vs Mathematical)
-        logger.info("🔍 Step 9b: Take Profit Calculation")
+        # СТЪПКА 9: TAKE PROFIT CALCULATION (renamed from Step 9b)
+        logger.info("🔍 Step 9: Take Profit Calculation")
         
         fibonacci_data = ict_components.get('fibonacci_data', {})
         bias_str = bias.value if hasattr(bias, 'value') else str(bias)
@@ -1212,9 +1243,9 @@ class ICTSignalEngine:
             )
             logger.info(f"   → Mathematical TPs (fallback): {[f'${tp:.2f}' for tp in tp_prices]}")
         
-        logger.info(f"✅ PASSED Step 9: SL/TP calculated and validated")
+        logger.info(f"✅ PASSED Step 9: Take Profit levels calculated")
         
-        # СТЪПКА 10: RR CHECK
+        # СТЪПКА 10: RISK/REWARD VALIDATION (renamed from Step 10)
         logger.info("🔍 Step 10: Risk/Reward Validation")
         risk = abs(entry_price - sl_price)
         
@@ -2090,10 +2121,17 @@ class ICTSignalEngine:
     def _detect_ict_components(
         self,
         df: pd.DataFrame,
-        timeframe: str
+        timeframe: str,
+        liquidity_zones: Optional[List[Dict]] = None
     ) -> Dict[str, List]:
         """
-        Detect all ICT components
+        Detect all ICT components with optional pre-calculated liquidity zones.
+        
+        Args:
+            df: DataFrame with candle data
+            timeframe: Timeframe string (e.g., '15m')
+            liquidity_zones: (OPTIONAL) Pre-calculated liquidity zones from Step 3.
+                             If None, calculates internally (backward compatible).
         
         Returns dict with:
         - whale_blocks
@@ -2137,23 +2175,37 @@ class ICTSignalEngine:
             except Exception as e:
                 logger.error(f"Whale detection error: {e}")
         
-        # Detect Liquidity Zones
-        if self.config['use_liquidity'] and self.liquidity_mapper:
-            try:
-                liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df)
-                components['liquidity_zones'] = liquidity_zones
-                logger.info(f"Detected {len(liquidity_zones)} liquidity zones")
+        # ✅ BACKWARD COMPATIBLE: If liquidity_zones not provided, calculate internally
+        if liquidity_zones is None:
+            # OLD BEHAVIOR: Calculate liquidity zones
+            if self.config['use_liquidity'] and self.liquidity_mapper:
+                try:
+                    liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df)
+                    components['liquidity_zones'] = liquidity_zones
+                    logger.info(f"Detected {len(liquidity_zones)} liquidity zones")
 
-                # Detect Liquidity Sweeps
-                if liquidity_zones:
-                    try:
-                        sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df, liquidity_zones)
-                        components['liquidity_sweeps'] = sweeps
-                        logger.info(f"Detected {len(sweeps)} liquidity sweeps")
-                    except Exception as e:
-                        logger.error(f"Sweep detection error: {e}")
-            except Exception as e:
-                logger.error(f"Liquidity detection error: {e}")
+                    # Detect Liquidity Sweeps
+                    if liquidity_zones:
+                        try:
+                            sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df, liquidity_zones)
+                            components['liquidity_sweeps'] = sweeps
+                            logger.info(f"Detected {len(sweeps)} liquidity sweeps")
+                        except Exception as e:
+                            logger.error(f"Sweep detection error: {e}")
+                except Exception as e:
+                    logger.error(f"Liquidity detection error: {e}")
+        else:
+            # NEW BEHAVIOR: Use provided liquidity_zones (no re-calculation!)
+            components['liquidity_zones'] = liquidity_zones
+            
+            # Detect Liquidity Sweeps using provided zones
+            if liquidity_zones and self.config.get('use_liquidity') and self.liquidity_mapper:
+                try:
+                    sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df, liquidity_zones)
+                    components['liquidity_sweeps'] = sweeps
+                    logger.info(f"Detected {len(sweeps)} liquidity sweeps")
+                except Exception as e:
+                    logger.error(f"Sweep detection error: {e}")
         
         # Detect Internal Liquidity Pools
         if self.ilp_detector:
@@ -2299,6 +2351,126 @@ class ICTSignalEngine:
             components['fibonacci_data'] = {}
         
         return components
+    
+    def _filter_quality_components(self, raw_components: Dict) -> Dict:
+        """
+        Filter ICT components to keep only high-quality ones.
+        
+        Quality criteria:
+        - Order Blocks: MEDIUM or STRONG only (volume_ratio >= 1.5)
+        - FVG Zones: Unfilled only (fill_percentage < 70%)
+        - Whale Blocks: Confidence >= 50%
+        - Liquidity Sweeps: Recent only (candles_ago <= 20)
+        - BSL/SSL: Strength >= 0.5
+        - Swing High/Low: Recent and strong
+        - Liquidity Zones: Active pools only
+        
+        Args:
+            raw_components: All detected components from Step 4
+        
+        Returns:
+            Filtered components (quality only)
+        """
+        filtered = {}
+        
+        # Filter Order Blocks (MEDIUM+ only)
+        raw_obs = raw_components.get('order_blocks', [])
+        filtered['order_blocks'] = [
+            ob for ob in raw_obs
+            if (hasattr(ob, 'strength') and ob.strength >= 40)  # MEDIUM = 40+, STRONG = 60+
+            or (isinstance(ob, dict) and ob.get('strength', 0) >= 40)
+        ]
+        
+        # Filter FVG Zones (unfilled only)
+        raw_fvgs = raw_components.get('fvgs', [])
+        filtered['fvgs'] = [
+            fvg for fvg in raw_fvgs
+            if (hasattr(fvg, 'fill_percentage') and fvg.fill_percentage < 70)
+            or (isinstance(fvg, dict) and fvg.get('fill_percentage', 100) < 70)
+        ]
+        
+        # Filter Whale Blocks (confidence >= 50%)
+        raw_whales = raw_components.get('whale_blocks', [])
+        filtered['whale_blocks'] = [
+            wb for wb in raw_whales
+            if (hasattr(wb, 'confidence') and wb.confidence >= 50)
+            or (isinstance(wb, dict) and wb.get('confidence', 0) >= 50)
+        ]
+        
+        # Filter Liquidity Sweeps (recent only)
+        raw_sweeps = raw_components.get('liquidity_sweeps', [])
+        filtered['liquidity_sweeps'] = [
+            sweep for sweep in raw_sweeps
+            if (hasattr(sweep, 'candles_ago') and sweep.candles_ago <= 20)
+            or (isinstance(sweep, dict) and sweep.get('candles_ago', 999) <= 20)
+        ]
+        
+        # Filter BSL/SSL (strength >= 0.5) - if they exist
+        raw_bsl = raw_components.get('bsl_zones', [])
+        filtered['bsl_zones'] = [
+            bsl for bsl in raw_bsl
+            if (hasattr(bsl, 'strength') and bsl.strength >= 0.5)
+            or (isinstance(bsl, dict) and bsl.get('strength', 0) >= 0.5)
+        ]
+        
+        raw_ssl = raw_components.get('ssl_zones', [])
+        filtered['ssl_zones'] = [
+            ssl for ssl in raw_ssl
+            if (hasattr(ssl, 'strength') and ssl.strength >= 0.5)
+            or (isinstance(ssl, dict) and ssl.get('strength', 0) >= 0.5)
+        ]
+        
+        # Keep all other components as-is (no filtering)
+        for key in ['breaker_blocks', 'mitigation_blocks', 'sibi_ssib_zones', 'internal_liquidity',
+                    'liquidity_zones', 'luxalgo_sr', 'luxalgo_ict', 'luxalgo_combined', 
+                    'fibonacci_data', 'support_resistance']:
+            if key in raw_components:
+                filtered[key] = raw_components[key]
+        
+        # Log filtering results
+        logger.info(f"   🔍 Component Filtering Results:")
+        if raw_obs:
+            kept_pct = len(filtered['order_blocks']) / len(raw_obs) * 100
+            logger.info(f"      • Order Blocks: {len(raw_obs)} → {len(filtered['order_blocks'])} "
+                        f"({kept_pct:.0f}% kept)")
+        if raw_fvgs:
+            kept_pct = len(filtered['fvgs']) / len(raw_fvgs) * 100
+            logger.info(f"      • FVG Zones: {len(raw_fvgs)} → {len(filtered['fvgs'])} "
+                        f"({kept_pct:.0f}% kept)")
+        if raw_whales:
+            kept_pct = len(filtered['whale_blocks']) / len(raw_whales) * 100
+            logger.info(f"      • Whale Blocks: {len(raw_whales)} → {len(filtered['whale_blocks'])} "
+                        f"({kept_pct:.0f}% kept)")
+        if raw_sweeps:
+            kept_pct = len(filtered['liquidity_sweeps']) / len(raw_sweeps) * 100
+            logger.info(f"      • Liquidity Sweeps: {len(raw_sweeps)} → {len(filtered['liquidity_sweeps'])} "
+                        f"({kept_pct:.0f}% kept)")
+        
+        return filtered
+    
+    def _save_analysis_json(self, symbol: str, timestamp: datetime, analysis_data: Dict) -> None:
+        """
+        Save full analysis to JSON file for debugging and backtesting.
+        
+        Args:
+            symbol: Trading symbol
+            timestamp: Analysis timestamp
+            analysis_data: Complete analysis data including all components
+        """
+        try:
+            # Create logs directory if not exists
+            os.makedirs('logs/analysis_history', exist_ok=True)
+            
+            # Filename with timestamp
+            filename = f"logs/analysis_history/{symbol}_{timestamp.strftime('%Y%m%d_%H%M%S')}.json"
+            
+            # Write JSON
+            with open(filename, 'w') as f:
+                json.dump(analysis_data, f, indent=2, default=str)
+            
+            logger.debug(f"✅ Analysis saved to {filename}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to save analysis JSON: {e}")
     
     def _analyze_mtf_confluence(
         self,
