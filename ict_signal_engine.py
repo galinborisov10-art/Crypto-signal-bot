@@ -1053,13 +1053,36 @@ class ICTSignalEngine:
                 confidence=None
             )
         
-        # ✅ SOFT CONSTRAINT: Handle NO_ZONE case with fallback instead of rejection
+        # ✅ HARD BLOCK for AUTO mode: No ICT zone means NO SIGNAL
         if entry_status == 'NO_ZONE' or entry_zone is None:
-            logger.info(f"⚠️ Step 7 Warning: No ICT zone in optimal range, using fallback")
+            # 🚫 CRITICAL: AUTO mode does NOT allow fallback entries
+            if is_auto:
+                logger.info(f"❌ BLOCKED at Step 7: No ICT zone found and AUTO mode active")
+                logger.info(f"   → AUTO signals require valid ICT entry zones (no fallback)")
+                logger.error(f"❌ No ICT zone in optimal range - AUTO signal BLOCKED")
+                context = self._extract_context_data(df, bias)
+                mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+                
+                return self._create_no_trade_message(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    reason=f"No ICT entry zone found (AUTO mode)",
+                    details=f"AUTO signals require valid ICT zones. No zone found in optimal range for {symbol}.",
+                    mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                    current_price=context['current_price'],
+                    price_change_24h=context['price_change_24h'],
+                    rsi=context['rsi'],
+                    signal_direction=context['signal_direction'],
+                    confidence=None
+                )
+            
+            # ✅ MANUAL/DEBUG MODE: Allow fallback with warning
+            logger.info(f"⚠️ Step 7 Warning: No ICT zone in optimal range, using fallback (MANUAL mode)")
             # ✅ NON-INVASIVE DIAGNOSTIC LOGGING
             logger.warning(f"⚠️ No ICT zone found in optimal range (0.5-7%) for {symbol}")
             logger.info(f"   → Creating fallback entry zone at current price ${current_price:.2f}")
             logger.debug(f"   → Fallback zone: ±1% from current price")
+            logger.info(f"   → FALLBACK allowed only in MANUAL/DEBUG mode")
             
             # Diagnostic: Log available ICT components
             sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
@@ -1127,6 +1150,27 @@ class ICTSignalEngine:
             timeframe=timeframe
         )
         
+        # 🚫 CRITICAL: AUTO mode requires valid entry scenario
+        if not entry_scenario_result and is_auto:
+            logger.info(f"❌ BLOCKED at Step 7: No valid entry scenario and AUTO mode active")
+            logger.info(f"   → AUTO signals require scored entry scenarios (no fallback)")
+            logger.error(f"❌ No valid scenario scored above minimum - AUTO signal BLOCKED")
+            context = self._extract_context_data(df, bias)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason=f"No valid entry scenario (AUTO mode)",
+                details=f"AUTO signals require valid ICT scenarios. No scenario scored above minimum for {symbol}.",
+                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=None
+            )
+        
         if entry_scenario_result:
             # Store poi_ref if available
             if poi_ref:
@@ -1166,8 +1210,29 @@ class ICTSignalEngine:
         if entry_scenario_result:
             invalidation_anchor = entry_scenario_result.get('invalidation_anchor')
         
+        # 🚫 CRITICAL: AUTO mode requires valid invalidation anchor
+        if not invalidation_anchor and is_auto:
+            logger.info(f"❌ BLOCKED at Step 8: No invalidation anchor and AUTO mode active")
+            logger.info(f"   → AUTO signals require valid invalidation anchors (no fallback SL)")
+            logger.error(f"❌ No invalidation anchor available - AUTO signal BLOCKED")
+            context = self._extract_context_data(df, bias)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason=f"No invalidation anchor (AUTO mode)",
+                details=f"AUTO signals require valid invalidation anchors. No anchor available for {symbol}.",
+                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=None
+            )
+        
         if not invalidation_anchor:
-            logger.warning("   ⚠️ No anchor from Entry Scenario - creating fallback")
+            logger.warning("   ⚠️ No anchor from Entry Scenario - creating fallback (MANUAL mode)")
             
             swing_price = self._find_recent_swing_for_sl(df, bias, entry_price)
             
@@ -2235,37 +2300,34 @@ class ICTSignalEngine:
             except Exception as e:
                 logger.error(f"Whale detection error: {e}")
         
-        # ✅ BACKWARD COMPATIBLE: If liquidity_zones not provided, calculate internally
+        # ✅ LIQUIDITY ZONES & SWEEPS - Clear flow without duplication
+        # Step 1: Get or calculate liquidity zones
         if liquidity_zones is None:
-            # OLD BEHAVIOR: Calculate liquidity zones
+            # Calculate liquidity zones internally (backward compatible)
             if self.config['use_liquidity'] and self.liquidity_mapper:
                 try:
                     liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df)
-                    components['liquidity_zones'] = liquidity_zones
                     logger.info(f"Detected {len(liquidity_zones)} liquidity zones")
-
-                    # Detect Liquidity Sweeps
-                    if liquidity_zones:
-                        try:
-                            sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df, liquidity_zones)
-                            components['liquidity_sweeps'] = sweeps
-                            logger.info(f"Detected {len(sweeps)} liquidity sweeps")
-                        except Exception as e:
-                            logger.error(f"Sweep detection error: {e}")
                 except Exception as e:
                     logger.error(f"Liquidity detection error: {e}")
+                    liquidity_zones = []
+            else:
+                liquidity_zones = []
+        
+        # Step 2: Store liquidity zones in components
+        components['liquidity_zones'] = liquidity_zones
+        
+        # Step 3: Calculate liquidity sweeps (ONCE) if zones exist
+        if liquidity_zones and self.config.get('use_liquidity') and self.liquidity_mapper:
+            try:
+                sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df, liquidity_zones)
+                components['liquidity_sweeps'] = sweeps
+                logger.info(f"Detected {len(sweeps)} liquidity sweeps")
+            except Exception as e:
+                logger.error(f"Sweep detection error: {e}")
+                components['liquidity_sweeps'] = []
         else:
-            # NEW BEHAVIOR: Use provided liquidity_zones (no re-calculation!)
-            components['liquidity_zones'] = liquidity_zones
-            
-            # Detect Liquidity Sweeps using provided zones
-            if liquidity_zones and self.config.get('use_liquidity') and self.liquidity_mapper:
-                try:
-                    sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df, liquidity_zones)
-                    components['liquidity_sweeps'] = sweeps
-                    logger.info(f"Detected {len(sweeps)} liquidity sweeps")
-                except Exception as e:
-                    logger.error(f"Sweep detection error: {e}")
+            components['liquidity_sweeps'] = []
         
         # Detect Internal Liquidity Pools
         if self.ilp_detector:
@@ -2435,50 +2497,181 @@ class ICTSignalEngine:
         
         # Filter Order Blocks (MEDIUM+ only)
         raw_obs = raw_components.get('order_blocks', [])
-        filtered['order_blocks'] = [
-            ob for ob in raw_obs
-            if (hasattr(ob, 'strength') and ob.strength >= 40)  # MEDIUM = 40+, STRONG = 60+
-            or (isinstance(ob, dict) and ob.get('strength', 0) >= 40)
-        ]
+        filtered_obs = []
+        
+        # Debug: Log first OB to validate schema
+        if raw_obs:
+            first_ob = raw_obs[0]
+            if hasattr(first_ob, '__dict__'):
+                logger.debug(f"   🔍 First Order Block schema (object): {list(vars(first_ob).keys())}")
+            elif isinstance(first_ob, dict):
+                logger.debug(f"   🔍 First Order Block schema (dict): {list(first_ob.keys())}")
+        
+        for ob in raw_obs:
+            # Safe field access with defaults
+            try:
+                if hasattr(ob, 'strength'):
+                    strength = ob.strength
+                elif isinstance(ob, dict):
+                    strength = ob.get('strength', None)
+                else:
+                    strength = None
+                
+                # If strength field missing, keep the component (don't filter aggressively)
+                if strength is None:
+                    logger.debug(f"   ⚠️ Order Block missing 'strength' field - keeping component")
+                    filtered_obs.append(ob)
+                elif strength >= 40:  # MEDIUM = 40+, STRONG = 60+
+                    filtered_obs.append(ob)
+            except Exception as e:
+                logger.warning(f"   ⚠️ Error filtering Order Block: {e} - keeping component")
+                filtered_obs.append(ob)
+        
+        filtered['order_blocks'] = filtered_obs
         
         # Filter FVG Zones (unfilled only)
         raw_fvgs = raw_components.get('fvgs', [])
-        filtered['fvgs'] = [
-            fvg for fvg in raw_fvgs
-            if (hasattr(fvg, 'fill_percentage') and fvg.fill_percentage < 70)
-            or (isinstance(fvg, dict) and fvg.get('fill_percentage', 100) < 70)
-        ]
+        filtered_fvgs = []
+        
+        # Debug: Log first FVG to validate schema
+        if raw_fvgs:
+            first_fvg = raw_fvgs[0]
+            if hasattr(first_fvg, '__dict__'):
+                logger.debug(f"   🔍 First FVG schema (object): {list(vars(first_fvg).keys())}")
+            elif isinstance(first_fvg, dict):
+                logger.debug(f"   🔍 First FVG schema (dict): {list(first_fvg.keys())}")
+        
+        for fvg in raw_fvgs:
+            try:
+                if hasattr(fvg, 'fill_percentage'):
+                    fill_pct = fvg.fill_percentage
+                elif isinstance(fvg, dict):
+                    fill_pct = fvg.get('fill_percentage', None)
+                else:
+                    fill_pct = None
+                
+                # If fill_percentage field missing, keep the component
+                if fill_pct is None:
+                    logger.debug(f"   ⚠️ FVG missing 'fill_percentage' field - keeping component")
+                    filtered_fvgs.append(fvg)
+                elif fill_pct < 70:
+                    filtered_fvgs.append(fvg)
+            except Exception as e:
+                logger.warning(f"   ⚠️ Error filtering FVG: {e} - keeping component")
+                filtered_fvgs.append(fvg)
+        
+        filtered['fvgs'] = filtered_fvgs
         
         # Filter Whale Blocks (confidence >= 50%)
         raw_whales = raw_components.get('whale_blocks', [])
-        filtered['whale_blocks'] = [
-            wb for wb in raw_whales
-            if (hasattr(wb, 'confidence') and wb.confidence >= 50)
-            or (isinstance(wb, dict) and wb.get('confidence', 0) >= 50)
-        ]
+        filtered_whales = []
+        
+        # Debug: Log first Whale Block to validate schema
+        if raw_whales:
+            first_whale = raw_whales[0]
+            if hasattr(first_whale, '__dict__'):
+                logger.debug(f"   🔍 First Whale Block schema (object): {list(vars(first_whale).keys())}")
+            elif isinstance(first_whale, dict):
+                logger.debug(f"   🔍 First Whale Block schema (dict): {list(first_whale.keys())}")
+        
+        for wb in raw_whales:
+            try:
+                if hasattr(wb, 'confidence'):
+                    confidence = wb.confidence
+                elif isinstance(wb, dict):
+                    confidence = wb.get('confidence', None)
+                else:
+                    confidence = None
+                
+                # If confidence field missing, keep the component
+                if confidence is None:
+                    logger.debug(f"   ⚠️ Whale Block missing 'confidence' field - keeping component")
+                    filtered_whales.append(wb)
+                elif confidence >= 50:
+                    filtered_whales.append(wb)
+            except Exception as e:
+                logger.warning(f"   ⚠️ Error filtering Whale Block: {e} - keeping component")
+                filtered_whales.append(wb)
+        
+        filtered['whale_blocks'] = filtered_whales
         
         # Filter Liquidity Sweeps (recent only)
         raw_sweeps = raw_components.get('liquidity_sweeps', [])
-        filtered['liquidity_sweeps'] = [
-            sweep for sweep in raw_sweeps
-            if (hasattr(sweep, 'candles_ago') and sweep.candles_ago <= 20)
-            or (isinstance(sweep, dict) and sweep.get('candles_ago', 999) <= 20)
-        ]
+        filtered_sweeps = []
+        
+        # Debug: Log first Sweep to validate schema
+        if raw_sweeps:
+            first_sweep = raw_sweeps[0]
+            if hasattr(first_sweep, '__dict__'):
+                logger.debug(f"   🔍 First Liquidity Sweep schema (object): {list(vars(first_sweep).keys())}")
+            elif isinstance(first_sweep, dict):
+                logger.debug(f"   🔍 First Liquidity Sweep schema (dict): {list(first_sweep.keys())}")
+        
+        for sweep in raw_sweeps:
+            try:
+                if hasattr(sweep, 'candles_ago'):
+                    candles_ago = sweep.candles_ago
+                elif isinstance(sweep, dict):
+                    candles_ago = sweep.get('candles_ago', None)
+                else:
+                    candles_ago = None
+                
+                # If candles_ago field missing, keep the component
+                if candles_ago is None:
+                    logger.debug(f"   ⚠️ Liquidity Sweep missing 'candles_ago' field - keeping component")
+                    filtered_sweeps.append(sweep)
+                elif candles_ago <= 20:
+                    filtered_sweeps.append(sweep)
+            except Exception as e:
+                logger.warning(f"   ⚠️ Error filtering Liquidity Sweep: {e} - keeping component")
+                filtered_sweeps.append(sweep)
+        
+        filtered['liquidity_sweeps'] = filtered_sweeps
         
         # Filter BSL/SSL (strength >= 0.5) - if they exist
         raw_bsl = raw_components.get('bsl_zones', [])
-        filtered['bsl_zones'] = [
-            bsl for bsl in raw_bsl
-            if (hasattr(bsl, 'strength') and bsl.strength >= 0.5)
-            or (isinstance(bsl, dict) and bsl.get('strength', 0) >= 0.5)
-        ]
+        filtered_bsl = []
+        
+        for bsl in raw_bsl:
+            try:
+                if hasattr(bsl, 'strength'):
+                    strength = bsl.strength
+                elif isinstance(bsl, dict):
+                    strength = bsl.get('strength', None)
+                else:
+                    strength = None
+                
+                if strength is None:
+                    filtered_bsl.append(bsl)
+                elif strength >= 0.5:
+                    filtered_bsl.append(bsl)
+            except Exception as e:
+                logger.warning(f"   ⚠️ Error filtering BSL: {e} - keeping component")
+                filtered_bsl.append(bsl)
+        
+        filtered['bsl_zones'] = filtered_bsl
         
         raw_ssl = raw_components.get('ssl_zones', [])
-        filtered['ssl_zones'] = [
-            ssl for ssl in raw_ssl
-            if (hasattr(ssl, 'strength') and ssl.strength >= 0.5)
-            or (isinstance(ssl, dict) and ssl.get('strength', 0) >= 0.5)
-        ]
+        filtered_ssl = []
+        
+        for ssl in raw_ssl:
+            try:
+                if hasattr(ssl, 'strength'):
+                    strength = ssl.strength
+                elif isinstance(ssl, dict):
+                    strength = ssl.get('strength', None)
+                else:
+                    strength = None
+                
+                if strength is None:
+                    filtered_ssl.append(ssl)
+                elif strength >= 0.5:
+                    filtered_ssl.append(ssl)
+            except Exception as e:
+                logger.warning(f"   ⚠️ Error filtering SSL: {e} - keeping component")
+                filtered_ssl.append(ssl)
+        
+        filtered['ssl_zones'] = filtered_ssl
         
         # Keep all other components as-is (no filtering)
         for key in ['breaker_blocks', 'mitigation_blocks', 'sibi_ssib_zones', 'internal_liquidity',
