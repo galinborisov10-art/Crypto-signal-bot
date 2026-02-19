@@ -1073,7 +1073,7 @@ class ICTSignalEngine:
             logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7, reason: Price already passed entry zone)")
             context = self._extract_context_data(df, bias)
             # Calculate MTF consensus for detailed breakdown
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
             
             return self._create_no_trade_message(
                 symbol=symbol,
@@ -1093,7 +1093,7 @@ class ICTSignalEngine:
             logger.info(f"❌ BLOCKED at Step 7: Entry zone too far from current price")
             logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7, reason: Entry distance exceeds 7% universal maximum)")
             context = self._extract_context_data(df, bias)
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
             
             return self._create_no_trade_message(
                 symbol=symbol,
@@ -1116,7 +1116,7 @@ class ICTSignalEngine:
                 logger.info(f"   → AUTO signals require valid ICT entry zones (no fallback)")
                 logger.error(f"❌ No ICT zone in optimal range - AUTO signal BLOCKED")
                 context = self._extract_context_data(df, bias)
-                mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+                mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
                 
                 return self._create_no_trade_message(
                     symbol=symbol,
@@ -1211,7 +1211,7 @@ class ICTSignalEngine:
             logger.info(f"   → All signals require scored entry scenarios (no fallback)")
             logger.error(f"❌ No valid scenario scored above minimum - Signal BLOCKED (no valid scenario)")
             context = self._extract_context_data(df, bias)
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
             
             return self._create_no_trade_message(
                 symbol=symbol,
@@ -1271,7 +1271,7 @@ class ICTSignalEngine:
             logger.info(f"   → AUTO signals require valid invalidation anchors (no fallback SL)")
             logger.error(f"❌ No invalidation anchor available - AUTO signal BLOCKED")
             context = self._extract_context_data(df, bias)
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
             
             return self._create_no_trade_message(
                 symbol=symbol,
@@ -1644,7 +1644,9 @@ class ICTSignalEngine:
         
         # 12a: MTF CONSENSUS CHECK (STRICT ICT)
         logger.info("   📊 MTF Consensus Validation")
-        mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+        mtf_consensus_data = self._calculate_mtf_consensus(
+            symbol, entry_tf, bias, mtf_data, tf_hierarchy  # ✅ STABILIZATION: Pass TF hierarchy
+        )
         
         logger.info(f"   → MTF Consensus: {mtf_consensus_data['consensus_pct']:.1f}%")
         logger.info(f"   → Aligned TFs: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}")
@@ -2872,28 +2874,50 @@ class ICTSignalEngine:
         symbol: str,
         primary_timeframe: str,
         target_bias: MarketBias,
-        mtf_data: Optional[Dict[str, pd.DataFrame]] = None
+        mtf_data: Optional[Dict[str, pd.DataFrame]] = None,
+        tf_hierarchy: Optional['TimeframeHierarchy'] = None  # ✅ STABILIZATION: Use TF contract
     ) -> Dict:
         """
         ✅ IMPROVED MTF Consensus:
         1. RANGING/NEUTRAL = ignored (not counted as conflicting)
-        2. Dynamic TF selection based on entry TF
+        2. Dynamic TF selection based on TF hierarchy contract
         3. Correct formula: aligned / (bullish + bearish) * 100
+        
+        ✅ STABILIZATION PR: Now uses centralized timeframe contract
         """
         
-        # Dynamic MTF hierarchy based on entry timeframe
-        MTF_HIERARCHY = {
-            '5m':  ['5m', '15m', '30m', '1h'],
-            '15m': ['15m', '30m', '1h', '4h'],
-            '30m': ['30m', '1h', '2h', '4h'],
-            '1h':  ['1h', '2h', '4h', '1d'],
-            '2h':  ['2h', '4h', '1d'],
-            '4h':  ['4h', '1d'],
-            '1d':  ['1d', '1w']
-        }
-        
-        # Get relevant timeframes for this entry TF
-        relevant_tfs = MTF_HIERARCHY.get(primary_timeframe, ['1h', '4h', '1d'])
+        # ✅ STABILIZATION: Use TF hierarchy if provided, else fallback to legacy
+        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+            # Use timeframes from the hierarchy contract
+            relevant_tfs = [
+                tf_hierarchy.signal_tf,
+                tf_hierarchy.confirmation_tf,
+                tf_hierarchy.structure_tf,
+                tf_hierarchy.htf_bias_tf
+            ]
+            # Remove duplicates while preserving order
+            unique_tfs = []
+            for tf in relevant_tfs:
+                if tf not in unique_tfs:
+                    unique_tfs.append(tf)
+            relevant_tfs = unique_tfs
+            
+            logger.info(f"📊 MTF Consensus using TF Contract: {relevant_tfs}")
+        else:
+            # Legacy: Dynamic MTF hierarchy based on entry timeframe
+            MTF_HIERARCHY = {
+                '5m':  ['5m', '15m', '30m', '1h'],
+                '15m': ['15m', '30m', '1h', '4h'],
+                '30m': ['30m', '1h', '2h', '4h'],
+                '1h':  ['1h', '2h', '4h', '1d'],
+                '2h':  ['2h', '4h', '1d'],
+                '4h':  ['4h', '1d'],
+                '1d':  ['1d', '1w']
+            }
+            
+            # Get relevant timeframes for this entry TF
+            relevant_tfs = MTF_HIERARCHY.get(primary_timeframe, ['1h', '4h', '1d'])
+            logger.info(f"📊 MTF Consensus using legacy hierarchy: {relevant_tfs}")
         
         # ✅ NORMALIZE target_bias to MarketBias enum
         if isinstance(target_bias, str):
