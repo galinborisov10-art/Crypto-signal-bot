@@ -962,10 +962,17 @@ class ICTSignalEngine:
         # ✅ FIX: Use PURE structure-only bias (no OB/displacement)
         bias_str, bias_confidence = self._calculate_pure_ict_bias_for_tf(df, symbol, entry_tf)
         bias = MarketBias[bias_str]  # Convert string to enum
+        
+        # Detect structure break and displacement on entry timeframe
         structure_broken = self._check_structure_break(df)
         displacement_detected, displacement_strength = self._check_displacement(df)
         ict_components["displacement"] = {"detected": displacement_detected, "strength": displacement_strength}
         ict_components["structure_break"] = {"type": "MSS" if structure_broken else None}
+        
+        # ✅ STABILIZATION: Log displacement and MSS/BOS detection
+        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+            TimeframeDebugLogger.log_component_source("Displacement", entry_tf, 1 if displacement_detected else 0)
+            TimeframeDebugLogger.log_component_source("MSS/BOS (Structure Break)", entry_tf, 1 if structure_broken else 0)
 
         # Add structure_break and displacement to ict_components for Entry Scenarios
         
@@ -2393,12 +2400,20 @@ class ICTSignalEngine:
         # Step 2: Store liquidity zones in components
         components['liquidity_zones'] = liquidity_zones
         
+        # ✅ STABILIZATION: Log liquidity zones source
+        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+            TimeframeDebugLogger.log_component_source("Liquidity Zones", timeframe, len(liquidity_zones))
+        
         # Step 3: Calculate liquidity sweeps (ONCE) if zones exist
         if liquidity_zones and self.config.get('use_liquidity') and self.liquidity_mapper:
             try:
                 sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df, liquidity_zones)
                 components['liquidity_sweeps'] = sweeps
-                logger.info(f"Detected {len(sweeps)} liquidity sweeps")
+                logger.info(f"Detected {len(sweeps)} liquidity sweeps on {timeframe}")
+                
+                # ✅ STABILIZATION: Log liquidity sweeps source
+                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+                    TimeframeDebugLogger.log_component_source("Liquidity Sweeps (BSL/SSL)", timeframe, len(sweeps))
             except Exception as e:
                 logger.error(f"Sweep detection error: {e}")
                 components['liquidity_sweeps'] = []
@@ -2410,7 +2425,11 @@ class ICTSignalEngine:
             try:
                 ilp_analysis = self.ilp_detector.analyze(df)
                 components['internal_liquidity'] = ilp_analysis.get('pools', [])
-                logger.info(f"Detected {len(components['internal_liquidity'])} ILPs")
+                logger.info(f"Detected {len(components['internal_liquidity'])} ILPs on {timeframe}")
+                
+                # ✅ STABILIZATION: Log ILP source
+                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+                    TimeframeDebugLogger.log_component_source("Internal Liquidity Pools", timeframe, len(components['internal_liquidity']))
                 
                 # Add ILP sweeps to liquidity_sweeps (quality filter)
                 ilp_swept_pools = ilp_analysis.get('swept_pools', [])
@@ -2448,7 +2467,11 @@ class ICTSignalEngine:
                     components['order_blocks']
                 )
                 components['breaker_blocks'] = breaker_blocks
-                logger.info(f"Detected {len(breaker_blocks)} breaker blocks")
+                logger.info(f"Detected {len(breaker_blocks)} breaker blocks on {timeframe}")
+                
+                # ✅ STABILIZATION: Log breaker blocks source
+                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+                    TimeframeDebugLogger.log_component_source("Breaker Blocks", timeframe, len(breaker_blocks))
             except Exception as e:
                 logger.error(f"Breaker block detection error: {e}")
                 components['breaker_blocks'] = []
@@ -2463,7 +2486,11 @@ class ICTSignalEngine:
                     components.get('order_blocks', [])
                 )
                 components['mitigation_blocks'] = mitigation_blocks
-                logger.info(f"Detected {len(mitigation_blocks)} mitigation blocks")
+                logger.info(f"Detected {len(mitigation_blocks)} mitigation blocks on {timeframe}")
+                
+                # ✅ STABILIZATION: Log mitigation blocks source
+                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+                    TimeframeDebugLogger.log_component_source("Mitigation Blocks", timeframe, len(mitigation_blocks))
             except Exception as e:
                 logger.error(f"Mitigation block detection error: {e}")
                 components['mitigation_blocks'] = []
