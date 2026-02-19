@@ -876,7 +876,7 @@ class ICTSignalEngine:
         logger.info("📊 Step 2: MTF Structure")
         mtf_analysis = self._analyze_mtf_confluence(df, mtf_data, symbol) if mtf_data is not None and isinstance(mtf_data, dict) else None
         
-        # ✅ PR #4: СТЪПКА 6b: TIMEFRAME HIERARCHY VALIDATION (NEW)
+        # ✅ STABILIZATION PR: TIMEFRAME HIERARCHY VALIDATION
         logger.info("=" * 60)
         logger.info("STEP 6b: TIMEFRAME HIERARCHY VALIDATION")
         logger.info("=" * 60)
@@ -886,12 +886,30 @@ class ICTSignalEngine:
         hierarchy_info = {}
         initial_confidence = 80.0  # Starting confidence before validation
         
-        # Perform TF hierarchy validation
-        validated_confidence, tf_warnings, hierarchy_info = self._validate_mtf_hierarchy(
-            entry_tf=timeframe,
-            mtf_analysis=mtf_analysis if mtf_analysis else {},
-            confidence=initial_confidence
-        )
+        # ✅ STABILIZATION: Populate hierarchy_info from TF contract
+        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+            hierarchy_info = {
+                'entry_tf': tf_hierarchy.signal_tf,
+                'confirmation_tf': tf_hierarchy.confirmation_tf,
+                'structure_tf': tf_hierarchy.structure_tf,
+                'htf_bias_tf': tf_hierarchy.htf_bias_tf,
+                'mode': tf_hierarchy.mode.value,
+                'description': f'{tf_hierarchy.signal_tf} signal with {tf_hierarchy.confirmation_tf} confirmation and {tf_hierarchy.structure_tf} structure'
+            }
+            logger.info(f"✅ TF hierarchy from contract:")
+            logger.info(f"   Entry: {hierarchy_info['entry_tf']}")
+            logger.info(f"   Confirmation: {hierarchy_info['confirmation_tf']}")
+            logger.info(f"   Structure: {hierarchy_info['structure_tf']}")
+            logger.info(f"   HTF Bias: {hierarchy_info['htf_bias_tf']}")
+            logger.info(f"   Mode: {hierarchy_info['mode']}")
+            validated_confidence = initial_confidence
+        else:
+            # Fallback to legacy validation
+            validated_confidence, tf_warnings, hierarchy_info = self._validate_mtf_hierarchy(
+                entry_tf=timeframe,
+                mtf_analysis=mtf_analysis if mtf_analysis else {},
+                confidence=initial_confidence
+            )
         
         # Store hierarchy info for later use in signal generation
         context_warnings = tf_warnings  # Will be added to signal warnings later

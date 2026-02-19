@@ -9327,7 +9327,21 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
 ⏰ <b>Таймфрейм:</b> {signal.timeframe}
 💪 <b>Сила:</b> {strength_stars} ({signal.signal_strength.value}/5)
 🎯 <b>Увереност:</b> {signal.confidence:.1f}%
+"""
 
+    # ✅ STABILIZATION PR: Add TF hierarchy display if available
+    if hasattr(signal, 'timeframe_hierarchy') and signal.timeframe_hierarchy:
+        tf_hier = signal.timeframe_hierarchy
+        if tf_hier.get('entry_tf'):
+            msg += f"""
+<b>📊 TF Йерархия:</b>
+   • Entry: {tf_hier.get('entry_tf', 'N/A')}
+   • Confirmation: {tf_hier.get('confirmation_tf', 'N/A')}
+   • Structure: {tf_hier.get('structure_tf', 'N/A')}
+   • HTF Bias: {tf_hier.get('htf_bias_tf', 'N/A')}
+"""
+    
+    msg += """
 ━━━━━━━━━━━━━━━━━━━━━━
 <b>💼 TRADE SETUP</b>
 ━━━━━━━━━━━━━━━━━━━━━━
