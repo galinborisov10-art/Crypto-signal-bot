@@ -41,6 +41,17 @@ except ImportError:
     TIMEFRAME_CONTRACT_AVAILABLE = False
     logging.warning("Timeframe Contract not available - using legacy hierarchy")
 
+# ✅ STABILIZATION PR: Import component validation layer
+try:
+    from component_tf_validator import (
+        ComponentTimeframeValidator,
+        CrossTimeframeContaminationDetector
+    )
+    COMPONENT_VALIDATOR_AVAILABLE = True
+except ImportError:
+    COMPONENT_VALIDATOR_AVAILABLE = False
+    logging.warning("Component TF Validator not available")
+
 # Import Entry Gating and Confidence Threshold evaluators (ESB v1.0 §2.1-2.2)
 try:
     from entry_gating_evaluator import evaluate_entry_gating
@@ -972,6 +983,86 @@ class ICTSignalEngine:
         # СТЪПКА 5: COMPONENT FILTERING (NEW) - Filter for quality
         logger.info("📊 Step 5: Component Filtering (Quality Focus)")
         ict_components = self._filter_quality_components(raw_components)
+        
+        # ✅ STABILIZATION PR: COMPREHENSIVE DEBUG LOGGING & VALIDATION
+        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+            logger.info("")
+            logger.info("=" * 80)
+            logger.info("🔍 STABILIZATION: TIMEFRAME & COMPONENT INTEGRITY CHECK")
+            logger.info("=" * 80)
+            
+            # Comprehensive debug logging
+            TimeframeDebugLogger.log_comprehensive_signal_debug(
+                symbol=symbol,
+                hierarchy=tf_hierarchy,
+                components=ict_components,
+                bias="CALCULATING...",  # Will be calculated next
+                scenario=None  # Will be selected later
+            )
+            
+            # Component validation and contamination check
+            if COMPONENT_VALIDATOR_AVAILABLE:
+                logger.info("🔍 COMPONENT VALIDATION:")
+                
+                # Get bias string for validation (peek ahead - will be calculated next)
+                bias_peek = "BULLISH"  # Default, will be refined
+                
+                # Validate Order Blocks
+                obs = ict_components.get('order_blocks', [])
+                if obs:
+                    valid_obs, rejected_obs = ComponentTimeframeValidator.validate_component_list(
+                        obs, "Order Block", tf_hierarchy.signal_tf, bias_peek
+                    )
+                    ict_components['order_blocks'] = valid_obs
+                    if rejected_obs > 0:
+                        logger.warning(f"   ⚠️ Rejected {rejected_obs} invalid Order Blocks")
+                
+                # Validate FVGs
+                fvgs = ict_components.get('fvgs', [])
+                if fvgs:
+                    valid_fvgs, rejected_fvgs = ComponentTimeframeValidator.validate_component_list(
+                        fvgs, "FVG", tf_hierarchy.signal_tf, bias_peek
+                    )
+                    ict_components['fvgs'] = valid_fvgs
+                    if rejected_fvgs > 0:
+                        logger.warning(f"   ⚠️ Rejected {rejected_fvgs} invalid FVGs")
+                
+                # Validate Liquidity Zones
+                liq_zones = ict_components.get('liquidity_zones', [])
+                if liq_zones:
+                    valid_lz, rejected_lz = ComponentTimeframeValidator.validate_component_list(
+                        liq_zones, "Liquidity Zone", tf_hierarchy.signal_tf
+                    )
+                    ict_components['liquidity_zones'] = valid_lz
+                    if rejected_lz > 0:
+                        logger.warning(f"   ⚠️ Rejected {rejected_lz} invalid Liquidity Zones")
+                
+                # Validate Liquidity Sweeps
+                sweeps = ict_components.get('liquidity_sweeps', [])
+                if sweeps:
+                    valid_sweeps, rejected_sweeps = ComponentTimeframeValidator.validate_component_list(
+                        sweeps, "Liquidity Sweep", tf_hierarchy.signal_tf, bias_peek
+                    )
+                    ict_components['liquidity_sweeps'] = valid_sweeps
+                    if rejected_sweeps > 0:
+                        logger.warning(f"   ⚠️ Rejected {rejected_sweeps} invalid Liquidity Sweeps")
+                
+                # Cross-TF contamination check
+                contamination_issues = CrossTimeframeContaminationDetector.check_entry_scoring_contamination(
+                    ict_components,
+                    tf_hierarchy.signal_tf,
+                    tf_hierarchy.structure_tf,
+                    tf_hierarchy.htf_bias_tf
+                )
+                
+                CrossTimeframeContaminationDetector.log_contamination_check(
+                    contamination_issues,
+                    tf_hierarchy.signal_tf
+                )
+            
+            logger.info("=" * 80)
+            logger.info("")
+
         
         # СТЪПКА 6: BIAS DETERMINATION - Market Direction Analysis
         logger.info("🔍 Step 6: Bias Determination")
