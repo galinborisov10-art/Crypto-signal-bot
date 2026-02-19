@@ -2995,38 +2995,36 @@ class ICTSignalEngine:
         ✅ STABILIZATION PR: Now uses centralized timeframe contract
         """
         
-        # ✅ STABILIZATION: Use TF hierarchy if provided, else fallback to legacy
-        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-            # Use timeframes from the hierarchy contract
-            relevant_tfs = [
-                tf_hierarchy.signal_tf,
-                tf_hierarchy.confirmation_tf,
-                tf_hierarchy.structure_tf,
-                tf_hierarchy.htf_bias_tf
-            ]
-            # Remove duplicates while preserving order
-            unique_tfs = []
-            for tf in relevant_tfs:
-                if tf not in unique_tfs:
-                    unique_tfs.append(tf)
-            relevant_tfs = unique_tfs
-            
-            logger.info(f"📊 MTF Consensus using TF Contract: {relevant_tfs}")
-        else:
-            # Legacy: Dynamic MTF hierarchy based on entry timeframe
-            MTF_HIERARCHY = {
-                '5m':  ['5m', '15m', '30m', '1h'],
-                '15m': ['15m', '30m', '1h', '4h'],
-                '30m': ['30m', '1h', '2h', '4h'],
-                '1h':  ['1h', '2h', '4h', '1d'],
-                '2h':  ['2h', '4h', '1d'],
-                '4h':  ['4h', '1d'],
-                '1d':  ['1d', '1w']
-            }
-            
-            # Get relevant timeframes for this entry TF
-            relevant_tfs = MTF_HIERARCHY.get(primary_timeframe, ['1h', '4h', '1d'])
-            logger.info(f"📊 MTF Consensus using legacy hierarchy: {relevant_tfs}")
+        # ✅ STABILIZATION PR: MANDATORY use of TF contract (no legacy fallback)
+        if not (tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE):
+            error_msg = (
+                f"❌ CRITICAL: Timeframe contract required but not available. "
+                f"Cannot calculate MTF consensus for {primary_timeframe}. "
+                f"Contract available: {TIMEFRAME_CONTRACT_AVAILABLE}, "
+                f"TF hierarchy: {tf_hierarchy is not None}"
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        
+        # Use timeframes from the hierarchy contract
+        relevant_tfs = [
+            tf_hierarchy.signal_tf,
+            tf_hierarchy.confirmation_tf,
+            tf_hierarchy.structure_tf,
+            tf_hierarchy.htf_bias_tf
+        ]
+        # Remove duplicates while preserving order
+        unique_tfs = []
+        for tf in relevant_tfs:
+            if tf not in unique_tfs:
+                unique_tfs.append(tf)
+        relevant_tfs = unique_tfs
+        
+        logger.info(f"📊 MTF Consensus using TF Contract: {relevant_tfs}")
+        logger.info(f"   Signal TF: {tf_hierarchy.signal_tf}")
+        logger.info(f"   Confirmation TF: {tf_hierarchy.confirmation_tf}")
+        logger.info(f"   Structure TF: {tf_hierarchy.structure_tf}")
+        logger.info(f"   HTF Bias TF: {tf_hierarchy.htf_bias_tf}")
         
         # ✅ NORMALIZE target_bias to MarketBias enum
         if isinstance(target_bias, str):
