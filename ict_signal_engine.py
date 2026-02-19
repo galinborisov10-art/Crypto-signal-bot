@@ -209,15 +209,8 @@ logger = logging.getLogger(__name__)
 
 ATR_FALLBACK_PCT = 0.02  # 2% fallback when ATR calculation fails
 
-TIMEFRAME_MIN_SL_DISTANCE = {
-    '15m': 0.003, '30m': 0.004, '1h': 0.005,
-    '2h': 0.007, '4h': 0.010, '1d': 0.015,
-}
-
-TIMEFRAME_BUFFER_PCT = {
-    '15m': 0.001, '30m': 0.0015, '1h': 0.002,
-    '2h': 0.0025, '4h': 0.003, '1d': 0.005,
-}
+# Legacy constants removed - now using TimeframeContract
+# TIMEFRAME_MIN_SL_DISTANCE and TIMEFRAME_BUFFER_PCT moved to contract
 
 
 class SignalType(Enum):
@@ -2371,7 +2364,13 @@ class ICTSignalEngine:
         
         # Sanity check 2: Minimum distance
         distance_pct = abs(anchor_price - entry_price) / entry_price
-        min_distance = TIMEFRAME_MIN_SL_DISTANCE.get(timeframe, 0.005)
+        # Use contract-based minimum SL distance
+        if TIMEFRAME_CONTRACT_AVAILABLE:
+            min_distance = TimeframeContract.get_min_sl_distance(timeframe)
+            logger.debug(f"📏 Using contract MIN_SL_DISTANCE {min_distance:.3%} for {timeframe}")
+        else:
+            min_distance = 0.005  # Safe fallback
+            logger.warning(f"⚠️ Contract unavailable, using fallback MIN_SL_DISTANCE {min_distance:.3%}")
         
         if distance_pct < min_distance:
             logger.warning(f"⚠️ Anchor too close ({distance_pct*100:.2f}% < {min_distance*100:.1f}%)")
@@ -2394,7 +2393,14 @@ class ICTSignalEngine:
             atr_value = entry_price * ATR_FALLBACK_PCT
         
         atr_buffer = atr_value * 0.25
-        pct_buffer = entry_price * TIMEFRAME_BUFFER_PCT.get(timeframe, 0.002)
+        # Use contract-based buffer percentage
+        if TIMEFRAME_CONTRACT_AVAILABLE:
+            buffer_pct = TimeframeContract.get_sl_buffer_pct(timeframe)
+            pct_buffer = entry_price * buffer_pct
+            logger.debug(f"📏 Using contract SL buffer {buffer_pct:.4%} for {timeframe}")
+        else:
+            pct_buffer = entry_price * 0.002  # Safe fallback
+            logger.warning(f"⚠️ Contract unavailable, using fallback SL buffer 0.2%")
         buffer = max(atr_buffer, pct_buffer)
         
         # Apply buffer

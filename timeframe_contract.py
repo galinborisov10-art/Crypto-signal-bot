@@ -409,6 +409,43 @@ class TimeframeContract:
         normalized_tf = signal_tf.lower()
         hierarchies = cls.MANUAL_HIERARCHIES if mode == SignalMode.MANUAL else cls.AUTOMATIC_HIERARCHIES
         return normalized_tf in hierarchies
+    
+    @classmethod
+    def get_all_supported_timeframes(cls) -> List[str]:
+        """
+        Get all supported timeframes across both manual and automatic modes
+        
+        Returns:
+            List of all supported timeframes (e.g., ['1m', '5m', '15m', ...])
+        """
+        manual_tfs = set(cls.MANUAL_HIERARCHIES.keys())
+        auto_tfs = set(cls.AUTOMATIC_HIERARCHIES.keys())
+        all_tfs = sorted(manual_tfs | auto_tfs, key=lambda x: cls._tf_sort_key(x))
+        return all_tfs
+    
+    @classmethod
+    def get_mtf_timeframes(cls) -> List[str]:
+        """
+        Get standard timeframes for multi-timeframe analysis
+        Excludes noisy short-term TFs (1m, 3m) and non-standard TFs (6h, 12h, 3d)
+        
+        Returns:
+            List of MTF timeframes for consensus analysis
+        """
+        # Standard MTF timeframes for consensus
+        # Removed: 1m, 3m (too noisy), 6h, 12h, 3d (non-standard)
+        return ['5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
+    
+    @staticmethod
+    def _tf_sort_key(tf: str) -> int:
+        """Helper to sort timeframes chronologically"""
+        tf_order = {
+            '1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
+            '1h': 60, '2h': 120, '3h': 180, '4h': 240,
+            '6h': 360, '8h': 480, '12h': 720,
+            '1d': 1440, '3d': 4320, '1w': 10080
+        }
+        return tf_order.get(tf, 0)
 
 
 class TimeframeDebugLogger:
