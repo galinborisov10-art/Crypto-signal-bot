@@ -25,6 +25,13 @@ class SignalMode(Enum):
     AUTOMATIC = "AUTOMATIC"
 
 
+class TimeframeCategory(Enum):
+    """Timeframe category for TF-specific logic"""
+    SHORT_TERM = "SHORT_TERM"      # 15m, 30m, 1h, 2h, 3h
+    MEDIUM_TERM = "MEDIUM_TERM"    # 4h, 6h, 8h, 12h
+    LONG_TERM = "LONG_TERM"        # 1d, 3d, 1w
+
+
 @dataclass
 class TimeframeHierarchy:
     """Timeframe hierarchy for a specific entry timeframe"""
@@ -60,6 +67,63 @@ class TimeframeContract:
     Centralized timeframe hierarchy contract
     Provides deterministic TF mapping for all signal types
     """
+    
+    # Timeframe Category Mappings
+    TF_CATEGORIES = {
+        # Short-term timeframes (conservative TP, tight SL)
+        '15m': TimeframeCategory.SHORT_TERM,
+        '30m': TimeframeCategory.SHORT_TERM,
+        '1h': TimeframeCategory.SHORT_TERM,
+        '2h': TimeframeCategory.SHORT_TERM,
+        '3h': TimeframeCategory.SHORT_TERM,
+        
+        # Medium-term timeframes (moderate TP/SL)
+        '4h': TimeframeCategory.MEDIUM_TERM,
+        '6h': TimeframeCategory.MEDIUM_TERM,
+        '8h': TimeframeCategory.MEDIUM_TERM,
+        '12h': TimeframeCategory.MEDIUM_TERM,
+        
+        # Long-term timeframes (aggressive TP, wider SL)
+        '1d': TimeframeCategory.LONG_TERM,
+        '3d': TimeframeCategory.LONG_TERM,
+        '1w': TimeframeCategory.LONG_TERM
+    }
+    
+    # TP Multipliers by Category
+    TP_MULTIPLIERS = {
+        TimeframeCategory.SHORT_TERM: (1.0, 3.0, 5.0),   # Conservative
+        TimeframeCategory.MEDIUM_TERM: (2.0, 4.0, 6.0),  # Aggressive
+        TimeframeCategory.LONG_TERM: (2.0, 4.0, 6.0)     # Aggressive
+    }
+    
+    # SL Buffer Percentage by Category
+    SL_BUFFER_PCT = {
+        TimeframeCategory.SHORT_TERM: 0.002,   # 0.2%
+        TimeframeCategory.MEDIUM_TERM: 0.003,  # 0.3%
+        TimeframeCategory.LONG_TERM: 0.003     # 0.3%
+    }
+    
+    # Minimum SL Distance by Timeframe
+    MIN_SL_DISTANCE = {
+        '15m': 0.005,   # 0.5%
+        '30m': 0.0075,  # 0.75%
+        '1h': 0.010,    # 1.0%
+        '2h': 0.0125,   # 1.25%
+        '4h': 0.020,    # 2.0%
+        '1d': 0.030     # 3.0%
+    }
+    
+    # ATR Multipliers for Displacement Detection
+    ATR_DISPLACEMENT_MULTIPLIERS = {
+        '15m': 0.003, '30m': 0.004, '1h': 0.005,
+        '2h': 0.006, '4h': 0.008, '1d': 0.012
+    }
+    
+    # ATR Multipliers for Structure Break Detection
+    ATR_STRUCTURE_MULTIPLIERS = {
+        '15m': 0.001, '30m': 0.0015, '1h': 0.002,
+        '2h': 0.0025, '4h': 0.003, '1d': 0.005
+    }
     
     # Manual Signal Timeframe Hierarchies
     # Supports: 15m, 30m, 1h, 2h, 4h, 1d
@@ -204,6 +268,100 @@ class TimeframeContract:
                 unique_tfs.append(tf)
         
         return unique_tfs
+    
+    @classmethod
+    def get_tf_category(cls, timeframe: str) -> Optional[TimeframeCategory]:
+        """
+        Get category for a timeframe
+        
+        Args:
+            timeframe: Timeframe string (e.g., '1h', '4h')
+        
+        Returns:
+            TimeframeCategory or None if not found
+        """
+        normalized_tf = timeframe.lower()
+        return cls.TF_CATEGORIES.get(normalized_tf)
+    
+    @classmethod
+    def get_tp_multipliers(cls, timeframe: str) -> Tuple[float, float, float]:
+        """
+        Get TP multipliers for a timeframe
+        
+        Args:
+            timeframe: Timeframe string (e.g., '1h', '4h')
+        
+        Returns:
+            Tuple of (TP1, TP2, TP3) multipliers
+        """
+        category = cls.get_tf_category(timeframe)
+        if category:
+            return cls.TP_MULTIPLIERS[category]
+        
+        # Default to short-term (conservative)
+        logger.warning(f"Unknown timeframe '{timeframe}', using conservative TPs")
+        return cls.TP_MULTIPLIERS[TimeframeCategory.SHORT_TERM]
+    
+    @classmethod
+    def get_sl_buffer_pct(cls, timeframe: str) -> float:
+        """
+        Get SL buffer percentage for a timeframe
+        
+        Args:
+            timeframe: Timeframe string (e.g., '1h', '4h')
+        
+        Returns:
+            Buffer percentage (e.g., 0.002 for 0.2%)
+        """
+        category = cls.get_tf_category(timeframe)
+        if category:
+            return cls.SL_BUFFER_PCT[category]
+        
+        # Default to short-term (tighter buffer)
+        logger.warning(f"Unknown timeframe '{timeframe}', using 0.002 buffer")
+        return 0.002
+    
+    @classmethod
+    def get_min_sl_distance(cls, timeframe: str) -> float:
+        """
+        Get minimum SL distance for a timeframe
+        
+        Args:
+            timeframe: Timeframe string (e.g., '1h', '4h')
+        
+        Returns:
+            Minimum SL distance percentage (e.g., 0.010 for 1.0%)
+        """
+        normalized_tf = timeframe.lower()
+        return cls.MIN_SL_DISTANCE.get(normalized_tf, 0.015)  # Default 1.5%
+    
+    @classmethod
+    def get_displacement_atr_multiplier(cls, timeframe: str) -> float:
+        """
+        Get ATR multiplier for displacement detection
+        
+        Args:
+            timeframe: Timeframe string (e.g., '1h', '4h')
+        
+        Returns:
+            ATR multiplier for displacement
+        """
+        normalized_tf = timeframe.lower()
+        return cls.ATR_DISPLACEMENT_MULTIPLIERS.get(normalized_tf, 0.005)
+    
+    @classmethod
+    def get_structure_atr_multiplier(cls, timeframe: str) -> float:
+        """
+        Get ATR multiplier for structure break detection
+        
+        Args:
+            timeframe: Timeframe string (e.g., '1h', '4h')
+        
+        Returns:
+            ATR multiplier for structure breaks
+        """
+        normalized_tf = timeframe.lower()
+        return cls.ATR_STRUCTURE_MULTIPLIERS.get(normalized_tf, 0.002)
     
     @classmethod
     def validate_component_timeframe(

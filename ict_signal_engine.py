@@ -258,6 +258,12 @@ def get_tp_multipliers_by_timeframe(timeframe: str) -> tuple:
     - 1h/2h: Faster moves, quicker reversals → Need fast TP hits
     - 4h/1d: Stronger trends, more follow-through → Can hold for bigger TPs
     
+def get_tp_multipliers_by_timeframe(timeframe: str) -> Tuple[float, float, float]:
+    """
+    Get TP multipliers based on timeframe category
+    
+    ✅ STABILIZATION PR: Now uses centralized timeframe contract
+    
     Args:
         timeframe: Candle timeframe (e.g., '1h', '4h', '1d')
         
@@ -270,21 +276,15 @@ def get_tp_multipliers_by_timeframe(timeframe: str) -> tuple:
         >>> get_tp_multipliers_by_timeframe('4h')
         (2.0, 4.0, 6.0)
     """
-    tf = timeframe.lower().strip()
-    
-    # Short-term: Conservative targets (1, 3, 5)
-    if tf in ['15m', '30m', '1h', '2h', '3h']:  # ← Added 3h
-        logger.info(f"📊 Using conservative TPs (1,3,5) for {timeframe}")
-        return (1.0, 3.0, 5.0)
-    
-    # Medium/Long-term: Aggressive targets (2, 4, 6)
-    elif tf in ['4h', '6h', '8h', '12h', '1d', '3d', '1w']:
-        logger.info(f"📊 Using aggressive TPs (2,4,6) for {timeframe}")
-        return (2.0, 4.0, 6.0)
-    
-    # Default: Conservative (safer)
+    if TIMEFRAME_CONTRACT_AVAILABLE:
+        multipliers = TimeframeContract.get_tp_multipliers(timeframe)
+        category = TimeframeContract.get_tf_category(timeframe)
+        category_name = category.value if category else "UNKNOWN"
+        logger.info(f"📊 Using TPs {multipliers} for {timeframe} ({category_name})")
+        return multipliers
     else:
-        logger.warning(f"⚠️ Unknown timeframe {timeframe}, defaulting to conservative TPs (1,3,5)")
+        # Fallback if contract not available (should not happen)
+        logger.warning(f"⚠️ TF Contract unavailable, using default conservative TPs for {timeframe}")
         return (1.0, 3.0, 5.0)
 
 
@@ -4042,19 +4042,32 @@ class ICTSignalEngine:
         timeframe = entry_setup.get('timeframe', '1h')
         
         # ✅ TIMEFRAME-BASED minimum SL distance (NOT fixed 3%!)
-        MIN_SL_DISTANCE = {
-            '15m': 0.005,   # 0.5%
-            '30m': 0.0075,  # 0.75%
-            '1h': 0.010,    # 1.0%
-            '2h': 0.0125,   # 1.25%
-            '4h': 0.020,    # 2.0%
-            '1d': 0.030     # 3.0%
-        }
-        min_sl_pct = MIN_SL_DISTANCE.get(timeframe, 0.015)
+        # ✅ STABILIZATION PR: Use TF contract for MIN_SL_DISTANCE
+        if TIMEFRAME_CONTRACT_AVAILABLE:
+            min_sl_pct = TimeframeContract.get_min_sl_distance(timeframe)
+            logger.info(f"📏 Using MIN_SL_DISTANCE {min_sl_pct:.2%} for {timeframe} (from contract)")
+        else:
+            # Fallback to hardcoded (should not happen)
+            MIN_SL_DISTANCE = {
+                '15m': 0.005,   # 0.5%
+                '30m': 0.0075,  # 0.75%
+                '1h': 0.010,    # 1.0%
+                '2h': 0.0125,   # 1.25%
+                '4h': 0.020,    # 2.0%
+                '1d': 0.030     # 3.0%
+            }
+            min_sl_pct = MIN_SL_DISTANCE.get(timeframe, 0.015)
+            logger.warning(f"⚠️ Using fallback MIN_SL_DISTANCE {min_sl_pct:.2%} for {timeframe}")
         
-        # ✅ ICT Buffer (small, structure-based - NOT 1.5 ATR!)
+        # ✅ STABILIZATION PR: Use TF contract for SL buffer
         atr = df['atr'].iloc[-1]
-        buffer_pct = 0.002 if timeframe in ['15m', '30m', '1h'] else 0.003
+        if TIMEFRAME_CONTRACT_AVAILABLE:
+            buffer_pct = TimeframeContract.get_sl_buffer_pct(timeframe)
+            logger.info(f"📏 Using SL buffer {buffer_pct:.3%} for {timeframe} (from contract)")
+        else:
+            buffer_pct = 0.002  # Fallback
+            logger.warning(f"⚠️ Using fallback SL buffer {buffer_pct:.3%}")
+        
         buffer = max(atr * 0.25, entry_price * buffer_pct)
         
         sl_price = None
