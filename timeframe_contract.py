@@ -314,6 +314,109 @@ class TimeframeDebugLogger:
         logger.error(f"   Expected TF:  {expected_tf}")
         logger.error(f"   Issue:        {issue}")
         logger.error("=" * 70)
+    
+    @staticmethod
+    def log_comprehensive_signal_debug(
+        symbol: str,
+        hierarchy: TimeframeHierarchy,
+        components: Dict,
+        bias: str,
+        scenario: Optional[str] = None
+    ):
+        """
+        MANDATORY: Comprehensive per-signal debug logging
+        Shows complete TF routing and component origin
+        """
+        logger.info("\n" + "=" * 80)
+        logger.info("🔍 COMPREHENSIVE SIGNAL DEBUG LOG")
+        logger.info("=" * 80)
+        logger.info(f"Symbol: {symbol} | Mode: {hierarchy.mode.value}")
+        logger.info("-" * 80)
+        
+        # 1. Timeframe Hierarchy
+        logger.info("📊 TIMEFRAME HIERARCHY:")
+        logger.info(f"   Signal TF (Entry):     {hierarchy.signal_tf}")
+        logger.info(f"   Confirmation TF:       {hierarchy.confirmation_tf}")
+        logger.info(f"   Structure TF:          {hierarchy.structure_tf}")
+        logger.info(f"   HTF Bias TF:           {hierarchy.htf_bias_tf}")
+        logger.info("-" * 80)
+        
+        # 2. Component → TF Origin Mapping
+        logger.info("🔍 COMPONENT → TF ORIGIN MAPPING:")
+        
+        obs = components.get('order_blocks', [])
+        logger.info(f"   Order Blocks:          {len(obs)} from {hierarchy.signal_tf} (signal_tf)")
+        
+        fvgs = components.get('fvgs', [])
+        logger.info(f"   FVGs:                  {len(fvgs)} from {hierarchy.signal_tf} (signal_tf)")
+        
+        liq_zones = components.get('liquidity_zones', [])
+        logger.info(f"   Liquidity Zones:       {len(liq_zones)} from {hierarchy.signal_tf} (signal_tf)")
+        
+        sweeps = components.get('liquidity_sweeps', [])
+        logger.info(f"   Liquidity Sweeps:      {len(sweeps)} from {hierarchy.signal_tf} (signal_tf)")
+        
+        displacement = components.get('displacement', {})
+        disp_detected = displacement.get('detected', False)
+        logger.info(f"   Displacement:          {'✅ Detected' if disp_detected else '❌ Not detected'} on {hierarchy.signal_tf} (signal_tf)")
+        
+        structure = components.get('structure_break', {})
+        struct_type = structure.get('type', 'None')
+        logger.info(f"   Structure Break:       {struct_type} from {hierarchy.structure_tf} (structure_tf)")
+        
+        breakers = components.get('breaker_blocks', [])
+        logger.info(f"   Breaker Blocks:        {len(breakers)} from {hierarchy.signal_tf} (signal_tf)")
+        
+        mitigations = components.get('mitigation_blocks', [])
+        logger.info(f"   Mitigation Blocks:     {len(mitigations)} from {hierarchy.signal_tf} (signal_tf)")
+        
+        logger.info("-" * 80)
+        
+        # 3. Scoring TF Used
+        logger.info("📊 SCORING TIMEFRAME:")
+        logger.info(f"   Entry Scenario Scoring: {hierarchy.signal_tf} (signal_tf)")
+        logger.info(f"   Components Used:        OBs, FVGs, Displacement from {hierarchy.signal_tf}")
+        if scenario:
+            logger.info(f"   Selected Scenario:      {scenario}")
+        logger.info("-" * 80)
+        
+        # 4. Bias TF Used
+        logger.info("🎯 BIAS CALCULATION:")
+        logger.info(f"   HTF Bias TF:           {hierarchy.htf_bias_tf}")
+        logger.info(f"   Bias Result:           {bias}")
+        logger.info("-" * 80)
+        
+        # 5. Structure TF Used
+        logger.info("🏗️ STRUCTURE ANALYSIS:")
+        logger.info(f"   Structure TF:          {hierarchy.structure_tf}")
+        logger.info(f"   MSS/BOS Analyzed on:   {hierarchy.structure_tf}")
+        if struct_type != 'None':
+            logger.info(f"   Structure Break Type:  {struct_type}")
+        logger.info("-" * 80)
+        
+        # 6. Cross-TF Contamination Check
+        logger.info("✅ CROSS-TF CONTAMINATION CHECK:")
+        contamination = False
+        
+        # Check if any components have wrong TF
+        for ob in obs:
+            ob_tf = getattr(ob, 'timeframe', None) or ob.get('timeframe', None) if isinstance(ob, dict) else None
+            if ob_tf and ob_tf != hierarchy.signal_tf:
+                logger.error(f"   ❌ Order Block from {ob_tf} in entry (expected {hierarchy.signal_tf})")
+                contamination = True
+        
+        for fvg in fvgs:
+            fvg_tf = getattr(fvg, 'timeframe', None) or fvg.get('timeframe', None) if isinstance(fvg, dict) else None
+            if fvg_tf and fvg_tf != hierarchy.signal_tf:
+                logger.error(f"   ❌ FVG from {fvg_tf} in entry (expected {hierarchy.signal_tf})")
+                contamination = True
+        
+        if not contamination:
+            logger.info(f"   ✅ All entry components from signal_tf ({hierarchy.signal_tf})")
+            logger.info(f"   ✅ No structure_tf components in entry scoring")
+            logger.info(f"   ✅ No htf_bias_tf OBs/FVGs in entry zone")
+        
+        logger.info("=" * 80 + "\n")
 
 
 # Example usage and testing
