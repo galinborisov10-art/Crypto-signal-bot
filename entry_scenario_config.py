@@ -57,7 +57,7 @@ ROLLBACK_WEIGHTS = {
 # PULLBACK scoring
 PULLBACK_WEIGHTS = {
     'base_score': 40,
-    'poi_quality_multiplier': 0.5,         # POI quality * 0.5
+    'poi_quality_multiplier': 0.4,         # POI quality * 0.4 (REDUCED: was 0.5)
     'trigger_count_bonus': 15,             # Per trigger
     'structure_trigger_bonus': 10,         # If has MSS/BOS
     'distance_penalty_per_pct': -5         # Stricter penalty
@@ -76,7 +76,7 @@ CONTINUATION_WEIGHTS = {
 REVERSAL_WEIGHTS = {
     'base_score': 55,
     'sweep_bonus': 25,                     # Liquidity sweep present
-    'choch_bonus': 20,                     # CHOCH confirmation
+    'choch_bonus': 25,                     # CHOCH confirmation (INCREASED: was 20)
     'mss_bonus': 15,                       # MSS confirmation
     'displacement_contra_bonus': 15,       # Displacement in reversal direction
     'trigger_count_bonus': 10              # Per additional trigger
