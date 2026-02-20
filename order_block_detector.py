@@ -23,8 +23,7 @@ from datetime import datetime
 from enum import Enum
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Get logger (configuration in bot.py)
 logger = logging.getLogger(__name__)
 
 

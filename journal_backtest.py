@@ -28,8 +28,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Get logger (configuration in bot.py)
 logger = logging.getLogger(__name__)
 
 

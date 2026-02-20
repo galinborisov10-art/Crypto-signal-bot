@@ -22,11 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import os
 
-# Setup logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Get logger (configuration in bot.py)
 logger = logging.getLogger(__name__)
 
 # Auto-detect base path
