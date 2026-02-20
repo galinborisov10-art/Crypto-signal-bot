@@ -9353,7 +9353,7 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
    • HTF Bias: {tf_hier.get('htf_bias_tf', 'N/A')}
 """
     
-    msg += """
+    msg += f"""
 ━━━━━━━━━━━━━━━━━━━━━━
 <b>💼 TRADE SETUP</b>
 ━━━━━━━━━━━━━━━━━━━━━━

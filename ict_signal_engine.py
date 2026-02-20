@@ -198,8 +198,7 @@ except ImportError:
     CHART_GENERATOR_AVAILABLE = False
     logging.warning("ChartGenerator not available")
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Get logger (do not configure - bot.py handles configuration)
 logger = logging.getLogger(__name__)
 
 
