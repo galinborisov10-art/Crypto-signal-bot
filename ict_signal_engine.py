@@ -782,8 +782,8 @@ class ICTSignalEngine:
         """
         Generate ICT signal with UNIFIED analysis sequence
         
-        UNIFIED sequence for ALL timeframes (1w to 1m)
-        UNIFIED logic for manual AND automatic signals
+        ЕДНАКВА последователност за ВСИЧКИ таймфремове (1w до 1m)
+        ЕДНАКВА логика за ръчни И автоматични сигнали
         """
         logger.info(f"🎯 Generating UNIFIED ICT signal for {symbol} on {timeframe}")
         
