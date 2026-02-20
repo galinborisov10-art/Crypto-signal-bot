@@ -180,16 +180,27 @@ class LiquidityMapper:
             if i in used:
                 continue
             
+            # Skip if price1 is None or invalid
+            if price1 is None or np.isnan(price1) or price1 == 0:
+                used.add(i)
+                continue
+            
             cluster = {'price': price1, 'indices': [idx1], 'prices': [price1]}
             used.add(i)
             
             for j, (idx2, price2) in enumerate(swing_points[i+1:], i+1):
-                if j not in used and abs(price1 - price2) <= tolerance:
+                if j not in used and price2 is not None and not np.isnan(price2) and price2 != 0 and abs(price1 - price2) <= tolerance:
                     cluster['indices'].append(idx2)
                     cluster['prices'].append(price2)
                     used.add(j)
             
-            cluster['price'] = np.mean(cluster['prices'])
+            # Calculate mean price and validate
+            mean_price = np.mean(cluster['prices'])
+            if mean_price is None or np.isnan(mean_price) or mean_price == 0:
+                logger.warning(f"Skipping cluster with invalid mean price: {mean_price}")
+                continue
+            
+            cluster['price'] = mean_price
             clusters.append(cluster)
         
         return clusters

@@ -31,11 +31,13 @@ from dotenv import load_dotenv
 # Зареди .env файла
 load_dotenv()
 
-# Логване
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Логване - Configure only once to avoid duplicate logs
+root_logger = logging.getLogger()
+if not root_logger.handlers:
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
 logger = logging.getLogger(__name__)
 
 # Track bot process start time (for version info)
@@ -58,19 +60,27 @@ else:
     logger.info(f"📂 BASE_PATH fallback (current dir): {BASE_PATH}")
 
 # Add rotating file handler for logging (prevents memory leak from unbounded growth)
+# Only add if not already present (avoid duplicate handlers)
 try:
     from logging.handlers import RotatingFileHandler
     
-    # Rotate at 50MB, keep 3 backups (max 200MB total)
-    file_handler = RotatingFileHandler(
-        f'{BASE_PATH}/bot.log',
-        maxBytes=50 * 1024 * 1024,  # 50 MB
-        backupCount=3,  # Keep 3 old files (bot.log.1, bot.log.2, bot.log.3)
-        encoding='utf-8'
-    )
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    logging.getLogger().addHandler(file_handler)
-    logger.info(f"📝 Rotating file logging enabled: {BASE_PATH}/bot.log (max 50MB, 3 backups)")
+    root_logger = logging.getLogger()
+    # Check if file handler already exists
+    has_file_handler = any(isinstance(h, RotatingFileHandler) for h in root_logger.handlers)
+    
+    if not has_file_handler:
+        # Rotate at 50MB, keep 3 backups (max 200MB total)
+        file_handler = RotatingFileHandler(
+            f'{BASE_PATH}/bot.log',
+            maxBytes=50 * 1024 * 1024,  # 50 MB
+            backupCount=3,  # Keep 3 old files (bot.log.1, bot.log.2, bot.log.3)
+            encoding='utf-8'
+        )
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        root_logger.addHandler(file_handler)
+        logger.info(f"📝 Rotating file logging enabled: {BASE_PATH}/bot.log (max 50MB, 3 backups)")
+    else:
+        logger.debug("File handler already configured, skipping duplicate")
 except Exception as e:
     logger.warning(f"⚠️ Could not setup rotating file logging: {e}")
 
