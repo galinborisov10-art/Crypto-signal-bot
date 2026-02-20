@@ -239,23 +239,19 @@ class MarketBias(Enum):
     RANGING = "RANGING"
 
 
-def get_tp_multipliers_by_timeframe(timeframe: str) -> tuple:
+def get_tp_multipliers_by_timeframe(timeframe: str) -> Tuple[float, float, float]:
     """
-    Get optimized TP multipliers based on timeframe volatility
+    Get TP multipliers based on timeframe category
+    
+    STABILIZATION PR: Now uses centralized timeframe contract
     
     Strategy:
     - Lower TFs (1h, 2h): (1, 3, 5) - Quick validation, conservative targets
     - Higher TFs (4h, 1d): (2, 4, 6) - Capture trends, aggressive targets
     
     Reasoning:
-    - 1h/2h: Faster moves, quicker reversals → Need fast TP hits
-    - 4h/1d: Stronger trends, more follow-through → Can hold for bigger TPs
-    
-def get_tp_multipliers_by_timeframe(timeframe: str) -> Tuple[float, float, float]:
-    """
-    Get TP multipliers based on timeframe category
-    
-    ✅ STABILIZATION PR: Now uses centralized timeframe contract
+    - 1h/2h: Faster moves, quicker reversals -> Need fast TP hits
+    - 4h/1d: Stronger trends, more follow-through -> Can hold for bigger TPs
     
     Args:
         timeframe: Candle timeframe (e.g., '1h', '4h', '1d')
@@ -786,8 +782,8 @@ class ICTSignalEngine:
         """
         Generate ICT signal with UNIFIED analysis sequence
         
-        ✅ ЕДНАКВА последователност за ВСИЧКИ таймфремове (1w до 1m)
-        ✅ ЕДНАКВА логика за ръчни И автоматични сигнали
+        UNIFIED sequence for ALL timeframes (1w to 1m)
+        UNIFIED logic for manual AND automatic signals
         """
         logger.info(f"🎯 Generating UNIFIED ICT signal for {symbol} on {timeframe}")
         
