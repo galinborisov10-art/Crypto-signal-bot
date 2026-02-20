@@ -102,6 +102,11 @@ class LiquidityMapper:
                 times = [df.index[i] for i in cluster['indices']]
                 volumes = [df['volume'].iloc[i] for i in cluster['indices']]
                 
+                # Validate cluster price is not None or 0
+                if cluster.get('price') is None or cluster.get('price') == 0:
+                    logger.warning(f"Skipping BSL zone with invalid price: {cluster.get('price')}")
+                    continue
+                
                 zone = LiquidityZone(
                     price_level=cluster['price'],
                     zone_type='BSL',
@@ -127,6 +132,11 @@ class LiquidityMapper:
             if len(cluster['indices']) >= self.config['touch_threshold']:
                 times = [df.index[i] for i in cluster['indices']]
                 volumes = [df['volume'].iloc[i] for i in cluster['indices']]
+                
+                # Validate cluster price is not None or 0
+                if cluster.get('price') is None or cluster.get('price') == 0:
+                    logger.warning(f"Skipping SSL zone with invalid price: {cluster.get('price')}")
+                    continue
                 
                 zone = LiquidityZone(
                     price_level=cluster['price'],
@@ -197,8 +207,19 @@ class LiquidityMapper:
             score += min(zone.volume_at_level / (volume_mean * zone.touches * 2), 0.3)
             score += zone.strength * 0.2
             
-            days_ago = (df.index[-1] - zone.last_touch).days
-            score += max(0, 0.1 - (days_ago / 30) * 0.1)
+            # Handle both datetime and timestamp for last_touch
+            try:
+                if isinstance(zone.last_touch, (int, float)):
+                    # If it's a timestamp, convert to datetime
+                    last_touch_dt = pd.to_datetime(zone.last_touch, unit='s')
+                else:
+                    last_touch_dt = zone.last_touch
+                
+                days_ago = (df.index[-1] - last_touch_dt).days
+                score += max(0, 0.1 - (days_ago / 30) * 0.1)
+            except (TypeError, AttributeError) as e:
+                logger.warning(f"Could not calculate days_ago for zone: {e}")
+                # If calculation fails, just skip the time-based score component
             
             zone.confidence = min(score, 1.0)
         

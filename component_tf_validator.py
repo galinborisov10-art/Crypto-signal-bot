@@ -76,10 +76,14 @@ class ComponentTimeframeValidator:
         
         # Validate type matches bias
         if expected_bias.upper() == "BULLISH":
-            if ob_type and "BEARISH" in ob_type.upper():
+            # Convert enum to string if needed
+            ob_type_str = str(ob_type.value) if hasattr(ob_type, 'value') else str(ob_type) if ob_type else ""
+            if ob_type_str and "BEARISH" in ob_type_str.upper():
                 errors.append(f"Bearish OB in bullish bias: {ob_type}")
         elif expected_bias.upper() == "BEARISH":
-            if ob_type and "BULLISH" in ob_type.upper():
+            # Convert enum to string if needed
+            ob_type_str = str(ob_type.value) if hasattr(ob_type, 'value') else str(ob_type) if ob_type else ""
+            if ob_type_str and "BULLISH" in ob_type_str.upper():
                 errors.append(f"Bullish OB in bearish bias: {ob_type}")
         
         # Validate non-zero values
@@ -225,13 +229,15 @@ class ComponentTimeframeValidator:
         
         # Validate sweep type
         if sweep_type:
+            # Convert to string if needed
+            sweep_type_str = str(sweep_type) if sweep_type else ""
             if expected_bias.upper() == "BULLISH":
                 # Bullish bias should sweep SSL (sell-side liquidity)
-                if "BSL" in sweep_type.upper():
+                if "BSL" in sweep_type_str.upper():
                     warnings.append(f"BSL sweep in bullish bias (unusual but possible)")
             elif expected_bias.upper() == "BEARISH":
                 # Bearish bias should sweep BSL (buy-side liquidity)
-                if "SSL" in sweep_type.upper():
+                if "SSL" in sweep_type_str.upper():
                     warnings.append(f"SSL sweep in bearish bias (unusual but possible)")
         
         return ValidationResult(
