@@ -30,7 +30,7 @@ def check_template_leakage(message: str) -> Tuple[bool, List[str]]:
     # Check for ${} placeholders
     dollar_placeholders = re.findall(r'\$\{[^}]+\}', message)
     if dollar_placeholders:
-        issues.append(f"Found ${{}}} placeholders: {dollar_placeholders}")
+        issues.append(f"Found ${{}} placeholders: {dollar_placeholders}")
     
     # Check for unresolved {} placeholders (excluding valid ones like emoji)
     curly_placeholders = re.findall(r'\{[a-zA-Z_][a-zA-Z0-9_.]+\}', message)
