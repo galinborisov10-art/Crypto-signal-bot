@@ -1,0 +1,13 @@
+{
+  "scenario": "REVERSAL",
+  "bias": "BEARISH",
+  "components": {
+    "order_blocks": 1,
+    "fvgs": 1,
+    "liquidity_zones": 2
+  },
+  "score": 70,
+  "entry_price": 42000.00,
+  "sl_price": 42800.00,
+  "tp_prices": [41200.00, 40500.00, 39800.00]
+}

@@ -1,0 +1,10 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "1d",
+  "timestamp": "2024-01-15T00:00:00Z",
+  "ohlcv": [
+    [1705276800000, 43500.0, 43800.0, 42200.0, 42400.0, 15250.5],
+    [1705363200000, 42400.0, 42600.0, 41800.0, 42000.0, 16340.2]
+  ],
+  "description": "Reversal scenario - bearish reversal with liquidity sweep"
+}

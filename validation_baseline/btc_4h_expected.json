@@ -1,0 +1,13 @@
+{
+  "scenario": "PULLBACK",
+  "bias": "BULLISH",
+  "components": {
+    "order_blocks": 2,
+    "fvgs": 1,
+    "liquidity_zones": 1
+  },
+  "score": 75,
+  "entry_price": 42200.00,
+  "sl_price": 41600.00,
+  "tp_prices": [42800.00, 43500.00, 44200.00]
+}
