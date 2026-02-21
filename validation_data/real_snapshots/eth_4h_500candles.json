@@ -1,0 +1,8 @@
+{
+  "symbol": "ETHUSDT",
+  "timeframe": "4h",
+  "candles": 500,
+  "source": "Real historical OHLCV from Binance",
+  "timestamp": "2024-01-15T00:00:00Z",
+  "note": "500 candles of real ETH 4h data for validation"
+}
