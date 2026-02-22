@@ -928,6 +928,49 @@ def main():
     
     args = parser.parse_args()
     
+    # ============================================================
+    # HARD FAIL CHECK - CORE ENGINE MUST BE AVAILABLE
+    # ============================================================
+    # The diagnostic script requires the core engine to be loaded.
+    # If the engine cannot be imported, the audit cannot proceed.
+    # This is intentional - "Engine not available" is a critical failure.
+    
+    if not ENGINE_AVAILABLE:
+        print("\n" + "=" * 80)
+        print("❌ CRITICAL ERROR: ICT Signal Engine Not Available")
+        print("=" * 80)
+        print("\nThe diagnostic script requires the ICT Signal Engine to function.")
+        print("The engine could not be imported, which indicates missing dependencies")
+        print("or environment issues that must be resolved before running diagnostics.")
+        print("\nCommon causes:")
+        print("  • Missing Python dependencies (pandas, numpy, etc.)")
+        print("  • Python environment not properly configured")
+        print("  • Engine files not accessible")
+        print("\nPlease ensure all dependencies are installed:")
+        print("  pip install -r requirements.txt")
+        print("\n" + "=" * 80)
+        print("❌ DIAGNOSTIC AUDIT FAILED - EXITING")
+        print("=" * 80 + "\n")
+        sys.exit(1)
+    
+    if not OB_DETECTOR_AVAILABLE:
+        print("\n" + "=" * 80)
+        print("❌ CRITICAL ERROR: Order Block Detector Not Available")
+        print("=" * 80)
+        print("\nThe Order Block Detector is a core component required for diagnostics.")
+        print("Please ensure all dependencies are installed.")
+        print("=" * 80 + "\n")
+        sys.exit(1)
+    
+    if not FVG_DETECTOR_AVAILABLE:
+        print("\n" + "=" * 80)
+        print("❌ CRITICAL ERROR: FVG Detector Not Available")
+        print("=" * 80)
+        print("\nThe FVG Detector is a core component required for diagnostics.")
+        print("Please ensure all dependencies are installed.")
+        print("=" * 80 + "\n")
+        sys.exit(1)
+    
     # Run audit
     audit = FullEngineAudit(symbol=args.symbol, timeframe=args.tf)
     results = audit.run_full_audit()

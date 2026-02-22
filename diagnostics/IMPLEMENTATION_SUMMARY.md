@@ -140,12 +140,12 @@ python diagnostics/full_engine_audit.py --symbol ETHUSDT --tf 4h
 ## 🧪 Testing Results
 
 ### ✅ Script Execution Tests
-- [x] Runs successfully with `--symbol BTCUSDT --tf 1h`
+- [x] Runs successfully with `--symbol BTCUSDT --tf 1h` (when dependencies available)
 - [x] Runs with different symbols (ETHUSDT)
 - [x] Runs with different timeframes (4h)
 - [x] Produces valid JSON output
-- [x] Gracefully handles missing dependencies
-- [x] Returns correct exit codes (0 = pass, 1 = fail)
+- [x] **Hard fails with exit code 1 when core engine not available**
+- [x] Returns correct exit codes (0 = pass, 1 = fail/unavailable)
 
 ### ✅ Code Quality
 - [x] **Code Review**: PASSED (0 comments)

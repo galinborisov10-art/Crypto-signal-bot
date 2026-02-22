@@ -199,11 +199,39 @@ This diagnostic module is completely standalone and does not affect production c
 ## Exit Codes
 
 - `0`: Audit passed (no violations)
-- `1`: Audit failed (violations found)
+- `1`: Audit failed (violations found OR core engine not available)
 
 ## Requirements
 
-The module gracefully handles missing dependencies and will report what components are not available. It works even when the full engine cannot be imported.
+**CRITICAL**: The diagnostic script requires the ICT Signal Engine and core detectors (Order Block, FVG) to be available. If these core components cannot be imported, the script will exit with code 1.
+
+### Required Components
+
+The following components **MUST** be available:
+- `ict_signal_engine` - Core ICT Signal Engine
+- `order_block_detector` - Order Block Detector
+- `fvg_detector` - Fair Value Gap Detector
+
+### Optional Components
+
+The following components are optional and will use fallback values if not available:
+- `liquidity_map` - Liquidity Mapper
+- `ict_whale_detector` - Whale Detector
+- `mtf_analyzer` - Multi-Timeframe Analyzer
+- `entry_scenario_config` - Scenario configuration (uses fallback values)
+
+### Installation
+
+Ensure all dependencies are installed:
+
+```bash
+pip install -r requirements.txt
+```
+
+If the script fails with "Engine Not Available" error, verify:
+1. All Python dependencies are installed
+2. Python environment is properly configured
+3. Engine files are accessible in the repository
 
 ## Author
 
