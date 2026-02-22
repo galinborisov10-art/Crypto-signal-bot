@@ -331,6 +331,21 @@ class LiquidityMapper:
                 break
         
         return count
+    
+    def detect_liquidity(self, df: pd.DataFrame, symbol: Optional[str] = None, timeframe: str = '1H') -> List[LiquidityZone]:
+        """
+        API compatibility method for regression suite.
+        Detects liquidity zones - wrapper around detect_liquidity_zones().
+        
+        Args:
+            df: DataFrame with OHLC data
+            symbol: Trading symbol (optional, for compatibility)
+            timeframe: Timeframe string
+            
+        Returns:
+            List of LiquidityZone objects
+        """
+        return self.detect_liquidity_zones(df, timeframe=timeframe)
 
 
 # API compatibility alias for regression suite
