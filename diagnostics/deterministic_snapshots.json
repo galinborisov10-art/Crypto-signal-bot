@@ -1,0 +1,55 @@
+{
+  "description": "Deterministic snapshots for engine validation",
+  "version": "1.0",
+  "last_updated": "2026-02-22",
+  "snapshots": {
+    "BTCUSDT_1h": {
+      "symbol": "BTCUSDT",
+      "tf": "1h",
+      "description": "BTC 1h validation snapshot",
+      "expected": {
+        "min_order_blocks": 1,
+        "min_fvg": 1,
+        "structure_bias": "bullish",
+        "note": "Minimum expectations - actual counts may be higher"
+      }
+    },
+    "BTCUSDT_4h": {
+      "symbol": "BTCUSDT",
+      "tf": "4h",
+      "description": "BTC 4h validation snapshot",
+      "expected": {
+        "min_order_blocks": 1,
+        "structure_bias": "bullish",
+        "note": "4h swing structure validation"
+      }
+    },
+    "ETHUSDT_1h": {
+      "symbol": "ETHUSDT",
+      "tf": "1h",
+      "description": "ETH 1h validation snapshot",
+      "expected": {
+        "min_order_blocks": 1,
+        "note": "Altcoin independent mode validation"
+      }
+    }
+  },
+  "validation_rules": {
+    "zero_components_acceptable": true,
+    "fail_only_on_expectation_violation": true,
+    "component_presence_not_required": true,
+    "routing_integrity_required": true,
+    "determinism_required": true
+  },
+  "notes": [
+    "Zero components ≠ failure",
+    "Missing liquidity ≠ failure",
+    "No OB ≠ failure",
+    "Failure ONLY if:",
+    "  - Routing violation",
+    "  - Cross-timeframe contamination",
+    "  - Determinism violation",
+    "  - Scenario using wrong TF components",
+    "  - Telegram mismatch"
+  ]
+}
