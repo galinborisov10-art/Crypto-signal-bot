@@ -333,5 +333,10 @@ class LiquidityMapper:
         return count
 
 
+# API compatibility alias for regression suite
+# LiquidityMap is an alias for LiquidityMapper to maintain backward compatibility
+LiquidityMap = LiquidityMapper
+
+
 if __name__ == "__main__":
     print("Liquidity Mapper ready!")

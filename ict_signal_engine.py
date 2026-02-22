@@ -3124,6 +3124,21 @@ class ICTSignalEngine:
             'bearish_votes': bearish_votes
         }
 
+    def _calculate_bias(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Tuple[str, float]:
+        """
+        API compatibility method for regression suite.
+        Wraps _calculate_pure_ict_bias_for_tf() for backward compatibility.
+        
+        Args:
+            df: DataFrame with OHLCV data
+            symbol: Trading symbol
+            timeframe: Timeframe string
+        
+        Returns:
+            Tuple of (bias_direction, bias_score)
+        """
+        return self._calculate_pure_ict_bias_for_tf(df, symbol, timeframe)
+
     def _calculate_pure_ict_bias_for_tf(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Tuple[str, float]:
         """
         Calculate pure ICT bias based ONLY on market structure (HH/HL vs LH/LL).
