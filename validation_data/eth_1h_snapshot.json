@@ -1,0 +1,10 @@
+{
+  "symbol": "ETHUSDT",
+  "timeframe": "1h",
+  "timestamp": "2024-01-15T12:00:00Z",
+  "ohlcv": [
+    [1705320000000, 2250.0, 2270.0, 2240.0, 2260.0, 850.5],
+    [1705323600000, 2260.0, 2285.0, 2255.0, 2275.0, 920.2]
+  ],
+  "description": "Continuation scenario - ETH bullish continuation"
+}

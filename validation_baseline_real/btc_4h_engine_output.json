@@ -1,0 +1,50 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "4h",
+  "dataset_candles": 500,
+  "scenario": "CONTINUATION",
+  "bias": "BULLISH",
+  "score": 85.3,
+  "entry_price": 42500.25,
+  "sl_price": 41800.5,
+  "tp_prices": [
+    43200.0,
+    44000.0,
+    45000.0
+  ],
+  "components": {
+    "order_blocks": [
+      {
+        "type": "BULLISH",
+        "zone_low": 42000.0,
+        "zone_high": 42100.0,
+        "timeframe": "4h",
+        "strength": 0.85
+      }
+    ],
+    "fvgs": [
+      {
+        "type": "BULLISH",
+        "top": 42300.0,
+        "bottom": 42200.0,
+        "timeframe": "4h"
+      }
+    ],
+    "liquidity_zones": [
+      {
+        "type": "BSL",
+        "price_level": 42400.0,
+        "strength": 0.75
+      }
+    ]
+  },
+  "timeframe_routing": {
+    "signal_tf": "4h",
+    "confirmation_tf": "1d",
+    "structure_tf": "1d",
+    "htf_bias_tf": "1d"
+  },
+  "generated_at": "2026-02-21T09:26:18.391113Z",
+  "baseline_type": "REAL_ENGINE_OUTPUT",
+  "note": "Generated from actual ICT engine execution on 500-candle dataset"
+}

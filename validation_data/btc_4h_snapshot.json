@@ -1,0 +1,10 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "4h",
+  "timestamp": "2024-01-15T12:00:00Z",
+  "ohlcv": [
+    [1705320000000, 41800.0, 42100.0, 41750.0, 42000.0, 3250.5],
+    [1705334400000, 42000.0, 42300.0, 41950.0, 42200.0, 3540.2]
+  ],
+  "description": "Pullback scenario - retracement to order block"
+}

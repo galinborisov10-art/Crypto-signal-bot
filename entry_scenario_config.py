@@ -57,7 +57,7 @@ ROLLBACK_WEIGHTS = {
 # PULLBACK scoring
 PULLBACK_WEIGHTS = {
     'base_score': 40,
-    'poi_quality_multiplier': 0.5,         # POI quality * 0.5
+    'poi_quality_multiplier': 0.4,         # POI quality * 0.4 (REDUCED: was 0.5)
     'trigger_count_bonus': 15,             # Per trigger
     'structure_trigger_bonus': 10,         # If has MSS/BOS
     'distance_penalty_per_pct': -5         # Stricter penalty
@@ -76,7 +76,7 @@ CONTINUATION_WEIGHTS = {
 REVERSAL_WEIGHTS = {
     'base_score': 55,
     'sweep_bonus': 25,                     # Liquidity sweep present
-    'choch_bonus': 20,                     # CHOCH confirmation
+    'choch_bonus': 25,                     # CHOCH confirmation (INCREASED: was 20)
     'mss_bonus': 15,                       # MSS confirmation
     'displacement_contra_bonus': 15,       # Displacement in reversal direction
     'trigger_count_bonus': 10              # Per additional trigger
@@ -166,4 +166,41 @@ REVERSAL_SETTINGS = {
     'require_sweep': True,           # Must have liquidity sweep
     'require_structure_flip': True,  # Must have MSS/CHOCH in opposite direction
     'displacement_bonus': True       # Bonus if displacement in reversal direction
+}
+
+# ============================================================
+# SCENARIO CONFIGURATIONS (for API compatibility)
+# ============================================================
+SCENARIO_CONFIGS = {
+    'CONTINUATION': {
+        'name': 'Continuation',
+        'description': 'Trend continuation scenario',
+        'min_score': MIN_SCENARIO_SCORE,
+        'min_triggers': MIN_TRIGGERS['CONTINUATION'],
+        'weights': CONTINUATION_WEIGHTS
+    },
+    'PULLBACK': {
+        'name': 'Pullback',
+        'description': 'Pullback to structure scenario',
+        'min_score': MIN_SCENARIO_SCORE,
+        'min_triggers': MIN_TRIGGERS['PULLBACK'],
+        'weights': PULLBACK_WEIGHTS,
+        'distance': PULLBACK_DISTANCE
+    },
+    'REVERSAL': {
+        'name': 'Reversal',
+        'description': 'Trend reversal scenario',
+        'min_score': MIN_SCENARIO_SCORE,
+        'min_triggers': MIN_TRIGGERS['REVERSAL'],
+        'weights': REVERSAL_WEIGHTS,
+        'settings': REVERSAL_SETTINGS
+    },
+    'ROLLBACK': {
+        'name': 'Rollback',
+        'description': 'Rollback to structure scenario',
+        'min_score': MIN_SCENARIO_SCORE,
+        'min_triggers': MIN_TRIGGERS['ROLLBACK'],
+        'weights': ROLLBACK_WEIGHTS,
+        'distance': ROLLBACK_DISTANCE
+    }
 }

@@ -1,0 +1,13 @@
+{
+  "scenario": "CONTINUATION",
+  "bias": "BULLISH",
+  "components": {
+    "order_blocks": 2,
+    "fvgs": 2,
+    "liquidity_zones": 1
+  },
+  "score": 82,
+  "entry_price": 2275.00,
+  "sl_price": 2230.00,
+  "tp_prices": [2320.00, 2370.00, 2420.00]
+}

@@ -31,11 +31,13 @@ from dotenv import load_dotenv
 # Зареди .env файла
 load_dotenv()
 
-# Логване
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Логване - Configure only once to avoid duplicate logs
+root_logger = logging.getLogger()
+if not root_logger.handlers:
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
 logger = logging.getLogger(__name__)
 
 # Track bot process start time (for version info)
@@ -58,19 +60,27 @@ else:
     logger.info(f"📂 BASE_PATH fallback (current dir): {BASE_PATH}")
 
 # Add rotating file handler for logging (prevents memory leak from unbounded growth)
+# Only add if not already present (avoid duplicate handlers)
 try:
     from logging.handlers import RotatingFileHandler
     
-    # Rotate at 50MB, keep 3 backups (max 200MB total)
-    file_handler = RotatingFileHandler(
-        f'{BASE_PATH}/bot.log',
-        maxBytes=50 * 1024 * 1024,  # 50 MB
-        backupCount=3,  # Keep 3 old files (bot.log.1, bot.log.2, bot.log.3)
-        encoding='utf-8'
-    )
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    logging.getLogger().addHandler(file_handler)
-    logger.info(f"📝 Rotating file logging enabled: {BASE_PATH}/bot.log (max 50MB, 3 backups)")
+    root_logger = logging.getLogger()
+    # Check if file handler already exists
+    has_file_handler = any(isinstance(h, RotatingFileHandler) for h in root_logger.handlers)
+    
+    if not has_file_handler:
+        # Rotate at 50MB, keep 3 backups (max 200MB total)
+        file_handler = RotatingFileHandler(
+            f'{BASE_PATH}/bot.log',
+            maxBytes=50 * 1024 * 1024,  # 50 MB
+            backupCount=3,  # Keep 3 old files (bot.log.1, bot.log.2, bot.log.3)
+            encoding='utf-8'
+        )
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        root_logger.addHandler(file_handler)
+        logger.info(f"📝 Rotating file logging enabled: {BASE_PATH}/bot.log (max 50MB, 3 backups)")
+    else:
+        logger.debug("File handler already configured, skipping duplicate")
 except Exception as e:
     logger.warning(f"⚠️ Could not setup rotating file logging: {e}")
 
@@ -130,6 +140,7 @@ try:
     from ict_80_alert_handler import ICT80AlertHandler
     from order_block_detector import OrderBlockDetector
     from fvg_detector import FVGDetector
+    from timeframe_contract import TimeframeContract
 # DISABLED:     from real_time_monitor import RealTimePositionMonitor
     ICT_SIGNAL_ENGINE_AVAILABLE = True
     logger.info("✅ ICT Signal Engine loaded")
@@ -2391,8 +2402,8 @@ def detect_divergence(closes, rsi_values):
 async def get_higher_timeframe_confirmation(symbol, current_timeframe, signal):
     """Multi-timeframe потвърждение"""
     try:
-        # Определи по-висок таймфрейм
-        tf_hierarchy = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+        # Get TF hierarchy from contract
+        tf_hierarchy = TimeframeContract.get_all_supported_timeframes()
         
         if current_timeframe not in tf_hierarchy:
             return None
@@ -3063,8 +3074,9 @@ def calculate_adaptive_tp_sl(symbol, volatility, timeframe):
 async def get_multi_timeframe_analysis(symbol, current_timeframe):
     """Анализира сигнала на ВСИЧКИ таймфреймове за пълна картина"""
     try:
-        # ВСИЧКИ таймфреймове за анализ
-        all_timeframes = ['1m', '5m', '15m', '1h', '2h', '3h', '4h', '1d', '1w']
+        # Get all supported timeframes from contract
+        all_timeframes = TimeframeContract.get_all_supported_timeframes()
+        logger.debug(f"📊 Using {len(all_timeframes)} timeframes from contract: {all_timeframes}")
         
         mtf_signals = {}
         
@@ -4215,10 +4227,9 @@ def fetch_mtf_data(symbol: str, timeframe: str, primary_df: pd.DataFrame) -> dic
         Dictionary with timeframes as keys and DataFrames as values
     """
     mtf_data = {}
-    mtf_timeframes = ['5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
-    # ❌ Removed noisy/non-standard timeframes:
-    # - 1m, 3m (too noisy for consensus)
-    # - 6h, 12h, 3d (non-standard, redundant between 4h/1d and 1d/1w)
+    # Get MTF timeframes from contract (standard timeframes for consensus)
+    mtf_timeframes = TimeframeContract.get_mtf_timeframes()
+    logger.debug(f"📊 Using MTF timeframes from contract: {mtf_timeframes}")
     
     for mtf_tf in mtf_timeframes:
         if mtf_tf == timeframe:  # Skip duplicate fetch
@@ -8464,7 +8475,8 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     custom_timeframe = None
     if len(context.args) > 1:
         tf = context.args[1].lower()
-        valid_timeframes = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+        # Get valid timeframes from contract
+        valid_timeframes = TimeframeContract.get_all_supported_timeframes()
         if tf in valid_timeframes:
             custom_timeframe = tf
         else:
@@ -9191,8 +9203,8 @@ def _format_hold_signal(signal: ICTSignal, signal_source: str = "AUTO") -> str:
         msg += f"<b>HTF Bias:</b> {signal.htf_bias}\n"
         msg += f"<b>MTF Structure:</b> {signal.mtf_structure}\n\n"
         
-        # Show breakdown for key timeframes
-        key_timeframes = ['1m', '15m', '1h', '4h', '1d']
+        # Show breakdown for key timeframes (from contract)
+        key_timeframes = TimeframeContract.get_mtf_timeframes()[:5]  # First 5 MTF timeframes
         msg += "<b>Breakdown:</b>\n"
         for tf in key_timeframes:
             if tf in breakdown:
@@ -9327,7 +9339,21 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
 ⏰ <b>Таймфрейм:</b> {signal.timeframe}
 💪 <b>Сила:</b> {strength_stars} ({signal.signal_strength.value}/5)
 🎯 <b>Увереност:</b> {signal.confidence:.1f}%
+"""
 
+    # ✅ STABILIZATION PR: Add TF hierarchy display if available
+    if hasattr(signal, 'timeframe_hierarchy') and signal.timeframe_hierarchy:
+        tf_hier = signal.timeframe_hierarchy
+        if tf_hier.get('entry_tf'):
+            msg += f"""
+<b>📊 TF Йерархия:</b>
+   • Entry: {tf_hier.get('entry_tf', 'N/A')}
+   • Confirmation: {tf_hier.get('confirmation_tf', 'N/A')}
+   • Structure: {tf_hier.get('structure_tf', 'N/A')}
+   • HTF Bias: {tf_hier.get('htf_bias_tf', 'N/A')}
+"""
+    
+    msg += f"""
 ━━━━━━━━━━━━━━━━━━━━━━
 <b>💼 TRADE SETUP</b>
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -9366,8 +9392,8 @@ def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -
         msg += f"<b>Consensus:</b> {consensus_pct:.1f}% {'✅' if consensus_pct >= 50 else '❌'}\n"
         msg += f"<b>Aligned:</b> {signal.mtf_consensus_data.get('aligned_count', 0)}/{signal.mtf_consensus_data.get('total_count', 0)} TFs\n\n"
         
-        # Показвай breakdown за ключовите TF
-        key_timeframes = ['1m', '15m', '1h', '4h', '1d']
+        # Show breakdown for key timeframes (from contract)
+        key_timeframes = TimeframeContract.get_mtf_timeframes()[:5]  # First 5 MTF timeframes
         msg += "<b>Breakdown:</b>\n"
         for tf in key_timeframes:
             if tf in breakdown:
@@ -10845,7 +10871,8 @@ async def timeframe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Директна промяна
     tf = context.args[0].lower()
-    valid_tfs = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w']
+    # Get valid timeframes from contract
+    valid_tfs = TimeframeContract.get_all_supported_timeframes()
     
     if tf not in valid_tfs:
         await update.message.reply_text(f"❌ Невалиден таймфрейм. Избери от: {', '.join(valid_tfs)}")
@@ -11335,8 +11362,9 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
     
     logger.info("🔍 Започвам ASYNC проверка на всички монети и timeframes...")
     
-    # Основни timeframes за проверка - 1h, 2h, 4h, 1d
-    timeframes_to_check = ['1h', '2h', '4h', '1d']
+    # Get automatic timeframes from contract
+    timeframes_to_check = TimeframeContract.get_supported_automatic_timeframes()
+    logger.debug(f"📊 Using automatic TFs from contract: {timeframes_to_check}")
     
     # 🚀 ASYNC ПАРАЛЕЛЕН АНАЛИЗ - всички монети/timeframes наведнъж
     async def analyze_single_pair(symbol, timeframe):
@@ -11589,8 +11617,8 @@ async def auto_signal_job(timeframe: str, bot_instance):
         bot_instance: Telegram bot instance for sending messages
     """
     try:
-        # ✅ AUTO TIMEFRAME FILTER (only 1h, 2h, 4h, 1d)
-        ALLOWED_AUTO_TIMEFRAMES = ['1h', '2h', '4h', '1d']
+        # ✅ AUTO TIMEFRAME FILTER - Get from contract
+        ALLOWED_AUTO_TIMEFRAMES = TimeframeContract.get_supported_automatic_timeframes()
         
         if timeframe not in ALLOWED_AUTO_TIMEFRAMES:
             logger.info(f"⚠️ Auto signals disabled for {timeframe} (allowed: {ALLOWED_AUTO_TIMEFRAMES})")
@@ -14726,8 +14754,8 @@ def _format_backtest_report(results: Dict) -> str:
     if by_timeframe:
         text += "<b>⏰ TIMEFRAME BREAKDOWN</b>\n"
         
-        # Sort timeframes
-        tf_order = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+        # Sort timeframes using contract order
+        tf_order = TimeframeContract.get_all_supported_timeframes()
         sorted_tfs = sorted(
             by_timeframe.items(),
             key=lambda x: tf_order.index(x[0]) if x[0] in tf_order else 999
@@ -16534,8 +16562,8 @@ async def reports_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Per-Timeframe Breakdown (truncated for callback message)
                 text += "<b>⏰ PER-TIMEFRAME BREAKDOWN</b>\n"
                 
-                # Sort timeframes logically
-                tf_order = ['1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '1d', '1w']
+                # Sort timeframes using contract order
+                tf_order = TimeframeContract.get_all_supported_timeframes()
                 sorted_tfs = sorted(timeframe_stats.keys(), 
                                     key=lambda x: tf_order.index(x) if x in tf_order else 999)
                 
@@ -18278,8 +18306,8 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
                         # ВСИЧКИ монети от SYMBOLS
                         symbols_to_test = list(SYMBOLS.values())  # BTCUSDT, ETHUSDT, XRPUSDT, SOLUSDT, BNBUSDT, ADAUSDT
                         
-                        # ВСИЧКИ основни таймфрейми
-                        timeframes_to_test = ['1h', '2h', '4h', '1d']
+                        # Get automatic timeframes from contract
+                        timeframes_to_test = TimeframeContract.get_supported_automatic_timeframes()
                         
                         # Събиране на резултати за общ отчет
                         all_results = []

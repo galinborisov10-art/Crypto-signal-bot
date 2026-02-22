@@ -1,0 +1,54 @@
+{
+  "status": "PASS",
+  "timeframes_tested": [
+    {
+      "timeframe": "1h",
+      "checks": [
+        {
+          "name": "signal_tf_match",
+          "status": "PASS",
+          "message": "signal_tf matches input: 1h"
+        },
+        {
+          "name": "structure_tf_separate",
+          "status": "PASS",
+          "message": "structure_tf (4h) separate from signal_tf (1h)"
+        },
+        {
+          "name": "htf_bias_tf",
+          "status": "PASS",
+          "message": "HTF bias from: 4h"
+        }
+      ]
+    },
+    {
+      "timeframe": "4h",
+      "checks": [
+        {
+          "name": "signal_tf_match",
+          "status": "PASS",
+          "message": "signal_tf matches input: 4h"
+        },
+        {
+          "name": "structure_tf_separate",
+          "status": "PASS",
+          "message": "structure_tf (1d) separate from signal_tf (4h)"
+        },
+        {
+          "name": "htf_bias_tf",
+          "status": "PASS",
+          "message": "HTF bias from: 1d"
+        }
+      ]
+    }
+  ],
+  "component_checks": [
+    {
+      "name": "validator_available",
+      "status": "PASS",
+      "message": "ComponentTimeframeValidator available"
+    }
+  ],
+  "cross_tf_checks": [],
+  "errors": []
+}

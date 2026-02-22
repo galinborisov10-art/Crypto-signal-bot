@@ -23,8 +23,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Get logger (configuration in bot.py)
 logger = logging.getLogger(__name__)
 
 
@@ -145,6 +144,21 @@ class FVGDetector:
             'displacement_required': True,  # Require displacement
             'min_displacement_pct': 0.3,   # Min 0.3% displacement
         }
+    
+    def detect_fvg(self, df: pd.DataFrame, symbol: Optional[str] = None, timeframe: str = "1H") -> List[FairValueGap]:
+        """
+        API compatibility method for regression suite.
+        Wraps detect_fvgs() for backward compatibility.
+        
+        Args:
+            df: OHLCV dataframe
+            symbol: Trading symbol (optional, for compatibility)
+            timeframe: Timeframe string
+        
+        Returns:
+            List of FairValueGap objects
+        """
+        return self.detect_fvgs(df, timeframe=timeframe)
     
     def detect_fvgs(
         self,

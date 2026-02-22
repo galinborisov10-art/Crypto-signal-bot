@@ -28,6 +28,30 @@ from entry_scenarios import select_best_entry_scenario
 import json
 import os
 
+# ✅ STABILIZATION PR: Import centralized timeframe contract
+try:
+    from timeframe_contract import (
+        TimeframeContract, 
+        TimeframeHierarchy, 
+        SignalMode, 
+        TimeframeDebugLogger
+    )
+    TIMEFRAME_CONTRACT_AVAILABLE = True
+except ImportError:
+    TIMEFRAME_CONTRACT_AVAILABLE = False
+    logging.warning("Timeframe Contract not available - using legacy hierarchy")
+
+# ✅ STABILIZATION PR: Import component validation layer
+try:
+    from component_tf_validator import (
+        ComponentTimeframeValidator,
+        CrossTimeframeContaminationDetector
+    )
+    COMPONENT_VALIDATOR_AVAILABLE = True
+except ImportError:
+    COMPONENT_VALIDATOR_AVAILABLE = False
+    logging.warning("Component TF Validator not available")
+
 # Import Entry Gating and Confidence Threshold evaluators (ESB v1.0 §2.1-2.2)
 try:
     from entry_gating_evaluator import evaluate_entry_gating
@@ -174,8 +198,7 @@ except ImportError:
     CHART_GENERATOR_AVAILABLE = False
     logging.warning("ChartGenerator not available")
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Get logger (do not configure - bot.py handles configuration)
 logger = logging.getLogger(__name__)
 
 
@@ -185,15 +208,8 @@ logger = logging.getLogger(__name__)
 
 ATR_FALLBACK_PCT = 0.02  # 2% fallback when ATR calculation fails
 
-TIMEFRAME_MIN_SL_DISTANCE = {
-    '15m': 0.003, '30m': 0.004, '1h': 0.005,
-    '2h': 0.007, '4h': 0.010, '1d': 0.015,
-}
-
-TIMEFRAME_BUFFER_PCT = {
-    '15m': 0.001, '30m': 0.0015, '1h': 0.002,
-    '2h': 0.0025, '4h': 0.003, '1d': 0.005,
-}
+# Legacy constants removed - now using TimeframeContract
+# TIMEFRAME_MIN_SL_DISTANCE and TIMEFRAME_BUFFER_PCT moved to contract
 
 
 class SignalType(Enum):
@@ -222,17 +238,19 @@ class MarketBias(Enum):
     RANGING = "RANGING"
 
 
-def get_tp_multipliers_by_timeframe(timeframe: str) -> tuple:
+def get_tp_multipliers_by_timeframe(timeframe: str) -> Tuple[float, float, float]:
     """
-    Get optimized TP multipliers based on timeframe volatility
+    Get TP multipliers based on timeframe category
+    
+    STABILIZATION PR: Now uses centralized timeframe contract
     
     Strategy:
     - Lower TFs (1h, 2h): (1, 3, 5) - Quick validation, conservative targets
     - Higher TFs (4h, 1d): (2, 4, 6) - Capture trends, aggressive targets
     
     Reasoning:
-    - 1h/2h: Faster moves, quicker reversals → Need fast TP hits
-    - 4h/1d: Stronger trends, more follow-through → Can hold for bigger TPs
+    - 1h/2h: Faster moves, quicker reversals -> Need fast TP hits
+    - 4h/1d: Stronger trends, more follow-through -> Can hold for bigger TPs
     
     Args:
         timeframe: Candle timeframe (e.g., '1h', '4h', '1d')
@@ -246,21 +264,15 @@ def get_tp_multipliers_by_timeframe(timeframe: str) -> tuple:
         >>> get_tp_multipliers_by_timeframe('4h')
         (2.0, 4.0, 6.0)
     """
-    tf = timeframe.lower().strip()
-    
-    # Short-term: Conservative targets (1, 3, 5)
-    if tf in ['15m', '30m', '1h', '2h', '3h']:  # ← Added 3h
-        logger.info(f"📊 Using conservative TPs (1,3,5) for {timeframe}")
-        return (1.0, 3.0, 5.0)
-    
-    # Medium/Long-term: Aggressive targets (2, 4, 6)
-    elif tf in ['4h', '6h', '8h', '12h', '1d', '3d', '1w']:
-        logger.info(f"📊 Using aggressive TPs (2,4,6) for {timeframe}")
-        return (2.0, 4.0, 6.0)
-    
-    # Default: Conservative (safer)
+    if TIMEFRAME_CONTRACT_AVAILABLE:
+        multipliers = TimeframeContract.get_tp_multipliers(timeframe)
+        category = TimeframeContract.get_tf_category(timeframe)
+        category_name = category.value if category else "UNKNOWN"
+        logger.info(f"📊 Using TPs {multipliers} for {timeframe} ({category_name})")
+        return multipliers
     else:
-        logger.warning(f"⚠️ Unknown timeframe {timeframe}, defaulting to conservative TPs (1,3,5)")
+        # Fallback if contract not available (should not happen)
+        logger.warning(f"⚠️ TF Contract unavailable, using default conservative TPs for {timeframe}")
         return (1.0, 3.0, 5.0)
 
 
@@ -769,8 +781,8 @@ class ICTSignalEngine:
         """
         Generate ICT signal with UNIFIED analysis sequence
         
-        ✅ ЕДНАКВА последователност за ВСИЧКИ таймфремове (1w до 1m)
-        ✅ ЕДНАКВА логика за ръчни И автоматични сигнали
+        ЕДНАКВА последователност за ВСИЧКИ таймфремове (1w до 1m)
+        ЕДНАКВА логика за ръчни И автоматични сигнали
         """
         logger.info(f"🎯 Generating UNIFIED ICT signal for {symbol} on {timeframe}")
         
@@ -816,20 +828,54 @@ class ICTSignalEngine:
         
         df = self._prepare_dataframe(df)
         
+        # ═══════════════════════════════════════════════════════════
+        # ✅ STABILIZATION PR: CENTRALIZED TIMEFRAME HIERARCHY
+        # ═══════════════════════════════════════════════════════════
+        
+        # STEP 0: Establish Timeframe Contract
+        if TIMEFRAME_CONTRACT_AVAILABLE:
+            signal_mode = SignalMode.AUTOMATIC if is_auto else SignalMode.MANUAL
+            tf_hierarchy = TimeframeContract.get_hierarchy(timeframe, signal_mode)
+            
+            if not tf_hierarchy:
+                logger.error(
+                    f"❌ Unsupported timeframe '{timeframe}' for {signal_mode.value} signals. "
+                    f"Supported TFs: {TimeframeContract.get_supported_manual_timeframes() if signal_mode == SignalMode.MANUAL else TimeframeContract.get_supported_automatic_timeframes()}"
+                )
+                return None
+            
+            # Log the timeframe hierarchy being used
+            TimeframeDebugLogger.log_hierarchy_usage(tf_hierarchy, symbol)
+            
+            # Extract timeframes from hierarchy
+            entry_tf = tf_hierarchy.signal_tf
+            confirmation_tf = tf_hierarchy.confirmation_tf
+            structure_tf = tf_hierarchy.structure_tf
+            htf_bias_tf = tf_hierarchy.htf_bias_tf
+            
+            logger.info(f"✅ TF Contract established: Signal={entry_tf}, Confirmation={confirmation_tf}, Structure={structure_tf}, HTF_Bias={htf_bias_tf}")
+        else:
+            # Fallback to legacy behavior
+            logger.warning("⚠️ Timeframe Contract not available - using legacy hierarchy")
+            entry_tf = timeframe
+            confirmation_tf = None
+            structure_tf = None
+            htf_bias_tf = None
+            tf_hierarchy = None
+        
         # ═══════ УНИФИЦИРАНА ПОСЛЕДОВАТЕЛНОСТ (12 СТЪПКИ) ═══════
         
-        # СТЪПКА 1: HTF BIAS (1D → 4H fallback)
-        # ✅ FIX: Define entry_tf from parameter
-        entry_tf = timeframe
-
+        # СТЪПКА 1: HTF BIAS
         logger.info("📊 Step 1: HTF Bias")
-        htf_bias = self._get_htf_bias_with_fallback(symbol, mtf_data, timeframe)
+        if tf_hierarchy:
+            TimeframeDebugLogger.log_bias_timeframe(htf_bias_tf, "Calculating...")
+        htf_bias = self._get_htf_bias_with_fallback(symbol, mtf_data, htf_bias_tf if htf_bias_tf else timeframe)
         
         # СТЪПКА 2: MTF STRUCTURE (4H)
         logger.info("📊 Step 2: MTF Structure")
         mtf_analysis = self._analyze_mtf_confluence(df, mtf_data, symbol) if mtf_data is not None and isinstance(mtf_data, dict) else None
         
-        # ✅ PR #4: СТЪПКА 6b: TIMEFRAME HIERARCHY VALIDATION (NEW)
+        # ✅ STABILIZATION PR: TIMEFRAME HIERARCHY VALIDATION
         logger.info("=" * 60)
         logger.info("STEP 6b: TIMEFRAME HIERARCHY VALIDATION")
         logger.info("=" * 60)
@@ -839,12 +885,30 @@ class ICTSignalEngine:
         hierarchy_info = {}
         initial_confidence = 80.0  # Starting confidence before validation
         
-        # Perform TF hierarchy validation
-        validated_confidence, tf_warnings, hierarchy_info = self._validate_mtf_hierarchy(
-            entry_tf=timeframe,
-            mtf_analysis=mtf_analysis if mtf_analysis else {},
-            confidence=initial_confidence
-        )
+        # ✅ STABILIZATION: Populate hierarchy_info from TF contract
+        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+            hierarchy_info = {
+                'entry_tf': tf_hierarchy.signal_tf,
+                'confirmation_tf': tf_hierarchy.confirmation_tf,
+                'structure_tf': tf_hierarchy.structure_tf,
+                'htf_bias_tf': tf_hierarchy.htf_bias_tf,
+                'mode': tf_hierarchy.mode.value,
+                'description': f'{tf_hierarchy.signal_tf} signal with {tf_hierarchy.confirmation_tf} confirmation and {tf_hierarchy.structure_tf} structure'
+            }
+            logger.info(f"✅ TF hierarchy from contract:")
+            logger.info(f"   Entry: {hierarchy_info['entry_tf']}")
+            logger.info(f"   Confirmation: {hierarchy_info['confirmation_tf']}")
+            logger.info(f"   Structure: {hierarchy_info['structure_tf']}")
+            logger.info(f"   HTF Bias: {hierarchy_info['htf_bias_tf']}")
+            logger.info(f"   Mode: {hierarchy_info['mode']}")
+            validated_confidence = initial_confidence
+        else:
+            # Fallback to legacy validation
+            validated_confidence, tf_warnings, hierarchy_info = self._validate_mtf_hierarchy(
+                entry_tf=timeframe,
+                mtf_analysis=mtf_analysis if mtf_analysis else {},
+                confidence=initial_confidence
+            )
         
         # Store hierarchy info for later use in signal generation
         context_warnings = tf_warnings  # Will be added to signal warnings later
@@ -875,8 +939,9 @@ class ICTSignalEngine:
         # СТЪПКА 4: ICT COMPONENT DETECTION (with pre-calculated liquidity)
         logger.info("📊 Step 4: ICT Component Detection")
         raw_components = self._detect_ict_components(
-            df, timeframe, 
-            liquidity_zones=liquidity_zones  # ✅ Pass pre-calculated liquidity zones
+            df, entry_tf,  # ✅ STABILIZATION: Use entry_tf from hierarchy
+            liquidity_zones=liquidity_zones,  # ✅ Pass pre-calculated liquidity zones
+            tf_hierarchy=tf_hierarchy  # ✅ STABILIZATION: Pass TF hierarchy for validation
         )
         
         # Add detailed logging for ALL 11 ICT components
@@ -907,6 +972,86 @@ class ICTSignalEngine:
         logger.info("📊 Step 5: Component Filtering (Quality Focus)")
         ict_components = self._filter_quality_components(raw_components)
         
+        # ✅ STABILIZATION PR: COMPREHENSIVE DEBUG LOGGING & VALIDATION
+        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+            logger.info("")
+            logger.info("=" * 80)
+            logger.info("🔍 STABILIZATION: TIMEFRAME & COMPONENT INTEGRITY CHECK")
+            logger.info("=" * 80)
+            
+            # Comprehensive debug logging
+            TimeframeDebugLogger.log_comprehensive_signal_debug(
+                symbol=symbol,
+                hierarchy=tf_hierarchy,
+                components=ict_components,
+                bias="CALCULATING...",  # Will be calculated next
+                scenario=None  # Will be selected later
+            )
+            
+            # Component validation and contamination check
+            if COMPONENT_VALIDATOR_AVAILABLE:
+                logger.info("🔍 COMPONENT VALIDATION:")
+                
+                # Get bias string for validation (peek ahead - will be calculated next)
+                bias_peek = "BULLISH"  # Default, will be refined
+                
+                # Validate Order Blocks
+                obs = ict_components.get('order_blocks', [])
+                if obs:
+                    valid_obs, rejected_obs = ComponentTimeframeValidator.validate_component_list(
+                        obs, "Order Block", tf_hierarchy.signal_tf, bias_peek
+                    )
+                    ict_components['order_blocks'] = valid_obs
+                    if rejected_obs > 0:
+                        logger.warning(f"   ⚠️ Rejected {rejected_obs} invalid Order Blocks")
+                
+                # Validate FVGs
+                fvgs = ict_components.get('fvgs', [])
+                if fvgs:
+                    valid_fvgs, rejected_fvgs = ComponentTimeframeValidator.validate_component_list(
+                        fvgs, "FVG", tf_hierarchy.signal_tf, bias_peek
+                    )
+                    ict_components['fvgs'] = valid_fvgs
+                    if rejected_fvgs > 0:
+                        logger.warning(f"   ⚠️ Rejected {rejected_fvgs} invalid FVGs")
+                
+                # Validate Liquidity Zones
+                liq_zones = ict_components.get('liquidity_zones', [])
+                if liq_zones:
+                    valid_lz, rejected_lz = ComponentTimeframeValidator.validate_component_list(
+                        liq_zones, "Liquidity Zone", tf_hierarchy.signal_tf
+                    )
+                    ict_components['liquidity_zones'] = valid_lz
+                    if rejected_lz > 0:
+                        logger.warning(f"   ⚠️ Rejected {rejected_lz} invalid Liquidity Zones")
+                
+                # Validate Liquidity Sweeps
+                sweeps = ict_components.get('liquidity_sweeps', [])
+                if sweeps:
+                    valid_sweeps, rejected_sweeps = ComponentTimeframeValidator.validate_component_list(
+                        sweeps, "Liquidity Sweep", tf_hierarchy.signal_tf, bias_peek
+                    )
+                    ict_components['liquidity_sweeps'] = valid_sweeps
+                    if rejected_sweeps > 0:
+                        logger.warning(f"   ⚠️ Rejected {rejected_sweeps} invalid Liquidity Sweeps")
+                
+                # Cross-TF contamination check
+                contamination_issues = CrossTimeframeContaminationDetector.check_entry_scoring_contamination(
+                    ict_components,
+                    tf_hierarchy.signal_tf,
+                    tf_hierarchy.structure_tf,
+                    tf_hierarchy.htf_bias_tf
+                )
+                
+                CrossTimeframeContaminationDetector.log_contamination_check(
+                    contamination_issues,
+                    tf_hierarchy.signal_tf
+                )
+            
+            logger.info("=" * 80)
+            logger.info("")
+
+        
         # СТЪПКА 6: BIAS DETERMINATION - Market Direction Analysis
         logger.info("🔍 Step 6: Bias Determination")
         
@@ -914,10 +1059,17 @@ class ICTSignalEngine:
         # ✅ FIX: Use PURE structure-only bias (no OB/displacement)
         bias_str, bias_confidence = self._calculate_pure_ict_bias_for_tf(df, symbol, entry_tf)
         bias = MarketBias[bias_str]  # Convert string to enum
+        
+        # Detect structure break and displacement on entry timeframe
         structure_broken = self._check_structure_break(df)
         displacement_detected, displacement_strength = self._check_displacement(df)
         ict_components["displacement"] = {"detected": displacement_detected, "strength": displacement_strength}
         ict_components["structure_break"] = {"type": "MSS" if structure_broken else None}
+        
+        # ✅ STABILIZATION: Log displacement and MSS/BOS detection
+        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+            TimeframeDebugLogger.log_component_source("Displacement", entry_tf, 1 if displacement_detected else 0)
+            TimeframeDebugLogger.log_component_source("MSS/BOS (Structure Break)", entry_tf, 1 if structure_broken else 0)
 
         # Add structure_break and displacement to ict_components for Entry Scenarios
         
@@ -1018,7 +1170,7 @@ class ICTSignalEngine:
             logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7, reason: Price already passed entry zone)")
             context = self._extract_context_data(df, bias)
             # Calculate MTF consensus for detailed breakdown
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
             
             return self._create_no_trade_message(
                 symbol=symbol,
@@ -1038,7 +1190,7 @@ class ICTSignalEngine:
             logger.info(f"❌ BLOCKED at Step 7: Entry zone too far from current price")
             logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7, reason: Entry distance exceeds 7% universal maximum)")
             context = self._extract_context_data(df, bias)
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
             
             return self._create_no_trade_message(
                 symbol=symbol,
@@ -1061,7 +1213,7 @@ class ICTSignalEngine:
                 logger.info(f"   → AUTO signals require valid ICT entry zones (no fallback)")
                 logger.error(f"❌ No ICT zone in optimal range - AUTO signal BLOCKED")
                 context = self._extract_context_data(df, bias)
-                mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+                mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
                 
                 return self._create_no_trade_message(
                     symbol=symbol,
@@ -1156,7 +1308,7 @@ class ICTSignalEngine:
             logger.info(f"   → All signals require scored entry scenarios (no fallback)")
             logger.error(f"❌ No valid scenario scored above minimum - Signal BLOCKED (no valid scenario)")
             context = self._extract_context_data(df, bias)
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
             
             return self._create_no_trade_message(
                 symbol=symbol,
@@ -1216,7 +1368,7 @@ class ICTSignalEngine:
             logger.info(f"   → AUTO signals require valid invalidation anchors (no fallback SL)")
             logger.error(f"❌ No invalidation anchor available - AUTO signal BLOCKED")
             context = self._extract_context_data(df, bias)
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
             
             return self._create_no_trade_message(
                 symbol=symbol,
@@ -1589,7 +1741,9 @@ class ICTSignalEngine:
         
         # 12a: MTF CONSENSUS CHECK (STRICT ICT)
         logger.info("   📊 MTF Consensus Validation")
-        mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+        mtf_consensus_data = self._calculate_mtf_consensus(
+            symbol, entry_tf, bias, mtf_data, tf_hierarchy  # ✅ STABILIZATION: Pass TF hierarchy
+        )
         
         logger.info(f"   → MTF Consensus: {mtf_consensus_data['consensus_pct']:.1f}%")
         logger.info(f"   → Aligned TFs: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}")
@@ -2205,7 +2359,13 @@ class ICTSignalEngine:
         
         # Sanity check 2: Minimum distance
         distance_pct = abs(anchor_price - entry_price) / entry_price
-        min_distance = TIMEFRAME_MIN_SL_DISTANCE.get(timeframe, 0.005)
+        # Use contract-based minimum SL distance
+        if TIMEFRAME_CONTRACT_AVAILABLE:
+            min_distance = TimeframeContract.get_min_sl_distance(timeframe)
+            logger.debug(f"📏 Using contract MIN_SL_DISTANCE {min_distance:.3%} for {timeframe}")
+        else:
+            min_distance = 0.005  # Safe fallback
+            logger.warning(f"⚠️ Contract unavailable, using fallback MIN_SL_DISTANCE {min_distance:.3%}")
         
         if distance_pct < min_distance:
             logger.warning(f"⚠️ Anchor too close ({distance_pct*100:.2f}% < {min_distance*100:.1f}%)")
@@ -2228,7 +2388,14 @@ class ICTSignalEngine:
             atr_value = entry_price * ATR_FALLBACK_PCT
         
         atr_buffer = atr_value * 0.25
-        pct_buffer = entry_price * TIMEFRAME_BUFFER_PCT.get(timeframe, 0.002)
+        # Use contract-based buffer percentage
+        if TIMEFRAME_CONTRACT_AVAILABLE:
+            buffer_pct = TimeframeContract.get_sl_buffer_pct(timeframe)
+            pct_buffer = entry_price * buffer_pct
+            logger.debug(f"📏 Using contract SL buffer {buffer_pct:.4%} for {timeframe}")
+        else:
+            pct_buffer = entry_price * 0.002  # Safe fallback
+            logger.warning(f"⚠️ Contract unavailable, using fallback SL buffer 0.2%")
         buffer = max(atr_buffer, pct_buffer)
         
         # Apply buffer
@@ -2247,16 +2414,20 @@ class ICTSignalEngine:
         self,
         df: pd.DataFrame,
         timeframe: str,
-        liquidity_zones: Optional[List[Dict]] = None
+        liquidity_zones: Optional[List[Dict]] = None,
+        tf_hierarchy: Optional['TimeframeHierarchy'] = None  # ✅ STABILIZATION: Pass TF hierarchy
     ) -> Dict[str, List]:
         """
         Detect all ICT components with optional pre-calculated liquidity zones.
+        
+        ✅ STABILIZATION PR: Now validates components come from correct timeframe
         
         Args:
             df: DataFrame with candle data
             timeframe: Timeframe string (e.g., '15m')
             liquidity_zones: (OPTIONAL) Pre-calculated liquidity zones from Step 3.
                              If None, calculates internally (backward compatible).
+            tf_hierarchy: (OPTIONAL) TimeframeHierarchy object for validation
         
         Returns dict with:
         - whale_blocks
@@ -2273,12 +2444,28 @@ class ICTSignalEngine:
             'internal_liquidity': []
         }
         
+        # ✅ STABILIZATION: Log component detection timeframe
+        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+            logger.info("=" * 70)
+            logger.info(f"🔍 COMPONENT DETECTION - Timeframe: {timeframe}")
+            logger.info(f"   Expected Signal TF: {tf_hierarchy.signal_tf}")
+            logger.info("=" * 70)
+        
         # Detect Order Blocks
         if self.config['use_order_blocks'] and self.ob_detector:
             try:
                 order_blocks = self.ob_detector.detect_order_blocks(df, timeframe)
                 components['order_blocks'] = order_blocks
-                logger.info(f"Detected {len(order_blocks)} order blocks")
+                logger.info(f"Detected {len(order_blocks)} order blocks on {timeframe}")
+                
+                # ✅ STABILIZATION: Validate timeframe if hierarchy provided
+                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+                    TimeframeDebugLogger.log_component_source("Order Blocks", timeframe, len(order_blocks))
+                    if timeframe.lower() != tf_hierarchy.signal_tf.lower():
+                        TimeframeDebugLogger.log_component_validation_error(
+                            "Order Blocks", timeframe, tf_hierarchy.signal_tf,
+                            "Components detected on wrong timeframe for entry signal"
+                        )
             except Exception as e:
                 logger.error(f"Order block detection error: {e}")
         
@@ -2287,7 +2474,11 @@ class ICTSignalEngine:
             try:
                 fvgs = self.fvg_detector.detect_fvgs(df, timeframe)
                 components['fvgs'] = fvgs
-                logger.info(f"Detected {len(fvgs)} FVGs")
+                logger.info(f"Detected {len(fvgs)} FVGs on {timeframe}")
+                
+                # ✅ STABILIZATION: Log component source
+                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+                    TimeframeDebugLogger.log_component_source("FVGs", timeframe, len(fvgs))
             except Exception as e:
                 logger.error(f"FVG detection error: {e}")
         
@@ -2296,7 +2487,11 @@ class ICTSignalEngine:
             try:
                 whale_blocks = self.whale_detector.detect_whale_blocks(df, timeframe)
                 components['whale_blocks'] = whale_blocks
-                logger.info(f"Detected {len(whale_blocks)} whale blocks")
+                logger.info(f"Detected {len(whale_blocks)} whale blocks on {timeframe}")
+                
+                # ✅ STABILIZATION: Log component source
+                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+                    TimeframeDebugLogger.log_component_source("Whale Blocks", timeframe, len(whale_blocks))
             except Exception as e:
                 logger.error(f"Whale detection error: {e}")
         
@@ -2317,12 +2512,20 @@ class ICTSignalEngine:
         # Step 2: Store liquidity zones in components
         components['liquidity_zones'] = liquidity_zones
         
+        # ✅ STABILIZATION: Log liquidity zones source
+        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+            TimeframeDebugLogger.log_component_source("Liquidity Zones", timeframe, len(liquidity_zones))
+        
         # Step 3: Calculate liquidity sweeps (ONCE) if zones exist
         if liquidity_zones and self.config.get('use_liquidity') and self.liquidity_mapper:
             try:
                 sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df, liquidity_zones)
                 components['liquidity_sweeps'] = sweeps
-                logger.info(f"Detected {len(sweeps)} liquidity sweeps")
+                logger.info(f"Detected {len(sweeps)} liquidity sweeps on {timeframe}")
+                
+                # ✅ STABILIZATION: Log liquidity sweeps source
+                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+                    TimeframeDebugLogger.log_component_source("Liquidity Sweeps (BSL/SSL)", timeframe, len(sweeps))
             except Exception as e:
                 logger.error(f"Sweep detection error: {e}")
                 components['liquidity_sweeps'] = []
@@ -2334,7 +2537,11 @@ class ICTSignalEngine:
             try:
                 ilp_analysis = self.ilp_detector.analyze(df)
                 components['internal_liquidity'] = ilp_analysis.get('pools', [])
-                logger.info(f"Detected {len(components['internal_liquidity'])} ILPs")
+                logger.info(f"Detected {len(components['internal_liquidity'])} ILPs on {timeframe}")
+                
+                # ✅ STABILIZATION: Log ILP source
+                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+                    TimeframeDebugLogger.log_component_source("Internal Liquidity Pools", timeframe, len(components['internal_liquidity']))
                 
                 # Add ILP sweeps to liquidity_sweeps (quality filter)
                 ilp_swept_pools = ilp_analysis.get('swept_pools', [])
@@ -2372,7 +2579,11 @@ class ICTSignalEngine:
                     components['order_blocks']
                 )
                 components['breaker_blocks'] = breaker_blocks
-                logger.info(f"Detected {len(breaker_blocks)} breaker blocks")
+                logger.info(f"Detected {len(breaker_blocks)} breaker blocks on {timeframe}")
+                
+                # ✅ STABILIZATION: Log breaker blocks source
+                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+                    TimeframeDebugLogger.log_component_source("Breaker Blocks", timeframe, len(breaker_blocks))
             except Exception as e:
                 logger.error(f"Breaker block detection error: {e}")
                 components['breaker_blocks'] = []
@@ -2387,7 +2598,11 @@ class ICTSignalEngine:
                     components.get('order_blocks', [])
                 )
                 components['mitigation_blocks'] = mitigation_blocks
-                logger.info(f"Detected {len(mitigation_blocks)} mitigation blocks")
+                logger.info(f"Detected {len(mitigation_blocks)} mitigation blocks on {timeframe}")
+                
+                # ✅ STABILIZATION: Log mitigation blocks source
+                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+                    TimeframeDebugLogger.log_component_source("Mitigation Blocks", timeframe, len(mitigation_blocks))
             except Exception as e:
                 logger.error(f"Mitigation block detection error: {e}")
                 components['mitigation_blocks'] = []
@@ -2769,28 +2984,48 @@ class ICTSignalEngine:
         symbol: str,
         primary_timeframe: str,
         target_bias: MarketBias,
-        mtf_data: Optional[Dict[str, pd.DataFrame]] = None
+        mtf_data: Optional[Dict[str, pd.DataFrame]] = None,
+        tf_hierarchy: Optional['TimeframeHierarchy'] = None  # ✅ STABILIZATION: Use TF contract
     ) -> Dict:
         """
         ✅ IMPROVED MTF Consensus:
         1. RANGING/NEUTRAL = ignored (not counted as conflicting)
-        2. Dynamic TF selection based on entry TF
+        2. Dynamic TF selection based on TF hierarchy contract
         3. Correct formula: aligned / (bullish + bearish) * 100
+        
+        ✅ STABILIZATION PR: Now uses centralized timeframe contract
         """
         
-        # Dynamic MTF hierarchy based on entry timeframe
-        MTF_HIERARCHY = {
-            '5m':  ['5m', '15m', '30m', '1h'],
-            '15m': ['15m', '30m', '1h', '4h'],
-            '30m': ['30m', '1h', '2h', '4h'],
-            '1h':  ['1h', '2h', '4h', '1d'],
-            '2h':  ['2h', '4h', '1d'],
-            '4h':  ['4h', '1d'],
-            '1d':  ['1d', '1w']
-        }
+        # ✅ STABILIZATION PR: MANDATORY use of TF contract (no legacy fallback)
+        if not (tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE):
+            error_msg = (
+                f"❌ CRITICAL: Timeframe contract required but not available. "
+                f"Cannot calculate MTF consensus for {primary_timeframe}. "
+                f"Contract available: {TIMEFRAME_CONTRACT_AVAILABLE}, "
+                f"TF hierarchy: {tf_hierarchy is not None}"
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         
-        # Get relevant timeframes for this entry TF
-        relevant_tfs = MTF_HIERARCHY.get(primary_timeframe, ['1h', '4h', '1d'])
+        # Use timeframes from the hierarchy contract
+        relevant_tfs = [
+            tf_hierarchy.signal_tf,
+            tf_hierarchy.confirmation_tf,
+            tf_hierarchy.structure_tf,
+            tf_hierarchy.htf_bias_tf
+        ]
+        # Remove duplicates while preserving order
+        unique_tfs = []
+        for tf in relevant_tfs:
+            if tf not in unique_tfs:
+                unique_tfs.append(tf)
+        relevant_tfs = unique_tfs
+        
+        logger.info(f"📊 MTF Consensus using TF Contract: {relevant_tfs}")
+        logger.info(f"   Signal TF: {tf_hierarchy.signal_tf}")
+        logger.info(f"   Confirmation TF: {tf_hierarchy.confirmation_tf}")
+        logger.info(f"   Structure TF: {tf_hierarchy.structure_tf}")
+        logger.info(f"   HTF Bias TF: {tf_hierarchy.htf_bias_tf}")
         
         # ✅ NORMALIZE target_bias to MarketBias enum
         if isinstance(target_bias, str):
@@ -2888,6 +3123,21 @@ class ICTSignalEngine:
             'bullish_votes': bullish_votes,
             'bearish_votes': bearish_votes
         }
+
+    def _calculate_bias(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Tuple[str, float]:
+        """
+        API compatibility method for regression suite.
+        Wraps _calculate_pure_ict_bias_for_tf() for backward compatibility.
+        
+        Args:
+            df: DataFrame with OHLCV data
+            symbol: Trading symbol
+            timeframe: Timeframe string
+        
+        Returns:
+            Tuple of (bias_direction, bias_score)
+        """
+        return self._calculate_pure_ict_bias_for_tf(df, symbol, timeframe)
 
     def _calculate_pure_ict_bias_for_tf(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Tuple[str, float]:
         """
@@ -3808,19 +4058,32 @@ class ICTSignalEngine:
         timeframe = entry_setup.get('timeframe', '1h')
         
         # ✅ TIMEFRAME-BASED minimum SL distance (NOT fixed 3%!)
-        MIN_SL_DISTANCE = {
-            '15m': 0.005,   # 0.5%
-            '30m': 0.0075,  # 0.75%
-            '1h': 0.010,    # 1.0%
-            '2h': 0.0125,   # 1.25%
-            '4h': 0.020,    # 2.0%
-            '1d': 0.030     # 3.0%
-        }
-        min_sl_pct = MIN_SL_DISTANCE.get(timeframe, 0.015)
+        # ✅ STABILIZATION PR: Use TF contract for MIN_SL_DISTANCE
+        if TIMEFRAME_CONTRACT_AVAILABLE:
+            min_sl_pct = TimeframeContract.get_min_sl_distance(timeframe)
+            logger.info(f"📏 Using MIN_SL_DISTANCE {min_sl_pct:.2%} for {timeframe} (from contract)")
+        else:
+            # Fallback to hardcoded (should not happen)
+            MIN_SL_DISTANCE = {
+                '15m': 0.005,   # 0.5%
+                '30m': 0.0075,  # 0.75%
+                '1h': 0.010,    # 1.0%
+                '2h': 0.0125,   # 1.25%
+                '4h': 0.020,    # 2.0%
+                '1d': 0.030     # 3.0%
+            }
+            min_sl_pct = MIN_SL_DISTANCE.get(timeframe, 0.015)
+            logger.warning(f"⚠️ Using fallback MIN_SL_DISTANCE {min_sl_pct:.2%} for {timeframe}")
         
-        # ✅ ICT Buffer (small, structure-based - NOT 1.5 ATR!)
+        # ✅ STABILIZATION PR: Use TF contract for SL buffer
         atr = df['atr'].iloc[-1]
-        buffer_pct = 0.002 if timeframe in ['15m', '30m', '1h'] else 0.003
+        if TIMEFRAME_CONTRACT_AVAILABLE:
+            buffer_pct = TimeframeContract.get_sl_buffer_pct(timeframe)
+            logger.info(f"📏 Using SL buffer {buffer_pct:.3%} for {timeframe} (from contract)")
+        else:
+            buffer_pct = 0.002  # Fallback
+            logger.warning(f"⚠️ Using fallback SL buffer {buffer_pct:.3%}")
+        
         buffer = max(atr * 0.25, entry_price * buffer_pct)
         
         sl_price = None

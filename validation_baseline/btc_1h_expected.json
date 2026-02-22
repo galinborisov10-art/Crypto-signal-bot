@@ -1,0 +1,14 @@
+{
+  "scenario": "CONTINUATION",
+  "bias": "BULLISH",
+  "components": {
+    "order_blocks": 3,
+    "fvgs": 2,
+    "liquidity_zones": 1
+  },
+  "score": 85,
+  "entry_price": 42500.00,
+  "sl_price": 41800.00,
+  "tp_prices": [43200.00, 44000.00, 45000.00],
+  "description": "Expected: Bullish continuation with strong components and high score"
+}

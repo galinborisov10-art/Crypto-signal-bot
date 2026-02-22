@@ -102,6 +102,11 @@ class LiquidityMapper:
                 times = [df.index[i] for i in cluster['indices']]
                 volumes = [df['volume'].iloc[i] for i in cluster['indices']]
                 
+                # Validate cluster price is not None or 0
+                if cluster.get('price') is None or cluster.get('price') == 0:
+                    logger.warning(f"Skipping BSL zone with invalid price: {cluster.get('price')}")
+                    continue
+                
                 zone = LiquidityZone(
                     price_level=cluster['price'],
                     zone_type='BSL',
@@ -127,6 +132,11 @@ class LiquidityMapper:
             if len(cluster['indices']) >= self.config['touch_threshold']:
                 times = [df.index[i] for i in cluster['indices']]
                 volumes = [df['volume'].iloc[i] for i in cluster['indices']]
+                
+                # Validate cluster price is not None or 0
+                if cluster.get('price') is None or cluster.get('price') == 0:
+                    logger.warning(f"Skipping SSL zone with invalid price: {cluster.get('price')}")
+                    continue
                 
                 zone = LiquidityZone(
                     price_level=cluster['price'],
@@ -170,16 +180,27 @@ class LiquidityMapper:
             if i in used:
                 continue
             
+            # Skip if price1 is None or invalid
+            if price1 is None or np.isnan(price1) or price1 == 0:
+                used.add(i)
+                continue
+            
             cluster = {'price': price1, 'indices': [idx1], 'prices': [price1]}
             used.add(i)
             
             for j, (idx2, price2) in enumerate(swing_points[i+1:], i+1):
-                if j not in used and abs(price1 - price2) <= tolerance:
+                if j not in used and price2 is not None and not np.isnan(price2) and price2 != 0 and abs(price1 - price2) <= tolerance:
                     cluster['indices'].append(idx2)
                     cluster['prices'].append(price2)
                     used.add(j)
             
-            cluster['price'] = np.mean(cluster['prices'])
+            # Calculate mean price and validate
+            mean_price = np.mean(cluster['prices'])
+            if mean_price is None or np.isnan(mean_price) or mean_price == 0:
+                logger.warning(f"Skipping cluster with invalid mean price: {mean_price}")
+                continue
+            
+            cluster['price'] = mean_price
             clusters.append(cluster)
         
         return clusters
@@ -197,8 +218,19 @@ class LiquidityMapper:
             score += min(zone.volume_at_level / (volume_mean * zone.touches * 2), 0.3)
             score += zone.strength * 0.2
             
-            days_ago = (df.index[-1] - zone.last_touch).days
-            score += max(0, 0.1 - (days_ago / 30) * 0.1)
+            # Handle both datetime and timestamp for last_touch
+            try:
+                if isinstance(zone.last_touch, (int, float)):
+                    # If it's a timestamp, convert to datetime
+                    last_touch_dt = pd.to_datetime(zone.last_touch, unit='s')
+                else:
+                    last_touch_dt = zone.last_touch
+                
+                days_ago = (df.index[-1] - last_touch_dt).days
+                score += max(0, 0.1 - (days_ago / 30) * 0.1)
+            except (TypeError, AttributeError) as e:
+                logger.warning(f"Could not calculate days_ago for zone: {e}")
+                # If calculation fails, just skip the time-based score component
             
             zone.confidence = min(score, 1.0)
         
@@ -299,6 +331,26 @@ class LiquidityMapper:
                 break
         
         return count
+    
+    def detect_liquidity(self, df: pd.DataFrame, symbol: Optional[str] = None, timeframe: str = '1H') -> List[LiquidityZone]:
+        """
+        API compatibility method for regression suite.
+        Detects liquidity zones - wrapper around detect_liquidity_zones().
+        
+        Args:
+            df: DataFrame with OHLC data
+            symbol: Trading symbol (optional, for compatibility)
+            timeframe: Timeframe string
+            
+        Returns:
+            List of LiquidityZone objects
+        """
+        return self.detect_liquidity_zones(df, timeframe=timeframe)
+
+
+# API compatibility alias for regression suite
+# LiquidityMap is an alias for LiquidityMapper to maintain backward compatibility
+LiquidityMap = LiquidityMapper
 
 
 if __name__ == "__main__":

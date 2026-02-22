@@ -24,8 +24,7 @@ import os
 import logging
 import fcntl
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Get logger (configuration in bot.py)
 logger = logging.getLogger(__name__)
 
 # ============================================================================

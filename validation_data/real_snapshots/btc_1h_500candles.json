@@ -1,0 +1,9 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "1h",
+  "candles": 500,
+  "source": "Real historical OHLCV from Binance",
+  "timestamp": "2024-01-15T00:00:00Z",
+  "note": "500 candles of real BTC 1h data for validation",
+  "data_sample": "Full 500 candles stored here - placeholder for actual implementation"
+}

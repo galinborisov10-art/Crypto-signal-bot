@@ -1,0 +1,58 @@
+name: ICT Logic Validation (Real Baseline)
+
+on:
+  pull_request:
+    branches:
+      - main
+      - copilot/stabilization-tf-components
+  push:
+    branches:
+      - copilot/stabilization-tf-components
+  workflow_dispatch:
+
+jobs:
+  validate-ict-logic:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      
+      - name: Create virtual environment
+        run: |
+          python -m venv venv_ict_validation
+          echo "VIRTUAL_ENV=venv_ict_validation" >> $GITHUB_ENV
+          echo "PATH=$PWD/venv_ict_validation/bin:$PATH" >> $GITHUB_ENV
+      
+      - name: Install dependencies
+        run: |
+          source venv_ict_validation/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run Real Baseline Validation
+        run: |
+          source venv_ict_validation/bin/activate
+          python3 validate_against_real_baseline.py
+      
+      - name: Report Results
+        if: always()
+        run: |
+          if [ $? -eq 0 ]; then
+            echo "✅ ICT Logic Validation: PASS"
+            echo "   All test cases matched frozen baselines"
+            echo "   No ICT logic regression detected"
+          else
+            echo "❌ ICT Logic Validation: FAIL"
+            echo "   ICT logic regression detected"
+            echo "   Engine output does not match frozen baseline"
+            echo ""
+            echo "If this change is intentional, regenerate baselines:"
+            echo "  python3 generate_baseline_from_engine.py --regenerate-baseline"
+            exit 1
+          fi

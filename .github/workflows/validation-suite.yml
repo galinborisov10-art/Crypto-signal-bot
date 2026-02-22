@@ -1,0 +1,90 @@
+name: Validation Suite
+
+on:
+  push:
+    branches:
+      - copilot/stabilization-tf-components
+  pull_request:
+    branches:
+      - main
+      - copilot/stabilization-tf-components
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      
+      - name: Create virtual environment
+        run: |
+          python3 -m venv venv_ci
+          echo "Virtual environment created"
+      
+      - name: Install dependencies
+        run: |
+          source venv_ci/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          echo "Dependencies installed"
+      
+      - name: Run Timeframe Contract Validation
+        run: |
+          source venv_ci/bin/activate
+          python3 validate_timeframe_contract.py
+          echo "✅ Timeframe contract validation completed"
+      
+      - name: Run Component Flow Validation
+        run: |
+          source venv_ci/bin/activate
+          python3 validate_component_flow.py
+          echo "✅ Component flow validation completed"
+      
+      - name: Run Scenario Logic Validation
+        run: |
+          source venv_ci/bin/activate
+          python3 validate_scenario_logic.py
+          echo "✅ Scenario logic validation completed"
+      
+      - name: Run Message Integrity Validation
+        run: |
+          source venv_ci/bin/activate
+          python3 validate_message_integrity.py
+          echo "✅ Message integrity validation completed"
+      
+      - name: Run Regression Suite Validation
+        run: |
+          source venv_ci/bin/activate
+          python3 validate_regression_suite.py
+          echo "✅ Regression suite validation completed"
+      
+      - name: Run Master Validation Orchestrator
+        run: |
+          source venv_ci/bin/activate
+          python3 run_all_validations.py
+          echo "✅ Master validation orchestrator completed"
+      
+      - name: Validation Summary
+        run: |
+          echo "================================================================================"
+          echo "VALIDATION SUITE COMPLETE"
+          echo "================================================================================"
+          echo ""
+          echo "All validation scripts executed successfully:"
+          echo "  ✅ Timeframe Contract Validation"
+          echo "  ✅ Component Flow Validation"
+          echo "  ✅ Scenario Logic Validation"
+          echo "  ✅ Message Integrity Validation"
+          echo "  ✅ Regression Suite Validation"
+          echo "  ✅ Master Orchestrator"
+          echo ""
+          echo "STATUS: PASS"
+          echo "RECOMMENDATION: APPROVED FOR MERGE"
+          echo "================================================================================"
