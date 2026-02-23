@@ -39,7 +39,6 @@ class ComponentTimeframeValidator:
     Validates ICT components for timeframe integrity
     Prevents cross-timeframe contamination
     """
-    
     @staticmethod
     def validate_order_block(
         ob: Any,
@@ -47,62 +46,67 @@ class ComponentTimeframeValidator:
         expected_bias: str
     ) -> ValidationResult:
         """
-        Validate Order Block component
-        
+        Validate Order Block component (DATA-ONLY)
+
         Checks:
-        - Timeframe matches expected
-        - Type matches bias (bullish OB for bullish bias)
-        - Non-zero zone values
-        - Correct high/low ordering (zone_high > zone_low)
+        - Timeframe matches expected (case-insensitive)
+        - Bounds exist (schema-safe: zone_low/zone_high OR bottom/top)
+        - Non-zero values
+        - Correct high/low ordering (high > low)
+
+        NOTE:
+        - Bias-based filtering was REMOVED intentionally.
+          Bias alignment should be handled in scoring/scenario selection, not in validation.
         """
         errors = []
         warnings = []
-        
-        # Extract OB data (handle both dict and object)
-        if hasattr(ob, '__dict__'):
-            ob_type = getattr(ob, 'type', None)
-            zone_low = getattr(ob, 'zone_low', None)
-            zone_high = getattr(ob, 'zone_high', None)
-            timeframe = getattr(ob, 'timeframe', None)
-        else:
-            ob_type = ob.get('type', None)
-            zone_low = ob.get('zone_low', None)
-            zone_high = ob.get('zone_high', None)
-            timeframe = ob.get('timeframe', None)
-        
-        # Validate timeframe
-        if timeframe != expected_tf:
+
+        def _norm_tf(x):
+            return str(x).strip().lower() if x is not None else None
+
+        def _get(obj, name, default=None):
+            if isinstance(obj, dict):
+                return obj.get(name, default)
+            return getattr(obj, name, default)
+
+        ob_type = _get(ob, 'type', None)
+
+        # Schema-safe bounds:
+        zone_low = _get(ob, 'zone_low', None)
+        zone_high = _get(ob, 'zone_high', None)
+        if zone_low is None:
+            zone_low = _get(ob, 'bottom', None)
+        if zone_high is None:
+            zone_high = _get(ob, 'top', None)
+
+        timeframe = _get(ob, 'timeframe', None)
+
+        # Validate timeframe (case-insensitive)
+        if _norm_tf(timeframe) != _norm_tf(expected_tf):
             errors.append(f"TF mismatch: expected {expected_tf}, got {timeframe}")
-        
-        # Validate type matches bias
-        if expected_bias.upper() == "BULLISH":
-            # Convert enum to string if needed
-            ob_type_str = str(ob_type.value) if hasattr(ob_type, 'value') else str(ob_type) if ob_type else ""
-            if ob_type_str and "BEARISH" in ob_type_str.upper():
-                errors.append(f"Bearish OB in bullish bias: {ob_type}")
-        elif expected_bias.upper() == "BEARISH":
-            # Convert enum to string if needed
-            ob_type_str = str(ob_type.value) if hasattr(ob_type, 'value') else str(ob_type) if ob_type else ""
-            if ob_type_str and "BULLISH" in ob_type_str.upper():
-                errors.append(f"Bullish OB in bearish bias: {ob_type}")
-        
+
         # Validate non-zero values
         if zone_low is None or zone_low == 0:
-            errors.append(f"Invalid zone_low: {zone_low}")
+            errors.append(f"Invalid zone_low/bottom: {zone_low}")
         if zone_high is None or zone_high == 0:
-            errors.append(f"Invalid zone_high: {zone_high}")
-        
+            errors.append(f"Invalid zone_high/top: {zone_high}")
+
         # Validate correct ordering
-        if zone_low and zone_high and zone_high <= zone_low:
-            errors.append(f"Invalid ordering: zone_high ({zone_high}) <= zone_low ({zone_low})")
-        
+        try:
+            if zone_low is not None and zone_high is not None and float(zone_high) <= float(zone_low):
+                errors.append(f"Invalid ordering: high ({zone_high}) <= low ({zone_low})")
+        except Exception as e:
+            errors.append(f"Ordering check failed: {e}")
+
+        if ob_type is None:
+            warnings.append("Missing OB type")
+
         return ValidationResult(
             is_valid=len(errors) == 0,
             component_type="Order Block",
             errors=errors,
             warnings=warnings
         )
-    
     @staticmethod
     def validate_fvg(
         fvg: Any,
@@ -110,94 +114,125 @@ class ComponentTimeframeValidator:
         expected_bias: str
     ) -> ValidationResult:
         """
-        Validate FVG (Fair Value Gap) component
-        
+        Validate FVG (Fair Value Gap) component (DATA-ONLY)
+
         Checks:
-        - Timeframe matches expected
-        - is_bullish matches bias
+        - Timeframe matches expected (case-insensitive)
         - Non-zero values
         - Correct top/bottom ordering (top > bottom)
+
+        NOTE:
+        - Bias-based filtering was REMOVED intentionally.
+          Bias alignment belongs to scoring/scenario selection, not validation.
         """
         errors = []
         warnings = []
-        
-        # Extract FVG data
-        if hasattr(fvg, '__dict__'):
-            is_bullish = getattr(fvg, 'is_bullish', None)
-            bottom = getattr(fvg, 'bottom', None)
-            top = getattr(fvg, 'top', None)
-            timeframe = getattr(fvg, 'timeframe', None)
-        else:
-            is_bullish = fvg.get('is_bullish', None)
-            bottom = fvg.get('bottom', None)
-            top = fvg.get('top', None)
-            timeframe = fvg.get('timeframe', None)
-        
-        # Validate timeframe
-        if timeframe != expected_tf:
+
+        def _norm_tf(x):
+            return str(x).strip().lower() if x is not None else None
+
+        def _get(obj, name, default=None):
+            if isinstance(obj, dict):
+                return obj.get(name, default)
+            return getattr(obj, name, default)
+
+        is_bullish = _get(fvg, 'is_bullish', None)
+        bottom = _get(fvg, 'bottom', None)
+        top = _get(fvg, 'top', None)
+        timeframe = _get(fvg, 'timeframe', None)
+
+        # Validate timeframe (case-insensitive)
+        if _norm_tf(timeframe) != _norm_tf(expected_tf):
             errors.append(f"TF mismatch: expected {expected_tf}, got {timeframe}")
-        
-        # Validate type matches bias
-        if expected_bias.upper() == "BULLISH" and is_bullish == False:
-            errors.append(f"Bearish FVG in bullish bias")
-        elif expected_bias.upper() == "BEARISH" and is_bullish == True:
-            errors.append(f"Bullish FVG in bearish bias")
-        
+
         # Validate non-zero values
         if bottom is None or bottom == 0:
             errors.append(f"Invalid bottom: {bottom}")
         if top is None or top == 0:
             errors.append(f"Invalid top: {top}")
-        
+
         # Validate correct ordering
-        if bottom and top and top <= bottom:
-            errors.append(f"Invalid ordering: top ({top}) <= bottom ({bottom})")
-        
+        try:
+            if bottom is not None and top is not None and float(top) <= float(bottom):
+                errors.append(f"Invalid ordering: top ({top}) <= bottom ({bottom})")
+        except Exception as e:
+            errors.append(f"Ordering check failed: {e}")
+
+        # Optional warnings (do not reject)
+        if is_bullish is None:
+            warnings.append("Missing is_bullish")
+
         return ValidationResult(
             is_valid=len(errors) == 0,
             component_type="FVG",
             errors=errors,
             warnings=warnings
         )
-    
     @staticmethod
     def validate_liquidity_zone(
-        lz: Any,
-        expected_tf: str
+        zone: Any,
+        expected_tf: str,
+        expected_bias: str
     ) -> ValidationResult:
         """
-        Validate Liquidity Zone component
-        
+        Validate Liquidity Zone component (DATA-ONLY)
+
         Checks:
-        - Non-zero price
-        - Valid type (BSL/SSL)
+        - Timeframe matches expected (case-insensitive)
+        - Price/level exists (supports LiquidityZone.price_level schema)
+        - Strength numeric if present
+        - zone_type exists (BSL/SSL/etc.) if present
+
+        NOTE:
+        - Bias-based filtering is intentionally not enforced here.
         """
         errors = []
         warnings = []
-        
-        # Extract data
-        if hasattr(lz, '__dict__'):
-            price = getattr(lz, 'price', None)
-            lz_type = getattr(lz, 'type', None)
-        else:
-            price = lz.get('price', None)
-            lz_type = lz.get('type', None)
-        
-        # Validate non-zero price
+
+        def _norm_tf(x):
+            return str(x).strip().lower() if x is not None else None
+
+        def _get(obj, name, default=None):
+            if isinstance(obj, dict):
+                return obj.get(name, default)
+            return getattr(obj, name, default)
+
+        timeframe = _get(zone, 'timeframe', None) or _get(zone, 'tf', None)
+        zone_type = _get(zone, 'zone_type', None) or _get(zone, 'type', None)
+
+        # IMPORTANT: LiquidityZone uses price_level
+        price = _get(zone, 'price_level', None)
+        if price is None:
+            price = _get(zone, 'price', None)
+        if price is None:
+            price = _get(zone, 'level', None)
+
+        strength = _get(zone, 'strength', None)
+
+        # TF validation
+        if _norm_tf(timeframe) != _norm_tf(expected_tf):
+            errors.append(f"TF mismatch: expected {expected_tf}, got {timeframe}")
+
+        # Price validation
         if price is None or price == 0:
             errors.append(f"Invalid price: {price}")
-        
-        # Validate type
-        if lz_type and lz_type not in ['BSL', 'SSL', 'EQL', 'EQH']:
-            warnings.append(f"Unexpected liquidity type: {lz_type}")
-        
+
+        # Strength numeric if present
+        if strength is not None:
+            try:
+                float(strength)
+            except Exception:
+                errors.append(f"Invalid strength: {strength}")
+
+        if not zone_type:
+            warnings.append("Missing zone_type")
+
         return ValidationResult(
             is_valid=len(errors) == 0,
             component_type="Liquidity Zone",
             errors=errors,
             warnings=warnings
         )
-    
     @staticmethod
     def validate_liquidity_sweep(
         sweep: Any,
@@ -205,48 +240,58 @@ class ComponentTimeframeValidator:
         expected_bias: str
     ) -> ValidationResult:
         """
-        Validate Liquidity Sweep component
-        
+        Validate Liquidity Sweep component (DATA-ONLY)
+
         Checks:
-        - Sweep type matches bias direction
-        - Non-zero price
-        - Valid sweep type
+        - Timestamp, price required
+        - sweep_type recommended
+        - Strength numeric if present
+        - Timeframe check is OPTIONAL (LiquiditySweep does not carry timeframe in this codebase)
+          If timeframe missing -> warning (do not reject)
+
+        NOTE:
+        - Bias-based filtering was REMOVED intentionally.
+          Bias alignment belongs to scoring/scenario selection, not validation.
         """
         errors = []
         warnings = []
-        
-        # Extract data
-        if hasattr(sweep, '__dict__'):
-            sweep_type = getattr(sweep, 'sweep_type', None)
-            price = getattr(sweep, 'price', None)
-        else:
-            sweep_type = sweep.get('sweep_type', None)
-            price = sweep.get('price', None)
-        
-        # Validate non-zero price
+
+        def _get(obj, name, default=None):
+            if isinstance(obj, dict):
+                return obj.get(name, default)
+            return getattr(obj, name, default)
+
+        timestamp = _get(sweep, 'timestamp', None)
+        price = _get(sweep, 'price', None)
+        sweep_type = _get(sweep, 'sweep_type', None) or _get(sweep, 'type', None) or _get(sweep, 'zone_type', None)
+        strength = _get(sweep, 'strength', None)
+
+        # OPTIONAL timeframe presence (accept both 'timeframe' / 'tf' if ever added later)
+        timeframe = _get(sweep, 'timeframe', None) or _get(sweep, 'tf', None)
+        if timeframe is None:
+            warnings.append("Missing timeframe on sweep (optional)")
+
+        # Required fields
+        if timestamp is None:
+            errors.append("Missing timestamp")
         if price is None or price == 0:
             errors.append(f"Invalid price: {price}")
-        
-        # Validate sweep type
-        if sweep_type:
-            # Convert to string if needed
-            sweep_type_str = str(sweep_type) if sweep_type else ""
-            if expected_bias.upper() == "BULLISH":
-                # Bullish bias should sweep SSL (sell-side liquidity)
-                if "BSL" in sweep_type_str.upper():
-                    warnings.append(f"BSL sweep in bullish bias (unusual but possible)")
-            elif expected_bias.upper() == "BEARISH":
-                # Bearish bias should sweep BSL (buy-side liquidity)
-                if "SSL" in sweep_type_str.upper():
-                    warnings.append(f"SSL sweep in bearish bias (unusual but possible)")
-        
+        if not sweep_type:
+            warnings.append("Missing sweep_type")
+
+        # Strength numeric if present
+        if strength is not None:
+            try:
+                float(strength)
+            except Exception:
+                errors.append(f"Invalid strength: {strength}")
+
         return ValidationResult(
             is_valid=len(errors) == 0,
             component_type="Liquidity Sweep",
             errors=errors,
             warnings=warnings
         )
-    
     @staticmethod
     def validate_displacement(
         displacement: Dict,
@@ -343,7 +388,7 @@ class ComponentTimeframeValidator:
                 )
             elif component_type == "Liquidity Zone":
                 result = ComponentTimeframeValidator.validate_liquidity_zone(
-                    component, expected_tf
+                    component, expected_tf, expected_bias
                 )
             elif component_type == "Liquidity Sweep":
                 result = ComponentTimeframeValidator.validate_liquidity_sweep(
