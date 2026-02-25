@@ -99,6 +99,16 @@ class OrderBlock:
             return False
         return True
 
+    @property
+    def zone_low(self) -> float:
+        """Alias for bottom — used by entry_scenarios.py and component validators."""
+        return self.bottom
+
+    @property
+    def zone_high(self) -> float:
+        """Alias for top — used by entry_scenarios.py and component validators."""
+        return self.top
+
 
 @dataclass
 class MitigationBlock:
@@ -278,10 +288,13 @@ class OrderBlockDetector:
             if strength < self.config['min_strength']:
                 continue
             
-            # Create order block (ICT: zone = candle body, not full range)
+            # Create order block
+            # ICT reference (docs/TRADING_STRATEGY_EXPLAINED.md): zone = full candle range (high/low)
+            # Rationale: full range captures the complete institutional footprint including wicks,
+            # provides wider SL protection, and matches the documented codebase ICT standard.
             ob = OrderBlock(
-                top=max(df['open'].iloc[i], df['close'].iloc[i]),
-                bottom=min(df['open'].iloc[i], df['close'].iloc[i]),
+                top=df['high'].iloc[i],
+                bottom=df['low'].iloc[i],
                 type=OrderBlockType.BULLISH,
                 timestamp=df.index[i],
                 candle_index=i,
@@ -339,10 +352,13 @@ class OrderBlockDetector:
             if strength < self.config['min_strength']:
                 continue
             
-            # Create order block (ICT: zone = candle body, not full range)
+            # Create order block
+            # ICT reference (docs/TRADING_STRATEGY_EXPLAINED.md): zone = full candle range (high/low)
+            # Rationale: full range captures the complete institutional footprint including wicks,
+            # provides wider SL protection, and matches the documented codebase ICT standard.
             ob = OrderBlock(
-                top=max(df['open'].iloc[i], df['close'].iloc[i]),
-                bottom=min(df['open'].iloc[i], df['close'].iloc[i]),
+                top=df['high'].iloc[i],
+                bottom=df['low'].iloc[i],
                 type=OrderBlockType.BEARISH,
                 timestamp=df.index[i],
                 candle_index=i,
