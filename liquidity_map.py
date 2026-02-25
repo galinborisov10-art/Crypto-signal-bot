@@ -69,6 +69,35 @@ class LiquidityMapper:
             'min_sweep_strength': 0.6
         }
     
+    def _get_adaptive_tolerance(self, timeframe: str) -> float:
+        """Get adaptive price tolerance based on timeframe
+        
+        Optimized for ICT liquidity zone detection across multiple timeframes.
+        Higher timeframes need wider tolerance due to larger candles and price swings.
+        
+        Args:
+            timeframe: Timeframe string (e.g., '15m', '1h', '4h', '1d')
+        
+        Returns:
+            Adaptive tolerance value (0.0015 to 0.003)
+        """
+        base = self.config['price_tolerance']  # 0.002 (0.2%) as base
+        
+        # Timeframe-specific multipliers based on production testing
+        multipliers = {
+            '15m': 0.75,   # 0.0015 (0.15%) - tighter for intraday
+            '30m': 0.875,  # 0.00175 (0.175%)
+            '1h': 1.0,     # 0.002 (0.2%) - base, tested & working
+            '2h': 1.0,     # 0.002 (0.2%) - tested & working
+            '4h': 1.25,    # 0.0025 (0.25%) - needed for 4h detection
+            '1d': 1.5,     # 0.003 (0.3%) - wider for daily swings
+        }
+        
+        tf_lower = timeframe.lower()
+        multiplier = multipliers.get(tf_lower, 1.0)
+        
+        return base * multiplier
+
     def detect_liquidity_zones(self, df: pd.DataFrame, timeframe: str = '1H') -> List[LiquidityZone]:
         """Detect all liquidity zones"""
         logger.info(f"Detecting liquidity zones on {timeframe}")
@@ -93,7 +122,7 @@ class LiquidityMapper:
     def _detect_bsl_zones(self, df: pd.DataFrame, timeframe: str) -> List[LiquidityZone]:
         """Detect Buy-Side Liquidity zones"""
         zones = []
-        tolerance = df['close'].mean() * self.config['price_tolerance']
+        tolerance = df['close'].mean() * self._get_adaptive_tolerance(timeframe)
         swing_highs = self._find_swing_highs(df)
         clustered = self._cluster_price_levels(swing_highs, tolerance)
         
@@ -124,7 +153,7 @@ class LiquidityMapper:
     def _detect_ssl_zones(self, df: pd.DataFrame, timeframe: str) -> List[LiquidityZone]:
         """Detect Sell-Side Liquidity zones"""
         zones = []
-        tolerance = df['close'].mean() * self.config['price_tolerance']
+        tolerance = df['close'].mean() * self._get_adaptive_tolerance(timeframe)
         swing_lows = self._find_swing_lows(df)
         clustered = self._cluster_price_levels(swing_lows, tolerance)
         
