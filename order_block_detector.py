@@ -278,10 +278,10 @@ class OrderBlockDetector:
             if strength < self.config['min_strength']:
                 continue
             
-            # Create order block
+            # Create order block (ICT: zone = candle body, not full range)
             ob = OrderBlock(
-                top=df['high'].iloc[i],
-                bottom=df['low'].iloc[i],
+                top=max(df['open'].iloc[i], df['close'].iloc[i]),
+                bottom=min(df['open'].iloc[i], df['close'].iloc[i]),
                 type=OrderBlockType.BULLISH,
                 timestamp=df.index[i],
                 candle_index=i,
@@ -339,10 +339,10 @@ class OrderBlockDetector:
             if strength < self.config['min_strength']:
                 continue
             
-            # Create order block
+            # Create order block (ICT: zone = candle body, not full range)
             ob = OrderBlock(
-                top=df['high'].iloc[i],
-                bottom=df['low'].iloc[i],
+                top=max(df['open'].iloc[i], df['close'].iloc[i]),
+                bottom=min(df['open'].iloc[i], df['close'].iloc[i]),
                 type=OrderBlockType.BEARISH,
                 timestamp=df.index[i],
                 candle_index=i,

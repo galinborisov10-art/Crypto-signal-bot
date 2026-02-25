@@ -2501,7 +2501,7 @@ class ICTSignalEngine:
             # Calculate liquidity zones internally (backward compatible)
             if self.config['use_liquidity'] and self.liquidity_mapper:
                 try:
-                    liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df)
+                    liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df, timeframe)
                     logger.info(f"Detected {len(liquidity_zones)} liquidity zones")
                 except Exception as e:
                     logger.error(f"Liquidity detection error: {e}")
