@@ -99,6 +99,16 @@ class OrderBlock:
             return False
         return True
 
+    @property
+    def zone_low(self) -> float:
+        """Alias for bottom — used by entry_scenarios.py and component validators."""
+        return self.bottom
+
+    @property
+    def zone_high(self) -> float:
+        """Alias for top — used by entry_scenarios.py and component validators."""
+        return self.top
+
 
 @dataclass
 class MitigationBlock:
@@ -279,6 +289,9 @@ class OrderBlockDetector:
                 continue
             
             # Create order block
+            # ICT reference (docs/TRADING_STRATEGY_EXPLAINED.md): zone = full candle range (high/low)
+            # Rationale: full range captures the complete institutional footprint including wicks,
+            # provides wider SL protection, and matches the documented codebase ICT standard.
             ob = OrderBlock(
                 top=df['high'].iloc[i],
                 bottom=df['low'].iloc[i],
@@ -340,6 +353,9 @@ class OrderBlockDetector:
                 continue
             
             # Create order block
+            # ICT reference (docs/TRADING_STRATEGY_EXPLAINED.md): zone = full candle range (high/low)
+            # Rationale: full range captures the complete institutional footprint including wicks,
+            # provides wider SL protection, and matches the documented codebase ICT standard.
             ob = OrderBlock(
                 top=df['high'].iloc[i],
                 bottom=df['low'].iloc[i],
