@@ -96,7 +96,8 @@ class LiquidityMapper:
         tf_lower = timeframe.lower()
         multiplier = multipliers.get(tf_lower, 1.0)
         
-        return base * multiplier
+        result = base * multiplier
+        return result
 
     def detect_liquidity_zones(self, df: pd.DataFrame, timeframe: str = '1H') -> List[LiquidityZone]:
         """Detect all liquidity zones"""
