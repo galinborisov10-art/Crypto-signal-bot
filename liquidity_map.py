@@ -62,8 +62,8 @@ class LiquidityMapper:
         
     def _get_default_config(self) -> Dict[str, Any]:
         return {
-            'touch_threshold': 3,
-            'price_tolerance': 0.001,
+            'touch_threshold': 2,
+            'price_tolerance': 0.002,
             'volume_threshold': 1.5,
             'sweep_reversal_candles': 5,
             'min_sweep_strength': 0.6
