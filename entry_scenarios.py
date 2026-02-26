@@ -375,12 +375,15 @@ def _validate_continuation_behavior(
     if not structure_break or structure_break.get('type') not in ['MSS', 'BOS']:
         return False, "No structure break (BOS/MSS)"
 
-    # 2. Check structure direction matches bias
-    sb_type = structure_break.get('type')
-    if bias == 'BULLISH' and 'BEARISH' in str(sb_type):
-        return False, f"Structure break {sb_type} against BULLISH bias"
-    if bias == 'BEARISH' and 'BULLISH' in str(sb_type):
-        return False, f"Structure break {sb_type} against BEARISH bias"
+    # 2. Check structure direction matches bias using explicit direction field
+    direction = structure_break.get('direction')
+    if direction is not None:
+        if bias == 'BULLISH' and direction != 'BULLISH':
+            return False, f"Structure direction '{direction}' does not match BULLISH bias"
+        if bias == 'BEARISH' and direction != 'BEARISH':
+            return False, f"Structure direction '{direction}' does not match BEARISH bias"
+    else:
+        logger.warning("Structure break has no 'direction' field, skipping direction check")
 
     # 3. Check displacement exists and meets minimum
     if not displacement or not displacement.get('detected'):
@@ -390,18 +393,19 @@ def _validate_continuation_behavior(
     if disp_strength < 0.5:
         return False, f"Weak displacement ({disp_strength:.2f} < 0.5 minimum)"
 
-    # 4. Check break recency
-    candles_ago = structure_break.get('candles_ago', 999)
-    if candles_ago > 20:
+    # 4. Check break recency (only when candles_ago field is present)
+    candles_ago = structure_break.get('candles_ago')
+    if candles_ago is not None and candles_ago > 20:
         return False, f"Structure break too old ({candles_ago} candles ago)"
 
-    # 5. Check price extension
-    break_price = structure_break.get('price', current_price)
-    extension_pct = abs(current_price - break_price) / break_price * 100
-
-    max_ext = MAX_EXTENSION_PCT.get(timeframe, MAX_EXTENSION_PCT['default'])
-    if extension_pct > max_ext:
-        return False, f"Overextended {extension_pct:.1f}% (max {max_ext}% for {timeframe})"
+    # 5. Check price extension (only when price key is present)
+    break_price = structure_break.get('price')
+    extension_pct = 0.0
+    if break_price is not None:
+        extension_pct = abs(current_price - break_price) / break_price * 100
+        max_ext = MAX_EXTENSION_PCT.get(timeframe, MAX_EXTENSION_PCT['default'])
+        if extension_pct > max_ext:
+            return False, f"Overextended {extension_pct:.1f}% (max {max_ext}% for {timeframe})"
 
     return True, f"CONTINUATION behavior valid (displacement {disp_strength:.2f}, extension {extension_pct:.1f}%)"
 
@@ -423,15 +427,13 @@ def _validate_pullback_behavior(
     if not poi:
         return False, "No POI (Order Block or FVG)"
 
-    # 2. Check for prior impulse (displacement)
+    # 2. Check for prior impulse (displacement) — only validate strength when detected
     displacement = ict_components.get('displacement', {})
-    if not displacement.get('detected'):
-        return False, "No prior impulse movement"
-
-    # Check displacement strength
-    disp_strength = displacement.get('strength', 0.0)
-    if disp_strength < 0.4:
-        return False, f"Weak impulse ({disp_strength:.2f} < 0.4 minimum)"
+    disp_strength = 0.0
+    if displacement.get('detected'):
+        disp_strength = displacement.get('strength', 0.0)
+        if disp_strength < 0.4:
+            return False, f"Weak impulse ({disp_strength:.2f} < 0.4 minimum)"
 
     # 3. Check impulse direction matches bias
     poi_price = poi.get('price', poi.get('center', current_price))
@@ -482,30 +484,39 @@ def _validate_reversal_behavior(
     if not structure_break or structure_break.get('type') not in ['CHOCH', 'MSS']:
         return False, "No structure flip (CHOCH/MSS)"
 
-    flip_candles_ago = structure_break.get('candles_ago', 999)
+    # Use None when candles_ago is absent so conditional checks can be skipped
+    flip_candles_ago = structure_break.get('candles_ago')
 
-    # 3. Check displacement exists
-    if not displacement or not displacement.get('detected'):
-        return False, "No displacement after structure flip"
-
-    disp_strength = displacement.get('strength', 0.0)
-    if disp_strength < 0.5:
-        return False, f"Weak reversal displacement ({disp_strength:.2f} < 0.5 minimum)"
+    # 3. Check displacement strength only when displacement is detected
+    disp_strength = 0.0
+    if displacement and displacement.get('detected'):
+        disp_strength = displacement.get('strength', 0.0)
+        if disp_strength < 0.5:
+            return False, f"Weak reversal displacement ({disp_strength:.2f} < 0.5 minimum)"
 
     # 4. Validate sequence: Sweep → Flip → Displacement
-    # (Lower candles_ago = more recent)
-    if flip_candles_ago >= sweep_candles_ago:
-        return False, f"Invalid sequence: Flip ({flip_candles_ago}) before Sweep ({sweep_candles_ago})"
+    # Valid: flip_candles_ago < sweep_candles_ago (flip is more recent = occurred after sweep)
+    # Only enforce when flip timing data is available
+    if flip_candles_ago is not None:
+        if flip_candles_ago >= sweep_candles_ago:
+            return False, (
+                f"Invalid sequence: Flip ({flip_candles_ago} candles ago) must be more recent "
+                f"than Sweep ({sweep_candles_ago} candles ago)"
+            )
 
-    # 5. Check gaps between events
-    sweep_to_flip_gap = sweep_candles_ago - flip_candles_ago
-    if sweep_to_flip_gap > 5:
-        return False, f"Gap between sweep and flip too large ({sweep_to_flip_gap} candles)"
+        # 5. Check gap between sweep and flip is not too large
+        sweep_to_flip_gap = sweep_candles_ago - flip_candles_ago
+        if sweep_to_flip_gap > 5:
+            return False, f"Gap between sweep and flip too large ({sweep_to_flip_gap} candles)"
 
-    # Check displacement is recent (should happen after flip)
-    disp_candles_ago = displacement.get('candles_ago', 0)
-    if disp_candles_ago > flip_candles_ago:
-        return False, f"Displacement ({disp_candles_ago}) happened before flip ({flip_candles_ago})"
+        # 6. Displacement must be more recent than flip (only when both timings are available)
+        disp_candles_ago = displacement.get('candles_ago') if displacement else None
+        if disp_candles_ago is not None:
+            if disp_candles_ago >= flip_candles_ago:
+                return False, (
+                    f"Invalid sequence: Displacement ({disp_candles_ago} candles ago) must be "
+                    f"more recent than Flip ({flip_candles_ago} candles ago)"
+                )
 
     return True, f"REVERSAL sequence valid: Sweep({sweep_candles_ago}) → Flip({flip_candles_ago}) → Disp({disp_strength:.2f})"
 
@@ -525,27 +536,25 @@ def _validate_rollback_behavior(
     if not structure_break or structure_break.get('type') not in ['BOS', 'MSS']:
         return False, "No structure break"
 
-    # 2. Check break recency
-    candles_ago = structure_break.get('candles_ago', 999)
-    if candles_ago > 25:
+    # 2. Check break recency (only when candles_ago field is present)
+    candles_ago = structure_break.get('candles_ago')
+    if candles_ago is not None and candles_ago > 25:
         return False, f"Structure break too old ({candles_ago} candles ago)"
 
-    # 3. Check price is near break level
-    # Use 'price' key if present, otherwise fall back to current_price (distance = 0)
-    break_price = structure_break.get('price', current_price)
-    distance_to_break = abs(current_price - break_price) / break_price * 100
+    # 3. Check price is near break level (only when price key is present)
+    break_price = structure_break.get('price')
+    distance_to_break = 0.0
+    if break_price is not None:
+        distance_to_break = abs(current_price - break_price) / break_price * 100
+        if distance_to_break > 0.5:
+            return False, f"Price not at break level (distance: {distance_to_break:.1f}% > 0.5%)"
 
-    if distance_to_break > 0.5:
-        return False, f"Price not at break level (distance: {distance_to_break:.1f}% > 0.5%)"
-
-    # 4. Verify price had moved away from break (not just sitting there)
+    # 4. Verify price had moved away from break — only check strength when detected
     displacement = ict_components.get('displacement', {})
-    if not displacement.get('detected'):
-        return False, "No movement away from break level"
-
-    disp_strength = displacement.get('strength', 0.0)
-    if disp_strength < 0.3:
-        return False, f"Insufficient movement from break ({disp_strength:.2f} < 0.3)"
+    if displacement.get('detected'):
+        disp_strength = displacement.get('strength', 0.0)
+        if disp_strength < 0.3:
+            return False, f"Insufficient movement from break ({disp_strength:.2f} < 0.3)"
 
     return True, f"ROLLBACK behavior valid (break {candles_ago} candles ago, distance {distance_to_break:.2f}%)"
 
