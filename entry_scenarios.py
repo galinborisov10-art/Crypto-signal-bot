@@ -981,34 +981,22 @@ def _score_pullback_scenario(
 
     logger.info(f"✅ PULLBACK: {reason}")
 
-    # Trigger requirement check (flexible for high-quality POI)
-    if len(triggers) < MIN_TRIGGERS['PULLBACK']:
-        if best_poi['quality'] < PULLBACK_HIGH_QUALITY_THRESHOLD:
-            logger.debug(f"   PULLBACK: insufficient triggers and POI quality < {PULLBACK_HIGH_QUALITY_THRESHOLD}")
-            return None, None
-        else:
-            logger.info(f"   ⚠️ PULLBACK accepted with 1 trigger (POI quality {best_poi['quality']})")
-    
     # ============================================================
-    # SCORE CALCULATION
+    # PROBABILITY CALCULATION (Phase 2)
     # ============================================================
-    score = PULLBACK_WEIGHTS['base_score']
+    poi_quality = best_poi['quality']
+    structure_present = 'MSS/BOS' in triggers
+    distance_pct = best_poi['distance_pct']
     
-    # POI quality bonus
-    score += best_poi['quality'] * PULLBACK_WEIGHTS['poi_quality_multiplier']
+    # Calculate probability using helper function
+    probability = _calculate_probability_pullback(
+        poi_quality=poi_quality,
+        triggers=triggers,
+        distance_pct=distance_pct,
+        structure_present=structure_present
+    )
     
-    # Trigger count bonus
-    score += len(triggers) * PULLBACK_WEIGHTS['trigger_count_bonus']
-    
-    # Structure trigger bonus
-    if 'MSS/BOS' in triggers:
-        score += PULLBACK_WEIGHTS['structure_trigger_bonus']
-    
-    # Distance penalty
-    score += best_poi['distance_pct'] * PULLBACK_WEIGHTS['distance_penalty_per_pct']
-    
-    # Cap score
-    score = min(100, max(0, score))
+    logger.debug(f"   PULLBACK probability: {probability:.3f}")
     
     # ✅ Extract poi_ref (remove from dict)
     poi_ref = best_poi.pop('_ref', None)
@@ -1041,10 +1029,10 @@ def _score_pullback_scenario(
         'scenario': 'PULLBACK',
         'eligible': True,
         'entry_zone': entry_zone,
-        'score': int(score),
+        'probability': float(probability),
         'triggers': triggers,
         'trigger_strength': _evaluate_trigger_strength(trigger_score),
-        'reasoning': f"Pullback to {best_poi['type']} @ ${best_poi['price']:.2f} ({best_poi['distance_pct']:.1f}% away, quality {best_poi['quality']})",
+        'reasoning': f"Pullback to {best_poi['type']} @ ${best_poi['price']:.2f} ({best_poi['distance_pct']:.1f}% away, probability: {probability:.3f})",
         'position_size_advisory': POSITION_SIZE['PULLBACK'],
         'poi_type': best_poi['type'],
         'poi_data': poi_data,
@@ -1090,11 +1078,6 @@ def _score_continuation_scenario(
 
     logger.info(f"✅ CONTINUATION: {reason}")
 
-    # Strict trigger requirement
-    if len(triggers) < MIN_TRIGGERS['CONTINUATION']:
-        logger.debug(f"   CONTINUATION: insufficient triggers ({len(triggers)} < {MIN_TRIGGERS['CONTINUATION']})")
-        return None, None
-    
     # Must have displacement OR structure trigger
     has_momentum = 'DISPLACEMENT' in triggers or 'MSS/BOS' in triggers
     if not has_momentum:
@@ -1106,40 +1089,39 @@ def _score_continuation_scenario(
     check_range = CONTINUATION_DISTANCE['poi_check_range_pct']
     
     obs = ict_components.get('order_blocks', [])
+    clear_path = True
     for ob in obs:
         ob_center = (ob.zone_low if hasattr(ob, 'zone_low') else (_safe_get(ob, 'zone_low', 0) if isinstance(ob, dict) else 0) + ob.zone_high if hasattr(ob, 'zone_high') else (_safe_get(ob, 'zone_high', 0) if isinstance(ob, dict) else 0)) / 2
         
         if is_bullish and current_price * (1 - check_range) <= ob_center <= current_price:
             logger.debug(f"   CONTINUATION: found OB in path @ ${ob_center:.2f}")
-            return None, None
+            clear_path = False
+            break
         
         if not is_bullish and current_price <= ob_center <= current_price * (1 + check_range):
             logger.debug(f"   CONTINUATION: found OB in path @ ${ob_center:.2f}")
-            return None, None
+            clear_path = False
+            break
+    
+    if not clear_path:
+        return None, None
     
     # ============================================================
-    # SCORE CALCULATION
+    # PROBABILITY CALCULATION (Phase 2)
     # ============================================================
-    score = CONTINUATION_WEIGHTS['base_score']
-    
-    # Trigger count bonus (max 2 extra triggers)
-    extra_triggers = min(len(triggers) - MIN_TRIGGERS['CONTINUATION'], 2)
-    score += extra_triggers * CONTINUATION_WEIGHTS['trigger_count_bonus']
-    
-    # Strong displacement bonus
     disp = ict_components.get('displacement', {})
-    if disp.get('strength', 0) >= TRIGGER_SETTINGS['displacement_strong_threshold']:
-        score += CONTINUATION_WEIGHTS['displacement_strong_bonus']
+    displacement_strength = disp.get('strength', 0) if disp.get('detected') else 0
+    structure_present = 'MSS/BOS' in triggers
     
-    # Structure trigger bonus
-    if 'MSS/BOS' in triggers:
-        score += CONTINUATION_WEIGHTS['structure_trigger_bonus']
+    # Calculate probability using helper function
+    probability = _calculate_probability_continuation(
+        displacement_strength=displacement_strength,
+        triggers=triggers,
+        structure_present=structure_present,
+        clear_path=clear_path
+    )
     
-    # No POI in range bonus
-    score += CONTINUATION_WEIGHTS['no_poi_in_range_bonus']
-    
-    # Cap score
-    score = min(100, max(0, score))
+    logger.debug(f"   CONTINUATION probability: {probability:.3f}")
     
     # Calculate entry price
     retracement = CONTINUATION_DISTANCE['retracement_pct']
@@ -1176,10 +1158,10 @@ def _score_continuation_scenario(
         'scenario': 'CONTINUATION',
         'eligible': True,
         'entry_zone': entry_zone,
-        'score': int(score),
+        'probability': float(probability),
         'triggers': triggers,
         'trigger_strength': trigger_strength,
-        'reasoning': f"Continuation with {len(triggers)} triggers (minimal retracement {retracement*100:.1f}%)",
+        'reasoning': f"Continuation with {len(triggers)} triggers (probability: {probability:.3f}, retracement {retracement*100:.1f}%)",
         'position_size_advisory': position_size,
         'poi_type': 'NONE',
         'poi_data': {},
@@ -1222,11 +1204,6 @@ def _score_reversal_scenario(
 
     logger.info(f"✅ REVERSAL: {reason}")
 
-    # Strict trigger requirement
-    if len(triggers) < MIN_TRIGGERS['REVERSAL']:
-        logger.debug(f"   REVERSAL: insufficient triggers ({len(triggers)} < {MIN_TRIGGERS['REVERSAL']})")
-        return None, None
-    
     # Check for liquidity sweep (required)
     if REVERSAL_SETTINGS['require_sweep']:
         if 'LIQUIDITY_SWEEP' not in triggers:
@@ -1234,6 +1211,7 @@ def _score_reversal_scenario(
             return None, None
     
     # Check for structure flip (MSS/CHOCH in opposite direction)
+    structure_flip = False
     if REVERSAL_SETTINGS['require_structure_flip']:
         if not sb or sb.get('type') not in ['MSS', 'CHOCH']:
             logger.debug("   REVERSAL: no structure flip (MSS/CHOCH) detected")
@@ -1252,6 +1230,8 @@ def _score_reversal_scenario(
             if bias_upper == 'BEARISH' and sb_direction == 'BEARISH':
                 logger.debug("   REVERSAL: same direction as bias")
                 return None, None
+        
+        structure_flip = True
     
     # Entry can be either rollback to break_level OR pullback to first POI
     break_level = sb.get('break_level') if sb else None
@@ -1384,32 +1364,23 @@ def _score_reversal_scenario(
         return None, None
     
     # ============================================================
-    # SCORE CALCULATION
+    # PROBABILITY CALCULATION (Phase 2)
     # ============================================================
-    score = REVERSAL_WEIGHTS['base_score']
+    sweep_present = 'LIQUIDITY_SWEEP' in triggers
     
-    # Sweep bonus
-    score += REVERSAL_WEIGHTS['sweep_bonus']
-    
-    # Structure flip bonus
-    if sb and sb.get('type') == 'CHOCH':
-        score += REVERSAL_WEIGHTS['choch_bonus']
-    elif sb and sb.get('type') == 'MSS':
-        score += REVERSAL_WEIGHTS['mss_bonus']
-    
-    # Displacement in reversal direction bonus
+    # Get displacement strength
     disp = ict_components.get('displacement', {})
-    if REVERSAL_SETTINGS['displacement_bonus']:
-        if disp.get('detected') and disp.get('strength', 0) >= TRIGGER_SETTINGS['displacement_min_strength']:
-            score += REVERSAL_WEIGHTS['displacement_contra_bonus']
+    displacement_strength = disp.get('strength', 0) if disp.get('detected') else 0
     
-    # Additional trigger bonus
-    extra_triggers = len(triggers) - MIN_TRIGGERS['REVERSAL']
-    if extra_triggers > 0:
-        score += extra_triggers * REVERSAL_WEIGHTS['trigger_count_bonus']
+    # Calculate probability using helper function
+    probability = _calculate_probability_reversal(
+        sweep_present=sweep_present,
+        structure_flip=structure_flip,
+        displacement_strength=displacement_strength,
+        triggers=triggers
+    )
     
-    # Cap score
-    score = min(100, max(0, score))
+    logger.debug(f"   REVERSAL probability: {probability:.3f}")
     
     # Build entry zone
     buffer = REVERSAL_DISTANCE['buffer_pct']
@@ -1437,10 +1408,10 @@ def _score_reversal_scenario(
         'scenario': 'REVERSAL',
         'eligible': True,
         'entry_zone': entry_zone,
-        'score': int(score),
+        'probability': float(probability),
         'triggers': triggers,
         'trigger_strength': _evaluate_trigger_strength(trigger_score),
-        'reasoning': f"Reversal setup with sweep + {sb.get('type')} @ ${entry_price:.2f} ({distance_pct:.1f}% away)",
+        'reasoning': f"Reversal setup with sweep + {sb.get('type')} @ ${entry_price:.2f} (probability: {probability:.3f}, {distance_pct:.1f}% away)",
         'position_size_advisory': POSITION_SIZE['REVERSAL'],
         'poi_type': 'NONE',
         'poi_data': {},
