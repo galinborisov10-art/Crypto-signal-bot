@@ -304,6 +304,53 @@ def test_no_scenario_fallback():
     print("✅ TEST 6 PASSED\n")
 
 
+from entry_scenario_config import STRUCTURE_ALIGNMENT, MIN_PROBABILITY_THRESHOLDS
+
+
+def test_structure_alignment_modifier():
+    """
+    Test that STRUCTURE_ALIGNMENT modifiers are correctly defined and can be
+    applied to a scenario probability - verifying the HTF bias alignment logic.
+    """
+    print("=" * 60)
+    print("TEST 7: Structure Alignment Modifier")
+    print("=" * 60)
+
+    # Verify STRUCTURE_ALIGNMENT values are present and in expected range
+    assert 'htf_aligned' in STRUCTURE_ALIGNMENT, "❌ Missing htf_aligned key"
+    assert 'ranging_penalty' in STRUCTURE_ALIGNMENT, "❌ Missing ranging_penalty key"
+    assert 'opposite' in STRUCTURE_ALIGNMENT, "❌ Missing opposite key"
+
+    assert STRUCTURE_ALIGNMENT['htf_aligned'] > 1.0, "❌ htf_aligned should be a bonus (> 1.0)"
+    assert 0 < STRUCTURE_ALIGNMENT['ranging_penalty'] < 1.0, "❌ ranging_penalty should be a penalty (< 1.0)"
+    assert 0 < STRUCTURE_ALIGNMENT['opposite'] < STRUCTURE_ALIGNMENT['ranging_penalty'], \
+        "❌ opposite should be a stronger penalty than ranging_penalty"
+
+    # Simulate: base probability passes threshold before modifier, ranging_penalty keeps it above threshold
+    base_probability = 0.68
+    ranging_modifier = STRUCTURE_ALIGNMENT['ranging_penalty']
+    adjusted = base_probability * ranging_modifier
+    threshold = MIN_PROBABILITY_THRESHOLDS.get('PULLBACK', 0.60)
+    assert adjusted >= threshold, \
+        f"❌ Example 1: {base_probability:.3f} × {ranging_modifier:.2f} = {adjusted:.3f} should be >= {threshold:.3f}"
+    print(f"✅ Ranging penalty: {base_probability:.3f} × {ranging_modifier:.2f} = {adjusted:.3f} >= threshold {threshold:.3f} → SIGNAL")
+
+    # Simulate: weak components - ranging_penalty pushes probability below threshold
+    weak_probability = 0.55
+    adjusted_weak = weak_probability * ranging_modifier
+    assert adjusted_weak < threshold, \
+        f"❌ Example 2: {weak_probability:.3f} × {ranging_modifier:.2f} = {adjusted_weak:.3f} should be < {threshold:.3f}"
+    print(f"✅ Weak components: {weak_probability:.3f} × {ranging_modifier:.2f} = {adjusted_weak:.3f} < threshold {threshold:.3f} → NO TRADE")
+
+    # Simulate: aligned HTF-Entry (bonus scenario)
+    aligned_modifier = STRUCTURE_ALIGNMENT['htf_aligned']
+    adjusted_aligned = base_probability * aligned_modifier
+    assert adjusted_aligned > base_probability, "❌ htf_aligned bonus should increase probability"
+    print(f"✅ HTF aligned: {base_probability:.3f} × {aligned_modifier:.2f} = {adjusted_aligned:.3f} (bonus)")
+
+    print("✅ TEST 7 PASSED\n")
+
+
 if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("🧪 ENTRY SCENARIO SCORING - UNIT TESTS")
@@ -316,9 +363,10 @@ if __name__ == "__main__":
         test_reversal_scenario()
         test_deterministic_selection()
         test_no_scenario_fallback()
+        test_structure_alignment_modifier()
         
         print("=" * 60)
-        print("✅ ALL 6 TESTS PASSED!")
+        print("✅ ALL 7 TESTS PASSED!")
         print("=" * 60)
         
     except AssertionError as e:
