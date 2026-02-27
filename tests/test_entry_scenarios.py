@@ -54,7 +54,7 @@ def test_rollback_scenario():
     assert result is not None, "❌ Expected ROLLBACK scenario"
     assert result['scenario'] == 'ROLLBACK'
     assert 'invalidation_anchor' in result, "❌ Missing invalidation_anchor"
-    print(f"✅ Scenario: {result['scenario']} (score: {result['score']})")
+    print(f"✅ Scenario: {result['scenario']} (probability: {result.get('probability', 0):.3f})")
     print(f"✅ Anchor: {result['invalidation_anchor']['type']}")
     print("✅ TEST 1 PASSED\n")
 
@@ -66,17 +66,24 @@ def test_pullback_scenario():
     print("=" * 60)
     
     ict_components = {
-        'structure_break': None,
+        'structure_break': {
+            'type': 'MSS',
+            'break_level': 48500.0,
+            'strength': 75,
+            'retested': False,
+            'direction': 'BULLISH'
+        },
         'order_blocks': [
             {
                 'type': 'BULLISH',
                 'zone_low': 49000.0,
-                'zone_high': 49200.0
+                'zone_high': 49200.0,
+                'strength': 85
             }
         ],
         'fvgs': [],
         'liquidity_zones': [],
-        'displacement': {'detected': False},
+        'displacement': {'detected': True, 'strength': 0.65},
         'liquidity_sweeps': [
             {'candles_ago': 3, 'type': 'BSL'}
         ],
@@ -98,7 +105,7 @@ def test_pullback_scenario():
     assert result['scenario'] == 'PULLBACK'
     assert 'invalidation_anchor' in result, "❌ Missing invalidation_anchor"
     assert poi_ref is not None, "❌ Expected POI reference for PULLBACK"
-    print(f"✅ Scenario: {result['scenario']} (score: {result['score']})")
+    print(f"✅ Scenario: {result['scenario']} (probability: {result.get('probability', 0):.3f})")
     print(f"✅ Anchor: {result['invalidation_anchor']['type']}")
     print(f"✅ POI Type: {result.get('poi_type', 'NONE')}")
     print("✅ TEST 2 PASSED\n")
@@ -144,7 +151,7 @@ def test_continuation_scenario():
     assert result is not None, "❌ Expected CONTINUATION scenario"
     assert result['scenario'] == 'CONTINUATION'
     assert 'invalidation_anchor' in result, "❌ Missing invalidation_anchor"
-    print(f"✅ Scenario: {result['scenario']} (score: {result['score']})")
+    print(f"✅ Scenario: {result['scenario']} (probability: {result.get('probability', 0):.3f})")
     print(f"✅ Anchor: {result['invalidation_anchor']['type']}")
     print("✅ TEST 3 PASSED\n")
 
@@ -198,7 +205,7 @@ def test_reversal_scenario():
     # REVERSAL may not always win, so just check that we get a valid scenario
     assert result is not None, "❌ Expected a scenario (PULLBACK or REVERSAL)"
     assert 'invalidation_anchor' in result, "❌ Missing invalidation_anchor"
-    print(f"✅ Scenario: {result['scenario']} (score: {result['score']})")
+    print(f"✅ Scenario: {result['scenario']} (probability: {result.get('probability', 0):.3f})")
     print(f"✅ Anchor: {result['invalidation_anchor']['type']}")
     print("✅ TEST 4 PASSED\n")
 
