@@ -164,7 +164,6 @@ def test_reversal_scenario():
     print("=" * 60)
     
     # Mock REVERSAL: Current bias BULLISH, but seeing BEARISH reversal signs
-    # Remove displacement to not trigger CONTINUATION
     ict_components = {
         'structure_break': {
             'type': 'CHOCH',
@@ -183,8 +182,8 @@ def test_reversal_scenario():
         'fvgs': [],
         'liquidity_zones': [],
         'displacement': {
-            'detected': False,  # Changed to False to prevent CONTINUATION
-            'strength': 0.0
+            'detected': True,  # Required for REVERSAL
+            'strength': 0.70   # Strong enough for reversal
         },
         'liquidity_sweeps': [
             {'candles_ago': 1, 'type': 'BSL'}  # Recent sweep
