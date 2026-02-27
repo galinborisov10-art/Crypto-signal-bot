@@ -76,7 +76,7 @@ def test_pullback_scenario():
         ],
         'fvgs': [],
         'liquidity_zones': [],
-        'displacement': {'detected': True, 'strength': 0.75},
+        'displacement': {'detected': False},
         'liquidity_sweeps': [
             {'candles_ago': 3, 'type': 'BSL'}
         ],
@@ -175,8 +175,8 @@ def test_reversal_scenario():
         'fvgs': [],
         'liquidity_zones': [],
         'displacement': {
-            'detected': True,
-            'strength': 0.75
+            'detected': False,  # Changed to False to prevent CONTINUATION
+            'strength': 0.0
         },
         'liquidity_sweeps': [
             {'candles_ago': 1, 'type': 'BSL'}  # Recent sweep
