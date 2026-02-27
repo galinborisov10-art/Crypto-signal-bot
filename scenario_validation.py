@@ -3,6 +3,12 @@
 Scenario Correctness Validation
 Demonstrates how different scenarios are selected based on structure and component strength
 
+⚠️ NOTE: This validation script is from the legacy score-based system (Phase 1).
+It needs to be updated to reflect the new probability-based system (Phase 2).
+
+For now, this script is retained for historical reference but may not accurately
+reflect the current probability-based selection logic.
+
 This script creates realistic test cases for:
 1. PULLBACK scenario dominant
 2. CONTINUATION scenario dominant  
@@ -12,7 +18,7 @@ This script creates realistic test cases for:
 For each case, shows:
 - Detected components
 - Trigger contributions
-- Scenario scores breakdown
+- Scenario scores breakdown (legacy)
 - Final selected scenario
 - Why alternatives were rejected
 """
@@ -31,10 +37,19 @@ from entry_scenario_config import (
     PULLBACK_WEIGHTS,
     CONTINUATION_WEIGHTS,
     REVERSAL_WEIGHTS,
-    MIN_SCENARIO_SCORE,
-    MIN_TRIGGERS,
+    MIN_PROBABILITY_THRESHOLDS,
     POI_QUALITY
 )
+
+# ⚠️ Legacy constants for backward compatibility with validation script
+# These are NOT used in the actual entry_scenarios.py implementation anymore
+MIN_SCENARIO_SCORE = 70  # Legacy - for validation script only
+MIN_TRIGGERS = {  # Legacy - for validation script only
+    'ROLLBACK': 2,
+    'PULLBACK': 1,
+    'CONTINUATION': 2,
+    'REVERSAL': 2
+}
 
 
 def print_header(title: str):
