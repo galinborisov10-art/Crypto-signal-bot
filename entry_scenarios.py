@@ -35,6 +35,21 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# BEHAVIORAL CORE GATE - Extension Limits
+# ============================================================
+
+MAX_EXTENSION_PCT = {
+    '15m': 2.0,
+    '30m': 2.5,
+    '1h': 3.0,
+    '2h': 4.0,
+    '4h': 5.0,
+    '1d': 7.0,
+    'default': 5.0
+}
+
+
+# ============================================================
 # PUBLIC API (единствена функция която се извиква отвън)
 # ============================================================
 
@@ -120,7 +135,7 @@ def select_best_entry_scenario(
     
     # 3. CONTINUATION
     continuation_dict, continuation_ref = _score_continuation_scenario(
-        current_price, bias, ict_components, triggers, trigger_score, trigger_strength
+        current_price, bias, ict_components, triggers, trigger_score, trigger_strength, timeframe
     )
     if continuation_dict:
         scenarios['CONTINUATION'] = continuation_dict
@@ -340,6 +355,215 @@ def _create_invalidation_anchor(poi_type: str, poi_object: Any, best_poi: Dict, 
 
 
 # ============================================================
+# BEHAVIORAL CORE GATE - Validation Functions
+# ============================================================
+
+def _validate_continuation_behavior(
+    structure_break: Dict,
+    displacement: Dict,
+    current_price: float,
+    bias: str,
+    timeframe: str
+) -> Tuple[bool, str]:
+    """
+    Validate CONTINUATION behavioral requirements
+
+    Returns:
+        (is_eligible, reason)
+    """
+    # 1. Check structure break exists
+    if not structure_break or structure_break.get('type') not in ['MSS', 'BOS']:
+        return False, "No structure break (BOS/MSS)"
+
+    # 2. Check structure direction matches bias using explicit direction field
+    direction = structure_break.get('direction')
+    if direction is not None:
+        if bias == 'BULLISH' and direction != 'BULLISH':
+            return False, f"Structure direction '{direction}' does not match BULLISH bias"
+        if bias == 'BEARISH' and direction != 'BEARISH':
+            return False, f"Structure direction '{direction}' does not match BEARISH bias"
+    else:
+        logger.warning("Structure break has no 'direction' field, skipping direction check")
+
+    # 3. Check displacement exists and meets minimum
+    if not displacement or not displacement.get('detected'):
+        return False, "No displacement after break"
+
+    disp_strength = displacement.get('strength', 0.0)
+    if disp_strength < 0.5:
+        return False, f"Weak displacement ({disp_strength:.2f} < 0.5 minimum)"
+
+    # 4. Check break recency (only when candles_ago field is present)
+    candles_ago = structure_break.get('candles_ago')
+    if candles_ago is not None and candles_ago > 20:
+        return False, f"Structure break too old ({candles_ago} candles ago)"
+
+    # 5. Check price extension (only when price key is present)
+    break_price = structure_break.get('price')
+    extension_pct = 0.0
+    if break_price is not None:
+        extension_pct = abs(current_price - break_price) / break_price * 100
+        max_ext = MAX_EXTENSION_PCT.get(timeframe, MAX_EXTENSION_PCT['default'])
+        if extension_pct > max_ext:
+            return False, f"Overextended {extension_pct:.1f}% (max {max_ext}% for {timeframe})"
+
+    return True, f"CONTINUATION behavior valid (displacement {disp_strength:.2f}, extension {extension_pct:.1f}%)"
+
+
+def _validate_pullback_behavior(
+    poi: Dict,
+    ict_components: Dict,
+    current_price: float,
+    bias: str,
+    distance_pct: float
+) -> Tuple[bool, str]:
+    """
+    Validate PULLBACK behavioral requirements
+
+    Returns:
+        (is_eligible, reason)
+    """
+    # 1. Check POI exists
+    if not poi:
+        return False, "No POI (Order Block or FVG)"
+
+    # 2. Check for prior impulse (displacement) — REQUIRED for pullback
+    displacement = ict_components.get('displacement', {})
+    if not displacement.get('detected'):
+        return False, "No impulse (displacement not detected)"
+
+    disp_strength = displacement.get('strength', 0.0)
+    if disp_strength < 0.4:
+        return False, f"Weak impulse ({disp_strength:.2f} < 0.4 minimum)"
+
+    # 3. Check impulse direction matches bias
+    poi_price = poi.get('price', poi.get('center', current_price))
+
+    if bias == 'BULLISH':
+        # For bullish pullback, POI should be below current price (we moved up, now pulling back)
+        if poi_price >= current_price:
+            return False, "POI not below price for bullish pullback"
+    else:
+        # For bearish pullback, POI should be above current price (we moved down, now pulling back)
+        if poi_price <= current_price:
+            return False, "POI not above price for bearish pullback"
+
+    # 4. Check for structure flip (CHOCH invalidates pullback)
+    structure_break = ict_components.get('structure_break', {})
+    if structure_break and structure_break.get('type') == 'CHOCH':
+        return False, "Structure flip (CHOCH) invalidates pullback"
+
+    # 5. Check distance to POI
+    if distance_pct > 5.0:
+        return False, f"POI too far ({distance_pct:.1f}% > 5% maximum)"
+
+    return True, f"PULLBACK behavior valid (impulse {disp_strength:.2f}, distance {distance_pct:.1f}%)"
+
+
+def _validate_reversal_behavior(
+    sweeps: List,
+    structure_break: Dict,
+    displacement: Dict
+) -> Tuple[bool, str]:
+    """
+    Validate REVERSAL behavioral requirements (sequential pattern)
+
+    Returns:
+        (is_eligible, reason)
+    """
+    # 1. Check sweep exists and is recent
+    if not sweeps:
+        return False, "No liquidity sweep"
+
+    sweep = sweeps[0]
+    sweep_candles_ago = sweep.get('candles_ago', 999) if hasattr(sweep, 'get') else getattr(sweep, 'candles_ago', 999)
+
+    if sweep_candles_ago > 10:
+        return False, f"Sweep too old ({sweep_candles_ago} candles ago)"
+
+    # 2. Check structure flip exists
+    if not structure_break or structure_break.get('type') not in ['CHOCH', 'MSS']:
+        return False, "No structure flip (CHOCH/MSS)"
+
+    # Use None when candles_ago is absent so conditional checks can be skipped
+    flip_candles_ago = structure_break.get('candles_ago')
+
+    # 3. Check displacement — REQUIRED after structure flip
+    if not displacement or not displacement.get('detected'):
+        return False, "No displacement after structure flip"
+
+    disp_strength = displacement.get('strength', 0.0)
+    if disp_strength < 0.5:
+        return False, f"Weak reversal displacement ({disp_strength:.2f} < 0.5 minimum)"
+
+    # 4. Validate sequence: Sweep → Flip → Displacement
+    # Valid: flip_candles_ago < sweep_candles_ago (flip is more recent = occurred after sweep)
+    # Only enforce when flip timing data is available
+    if flip_candles_ago is not None:
+        if flip_candles_ago >= sweep_candles_ago:
+            return False, (
+                f"Invalid sequence: Flip ({flip_candles_ago} candles ago) must be more recent "
+                f"than Sweep ({sweep_candles_ago} candles ago)"
+            )
+
+        # 5. Check gap between sweep and flip is not too large
+        sweep_to_flip_gap = sweep_candles_ago - flip_candles_ago
+        if sweep_to_flip_gap > 5:
+            return False, f"Gap between sweep and flip too large ({sweep_to_flip_gap} candles)"
+
+        # 6. Displacement must be more recent than flip (only when both timings are available)
+        disp_candles_ago = displacement.get('candles_ago') if displacement else None
+        if disp_candles_ago is not None:
+            if disp_candles_ago >= flip_candles_ago:
+                return False, (
+                    f"Invalid sequence: Displacement ({disp_candles_ago} candles ago) must be "
+                    f"more recent than Flip ({flip_candles_ago} candles ago)"
+                )
+
+    return True, f"REVERSAL sequence valid: Sweep({sweep_candles_ago}) → Flip({flip_candles_ago}) → Disp({disp_strength:.2f})"
+
+
+def _validate_rollback_behavior(
+    structure_break: Dict,
+    current_price: float,
+    ict_components: Dict
+) -> Tuple[bool, str]:
+    """
+    Validate ROLLBACK behavioral requirements
+
+    Returns:
+        (is_eligible, reason)
+    """
+    # 1. Check structure break exists
+    if not structure_break or structure_break.get('type') not in ['BOS', 'MSS']:
+        return False, "No structure break"
+
+    # 2. Check break recency (only when candles_ago field is present)
+    candles_ago = structure_break.get('candles_ago')
+    if candles_ago is not None and candles_ago > 25:
+        return False, f"Structure break too old ({candles_ago} candles ago)"
+
+    # 3. Check price is near break level (only when price key is present)
+    break_price = structure_break.get('price')
+    distance_to_break = 0.0
+    if break_price is not None:
+        distance_to_break = abs(current_price - break_price) / break_price * 100
+        if distance_to_break > 0.5:
+            return False, f"Price not at break level (distance: {distance_to_break:.1f}% > 0.5%)"
+
+    # 4. Verify price had moved away from break — REQUIRED for rollback
+    displacement = ict_components.get('displacement', {})
+    if not displacement.get('detected'):
+        return False, "No movement away from break level"
+
+    disp_strength = displacement.get('strength', 0.0)
+    if disp_strength < 0.3:
+        return False, f"Insufficient movement from break ({disp_strength:.2f} < 0.3)"
+
+    return True, f"ROLLBACK behavior valid (break {candles_ago} candles ago, distance {distance_to_break:.2f}%)"
+
+
+# ============================================================
 # ROLLBACK SCENARIO SCORING
 # ============================================================
 
@@ -352,13 +576,24 @@ def _score_rollback_scenario(
 ) -> Tuple[Optional[Dict], Any]:
     """
     Score ROLLBACK scenario: retest to structure break level
-    
+
     Returns tuple: (scenario_dict, poi_ref) OR (None, None) if invalid
     """
     sb = ict_components.get('structure_break')
-    if not sb or sb.get('type') not in ['MSS', 'BOS', 'CHOCH']:
+
+    # ✅ BEHAVIORAL CORE GATE
+    is_eligible, reason = _validate_rollback_behavior(
+        structure_break=sb,
+        current_price=current_price,
+        ict_components=ict_components
+    )
+
+    if not is_eligible:
+        logger.info(f"❌ ROLLBACK: {reason}")
         return None, None
-    
+
+    logger.info(f"✅ ROLLBACK: {reason}")
+
     break_level = sb.get('break_level')
     if not break_level:
         return None, None
@@ -447,6 +682,7 @@ def _score_rollback_scenario(
     
     scenario_dict = {
         'scenario': 'ROLLBACK',
+        'eligible': True,
         'entry_zone': entry_zone,
         'score': int(score),
         'triggers': triggers,
@@ -590,7 +826,22 @@ def _score_pullback_scenario(
     
     # Select best POI (highest quality, then closest)
     best_poi = max(poi_candidates, key=lambda x: (x['quality'], -x['distance_pct']))
-    
+
+    # ✅ BEHAVIORAL CORE GATE
+    is_eligible, reason = _validate_pullback_behavior(
+        poi=best_poi,
+        ict_components=ict_components,
+        current_price=current_price,
+        bias=bias,
+        distance_pct=best_poi['distance_pct']
+    )
+
+    if not is_eligible:
+        logger.info(f"❌ PULLBACK: {reason}")
+        return None, None
+
+    logger.info(f"✅ PULLBACK: {reason}")
+
     # Trigger requirement check (flexible for high-quality POI)
     if len(triggers) < MIN_TRIGGERS['PULLBACK']:
         if best_poi['quality'] < PULLBACK_HIGH_QUALITY_THRESHOLD:
@@ -649,6 +900,7 @@ def _score_pullback_scenario(
     # ✅ Return tuple (safe_dict, poi_ref)
     scenario_dict = {
         'scenario': 'PULLBACK',
+        'eligible': True,
         'entry_zone': entry_zone,
         'score': int(score),
         'triggers': triggers,
@@ -673,13 +925,32 @@ def _score_continuation_scenario(
     ict_components: Dict,
     triggers: List[str],
     trigger_score: int,
-    trigger_strength: str
+    trigger_strength: str,
+    timeframe: str = '1h'
 ) -> Tuple[Optional[Dict], Any]:
     """
     Score CONTINUATION scenario: minimal retracement, high momentum
-    
+
     Returns tuple: (scenario_dict, None) OR (None, None) if invalid
     """
+    sb = ict_components.get('structure_break')
+    disp = ict_components.get('displacement', {})
+
+    # ✅ BEHAVIORAL CORE GATE
+    is_eligible, reason = _validate_continuation_behavior(
+        structure_break=sb,
+        displacement=disp,
+        current_price=current_price,
+        bias=bias,
+        timeframe=timeframe
+    )
+
+    if not is_eligible:
+        logger.info(f"❌ CONTINUATION: {reason}")
+        return None, None
+
+    logger.info(f"✅ CONTINUATION: {reason}")
+
     # Strict trigger requirement
     if len(triggers) < MIN_TRIGGERS['CONTINUATION']:
         logger.debug(f"   CONTINUATION: insufficient triggers ({len(triggers)} < {MIN_TRIGGERS['CONTINUATION']})")
@@ -764,6 +1035,7 @@ def _score_continuation_scenario(
     
     scenario_dict = {
         'scenario': 'CONTINUATION',
+        'eligible': True,
         'entry_zone': entry_zone,
         'score': int(score),
         'triggers': triggers,
@@ -791,9 +1063,26 @@ def _score_reversal_scenario(
 ) -> Tuple[Optional[Dict], Any]:
     """
     Score REVERSAL scenario: market structure flip with liquidity sweep
-    
+
     Returns tuple: (scenario_dict, None) OR (None, None) if invalid
     """
+    sweeps = ict_components.get('liquidity_sweeps', [])
+    sb = ict_components.get('structure_break')
+    disp = ict_components.get('displacement', {})
+
+    # ✅ BEHAVIORAL CORE GATE
+    is_eligible, reason = _validate_reversal_behavior(
+        sweeps=sweeps,
+        structure_break=sb,
+        displacement=disp
+    )
+
+    if not is_eligible:
+        logger.info(f"❌ REVERSAL: {reason}")
+        return None, None
+
+    logger.info(f"✅ REVERSAL: {reason}")
+
     # Strict trigger requirement
     if len(triggers) < MIN_TRIGGERS['REVERSAL']:
         logger.debug(f"   REVERSAL: insufficient triggers ({len(triggers)} < {MIN_TRIGGERS['REVERSAL']})")
@@ -806,7 +1095,6 @@ def _score_reversal_scenario(
             return None, None
     
     # Check for structure flip (MSS/CHOCH in opposite direction)
-    sb = ict_components.get('structure_break')
     if REVERSAL_SETTINGS['require_structure_flip']:
         if not sb or sb.get('type') not in ['MSS', 'CHOCH']:
             logger.debug("   REVERSAL: no structure flip (MSS/CHOCH) detected")
@@ -1008,6 +1296,7 @@ def _score_reversal_scenario(
     
     scenario_dict = {
         'scenario': 'REVERSAL',
+        'eligible': True,
         'entry_zone': entry_zone,
         'score': int(score),
         'triggers': triggers,
