@@ -70,7 +70,7 @@ def test_pullback_scenario():
             'type': 'MSS',
             'break_level': 48500.0,
             'strength': 75,
-            'retested': False,
+            'retested': True,  # Mark as retested so ROLLBACK is invalid
             'direction': 'BULLISH'
         },
         'order_blocks': [
@@ -83,7 +83,7 @@ def test_pullback_scenario():
         ],
         'fvgs': [],
         'liquidity_zones': [],
-        'displacement': {'detected': True, 'strength': 0.65},
+        'displacement': {'detected': True, 'strength': 0.45},  # Weak displacement (below CONTINUATION threshold)
         'liquidity_sweeps': [
             {'candles_ago': 3, 'type': 'BSL'}
         ],
@@ -122,7 +122,8 @@ def test_continuation_scenario():
             'type': 'MSS',
             'break_level': 51000.0,
             'strength': 90,
-            'retested': False
+            'retested': False,
+            'direction': 'BULLISH'
         },
         'order_blocks': [],
         'fvgs': [],
