@@ -63,6 +63,22 @@ def _safe_get(obj, attr, default=None):
     else:
         return default
 
+
+def _get_ob_center(ob: Any) -> float:
+    """
+    Safely extract center price from Order Block object or dict.
+    
+    Args:
+        ob: Order Block object or dictionary
+        
+    Returns:
+        Center price (average of zone_low and zone_high)
+    """
+    zone_low = _safe_get(ob, 'zone_low', 0)
+    zone_high = _safe_get(ob, 'zone_high', 0)
+    return (zone_low + zone_high) / 2.0
+
+
 def select_best_entry_scenario(
     current_price: float,
     bias: str,
@@ -273,6 +289,20 @@ def _evaluate_trigger_strength(trigger_score: int) -> str:
 # PROBABILITY ENGINE - Phase 2
 # ============================================================
 
+def _normalize_trigger_count(trigger_count: int, max_triggers: int = 4) -> float:
+    """
+    Normalize trigger count to 0.0-1.0 range.
+    
+    Args:
+        trigger_count: Number of detected triggers
+        max_triggers: Maximum expected triggers for normalization
+        
+    Returns:
+        Normalized value between 0.0 and 1.0
+    """
+    return min(trigger_count / float(max_triggers), 1.0)
+
+
 def _calculate_probability_rollback(
     structure_strength: float,
     displacement_strength: float,
@@ -295,8 +325,8 @@ def _calculate_probability_rollback(
     if 'LIQUIDITY_SWEEP' in triggers:
         probability += PROBABILITY_CONTRIBUTIONS['sweep_strength']
     
-    # Trigger count contribution (normalized to 0-1)
-    trigger_count_normalized = min(len(triggers) / 4.0, 1.0)  # Max 4 triggers
+    # Trigger count contribution (normalized for typical max of 4 triggers)
+    trigger_count_normalized = _normalize_trigger_count(len(triggers), max_triggers=4)
     probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
     
     # Distance penalty (closer is better, penalty increases with distance)
@@ -324,8 +354,8 @@ def _calculate_probability_pullback(
     if structure_present:
         probability += PROBABILITY_CONTRIBUTIONS['structure_strength'] * 0.5
     
-    # Trigger count contribution
-    trigger_count_normalized = min(len(triggers) / 3.0, 1.0)  # Max 3 triggers
+    # Trigger count contribution (normalized for typical max of 3 triggers)
+    trigger_count_normalized = _normalize_trigger_count(len(triggers), max_triggers=3)
     probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
     
     # Distance penalty (0% to 5% distance)
@@ -358,8 +388,8 @@ def _calculate_probability_continuation(
     if structure_present:
         probability += PROBABILITY_CONTRIBUTIONS['structure_strength'] * 0.7
     
-    # Trigger count (max 3 triggers valued)
-    trigger_count_normalized = min(len(triggers) / 3.0, 1.0)
+    # Trigger count (normalized for typical max of 3 triggers)
+    trigger_count_normalized = _normalize_trigger_count(len(triggers), max_triggers=3)
     probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
     
     # Clear path bonus (no resistance ahead)
@@ -392,8 +422,8 @@ def _calculate_probability_reversal(
         disp_contribution = displacement_strength * PROBABILITY_CONTRIBUTIONS['displacement_strength']
         probability += disp_contribution
     
-    # Trigger count
-    trigger_count_normalized = min(len(triggers) / 4.0, 1.0)  # Max 4 triggers
+    # Trigger count (normalized for typical max of 4 triggers)
+    trigger_count_normalized = _normalize_trigger_count(len(triggers), max_triggers=4)
     probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
     
     # HTF alignment bonus (assume aligned if all components present)
@@ -861,7 +891,7 @@ def _score_pullback_scenario(
     obs = ict_components.get('order_blocks', [])
     for ob in obs:
         ob_type = str(ob.type if hasattr(ob, "type") else (_safe_get(ob, "type", "") if isinstance(ob, dict) else "")).upper()
-        ob_center = ((ob.zone_low if hasattr(ob, 'zone_low') else (ob.zone_low if hasattr(ob, 'zone_low') else (_safe_get(ob, 'zone_low', 0) if isinstance(ob, dict) else 0) if isinstance(ob, dict) else 0)) + (ob.zone_high if hasattr(ob, 'zone_high') else (ob.zone_high if hasattr(ob, 'zone_high') else (_safe_get(ob, 'zone_high', 0) if isinstance(ob, dict) else 0) if isinstance(ob, dict) else 0))) / 2
+        ob_center = _get_ob_center(ob)
         
         if is_bullish and 'BULLISH' in ob_type and ob_center < current_price:
             distance_pct = abs(ob_center - current_price) / current_price * 100
@@ -1091,7 +1121,7 @@ def _score_continuation_scenario(
     obs = ict_components.get('order_blocks', [])
     clear_path = True
     for ob in obs:
-        ob_center = (ob.zone_low if hasattr(ob, 'zone_low') else (_safe_get(ob, 'zone_low', 0) if isinstance(ob, dict) else 0) + ob.zone_high if hasattr(ob, 'zone_high') else (_safe_get(ob, 'zone_high', 0) if isinstance(ob, dict) else 0)) / 2
+        ob_center = _get_ob_center(ob)
         
         if is_bullish and current_price * (1 - check_range) <= ob_center <= current_price:
             logger.debug(f"   CONTINUATION: found OB in path @ ${ob_center:.2f}")
@@ -1256,7 +1286,7 @@ def _score_reversal_scenario(
         
         for ob in obs:
             ob_type = str(ob.type if hasattr(ob, "type") else (_safe_get(ob, "type", "") if isinstance(ob, dict) else "")).upper()
-            ob_center = (ob.zone_low if hasattr(ob, 'zone_low') else (_safe_get(ob, 'zone_low', 0) if isinstance(ob, dict) else 0) + ob.zone_high if hasattr(ob, 'zone_high') else (_safe_get(ob, 'zone_high', 0) if isinstance(ob, dict) else 0)) / 2
+            ob_center = _get_ob_center(ob)
             distance_to_ob = abs(ob_center - current_price) / current_price * 100
             
             # Step 2: Correct REVERSAL POI direction logic
@@ -1293,7 +1323,7 @@ def _score_reversal_scenario(
         
         for ob in obs:
             ob_type = str(ob.type if hasattr(ob, "type") else (_safe_get(ob, "type", "") if isinstance(ob, dict) else "")).upper()
-            ob_center = (ob.zone_low if hasattr(ob, 'zone_low') else (_safe_get(ob, 'zone_low', 0) if isinstance(ob, dict) else 0) + ob.zone_high if hasattr(ob, 'zone_high') else (_safe_get(ob, 'zone_high', 0) if isinstance(ob, dict) else 0)) / 2
+            ob_center = _get_ob_center(ob)
             distance_to_ob = abs(ob_center - current_price) / current_price * 100
             
             # Step 2: Correct REVERSAL POI direction logic
@@ -1330,7 +1360,7 @@ def _score_reversal_scenario(
         
         for ob in obs:
             ob_type = str(ob.type if hasattr(ob, "type") else (_safe_get(ob, "type", "") if isinstance(ob, dict) else "")).upper()
-            ob_center = (ob.zone_low if hasattr(ob, 'zone_low') else (_safe_get(ob, 'zone_low', 0) if isinstance(ob, dict) else 0) + ob.zone_high if hasattr(ob, 'zone_high') else (_safe_get(ob, 'zone_high', 0) if isinstance(ob, dict) else 0)) / 2
+            ob_center = _get_ob_center(ob)
             distance_to_ob = abs(ob_center - current_price) / current_price * 100
             
             # Step 2: Correct REVERSAL POI direction logic
