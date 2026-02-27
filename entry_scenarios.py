@@ -35,6 +35,20 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# SCENARIO PRIORITY - For Deterministic Tie-Breaking (Phase 2)
+# ============================================================
+
+# Priority for tie-breaking when scenarios have equal probability
+# Lower number = higher priority
+SCENARIO_PRIORITY = {
+    'CONTINUATION': 1,  # Highest priority in ties (strong trend + momentum)
+    'PULLBACK': 2,      # High priority (structure retest)
+    'REVERSAL': 3,      # Medium priority (requires multiple confirmations)
+    'ROLLBACK': 4       # Lowest priority (risky, distance-dependent)
+}
+
+
+# ============================================================
 # BEHAVIORAL CORE GATE - Extension Limits
 # ============================================================
 
@@ -177,8 +191,15 @@ def select_best_entry_scenario(
         logger.warning("⚠️ No eligible scenarios (all failed behavioral core validation)")
         return None, None
     
-    # Step 2: Select highest probability
-    best_scenario_name = max(eligible_scenarios, key=lambda k: eligible_scenarios[k].get('probability', 0))
+    # Step 2: Select highest probability with deterministic tie-breaking
+    # If multiple scenarios have equal probability, priority is used
+    best_scenario_name = max(
+        eligible_scenarios,
+        key=lambda k: (
+            eligible_scenarios[k].get('probability', 0),  # Primary: highest probability
+            -SCENARIO_PRIORITY.get(k, 999)  # Tie-break: scenario priority (negative for descending)
+        )
+    )
     best_scenario_dict = eligible_scenarios[best_scenario_name]
     best_probability = best_scenario_dict.get('probability', 0)
     best_poi_ref = poi_refs.get(best_scenario_name)
@@ -896,26 +917,30 @@ def _score_pullback_scenario(
         if is_bullish and 'BULLISH' in ob_type and ob_center < current_price:
             distance_pct = abs(ob_center - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
+                # Use actual component strength instead of hardcoded quality
+                ob_strength = _safe_get(ob, 'strength', 70)
                 poi_candidates.append({
                     'type': 'OB',
                     'price': ob_center,
                     'low': ob.zone_low if hasattr(ob, 'zone_low') else (ob.get('zone_low') if isinstance(ob, dict) else None),
                     'high': ob.zone_high if hasattr(ob, 'zone_high') else (ob.get('zone_high') if isinstance(ob, dict) else None),
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['OB'],
+                    'quality': ob_strength,
                     '_ref': ob  # ← NEW: Store reference
                 })
         
         if is_bearish and 'BEARISH' in ob_type and ob_center > current_price:
             distance_pct = abs(ob_center - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
+                # Use actual component strength instead of hardcoded quality
+                ob_strength = _safe_get(ob, 'strength', 70)
                 poi_candidates.append({
                     'type': 'OB',
                     'price': ob_center,
                     'low': ob.zone_low if hasattr(ob, 'zone_low') else (ob.get('zone_low') if isinstance(ob, dict) else None),
                     'high': ob.zone_high if hasattr(ob, 'zone_high') else (ob.get('zone_high') if isinstance(ob, dict) else None),
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['OB'],
+                    'quality': ob_strength,
                     '_ref': ob  # ← NEW: Store reference
                 })
     
@@ -928,26 +953,30 @@ def _score_pullback_scenario(
         if is_bullish and 'BULLISH' in str(fvg_type).upper() and fvg_center < current_price:
             distance_pct = abs(fvg_center - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
+                # Use actual component strength instead of hardcoded quality
+                fvg_strength = _safe_get(fvg, 'strength', 70)
                 poi_candidates.append({
                     'type': 'FVG',
                     'price': fvg_center,
                     'low': fvg.bottom if hasattr(fvg, 'bottom') else (_safe_get(fvg, 'bottom') if isinstance(fvg, dict) else None),
                     'high': fvg.top if hasattr(fvg, 'top') else (_safe_get(fvg, 'top') if isinstance(fvg, dict) else None),
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['FVG'],
+                    'quality': fvg_strength,
                     '_ref': fvg  # ← NEW: Store reference
                 })
         
         if is_bearish and 'BEARISH' in str(fvg_type).upper() and fvg_center > current_price:
             distance_pct = abs(fvg_center - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
+                # Use actual component strength instead of hardcoded quality
+                fvg_strength = _safe_get(fvg, 'strength', 70)
                 poi_candidates.append({
                     'type': 'FVG',
                     'price': fvg_center,
                     'low': fvg.bottom if hasattr(fvg, 'bottom') else (_safe_get(fvg, 'bottom') if isinstance(fvg, dict) else None),
                     'high': fvg.top if hasattr(fvg, 'top') else (_safe_get(fvg, 'top') if isinstance(fvg, dict) else None),
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['FVG'],
+                    'quality': fvg_strength,
                     '_ref': fvg  # ← NEW: Store reference
                 })
     
@@ -960,26 +989,30 @@ def _score_pullback_scenario(
         if is_bullish and 'BSL' in liq_type and liq_price < current_price:
             distance_pct = abs(liq_price - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
+                # Use actual component strength instead of hardcoded quality
+                liq_strength = _safe_get(liq, 'strength', 70)
                 poi_candidates.append({
                     'type': 'BSL',
                     'price': liq_price,
                     'low': liq_price * 0.999,
                     'high': liq_price * 1.001,
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['BSL'],
+                    'quality': liq_strength,
                     '_ref': liq  # ← NEW: Store reference
                 })
         
         if is_bearish and 'SSL' in liq_type and liq_price > current_price:
             distance_pct = abs(liq_price - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
+                # Use actual component strength instead of hardcoded quality
+                liq_strength = _safe_get(liq, 'strength', 70)
                 poi_candidates.append({
                     'type': 'SSL',
                     'price': liq_price,
                     'low': liq_price * 0.999,
                     'high': liq_price * 1.001,
                     'distance_pct': distance_pct,
-                    'quality': POI_QUALITY['SSL'],
+                    'quality': liq_strength,
                     '_ref': liq  # ← NEW: Store reference
                 })
     

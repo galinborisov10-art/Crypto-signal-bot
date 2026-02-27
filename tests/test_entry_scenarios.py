@@ -210,10 +210,71 @@ def test_reversal_scenario():
     print("✅ TEST 4 PASSED\n")
 
 
+def test_deterministic_selection():
+    """
+    Verify selection is deterministic - identical inputs produce identical outputs.
+    This is critical for a production trading system.
+    """
+    print("=" * 60)
+    print("TEST 5: DETERMINISM VALIDATION")
+    print("=" * 60)
+    
+    # Setup test data - scenario that could have ties or complex selection
+    ict_components = {
+        'structure_break': {
+            'type': 'MSS',
+            'break_level': 49500.0,
+            'strength': 75,
+            'retested': False,
+            'direction': 'BULLISH'
+        },
+        'order_blocks': [
+            {'type': 'BULLISH', 'zone_low': 49000.0, 'zone_high': 49200.0, 'strength': 80}
+        ],
+        'fvgs': [],
+        'liquidity_zones': [],
+        'displacement': {'detected': True, 'strength': 0.55},
+        'liquidity_sweeps': [{'candles_ago': 2, 'type': 'BSL'}],
+        'breaker_blocks': ['block1'],
+        'mitigation_blocks': None
+    }
+    
+    entry_zone_step8 = {'center': 50000.0, 'quality': 80}
+    
+    # Run selection 10 times with identical inputs
+    results = []
+    probabilities = []
+    for i in range(10):
+        result, _ = select_best_entry_scenario(
+            current_price=50000.0,
+            bias='BULLISH',
+            ict_components=ict_components,
+            entry_zone=entry_zone_step8,
+            timeframe='1h'
+        )
+        scenario_name = result['scenario'] if result else None
+        probability = result.get('probability', 0) if result else 0
+        results.append(scenario_name)
+        probabilities.append(probability)
+    
+    # Verify all results are identical
+    unique_results = set(results)
+    unique_probabilities = set(probabilities)
+    
+    assert len(unique_results) == 1, \
+        f"❌ DETERMINISM FAILURE: Got different scenarios across runs: {unique_results}"
+    
+    assert len(unique_probabilities) == 1, \
+        f"❌ DETERMINISM FAILURE: Got different probabilities across runs: {unique_probabilities}"
+    
+    print(f"✅ Deterministic: All 10 runs selected '{results[0]}' with probability {probabilities[0]:.3f}")
+    print("✅ TEST 5 PASSED\n")
+
+
 def test_no_scenario_fallback():
     """Test fallback when no scenario is valid"""
     print("=" * 60)
-    print("TEST 5: No Valid Scenario")
+    print("TEST 6: No Valid Scenario")
     print("=" * 60)
     
     ict_components = {
@@ -240,7 +301,7 @@ def test_no_scenario_fallback():
     assert result is None, f"❌ Expected None, got {result}"
     assert poi_ref is None, f"❌ Expected None for poi_ref, got {poi_ref}"
     print("✅ Correctly returned (None, None)")
-    print("✅ TEST 5 PASSED\n")
+    print("✅ TEST 6 PASSED\n")
 
 
 if __name__ == "__main__":
@@ -253,10 +314,11 @@ if __name__ == "__main__":
         test_pullback_scenario()
         test_continuation_scenario()
         test_reversal_scenario()
+        test_deterministic_selection()
         test_no_scenario_fallback()
         
         print("=" * 60)
-        print("✅ ALL 5 TESTS PASSED!")
+        print("✅ ALL 6 TESTS PASSED!")
         print("=" * 60)
         
     except AssertionError as e:
