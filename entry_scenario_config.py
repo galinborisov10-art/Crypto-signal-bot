@@ -213,3 +213,27 @@ SCENARIO_CONFIGS = {
         'distance': ROLLBACK_DISTANCE
     }
 }
+
+# ============================================================
+# LEGACY CONSTANTS - Backward Compatibility ONLY
+# ============================================================
+# ⚠️ WARNING: These are NOT used in entry_scenarios.py (Phase 2 removed them)
+# They exist ONLY for scenario_validation.py and other legacy validation scripts
+# DO NOT USE these in active production code!
+#
+# Phase 2 Implementation Note:
+# - The main entry_scenarios.py uses PROBABILITY-BASED selection (Phase 2)
+# - These score-based constants are DEPRECATED
+# - They remain here ONLY to prevent import errors in validation scripts
+# - For production logic, see: MIN_PROBABILITY_THRESHOLDS (above)
+
+MIN_SCENARIO_SCORE = 70  # Legacy - validation script only (NOT used in Phase 2)
+
+MIN_TRIGGERS = {          # Legacy - validation script only (NOT used in Phase 2)
+    'ROLLBACK': 2,
+    'PULLBACK': 1,
+    'CONTINUATION': 2,
+    'REVERSAL': 2
+}
+
+PULLBACK_HIGH_QUALITY_THRESHOLD = 85  # Legacy - validation script only (NOT used in Phase 2)
