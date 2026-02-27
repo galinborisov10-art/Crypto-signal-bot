@@ -25,9 +25,9 @@ from entry_scenario_config import (
     REVERSAL_DISTANCE,
     POI_QUALITY,
     POSITION_SIZE,
-    MIN_SCENARIO_SCORE,
-    MIN_TRIGGERS,
-    PULLBACK_HIGH_QUALITY_THRESHOLD,
+    BASE_PROBABILITY,
+    PROBABILITY_CONTRIBUTIONS,
+    MIN_PROBABILITY_THRESHOLDS,
     REVERSAL_SETTINGS
 )
 
@@ -101,7 +101,7 @@ def select_best_entry_scenario(
     }
     """
     logger.info("=" * 60)
-    logger.info("🎯 Entry Scenario Scoring System")
+    logger.info("🎯 Entry Scenario Evaluation System (Probability-Based)")
     logger.info("=" * 60)
     
     # Detect triggers
@@ -111,7 +111,7 @@ def select_best_entry_scenario(
     logger.info(f"Triggers detected: {triggers}")
     logger.info(f"Trigger score: {trigger_score} ({trigger_strength})")
     
-    # Score all 4 scenarios
+    # Evaluate all 4 scenarios
     scenarios = {}
     poi_refs = {}
     
@@ -122,7 +122,7 @@ def select_best_entry_scenario(
     if rollback_dict:
         scenarios['ROLLBACK'] = rollback_dict
         poi_refs['ROLLBACK'] = rollback_ref
-        logger.info(f"ROLLBACK score: {rollback_dict['score']}")
+        logger.info(f"ROLLBACK probability: {rollback_dict.get('probability', 0):.3f}")
     
     # 2. PULLBACK
     pullback_dict, pullback_ref = _score_pullback_scenario(
@@ -131,7 +131,7 @@ def select_best_entry_scenario(
     if pullback_dict:
         scenarios['PULLBACK'] = pullback_dict
         poi_refs['PULLBACK'] = pullback_ref
-        logger.info(f"PULLBACK score: {pullback_dict['score']}")
+        logger.info(f"PULLBACK probability: {pullback_dict.get('probability', 0):.3f}")
     
     # 3. CONTINUATION
     continuation_dict, continuation_ref = _score_continuation_scenario(
@@ -140,7 +140,7 @@ def select_best_entry_scenario(
     if continuation_dict:
         scenarios['CONTINUATION'] = continuation_dict
         poi_refs['CONTINUATION'] = continuation_ref
-        logger.info(f"CONTINUATION score: {continuation_dict['score']}")
+        logger.info(f"CONTINUATION probability: {continuation_dict.get('probability', 0):.3f}")
     
     # 4. REVERSAL
     reversal_dict, reversal_ref = _score_reversal_scenario(
@@ -149,26 +149,41 @@ def select_best_entry_scenario(
     if reversal_dict:
         scenarios['REVERSAL'] = reversal_dict
         poi_refs['REVERSAL'] = reversal_ref
-        logger.info(f"REVERSAL score: {reversal_dict['score']}")
+        logger.info(f"REVERSAL probability: {reversal_dict.get('probability', 0):.3f}")
     
-    # Filter by minimum score
-    valid_scenarios = {k: v for k, v in scenarios.items() if v['score'] >= MIN_SCENARIO_SCORE}
+    # Step 1: Filter by eligible flag
+    eligible_scenarios = {
+        k: v for k, v in scenarios.items() 
+        if v.get('eligible', False)
+    }
     
-    if not valid_scenarios:
-        logger.warning(f"⚠️ No scenario scored above {MIN_SCENARIO_SCORE} minimum")
+    if not eligible_scenarios:
+        logger.warning("⚠️ No eligible scenarios (all failed behavioral core validation)")
         return None, None
     
-    # Select best scenario (highest score)
-    best_scenario_name = max(valid_scenarios, key=lambda k: valid_scenarios[k]['score'])
-    best_scenario_dict = valid_scenarios[best_scenario_name]
+    # Step 2: Select highest probability
+    best_scenario_name = max(eligible_scenarios, key=lambda k: eligible_scenarios[k].get('probability', 0))
+    best_scenario_dict = eligible_scenarios[best_scenario_name]
+    best_probability = best_scenario_dict.get('probability', 0)
     best_poi_ref = poi_refs.get(best_scenario_name)
     
+    # Step 3: Apply probability threshold check
+    threshold = MIN_PROBABILITY_THRESHOLDS.get(best_scenario_name, 0.60)
+    
+    if best_probability < threshold:
+        logger.warning(
+            f"⚠️ Best scenario {best_scenario_name} probability {best_probability:.3f} "
+            f"< threshold {threshold:.3f} → NO TRADE"
+        )
+        return None, None
+    
     logger.info("=" * 60)
-    logger.info(f"🏆 BEST SCENARIO: {best_scenario_name} (score: {best_scenario_dict['score']})")
+    logger.info(f"🏆 BEST SCENARIO: {best_scenario_name} (probability: {best_probability:.3f}, threshold: {threshold:.3f})")
     logger.info(f"   Reasoning: {best_scenario_dict['reasoning']}")
     logger.info("=" * 60)
     
     return best_scenario_dict, best_poi_ref
+
 
 
 # ============================================================
@@ -252,6 +267,141 @@ def _evaluate_trigger_strength(trigger_score: int) -> str:
         return "MEDIUM"
     else:
         return "LOW"
+
+
+# ============================================================
+# PROBABILITY ENGINE - Phase 2
+# ============================================================
+
+def _calculate_probability_rollback(
+    structure_strength: float,
+    displacement_strength: float,
+    triggers: List[str],
+    distance_pct: float
+) -> float:
+    """Calculate probability for ROLLBACK scenario"""
+    probability = BASE_PROBABILITY['ROLLBACK']
+    
+    # Structure strength contribution (0-100 → 0.0-0.20)
+    structure_contribution = (structure_strength / 100.0) * PROBABILITY_CONTRIBUTIONS['structure_strength']
+    probability += structure_contribution
+    
+    # Displacement strength contribution (0-1 → 0.0-0.15)
+    if displacement_strength > 0:
+        disp_contribution = displacement_strength * PROBABILITY_CONTRIBUTIONS['displacement_strength']
+        probability += disp_contribution
+    
+    # Sweep strength contribution
+    if 'LIQUIDITY_SWEEP' in triggers:
+        probability += PROBABILITY_CONTRIBUTIONS['sweep_strength']
+    
+    # Trigger count contribution (normalized to 0-1)
+    trigger_count_normalized = min(len(triggers) / 4.0, 1.0)  # Max 4 triggers
+    probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
+    
+    # Distance penalty (closer is better, penalty increases with distance)
+    distance_penalty_factor = min(distance_pct / 5.0, 1.0)  # 0% to 5% distance
+    probability -= distance_penalty_factor * PROBABILITY_CONTRIBUTIONS['distance_penalty']
+    
+    # Clamp between 0.0 and 1.0
+    return max(0.0, min(1.0, probability))
+
+
+def _calculate_probability_pullback(
+    poi_quality: float,
+    triggers: List[str],
+    distance_pct: float,
+    structure_present: bool
+) -> float:
+    """Calculate probability for PULLBACK scenario"""
+    probability = BASE_PROBABILITY['PULLBACK']
+    
+    # POI quality contribution (0-100 → 0.0-0.15)
+    poi_contribution = (poi_quality / 100.0) * PROBABILITY_CONTRIBUTIONS['poi_quality']
+    probability += poi_contribution
+    
+    # Structure bonus if MSS/BOS present
+    if structure_present:
+        probability += PROBABILITY_CONTRIBUTIONS['structure_strength'] * 0.5
+    
+    # Trigger count contribution
+    trigger_count_normalized = min(len(triggers) / 3.0, 1.0)  # Max 3 triggers
+    probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
+    
+    # Distance penalty (0% to 5% distance)
+    distance_penalty_factor = min(distance_pct / 5.0, 1.0)
+    probability -= distance_penalty_factor * PROBABILITY_CONTRIBUTIONS['distance_penalty']
+    
+    # Clamp between 0.0 and 1.0
+    return max(0.0, min(1.0, probability))
+
+
+def _calculate_probability_continuation(
+    displacement_strength: float,
+    triggers: List[str],
+    structure_present: bool,
+    clear_path: bool
+) -> float:
+    """Calculate probability for CONTINUATION scenario"""
+    probability = BASE_PROBABILITY['CONTINUATION']
+    
+    # Displacement strength (strongest factor for continuation)
+    if displacement_strength > 0:
+        disp_contribution = displacement_strength * PROBABILITY_CONTRIBUTIONS['displacement_strength']
+        probability += disp_contribution
+        
+        # Extra bonus for very strong displacement
+        if displacement_strength > 0.8:
+            probability += 0.05
+    
+    # Structure confirmation
+    if structure_present:
+        probability += PROBABILITY_CONTRIBUTIONS['structure_strength'] * 0.7
+    
+    # Trigger count (max 3 triggers valued)
+    trigger_count_normalized = min(len(triggers) / 3.0, 1.0)
+    probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
+    
+    # Clear path bonus (no resistance ahead)
+    if clear_path:
+        probability += 0.05
+    
+    # Clamp between 0.0 and 1.0
+    return max(0.0, min(1.0, probability))
+
+
+def _calculate_probability_reversal(
+    sweep_present: bool,
+    structure_flip: bool,
+    displacement_strength: float,
+    triggers: List[str]
+) -> float:
+    """Calculate probability for REVERSAL scenario"""
+    probability = BASE_PROBABILITY['REVERSAL']
+    
+    # Sweep strength (critical for reversal)
+    if sweep_present:
+        probability += PROBABILITY_CONTRIBUTIONS['sweep_strength']
+    
+    # Structure flip (critical for reversal)
+    if structure_flip:
+        probability += PROBABILITY_CONTRIBUTIONS['structure_strength']
+    
+    # Displacement in reversal direction
+    if displacement_strength > 0:
+        disp_contribution = displacement_strength * PROBABILITY_CONTRIBUTIONS['displacement_strength']
+        probability += disp_contribution
+    
+    # Trigger count
+    trigger_count_normalized = min(len(triggers) / 4.0, 1.0)  # Max 4 triggers
+    probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
+    
+    # HTF alignment bonus (assume aligned if all components present)
+    if sweep_present and structure_flip and displacement_strength > 0.6:
+        probability += PROBABILITY_CONTRIBUTIONS['htf_alignment'] * 0.5
+    
+    # Clamp between 0.0 and 1.0
+    return max(0.0, min(1.0, probability))
 
 
 def _create_safe_poi_data(poi_type: str, poi_object: Any) -> Dict:
@@ -575,7 +725,8 @@ def _score_rollback_scenario(
     trigger_score: int
 ) -> Tuple[Optional[Dict], Any]:
     """
-    Score ROLLBACK scenario: retest to structure break level
+    Evaluate ROLLBACK scenario: retest to structure break level
+    Uses probability engine instead of score-based filtering
 
     Returns tuple: (scenario_dict, poi_ref) OR (None, None) if invalid
     """
@@ -626,37 +777,24 @@ def _score_rollback_scenario(
         logger.debug(f"   ROLLBACK: BEARISH but break_level below current")
         return None, None
     
-    # Trigger requirement check
-    if len(triggers) < MIN_TRIGGERS['ROLLBACK']:
-        logger.debug(f"   ROLLBACK: insufficient triggers ({len(triggers)} < {MIN_TRIGGERS['ROLLBACK']})")
-        return None, None
-    
     # ============================================================
-    # SCORE CALCULATION
+    # PROBABILITY CALCULATION (Phase 2)
     # ============================================================
-    score = ROLLBACK_WEIGHTS['base_score']
-    
-    # Structure strength bonus
     structure_strength = sb.get('strength', 50)
-    score += structure_strength * ROLLBACK_WEIGHTS['structure_strength_multiplier']
     
-    # Trigger bonuses
-    if 'DISPLACEMENT' in triggers:
-        score += ROLLBACK_WEIGHTS['displacement_bonus']
+    # Get displacement strength
+    displacement = ict_components.get('displacement', {})
+    displacement_strength = displacement.get('strength', 0) if displacement.get('detected') else 0
     
-    if 'LIQUIDITY_SWEEP' in triggers:
-        score += ROLLBACK_WEIGHTS['liquidity_sweep_bonus']
+    # Calculate probability using helper function
+    probability = _calculate_probability_rollback(
+        structure_strength=structure_strength,
+        displacement_strength=displacement_strength,
+        triggers=triggers,
+        distance_pct=distance_pct
+    )
     
-    # Additional trigger bonus
-    extra_triggers = len(triggers) - MIN_TRIGGERS['ROLLBACK']
-    if extra_triggers > 0:
-        score += extra_triggers * ROLLBACK_WEIGHTS['trigger_count_bonus']
-    
-    # Distance penalty
-    score += distance_pct * ROLLBACK_WEIGHTS['distance_penalty_per_pct']
-    
-    # Cap score at 100
-    score = min(100, max(0, score))
+    logger.debug(f"   ROLLBACK probability: {probability:.3f}")
     
     # Build entry zone
     buffer = ROLLBACK_DISTANCE['buffer_pct']
@@ -684,10 +822,10 @@ def _score_rollback_scenario(
         'scenario': 'ROLLBACK',
         'eligible': True,
         'entry_zone': entry_zone,
-        'score': int(score),
+        'probability': float(probability),
         'triggers': triggers,
         'trigger_strength': _evaluate_trigger_strength(trigger_score),
-        'reasoning': f"Rollback to {sb.get('type')} break level @ ${break_level:.2f} ({distance_pct:.1f}% away, {len(triggers)} triggers)",
+        'reasoning': f"Rollback to {sb.get('type')} break level @ ${break_level:.2f} ({distance_pct:.1f}% away, probability: {probability:.3f})",
         'position_size_advisory': POSITION_SIZE['ROLLBACK'],
         'poi_type': 'NONE',
         'poi_data': {},
@@ -695,6 +833,7 @@ def _score_rollback_scenario(
     }
     
     return scenario_dict, None
+
 
 
 # ============================================================

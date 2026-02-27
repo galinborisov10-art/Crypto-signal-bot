@@ -142,22 +142,35 @@ POSITION_SIZE = {
 }
 
 # ============================================================
-# MINIMUM SCENARIO SCORE
+# PROBABILITY ENGINE (Phase 2 - Replaces Score System)
 # ============================================================
-MIN_SCENARIO_SCORE = 70  # Scenarios below this are rejected
 
-# ============================================================
-# MINIMUM TRIGGERS PER SCENARIO
-# ============================================================
-MIN_TRIGGERS = {
-    'ROLLBACK': 2,       # Strict: 2+ triggers
-    'PULLBACK': 1,       # Flexible: 1 trigger OK if POI quality >= 85
-    'CONTINUATION': 2,   # Strict: 2+ triggers
-    'REVERSAL': 2        # Strict: 2+ triggers (sweep + structure)
+# Base probabilities for each scenario type
+BASE_PROBABILITY = {
+    'CONTINUATION': 0.55,
+    'PULLBACK': 0.50,
+    'REVERSAL': 0.52,
+    'ROLLBACK': 0.48
 }
 
-# High quality POI threshold (for PULLBACK with 1 trigger)
-PULLBACK_HIGH_QUALITY_THRESHOLD = 85
+# Contribution weights for probability calculation
+PROBABILITY_CONTRIBUTIONS = {
+    'structure_strength': 0.20,
+    'displacement_strength': 0.15,
+    'poi_quality': 0.15,
+    'sweep_strength': 0.15,
+    'trigger_count': 0.08,
+    'htf_alignment': 0.10,
+    'distance_penalty': 0.15
+}
+
+# Minimum probability thresholds for each scenario
+MIN_PROBABILITY_THRESHOLDS = {
+    'CONTINUATION': 0.65,
+    'PULLBACK': 0.60,
+    'REVERSAL': 0.55,
+    'ROLLBACK': 0.55
+}
 
 # ============================================================
 # REVERSAL DETECTION SETTINGS
@@ -175,31 +188,27 @@ SCENARIO_CONFIGS = {
     'CONTINUATION': {
         'name': 'Continuation',
         'description': 'Trend continuation scenario',
-        'min_score': MIN_SCENARIO_SCORE,
-        'min_triggers': MIN_TRIGGERS['CONTINUATION'],
+        'min_probability': MIN_PROBABILITY_THRESHOLDS['CONTINUATION'],
         'weights': CONTINUATION_WEIGHTS
     },
     'PULLBACK': {
         'name': 'Pullback',
         'description': 'Pullback to structure scenario',
-        'min_score': MIN_SCENARIO_SCORE,
-        'min_triggers': MIN_TRIGGERS['PULLBACK'],
+        'min_probability': MIN_PROBABILITY_THRESHOLDS['PULLBACK'],
         'weights': PULLBACK_WEIGHTS,
         'distance': PULLBACK_DISTANCE
     },
     'REVERSAL': {
         'name': 'Reversal',
         'description': 'Trend reversal scenario',
-        'min_score': MIN_SCENARIO_SCORE,
-        'min_triggers': MIN_TRIGGERS['REVERSAL'],
+        'min_probability': MIN_PROBABILITY_THRESHOLDS['REVERSAL'],
         'weights': REVERSAL_WEIGHTS,
         'settings': REVERSAL_SETTINGS
     },
     'ROLLBACK': {
         'name': 'Rollback',
         'description': 'Rollback to structure scenario',
-        'min_score': MIN_SCENARIO_SCORE,
-        'min_triggers': MIN_TRIGGERS['ROLLBACK'],
+        'min_probability': MIN_PROBABILITY_THRESHOLDS['ROLLBACK'],
         'weights': ROLLBACK_WEIGHTS,
         'distance': ROLLBACK_DISTANCE
     }
