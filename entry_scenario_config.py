@@ -172,6 +172,21 @@ MIN_PROBABILITY_THRESHOLDS = {
     'ROLLBACK': 0.55
 }
 
+# Default fallback threshold when scenario type is not in MIN_PROBABILITY_THRESHOLDS
+DEFAULT_MIN_PROBABILITY_THRESHOLD = 0.60
+
+# ============================================================
+# STRUCTURE ALIGNMENT MODIFIERS - Phase 2 Enhancement
+# ============================================================
+# These modifiers adjust probability based on HTF vs Entry TF structure alignment.
+# They do NOT hard-block signals - threshold remains the final decision gate.
+
+STRUCTURE_ALIGNMENT = {
+    'htf_aligned': 1.10,      # HTF and Entry both bullish/bearish (+10% bonus)
+    'ranging_penalty': 0.90,  # Entry TF mixed/ranging (-10% penalty, pullback/consolidation)
+    'opposite': 0.75          # HTF and Entry opposite directions (-25% penalty, conflict)
+}
+
 # ============================================================
 # REVERSAL DETECTION SETTINGS
 # ============================================================
