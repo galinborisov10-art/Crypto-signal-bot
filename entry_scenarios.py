@@ -427,13 +427,14 @@ def _validate_pullback_behavior(
     if not poi:
         return False, "No POI (Order Block or FVG)"
 
-    # 2. Check for prior impulse (displacement) — only validate strength when detected
+    # 2. Check for prior impulse (displacement) — REQUIRED for pullback
     displacement = ict_components.get('displacement', {})
-    disp_strength = 0.0
-    if displacement.get('detected'):
-        disp_strength = displacement.get('strength', 0.0)
-        if disp_strength < 0.4:
-            return False, f"Weak impulse ({disp_strength:.2f} < 0.4 minimum)"
+    if not displacement.get('detected'):
+        return False, "No impulse (displacement not detected)"
+
+    disp_strength = displacement.get('strength', 0.0)
+    if disp_strength < 0.4:
+        return False, f"Weak impulse ({disp_strength:.2f} < 0.4 minimum)"
 
     # 3. Check impulse direction matches bias
     poi_price = poi.get('price', poi.get('center', current_price))
@@ -487,12 +488,13 @@ def _validate_reversal_behavior(
     # Use None when candles_ago is absent so conditional checks can be skipped
     flip_candles_ago = structure_break.get('candles_ago')
 
-    # 3. Check displacement strength only when displacement is detected
-    disp_strength = 0.0
-    if displacement and displacement.get('detected'):
-        disp_strength = displacement.get('strength', 0.0)
-        if disp_strength < 0.5:
-            return False, f"Weak reversal displacement ({disp_strength:.2f} < 0.5 minimum)"
+    # 3. Check displacement — REQUIRED after structure flip
+    if not displacement or not displacement.get('detected'):
+        return False, "No displacement after structure flip"
+
+    disp_strength = displacement.get('strength', 0.0)
+    if disp_strength < 0.5:
+        return False, f"Weak reversal displacement ({disp_strength:.2f} < 0.5 minimum)"
 
     # 4. Validate sequence: Sweep → Flip → Displacement
     # Valid: flip_candles_ago < sweep_candles_ago (flip is more recent = occurred after sweep)
@@ -549,12 +551,14 @@ def _validate_rollback_behavior(
         if distance_to_break > 0.5:
             return False, f"Price not at break level (distance: {distance_to_break:.1f}% > 0.5%)"
 
-    # 4. Verify price had moved away from break — only check strength when detected
+    # 4. Verify price had moved away from break — REQUIRED for rollback
     displacement = ict_components.get('displacement', {})
-    if displacement.get('detected'):
-        disp_strength = displacement.get('strength', 0.0)
-        if disp_strength < 0.3:
-            return False, f"Insufficient movement from break ({disp_strength:.2f} < 0.3)"
+    if not displacement.get('detected'):
+        return False, "No movement away from break level"
+
+    disp_strength = displacement.get('strength', 0.0)
+    if disp_strength < 0.3:
+        return False, f"Insufficient movement from break ({disp_strength:.2f} < 0.3)"
 
     return True, f"ROLLBACK behavior valid (break {candles_ago} candles ago, distance {distance_to_break:.2f}%)"
 
