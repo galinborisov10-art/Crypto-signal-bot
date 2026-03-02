@@ -1798,7 +1798,8 @@ class ICTSignalEngine:
         # ✅ APPLY CONFIRMATION LAYER MODIFIER (±8%)
         logger.info(f"   📊 Applying Confirmation Layer Modifier")
         logger.info(f"   → Confidence before confirmation: {confidence:.1f}%")
-        confidence = confidence * (1 + confirmation_modifier)
+        # Apply percentage-based adjustment (e.g., 80% * 1.08 = 86.4% for +8% modifier)
+        confidence = confidence + (confidence * confirmation_modifier)
         logger.info(f"   → Confirmation modifier: {confirmation_modifier:+.1%}")
         logger.info(f"   → Confidence after confirmation: {confidence:.1f}%")
         
@@ -3458,10 +3459,19 @@ class ICTSignalEngine:
             return False, -0.08
         
         # Check for MSS/BOS (structure break)
-        has_structure_break = self._check_structure_break(df)
+        has_structure_break = False
+        try:
+            has_structure_break = self._check_structure_break(df)
+        except Exception as e:
+            logger.debug(f"   Could not check structure break: {e}")
         
         # Check for Displacement
-        has_displacement, displacement_strength = self._check_displacement(df)
+        has_displacement = False
+        displacement_strength = 0.0
+        try:
+            has_displacement, displacement_strength = self._check_displacement(df)
+        except Exception as e:
+            logger.debug(f"   Could not check displacement: {e}")
         
         # Check for Sweep (if liquidity mapper available)
         has_sweep = False
