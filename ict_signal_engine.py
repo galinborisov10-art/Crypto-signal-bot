@@ -2828,12 +2828,12 @@ class ICTSignalEngine:
             components['luxalgo_ict'] = {}
             components['luxalgo_combined'] = {}
         
-        # Run Fibonacci Analysis
+        # Run Fibonacci Analysis (from signal_tf)
         # Determine bias from existing components
         bias_str = self._determine_bias_from_components(components)
         if self.fibonacci_analyzer:
             try:
-                fibonacci_data = self.fibonacci_analyzer.analyze(df, bias_str, lookback=50)
+                fibonacci_data = self.fibonacci_analyzer.analyze(df_signal, bias_str, lookback=50)
                 components['fibonacci_data'] = fibonacci_data
                 
                 logger.info(f"Fibonacci analysis complete - "
