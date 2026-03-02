@@ -1061,16 +1061,66 @@ class ICTSignalEngine:
         bias_str, bias_confidence = self._calculate_pure_ict_bias_for_tf(df, symbol, entry_tf)
         bias = MarketBias[bias_str]  # Convert string to enum
         
-        # Detect structure break and displacement on entry timeframe
-        structure_broken = self._check_structure_break(df)
-        displacement_detected, displacement_strength = self._check_displacement(df)
+        # ═══════════════════════════════════════════════════════════
+        # ✅ MTF ROUTING FIX: Extract appropriate DataFrames per contract
+        # ═══════════════════════════════════════════════════════════
+        
+        # Extract structure TF DataFrame (for structure breaks)
+        if tf_hierarchy and structure_tf:
+            df_structure = self._get_mtf_dataframe(mtf_data, structure_tf, df)
+        else:
+            df_structure = df  # Fallback to signal TF
+        
+        # Extract confirmation TF DataFrame (for displacement and whale blocks)
+        if tf_hierarchy and confirmation_tf:
+            df_confirmation = self._get_mtf_dataframe(mtf_data, confirmation_tf, df)
+        else:
+            df_confirmation = df  # Fallback to signal TF
+        
+        # Detect structure break on STRUCTURE_TF (not signal_tf)
+        structure_broken = self._check_structure_break(df_structure)
+        
+        # Detect displacement on CONFIRMATION_TF (not signal_tf)
+        displacement_detected, displacement_strength = self._check_displacement(df_confirmation)
+        
+        # ✅ MTF ROUTING FIX: Detect whale blocks on CONFIRMATION_TF
+        # Whale blocks are proof of intent and should be detected on confirmation timeframe
+        whale_blocks_confirmation = []
+        if tf_hierarchy and confirmation_tf and self.config.get('use_whale_blocks') and self.whale_detector:
+            try:
+                whale_blocks_confirmation = self.whale_detector.detect_whale_blocks(df_confirmation, confirmation_tf)
+                logger.info(f"Detected {len(whale_blocks_confirmation)} whale blocks on confirmation TF ({confirmation_tf})")
+                
+                # Replace whale blocks in ict_components with confirmation TF whale blocks
+                ict_components['whale_blocks'] = whale_blocks_confirmation
+                
+                if TIMEFRAME_CONTRACT_AVAILABLE:
+                    actual_whale_tf = confirmation_tf if df_confirmation is not df else entry_tf
+                    TimeframeDebugLogger.log_component_source("Whale Blocks", actual_whale_tf, len(whale_blocks_confirmation))
+                    
+                    # Log warning if fallback occurred
+                    if df_confirmation is df and confirmation_tf.lower() != entry_tf.lower():
+                        logger.warning(f"⚠️ FALLBACK: Whale blocks detected on {entry_tf} (expected {confirmation_tf})")
+            except Exception as e:
+                logger.error(f"Whale block detection error on confirmation TF: {e}")
+        
+        # Store components
         ict_components["displacement"] = {"detected": displacement_detected, "strength": displacement_strength}
         ict_components["structure_break"] = {"type": "MSS" if structure_broken else None}
         
-        # ✅ STABILIZATION: Log displacement and MSS/BOS detection
+        # ✅ STABILIZATION: Log displacement and MSS/BOS detection with correct TF
         if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-            TimeframeDebugLogger.log_component_source("Displacement", entry_tf, 1 if displacement_detected else 0)
-            TimeframeDebugLogger.log_component_source("MSS/BOS (Structure Break)", entry_tf, 1 if structure_broken else 0)
+            actual_displacement_tf = confirmation_tf if confirmation_tf and df_confirmation is not df else entry_tf
+            actual_structure_tf = structure_tf if structure_tf and df_structure is not df else entry_tf
+            
+            TimeframeDebugLogger.log_component_source("Displacement", actual_displacement_tf, 1 if displacement_detected else 0)
+            TimeframeDebugLogger.log_component_source("MSS/BOS (Structure Break)", actual_structure_tf, 1 if structure_broken else 0)
+            
+            # Log warnings if fallback occurred
+            if df_structure is df and structure_tf and structure_tf.lower() != entry_tf.lower():
+                logger.warning(f"⚠️ FALLBACK: Structure break detected on {entry_tf} (expected {structure_tf})")
+            if df_confirmation is df and confirmation_tf and confirmation_tf.lower() != entry_tf.lower():
+                logger.warning(f"⚠️ FALLBACK: Displacement detected on {entry_tf} (expected {confirmation_tf})")
 
         # Add structure_break and displacement to ict_components for Entry Scenarios
         
@@ -5396,6 +5446,45 @@ class ICTSignalEngine:
         except Exception as e:
             logger.error(f"❌ ML optimization error: {e}")
             return entry_price, stop_loss, take_profit
+    
+    def _get_mtf_dataframe(
+        self,
+        mtf_data: Optional[Dict[str, pd.DataFrame]],
+        target_tf: str,
+        fallback_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Safely extract DataFrame for a specific timeframe from mtf_data.
+        
+        Args:
+            mtf_data: Dictionary of timeframe -> DataFrame
+            target_tf: Target timeframe (e.g., '4h', '2h', '1d')
+            fallback_df: Fallback DataFrame if target_tf is not available
+        
+        Returns:
+            DataFrame for target_tf, or fallback_df if not available
+        """
+        if mtf_data is None or not isinstance(mtf_data, dict):
+            logger.warning(
+                f"⚠️ MTF data not available for {target_tf} - "
+                f"falling back to signal_tf (backward compatibility)"
+            )
+            return fallback_df
+        
+        # Try different case variants of the timeframe key
+        for tf_variant in [target_tf, target_tf.upper(), target_tf.lower()]:
+            if tf_variant in mtf_data:
+                df = mtf_data[tf_variant]
+                if df is not None and not df.empty and len(df) >= 20:
+                    logger.info(f"✅ Using {target_tf} DataFrame ({len(df)} candles)")
+                    return df
+        
+        # If not found, fallback
+        logger.warning(
+            f"⚠️ {target_tf} data missing from mtf_data - "
+            f"falling back to signal_tf (backward compatibility)"
+        )
+        return fallback_df
     
     def _get_htf_bias_with_fallback(self, symbol: str, mtf_data: Optional[Dict], entry_timeframe: str) -> str:
         """
