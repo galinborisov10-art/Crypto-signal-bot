@@ -710,22 +710,23 @@ class ICTSignalEngine:
             logger.info(f"   Expected - Structure: {expected_structure_tf}, Confirmation: {expected_confirmation_tf}")
             logger.info(f"   Available: {available_tfs}")
             
-            # VALIDATION 1: Check Confirmation TF
+            # VALIDATION 1: Check Confirmation TF (INFORMATIONAL ONLY)
+            # Note: Confirmation layer analysis will apply ±8% modifier separately
             if expected_confirmation_tf:
                 if expected_confirmation_tf in available_tfs:
                     logger.info(f"   ✅ Confirmation TF ({expected_confirmation_tf}) present")
                     hierarchy_info['confirmation_tf_present'] = True
                 else:
+                    # ✅ Confirmation layer will handle this with -8% modifier
                     warning_msg = (
-                        f"⚠️ Missing Confirmation TF ({expected_confirmation_tf}) "
-                        f"- intermediate pattern validation limited"
+                        f"ℹ️ Confirmation TF ({expected_confirmation_tf}) not available "
+                        f"- confirmation layer will apply -8% modifier"
                     )
                     warnings.append(warning_msg)
-                    adjusted_confidence -= confirmation_penalty
                     hierarchy_info['confirmation_tf_present'] = False
-                    logger.warning(f"   {warning_msg} (-{confirmation_penalty*100:.0f}%)")
+                    logger.info(f"   {warning_msg}")
             
-            # VALIDATION 2: Check Structure TF
+            # VALIDATION 2: Check Structure TF (INFORMATIONAL ONLY - NO PENALTY)
             if expected_structure_tf:
                 if expected_structure_tf in available_tfs:
                     logger.info(f"   ✅ Structure TF ({expected_structure_tf}) present")
@@ -737,16 +738,16 @@ class ICTSignalEngine:
                     
                     if structure_bias:
                         hierarchy_info['structure_bias'] = structure_bias
-                        logger.info(f"   📊 Structure bias: {structure_bias}")
+                        logger.info(f"   📊 Structure bias: {structure_bias} (context only)")
                 else:
+                    # ✅ Structure is CONTEXT ONLY - does not apply penalty
                     warning_msg = (
-                        f"⚠️ Missing Structure TF ({expected_structure_tf}) "
-                        f"- major trend validation limited"
+                        f"ℹ️ Structure TF ({expected_structure_tf}) not available "
+                        f"- structure context limited (no penalty applied)"
                     )
                     warnings.append(warning_msg)
-                    adjusted_confidence -= structure_penalty
                     hierarchy_info['structure_tf_present'] = False
-                    logger.warning(f"   {warning_msg} (-{structure_penalty*100:.0f}%)")
+                    logger.info(f"   {warning_msg}")
             
             # VALIDATION 3: Check HTF Bias TF (informational only, no penalty)
             if expected_htf_bias_tf:
@@ -1137,6 +1138,17 @@ class ICTSignalEngine:
         # ✅ CONTINUE TO STEP 7 (NO EARLY EXIT FOR DIRECTIONAL BIAS)
         # At this point, bias is guaranteed to be BULLISH or BEARISH
         logger.info(f"✅ PASSED Step 6: Continuing with bias {bias.value} (penalty: {confidence_penalty*100:.0f}%)")
+        
+        # СТЪПКА 6c: CONFIRMATION LAYER - Check for MSS/BOS/Displacement/Sweep
+        logger.info("🔍 Step 6c: Confirmation Layer Analysis")
+        has_confirmation, confirmation_modifier = self._analyze_confirmation_layer(
+            symbol=symbol,
+            confirmation_tf=confirmation_tf,
+            mtf_data=mtf_data
+        )
+        logger.info(f"   → Confirmation found: {has_confirmation}")
+        logger.info(f"   → Confidence modifier: {confirmation_modifier:+.1%}")
+        # Store for later use in confidence calculation
         
         # СТЪПКА 7: ENTRY SCENARIO SELECTION (merged Step 8 + Step 8.1)
         logger.info("🎯 Step 7: Entry Scenario Selection")
@@ -1782,6 +1794,14 @@ class ICTSignalEngine:
         # ✅ Pre-ML confidence (before ML advisory layer runs)
         # ML will be applied AFTER all guards at the end of the pipeline
         confidence = confidence_after_context
+        
+        # ✅ APPLY CONFIRMATION LAYER MODIFIER (±8%)
+        logger.info(f"   📊 Applying Confirmation Layer Modifier")
+        logger.info(f"   → Confidence before confirmation: {confidence:.1f}%")
+        confidence = confidence * (1 + confirmation_modifier)
+        logger.info(f"   → Confirmation modifier: {confirmation_modifier:+.1%}")
+        logger.info(f"   → Confidence after confirmation: {confidence:.1f}%")
+        
         confidence = max(0.0, min(100.0, confidence))
         
         logger.info(f"   → Confidence (after ML adjustments): {confidence:.1f}%")
@@ -1790,77 +1810,30 @@ class ICTSignalEngine:
         # СТЪПКА 12: FINAL VALIDATION (consolidated from Step 11.5, 11.5b, 11.6)
         logger.info("🔍 Step 12: Final Validation")
         
-        # 12a: MTF CONSENSUS CHECK (STRICT ICT)
-        logger.info("   📊 MTF Consensus Validation")
+        # 12a: MTF CONSENSUS CHECK (INFORMATIONAL ONLY - NOT A GATE)
+        logger.info("   📊 MTF Consensus Analysis (informational)")
         mtf_consensus_data = self._calculate_mtf_consensus(
             symbol, entry_tf, bias, mtf_data, tf_hierarchy  # ✅ STABILIZATION: Pass TF hierarchy
         )
         
         logger.info(f"   → MTF Consensus: {mtf_consensus_data['consensus_pct']:.1f}%")
         logger.info(f"   → Aligned TFs: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}")
-        logger.info(f"   → Minimum Required: 50%")
+        logger.info(f"   → This is INFORMATIONAL ONLY - does not block signals")
         
-        # Ако MTF consensus < 50%, confidence = 0 и сигналът НЕ СЕ ИЗПРАЩА
-        if mtf_consensus_data['consensus_pct'] < 50.0:
-            logger.info(f"❌ BLOCKED at Step 12: MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50%")
-            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 12, reason: Insufficient MTF consensus)")
-            logger.error(f"❌ MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50% - сигналът НЕ СЕ ИЗПРАЩА")
-            # Изпрати информативно съобщение
-            context = self._extract_context_data(df, bias)
-            return self._create_no_trade_message(
-                symbol=symbol,
-                timeframe=timeframe,
-                reason=f"Липса на MTF consensus ({mtf_consensus_data['consensus_pct']:.1f}%)",
-                details=f"Необходими: >=50% aligned TFs. Намерени: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}",
-                mtf_breakdown=mtf_consensus_data['breakdown'],
-                current_price=context['current_price'],
-                price_change_24h=context['price_change_24h'],
-                rsi=context['rsi'],
-                signal_direction=context['signal_direction'],
-                confidence=confidence
-            )
+        # ✅ MTF consensus does NOT block - it's context information only
+        # Store for signal message, but doesn't affect eligibility
         
-        logger.info(f"   ✅ MTF consensus validated ({mtf_consensus_data['consensus_pct']:.1f}% >= 50%)")
-
-        # 12b: HTF Bias Direction Validation (CRITICAL ICT PRINCIPLE)
-        logger.info("   📊 HTF Bias Direction Alignment")
+        # 12b: HTF Bias Direction Validation - REMOVED
+        # ✅ Per spec: Counter-HTF trades are ALLOWED
+        # Structure and HTF bias are context only, not gates
+        logger.info("   ✅ HTF bias is context only - does not block signals")
         
-        # Get HTF bias from earlier analysis
-        htf_bias_value = ict_components.get('htf_bias', 'NEUTRAL')
-        entry_bias_value = bias.value if hasattr(bias, 'value') else str(bias)
-        
-        logger.info(f"   → HTF Bias: {htf_bias_value}")
-        logger.info(f"   → Entry Bias: {entry_bias_value}")
-        
-        # ICT Rule: NEVER trade against HTF bias
-        if htf_bias_value in ['BULLISH', 'BEARISH'] and htf_bias_value != 'NEUTRAL':
-            if (htf_bias_value == 'BEARISH' and entry_bias_value == 'BULLISH') or \
-               (htf_bias_value == 'BULLISH' and entry_bias_value == 'BEARISH'):
-                logger.info(f"❌ BLOCKED at Step 12: Counter-HTF trade detected!")
-                logger.info(f"   HTF ({hierarchy.get('htf_bias_tf', 'unknown')}) is {htf_bias_value}, but entry ({timeframe}) is {entry_bias_value}")
-                logger.error(f"❌ Counter-HTF trade: HTF {htf_bias_value} vs Entry {entry_bias_value} - BLOCKED")
-                
-                context = self._extract_context_data(df, bias)
-                return self._create_no_trade_message(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    reason=f"Counter-trend trade against HTF bias",
-                    details=f"HTF ({hierarchy.get('htf_bias_tf', 'unknown')}): {htf_bias_value}, Entry ({timeframe}): {entry_bias_value}. ICT principle: Never trade against HTF bias.",
-                    mtf_breakdown=mtf_consensus_data['breakdown'],
-                    current_price=context['current_price'],
-                    price_change_24h=context['price_change_24h'],
-                    rsi=context['rsi'],
-                    signal_direction=context['signal_direction'],
-                    confidence=confidence
-                )
-        
-        logger.info(f"   ✅ HTF bias aligned or neutral ({htf_bias_value})")
-        
-        # 12c: Final Confidence Check
+        # 12c: Final Confidence Check (ONLY REMAINING HARD GATE)
         logger.info("   📊 Final Confidence Check")
         
         # Determine min confidence based on signal type
-        min_confidence = 50 if is_auto else 55
+        # ✅ SPEC: 60% for auto, 70% for manual
+        min_confidence = 60 if is_auto else 70
         mode = "Auto" if is_auto else "Manual"
         
         logger.info(f"   → Final Confidence: {confidence:.1f}%")
@@ -3437,6 +3410,89 @@ class ICTSignalEngine:
                 detected = True
         
         return detected, max_strength
+    
+    def _analyze_confirmation_layer(
+        self,
+        symbol: str,
+        confirmation_tf: str,
+        mtf_data: Optional[Dict] = None
+    ) -> tuple:
+        """
+        ✅ NEW: Confirmation Layer Analysis
+        
+        Checks for MSS, BOS, Displacement, or Sweep + Displacement on confirmation_tf.
+        Returns confidence modifier: +8% if found, -8% if not found.
+        
+        NEVER returns None.
+        NEVER sets eligible = False.
+        NEVER blocks signals.
+        NEVER filters scenarios.
+        NEVER participates in probability.
+        NEVER applies threshold.
+        
+        This is ONLY a confidence modifier.
+        
+        Args:
+            symbol: Trading symbol
+            confirmation_tf: Confirmation timeframe
+            mtf_data: Multi-timeframe data dictionary
+        
+        Returns:
+            (has_confirmation: bool, confidence_modifier: float)
+        """
+        logger.info(f"🔍 Confirmation Layer Analysis on {confirmation_tf}")
+        
+        # Try to get confirmation TF data from mtf_data
+        if mtf_data is None or not isinstance(mtf_data, dict):
+            logger.warning(f"   ⚠️ No MTF data available for confirmation analysis")
+            return False, -0.08
+        
+        confirmation_data = mtf_data.get(confirmation_tf)
+        if confirmation_data is None or not isinstance(confirmation_data, pd.DataFrame):
+            logger.warning(f"   ⚠️ No data available for confirmation TF: {confirmation_tf}")
+            return False, -0.08
+        
+        df = confirmation_data
+        if len(df) < 5:
+            logger.warning(f"   ⚠️ Insufficient data on {confirmation_tf} for confirmation analysis")
+            return False, -0.08
+        
+        # Check for MSS/BOS (structure break)
+        has_structure_break = self._check_structure_break(df)
+        
+        # Check for Displacement
+        has_displacement, displacement_strength = self._check_displacement(df)
+        
+        # Check for Sweep (if liquidity mapper available)
+        has_sweep = False
+        if self.liquidity_mapper and LIQUIDITY_AVAILABLE:
+            try:
+                # Quick check for recent sweeps
+                liquidity_zones = self.liquidity_mapper.map_liquidity(df, symbol)
+                recent_sweeps = [z for z in liquidity_zones if hasattr(z, 'swept') and z.swept]
+                has_sweep = len(recent_sweeps) > 0
+            except Exception as e:
+                logger.debug(f"   Could not check sweeps: {e}")
+        
+        # Check if we have at least one confirmation
+        has_confirmation = (
+            has_structure_break or 
+            has_displacement or 
+            (has_sweep and has_displacement)  # Sweep + Displacement
+        )
+        
+        # Calculate modifier
+        confidence_modifier = 0.08 if has_confirmation else -0.08
+        
+        # Log results
+        logger.info(f"   → Confirmation Layer Results:")
+        logger.info(f"      • MSS/BOS: {'✅ Yes' if has_structure_break else '❌ No'}")
+        logger.info(f"      • Displacement: {'✅ Yes' if has_displacement else '❌ No'} (strength: {displacement_strength:.2f}%)")
+        logger.info(f"      • Sweep: {'✅ Yes' if has_sweep else '❌ No'}")
+        logger.info(f"      • Has Confirmation: {'✅ Yes' if has_confirmation else '❌ No'}")
+        logger.info(f"      • Confidence Modifier: {confidence_modifier:+.1%}")
+        
+        return has_confirmation, confidence_modifier
     
     def _identify_entry_setup(
         self,
