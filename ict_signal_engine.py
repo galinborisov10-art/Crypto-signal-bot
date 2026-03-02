@@ -2584,17 +2584,19 @@ class ICTSignalEngine:
                 logger.error(f"FVG detection error: {e}")
         
         # Detect Whale Blocks
-        if self.config['use_whale_blocks'] and self.whale_detector:
-            try:
-                whale_blocks = self.whale_detector.detect_whale_blocks(df, timeframe)
-                components['whale_blocks'] = whale_blocks
-                logger.info(f"Detected {len(whale_blocks)} whale blocks on {timeframe}")
-                
-                # ✅ STABILIZATION: Log component source
-                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-                    TimeframeDebugLogger.log_component_source("Whale Blocks", timeframe, len(whale_blocks))
-            except Exception as e:
-                logger.error(f"Whale detection error: {e}")
+        # ❌ DISABLED: Whale blocks are now detected separately on confirmation_tf in generate_signal
+        # Keeping this commented for backward compatibility documentation
+        # if self.config['use_whale_blocks'] and self.whale_detector:
+        #     try:
+        #         whale_blocks = self.whale_detector.detect_whale_blocks(df, timeframe)
+        #         components['whale_blocks'] = whale_blocks
+        #         logger.info(f"Detected {len(whale_blocks)} whale blocks on {timeframe}")
+        #         
+        #         # ✅ STABILIZATION: Log component source
+        #         if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
+        #             TimeframeDebugLogger.log_component_source("Whale Blocks", timeframe, len(whale_blocks))
+        #     except Exception as e:
+        #         logger.error(f"Whale detection error: {e}")
         
         # ✅ LIQUIDITY ZONES & SWEEPS - Clear flow without duplication
         # Step 1: Get or calculate liquidity zones
