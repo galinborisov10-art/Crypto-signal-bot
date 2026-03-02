@@ -1099,44 +1099,70 @@ class ICTSignalEngine:
         logger.info(f"      • Displacement Detected: {displacement_detected}")
         logger.info(f"   → Final Bias: {bias.value}")
         
-        # СТЪПКА 6b: Apply confidence penalty for NEUTRAL/RANGING bias (NO EARLY EXIT)
-        # ✅ FIX #1: HTF is now a soft constraint (penalty) instead of hard block
-        confidence_penalty = 0.0  # Track penalty for Step 10 confidence calculation
-        entry_tf_structure = None  # Tracks entry TF structure for structure alignment modifier
-
-        if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-            logger.warning(f"⚠️ Step 6b: {symbol} bias is {bias.value} - RANGING market detected")
-
-            # Check if HTF bias provides clear directional guidance
-            # htf_bias is already a string from _get_htf_bias_with_fallback
-            if htf_bias in ['BULLISH', 'BEARISH']:
-                logger.info(f"   → HTF bias is {htf_bias} (directional) - using HTF bias for scenario direction")
-                logger.info(f"   → Entry TF structure ({bias.value}) = pullback/consolidation in HTF trend")
-                entry_tf_structure = bias.value  # Save original entry TF structure for modifier
-                bias = MarketBias[htf_bias]  # Override bias with HTF direction
-                logger.info(f"   → Bias overridden to {bias.value} (from HTF)")
-            else:
-                logger.info(f"   → HTF bias is also {htf_bias} - no directional guidance")
-                logger.info(f"   → Returning HOLD signal (no trade setup)")
-
-                # ✅ EARLY EXIT: RANGING + no directional HTF = HOLD (no trade)
-                return {
-                    'action': 'HOLD',
-                    'confidence': 0,
-                    'reason': 'RANGING_MARKET',
-                    'message': f'{symbol} market is RANGING on {timeframe}. No clear directional bias. Wait for breakout.',
-                    'bias': bias.value,
-                    'timeframe': timeframe,
-                    'symbol': symbol
-                }
-        else:
-            # Directional bias (BULLISH/BEARISH) - no penalty
-            confidence_penalty = 0.0
-            logger.info(f"✅ Step 6b: Directional bias {bias.value} - no penalty")
+        # ═══════════════════════════════════════════════════════════
+        # 🎯 CLEAN ARCHITECTURE: STRUCTURE LAYER = CONTEXT ONLY
+        # ═══════════════════════════════════════════════════════════
+        # Structure provides market bias (BULLISH/BEARISH/NEUTRAL) as CONTEXT
+        # Structure NEVER blocks signals
+        # Structure NEVER modifies probability
+        # Structure NEVER participates in scenario selection
+        # 
+        # СТЪПКА 6b: Structure Layer - Bias Context (NO BLOCKING)
+        logger.info("=" * 60)
+        logger.info("🎯 STRUCTURE LAYER - Bias Context (NEVER BLOCKS)")
+        logger.info(f"   Source: {structure_tf if tf_hierarchy else entry_tf}")
+        logger.info("=" * 60)
         
-        # ✅ CONTINUE TO STEP 7 (NO EARLY EXIT FOR DIRECTIONAL BIAS)
-        # At this point, bias is guaranteed to be BULLISH or BEARISH
-        logger.info(f"✅ PASSED Step 6: Continuing with bias {bias.value} (penalty: {confidence_penalty*100:.0f}%)")
+        # Store original structure bias for context
+        structure_bias_context = bias.value
+        entry_tf_structure = None  # Tracks entry TF structure for structure alignment modifier
+        
+        # If structure is NEUTRAL/RANGING, check HTF for directional guidance
+        if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
+            logger.info(f"   Structure bias: {bias.value} (RANGING/NEUTRAL)")
+            
+            # Check if HTF bias provides clear directional guidance
+            if htf_bias in ['BULLISH', 'BEARISH']:
+                logger.info(f"   → HTF bias: {htf_bias} (directional)")
+                logger.info(f"   → Using HTF bias for scenario direction (structure = context)")
+                entry_tf_structure = bias.value  # Save original entry TF structure
+                bias = MarketBias[htf_bias]  # Use HTF direction for scenarios
+                logger.info(f"   → Scenario direction: {bias.value} (from HTF)")
+            else:
+                logger.info(f"   → HTF bias: {htf_bias} (also non-directional)")
+                logger.info(f"   → No clear direction from either structure or HTF")
+                # 🎯 CLEAN ARCH: Don't block - let scenarios evaluate with NEUTRAL bias
+                # Scenarios with weak components will naturally fail Core gate
+                logger.info(f"   → Continuing with NEUTRAL bias (scenarios will self-filter)")
+                bias = MarketBias.NEUTRAL
+        else:
+            logger.info(f"   Structure bias: {bias.value} (directional)")
+        
+        logger.info(f"✅ Structure Layer: Bias = {bias.value} (context only, NEVER BLOCKS)")
+        logger.info("=" * 60)
+        
+        # ═══════════════════════════════════════════════════════════
+        # 🎯 CLEAN ARCHITECTURE: CONFIRMATION LAYER = CONFIDENCE MODIFIER
+        # ═══════════════════════════════════════════════════════════
+        # Confirmation checks for proven intention: MSS, BOS, Displacement, Sweep
+        # Confirmation adjusts confidence: +8% if present, -8% if absent
+        # Confirmation NEVER blocks signals
+        # 
+        # СТЪПКА 6c: Confirmation Layer - Confidence Adjustment
+        confirmation_adjustment = 0.0
+        if mtf_data and confirmation_tf and confirmation_tf in mtf_data:
+            confirmation_df = mtf_data[confirmation_tf]
+            confirmation_adjustment = self._check_confirmation_layer(
+                confirmation_df, symbol, confirmation_tf
+            )
+        else:
+            logger.warning(f"⚠️ No confirmation data available for {confirmation_tf}")
+            logger.info(f"   → Applying default -8% penalty (no confirmation data)")
+            confirmation_adjustment = -8.0
+        
+        # Store for later application to confidence
+        # (Will be applied after base confidence calculation, before threshold check)
+        logger.info("=" * 60)
         
         # СТЪПКА 7: ENTRY SCENARIO SELECTION (merged Step 8 + Step 8.1)
         logger.info("🎯 Step 7: Entry Scenario Selection")
@@ -1672,20 +1698,23 @@ class ICTSignalEngine:
                 logger.info(f"   ℹ️ Entry {distance_pct:.1f}% from current price - waiting for retracement")
                 context_warnings.append(f"ℹ️ Entry {distance_pct:.1f}% from current price - valid ICT retracement setup")
         
+        # ═══════════════════════════════════════════════════════════
+        # 🎯 CLEAN ARCHITECTURE: APPLY CONFIRMATION ADJUSTMENT
+        # ═══════════════════════════════════════════════════════════
+        # Confirmation adjustment (+8% or -8%) must be applied BEFORE threshold validation
+        # This ensures confirmation impacts the final confidence check
+        logger.info("   📊 Applying Confirmation Adjustment")
+        logger.info(f"   → Confidence before confirmation: {confidence_after_context:.1f}%")
+        logger.info(f"   → Confirmation adjustment: {confirmation_adjustment:+.1f}%")
+        confidence_after_context = confidence_after_context + confirmation_adjustment
+        logger.info(f"   → Confidence after confirmation: {confidence_after_context:.1f}%")
+        
         # ✅ HTF BIAS PENALTY (Soft Constraint - FIX #1)
-        logger.info("   📊 HTF Bias Penalty Check")
-        if confidence_penalty > 0:
-            logger.warning(f"⚠️ Applying HTF bias penalty: -{confidence_penalty*100:.0f}%")
-            confidence_after_context = confidence_after_context * (1 - confidence_penalty)
-            logger.info(f"   HTF penalty applied: confidence reduced to {confidence_after_context:.1f}%")
-            
-            # Add warning about HTF bias
-            if confidence_penalty >= 0.40:
-                context_warnings.append("⚠️ Non-directional bias on both HTF and own structure - high uncertainty")
-            elif confidence_penalty >= 0.35:
-                context_warnings.append("⚠️ Non-directional HTF bias - reduced confidence")
-            elif confidence_penalty >= 0.20:
-                context_warnings.append("ℹ️ HTF bias unclear, relying on own structure")
+        # Note: This was removed in Clean Architecture - structure is context only
+        # Keeping this section for backward compatibility but it should have no effect
+        logger.info("   📊 HTF Bias Context Check")
+        confidence_penalty = 0.0  # Structure doesn't penalize in Clean Architecture
+        logger.info(f"   → No HTF penalty in Clean Architecture (structure = context only)")
         
         # ✅ ML OPTIMIZATION (Existing ML logic)
         logger.info("   📊 ML Optimization")
@@ -1790,40 +1819,35 @@ class ICTSignalEngine:
         # СТЪПКА 12: FINAL VALIDATION (consolidated from Step 11.5, 11.5b, 11.6)
         logger.info("🔍 Step 12: Final Validation")
         
-        # 12a: MTF CONSENSUS CHECK (STRICT ICT)
-        logger.info("   📊 MTF Consensus Validation")
+        # ═══════════════════════════════════════════════════════════
+        # 🎯 CLEAN ARCHITECTURE: MTF CONSENSUS = SOFT MODIFIER (NOT GATE)
+        # ═══════════════════════════════════════════════════════════
+        # MTF consensus provides confidence adjustment, NOT blocking
+        # Low consensus reduces confidence but doesn't block signal
+        # 
+        # 12a: MTF CONSENSUS CHECK (SOFT MODIFIER)
+        logger.info("   📊 MTF Consensus Soft Modifier")
         mtf_consensus_data = self._calculate_mtf_consensus(
             symbol, entry_tf, bias, mtf_data, tf_hierarchy  # ✅ STABILIZATION: Pass TF hierarchy
         )
         
         logger.info(f"   → MTF Consensus: {mtf_consensus_data['consensus_pct']:.1f}%")
         logger.info(f"   → Aligned TFs: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}")
-        logger.info(f"   → Minimum Required: 50%")
         
-        # Ако MTF consensus < 50%, confidence = 0 и сигналът НЕ СЕ ИЗПРАЩА
+        # 🎯 CLEAN ARCH: Convert from gate to soft modifier
+        # If consensus < 50%, reduce confidence by 10% (not blocking)
         if mtf_consensus_data['consensus_pct'] < 50.0:
-            logger.info(f"❌ BLOCKED at Step 12: MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50%")
-            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 12, reason: Insufficient MTF consensus)")
-            logger.error(f"❌ MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50% - сигналът НЕ СЕ ИЗПРАЩА")
-            # Изпрати информативно съобщение
-            context = self._extract_context_data(df, bias)
-            return self._create_no_trade_message(
-                symbol=symbol,
-                timeframe=timeframe,
-                reason=f"Липса на MTF consensus ({mtf_consensus_data['consensus_pct']:.1f}%)",
-                details=f"Необходими: >=50% aligned TFs. Намерени: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}",
-                mtf_breakdown=mtf_consensus_data['breakdown'],
-                current_price=context['current_price'],
-                price_change_24h=context['price_change_24h'],
-                rsi=context['rsi'],
-                signal_direction=context['signal_direction'],
-                confidence=confidence
-            )
+            logger.warning(f"⚠️ Low MTF consensus ({mtf_consensus_data['consensus_pct']:.1f}% < 50%)")
+            logger.info(f"   → Applying -10% confidence penalty (soft constraint)")
+            confidence = confidence * 0.9  # Reduce by 10%
+            logger.info(f"   → Confidence after MTF penalty: {confidence:.1f}%")
+        else:
+            logger.info(f"   ✅ Good MTF consensus ({mtf_consensus_data['consensus_pct']:.1f}% >= 50%)")
         
-        logger.info(f"   ✅ MTF consensus validated ({mtf_consensus_data['consensus_pct']:.1f}% >= 50%)")
+        logger.info(f"✅ MTF Consensus: {mtf_consensus_data['consensus_pct']:.1f}% (soft modifier, NEVER BLOCKS)")
 
-        # 12b: HTF Bias Direction Validation (CRITICAL ICT PRINCIPLE)
-        logger.info("   📊 HTF Bias Direction Alignment")
+        # 12b: HTF Bias Direction Context (INFORMATIONAL ONLY)
+        logger.info("   📊 HTF Bias Direction Context")
         
         # Get HTF bias from earlier analysis
         htf_bias_value = ict_components.get('htf_bias', 'NEUTRAL')
@@ -1832,29 +1856,18 @@ class ICTSignalEngine:
         logger.info(f"   → HTF Bias: {htf_bias_value}")
         logger.info(f"   → Entry Bias: {entry_bias_value}")
         
-        # ICT Rule: NEVER trade against HTF bias
+        # 🎯 CLEAN ARCH: HTF bias is context only, NOT a gate
+        # Counter-HTF trades are allowed (scenarios will self-filter based on strength)
         if htf_bias_value in ['BULLISH', 'BEARISH'] and htf_bias_value != 'NEUTRAL':
             if (htf_bias_value == 'BEARISH' and entry_bias_value == 'BULLISH') or \
                (htf_bias_value == 'BULLISH' and entry_bias_value == 'BEARISH'):
-                logger.info(f"❌ BLOCKED at Step 12: Counter-HTF trade detected!")
-                logger.info(f"   HTF ({hierarchy.get('htf_bias_tf', 'unknown')}) is {htf_bias_value}, but entry ({timeframe}) is {entry_bias_value}")
-                logger.error(f"❌ Counter-HTF trade: HTF {htf_bias_value} vs Entry {entry_bias_value} - BLOCKED")
-                
-                context = self._extract_context_data(df, bias)
-                return self._create_no_trade_message(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    reason=f"Counter-trend trade against HTF bias",
-                    details=f"HTF ({hierarchy.get('htf_bias_tf', 'unknown')}): {htf_bias_value}, Entry ({timeframe}): {entry_bias_value}. ICT principle: Never trade against HTF bias.",
-                    mtf_breakdown=mtf_consensus_data['breakdown'],
-                    current_price=context['current_price'],
-                    price_change_24h=context['price_change_24h'],
-                    rsi=context['rsi'],
-                    signal_direction=context['signal_direction'],
-                    confidence=confidence
-                )
+                logger.warning(f"⚠️ Counter-HTF setup detected: HTF {htf_bias_value} vs Entry {entry_bias_value}")
+                logger.info(f"   → This is INFORMATIONAL - not blocking (Clean Architecture)")
+                logger.info(f"   → Scenario strength will determine viability")
+        else:
+            logger.info(f"   ✅ HTF bias aligned or neutral ({htf_bias_value})")
         
-        logger.info(f"   ✅ HTF bias aligned or neutral ({htf_bias_value})")
+        logger.info(f"✅ HTF Direction: Context only (NEVER BLOCKS)")
         
         # 12c: Final Confidence Check
         logger.info("   📊 Final Confidence Check")
@@ -3437,6 +3450,95 @@ class ICTSignalEngine:
                 detected = True
         
         return detected, max_strength
+
+    def _check_confirmation_layer(
+        self, 
+        confirmation_df: pd.DataFrame, 
+        symbol: str, 
+        confirmation_tf: str
+    ) -> float:
+        """
+        🎯 CONFIRMATION LAYER (Clean Architecture)
+        
+        Source: confirmation_tf
+        
+        Checks for proven intention:
+        - MSS
+        - BOS
+        - Displacement
+        - Sweep + Displacement
+        
+        Logic:
+        - If at least ONE is present: confidence += 8%
+        - If NONE are present: confidence -= 8%
+        
+        CRITICAL RULES:
+        - NEVER return None
+        - NEVER block signal
+        - NEVER set eligible = False
+        - NEVER apply threshold
+        - NEVER gate scenario
+        
+        Confirmation is a confidence modifier ONLY.
+        
+        Args:
+            confirmation_df: DataFrame from confirmation_tf
+            symbol: Trading symbol
+            confirmation_tf: Timeframe for confirmation
+            
+        Returns:
+            float: Confidence adjustment (+8.0 or -8.0)
+        """
+        logger.info("=" * 60)
+        logger.info("🔍 CONFIRMATION LAYER - Confidence Modifier")
+        logger.info(f"   Source: {confirmation_tf}")
+        logger.info("=" * 60)
+        
+        if confirmation_df is None or confirmation_df.empty or len(confirmation_df) < 20:
+            logger.warning(f"⚠️ Insufficient confirmation data - applying -8% penalty")
+            return -8.0
+        
+        # Check for MSS/BOS (structure break)
+        has_mss_bos = self._check_structure_break(confirmation_df)
+        
+        # Check for Displacement
+        displacement_detected, displacement_strength = self._check_displacement(confirmation_df)
+        
+        # Check for Liquidity Sweep (if liquidity_map available)
+        has_sweep = False
+        if self.liquidity_map and len(confirmation_df) >= 50:
+            try:
+                liquidity_zones = self.liquidity_map.detect_liquidity_zones(confirmation_df, symbol)
+                sweeps = self.liquidity_map.detect_liquidity_sweeps(confirmation_df, liquidity_zones)
+                has_sweep = len(sweeps) > 0
+            except Exception as e:
+                logger.debug(f"Liquidity sweep check failed: {e}")
+        
+        # Evaluate confirmation components
+        confirmations_found = []
+        
+        if has_mss_bos:
+            confirmations_found.append("MSS/BOS")
+        
+        if displacement_detected:
+            confirmations_found.append("Displacement")
+        
+        if has_sweep and displacement_detected:
+            confirmations_found.append("Sweep+Displacement")
+        
+        # Determine confidence adjustment
+        if len(confirmations_found) > 0:
+            adjustment = 8.0
+            logger.info(f"✅ Confirmations found: {', '.join(confirmations_found)}")
+            logger.info(f"   → Confidence adjustment: +{adjustment}%")
+        else:
+            adjustment = -8.0
+            logger.info(f"⚠️ No confirmations found")
+            logger.info(f"   → Confidence adjustment: {adjustment}%")
+        
+        logger.info(f"✅ Confirmation Layer: {adjustment:+.1f}% (NEVER BLOCKS)")
+        
+        return adjustment
     
     def _identify_entry_setup(
         self,
