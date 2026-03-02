@@ -940,10 +940,24 @@ class ICTSignalEngine:
         
         # ✅ PHASE 2: MULTI-TIMEFRAME DATA EXTRACTION
         # Extract multi-timeframe data per contract
+        mtf_data_available = False  # Track if MTF data is actually being used
+        
         if tf_hierarchy and mtf_data and isinstance(mtf_data, dict):
             df_signal = df  # Signal TF (already have)
             df_confirmation = mtf_data.get(tf_hierarchy.confirmation_tf)
             df_structure = mtf_data.get(tf_hierarchy.structure_tf)
+            
+            # Validate that we got valid DataFrames
+            if isinstance(df_confirmation, pd.DataFrame) and not df_confirmation.empty:
+                mtf_data_available = True
+            else:
+                df_confirmation = None
+            
+            if isinstance(df_structure, pd.DataFrame) and not df_structure.empty:
+                # Only mark as available if at least one MTF dataframe is valid
+                mtf_data_available = True
+            else:
+                df_structure = None
             
             logger.info(f"📊 Multi-TF Data Extraction:")
             logger.info(f"   Signal TF ({tf_hierarchy.signal_tf}): {len(df_signal)} bars")
@@ -953,8 +967,8 @@ class ICTSignalEngine:
             # Fallback: Use signal TF for all (backward compatible)
             logger.warning("⚠️ MTF data not available - using signal_tf for all components")
             df_signal = df
-            df_confirmation = df
-            df_structure = df
+            df_confirmation = None  # Will trigger fallback in _detect_ict_components
+            df_structure = None  # Will trigger fallback in _detect_ict_components
         
         # СТЪПКА 4: ICT COMPONENT DETECTION (with pre-calculated liquidity)
         logger.info("📊 Step 4: ICT Component Detection")
@@ -2521,17 +2535,23 @@ class ICTSignalEngine:
             logger.info("=" * 70)
         
         # ✅ PHASE 2: Fallback handling - use signal TF if MTF data missing
+        # Track whether we're using fallback data
+        using_confirmation_fallback = False
+        using_structure_fallback = False
+        
         if df_confirmation is None:
             if tf_hierarchy:
                 logger.warning(f"⚠️ Confirmation TF ({tf_hierarchy.confirmation_tf}) data missing")
                 logger.warning(f"   Fallback: Using signal_tf for confirmation components")
             df_confirmation = df_signal  # Backward compatible
+            using_confirmation_fallback = True
         
         if df_structure is None:
             if tf_hierarchy:
                 logger.warning(f"⚠️ Structure TF ({tf_hierarchy.structure_tf}) data missing")
                 logger.warning(f"   Fallback: Using signal_tf for structure components")
             df_structure = df_signal  # Backward compatible
+            using_structure_fallback = True
         
         # ✅ PHASE 2: SIGNAL TF COMPONENTS - Detect from signal_tf (1h)
         # Detect Order Blocks
@@ -2569,37 +2589,43 @@ class ICTSignalEngine:
         # Detect Whale Blocks
         if self.config['use_whale_blocks'] and self.whale_detector:
             try:
-                confirmation_tf_str = tf_hierarchy.confirmation_tf if tf_hierarchy else timeframe
-                whale_blocks = self.whale_detector.detect_whale_blocks(df_confirmation, confirmation_tf_str)
+                # Determine actual TF to use for detection
+                if tf_hierarchy and not using_confirmation_fallback:
+                    whale_df = df_confirmation
+                    whale_tf = tf_hierarchy.confirmation_tf
+                    is_fallback = False
+                else:
+                    whale_df = df_signal
+                    whale_tf = timeframe
+                    is_fallback = True
+                
+                whale_blocks = self.whale_detector.detect_whale_blocks(whale_df, whale_tf)
                 components['whale_blocks'] = whale_blocks
                 
-                if tf_hierarchy and df_confirmation is not df_signal:
-                    logger.info(f"Detected {len(whale_blocks)} whale blocks on {confirmation_tf_str} (confirmation_tf)")
+                if not is_fallback:
+                    logger.info(f"Detected {len(whale_blocks)} whale blocks on {whale_tf} (confirmation_tf)")
                 else:
-                    logger.info(f"Detected {len(whale_blocks)} whale blocks on {timeframe} (signal_tf fallback)")
+                    logger.info(f"Detected {len(whale_blocks)} whale blocks on {whale_tf} (signal_tf fallback)")
                 
                 # ✅ STABILIZATION: Log component source
                 if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-                    TimeframeDebugLogger.log_component_source("Whale Blocks", confirmation_tf_str, len(whale_blocks))
+                    TimeframeDebugLogger.log_component_source("Whale Blocks", whale_tf, len(whale_blocks))
             except Exception as e:
                 logger.error(f"Whale detection error: {e}")
         
         # ✅ PHASE 2: Detect Displacement from confirmation_tf
-        if tf_hierarchy and df_confirmation is not None:
+        if tf_hierarchy and not using_confirmation_fallback:
             try:
                 confirmation_tf_str = tf_hierarchy.confirmation_tf
                 displacement_detected, displacement_strength = self._check_displacement(df_confirmation)
                 
-                if df_confirmation is not df_signal:
-                    logger.info(f"   Displacement detected on {confirmation_tf_str} (confirmation_tf): {displacement_detected}")
-                else:
-                    logger.info(f"   Displacement detected on {timeframe} (signal_tf fallback): {displacement_detected}")
+                logger.info(f"   Displacement detected on {confirmation_tf_str} (confirmation_tf): {displacement_detected}")
                 
                 # Store in components
                 components['displacement'] = {
                     'detected': displacement_detected,
                     'strength': displacement_strength,
-                    'source_tf': confirmation_tf_str if df_confirmation is not df_signal else timeframe
+                    'source_tf': confirmation_tf_str
                 }
             except Exception as e:
                 logger.error(f"Displacement detection error: {e}")
@@ -2608,7 +2634,8 @@ class ICTSignalEngine:
             # Fallback: detect from signal_tf
             try:
                 displacement_detected, displacement_strength = self._check_displacement(df_signal)
-                logger.warning(f"   ⚠️ Using signal_tf for displacement detection (MTF data missing)")
+                if using_confirmation_fallback:
+                    logger.warning(f"   ⚠️ Using signal_tf for displacement detection (MTF data missing)")
                 components['displacement'] = {
                     'detected': displacement_detected,
                     'strength': displacement_strength,
@@ -2620,21 +2647,18 @@ class ICTSignalEngine:
         
         # ✅ PHASE 2: STRUCTURE TF COMPONENTS - Detect from structure_tf (4h)
         # Detect Structure Break
-        if tf_hierarchy and df_structure is not None:
+        if tf_hierarchy and not using_structure_fallback:
             try:
                 structure_tf_str = tf_hierarchy.structure_tf
                 structure_broken = self._check_structure_break(df_structure)
                 
-                if df_structure is not df_signal:
-                    logger.info(f"   Structure Break detected on {structure_tf_str} (structure_tf): {structure_broken}")
-                else:
-                    logger.info(f"   Structure Break detected on {timeframe} (signal_tf fallback): {structure_broken}")
+                logger.info(f"   Structure Break detected on {structure_tf_str} (structure_tf): {structure_broken}")
                 
                 # Store in components
                 components['structure_break'] = {
                     'type': 'MSS' if structure_broken else None,
                     'broken': structure_broken,
-                    'source_tf': structure_tf_str if df_structure is not df_signal else timeframe
+                    'source_tf': structure_tf_str
                 }
             except Exception as e:
                 logger.error(f"Structure break detection error: {e}")
@@ -2643,7 +2667,8 @@ class ICTSignalEngine:
             # Fallback: detect from signal_tf
             try:
                 structure_broken = self._check_structure_break(df_signal)
-                logger.warning(f"   ⚠️ Using signal_tf for structure break detection (MTF data missing)")
+                if using_structure_fallback:
+                    logger.warning(f"   ⚠️ Using signal_tf for structure break detection (MTF data missing)")
                 components['structure_break'] = {
                     'type': 'MSS' if structure_broken else None,
                     'broken': structure_broken,
