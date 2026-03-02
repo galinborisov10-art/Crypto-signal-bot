@@ -5626,7 +5626,12 @@ Get HTF bias based on entry timeframe hierarchy
                 if tf_variant in mtf_data:
                     df_htf = mtf_data[tf_variant]
                     if df_htf is not None and not df_htf.empty and len(df_htf) >= 20:
-                        bias_components = self._detect_ict_components(df_htf, htf_bias_tf)
+                        bias_components = self._detect_ict_components(
+                            df_signal=df_htf,
+                            df_confirmation=df_htf,  # Use same TF for bias calculation
+                            df_structure=df_htf,  # Use same TF for bias calculation
+                            timeframe=htf_bias_tf
+                        )
                         htf_bias = self._determine_market_bias(df_htf, bias_components, None)
                         htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
                         logger.info(f"✅ HTF Bias from {htf_bias_tf.upper()}: {htf_bias_str}")
@@ -5638,7 +5643,12 @@ Get HTF bias based on entry timeframe hierarchy
                 df_1d = mtf_data.get('1d') if mtf_data.get('1d') is not None else mtf_data.get('1D')
                 if df_1d is not None and not df_1d.empty and len(df_1d) >= 20:
                     # Determine bias from 1D
-                    bias_components = self._detect_ict_components(df_1d, '1d')
+                    bias_components = self._detect_ict_components(
+                        df_signal=df_1d,
+                        df_confirmation=df_1d,  # Use same TF for bias calculation
+                        df_structure=df_1d,  # Use same TF for bias calculation
+                        timeframe='1d'
+                    )
                     htf_bias = self._determine_market_bias(df_1d, bias_components, None)
                     htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
                     logger.info(f"✅ HTF Bias from 1D: {htf_bias_str}")
@@ -5649,7 +5659,12 @@ Get HTF bias based on entry timeframe hierarchy
             if '4h' in mtf_data or '4H' in mtf_data:
                 df_4h = mtf_data.get('4h') if mtf_data.get('4h') is not None else mtf_data.get('4H')
                 if df_4h is not None and not df_4h.empty and len(df_4h) >= 20:
-                    bias_components = self._detect_ict_components(df_4h, '4h')
+                    bias_components = self._detect_ict_components(
+                        df_signal=df_4h,
+                        df_confirmation=df_4h,  # Use same TF for bias calculation
+                        df_structure=df_4h,  # Use same TF for bias calculation
+                        timeframe='4h'
+                    )
                     htf_bias = self._determine_market_bias(df_4h, bias_components, None)
                     htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
                     logger.info(f"✅ HTF Bias from 4H (fallback): {htf_bias_str}")
