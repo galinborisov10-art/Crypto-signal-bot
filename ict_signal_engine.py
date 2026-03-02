@@ -208,6 +208,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 ATR_FALLBACK_PCT = 0.02  # 2% fallback when ATR calculation fails
+MIN_CANDLES_FOR_ANALYSIS = 20  # Minimum candles required for MTF dataframe analysis
 
 # Legacy constants removed - now using TimeframeContract
 # TIMEFRAME_MIN_SL_DISTANCE and TIMEFRAME_BUFFER_PCT moved to contract
@@ -1065,17 +1066,27 @@ class ICTSignalEngine:
         # ✅ MTF ROUTING FIX: Extract appropriate DataFrames per contract
         # ═══════════════════════════════════════════════════════════
         
+        # Track whether fallback occurred (for logging)
+        structure_tf_fallback = False
+        confirmation_tf_fallback = False
+        
         # Extract structure TF DataFrame (for structure breaks)
         if tf_hierarchy and structure_tf:
             df_structure = self._get_mtf_dataframe(mtf_data, structure_tf, df)
+            # Check if fallback occurred by comparing if we got original df back
+            structure_tf_fallback = (df_structure is df and structure_tf.lower() != entry_tf.lower())
         else:
             df_structure = df  # Fallback to signal TF
+            structure_tf_fallback = True
         
         # Extract confirmation TF DataFrame (for displacement and whale blocks)
         if tf_hierarchy and confirmation_tf:
             df_confirmation = self._get_mtf_dataframe(mtf_data, confirmation_tf, df)
+            # Check if fallback occurred
+            confirmation_tf_fallback = (df_confirmation is df and confirmation_tf.lower() != entry_tf.lower())
         else:
             df_confirmation = df  # Fallback to signal TF
+            confirmation_tf_fallback = True
         
         # Detect structure break on STRUCTURE_TF (not signal_tf)
         structure_broken = self._check_structure_break(df_structure)
@@ -1086,7 +1097,16 @@ class ICTSignalEngine:
         # ✅ MTF ROUTING FIX: Detect whale blocks on CONFIRMATION_TF
         # Whale blocks are proof of intent and should be detected on confirmation timeframe
         whale_blocks_confirmation = []
-        if tf_hierarchy and confirmation_tf and self.config.get('use_whale_blocks') and self.whale_detector:
+        
+        # Extract whale block detection condition for readability
+        should_detect_whale_blocks_on_confirmation = (
+            tf_hierarchy and 
+            confirmation_tf and 
+            self.config.get('use_whale_blocks') and 
+            self.whale_detector is not None
+        )
+        
+        if should_detect_whale_blocks_on_confirmation:
             try:
                 whale_blocks_confirmation = self.whale_detector.detect_whale_blocks(df_confirmation, confirmation_tf)
                 logger.info(f"Detected {len(whale_blocks_confirmation)} whale blocks on confirmation TF ({confirmation_tf})")
@@ -1095,11 +1115,11 @@ class ICTSignalEngine:
                 ict_components['whale_blocks'] = whale_blocks_confirmation
                 
                 if TIMEFRAME_CONTRACT_AVAILABLE:
-                    actual_whale_tf = confirmation_tf if df_confirmation is not df else entry_tf
+                    actual_whale_tf = entry_tf if confirmation_tf_fallback else confirmation_tf
                     TimeframeDebugLogger.log_component_source("Whale Blocks", actual_whale_tf, len(whale_blocks_confirmation))
                     
                     # Log warning if fallback occurred
-                    if df_confirmation is df and confirmation_tf.lower() != entry_tf.lower():
+                    if confirmation_tf_fallback:
                         logger.warning(f"⚠️ FALLBACK: Whale blocks detected on {entry_tf} (expected {confirmation_tf})")
             except Exception as e:
                 logger.error(f"Whale block detection error on confirmation TF: {e}")
@@ -1110,16 +1130,16 @@ class ICTSignalEngine:
         
         # ✅ STABILIZATION: Log displacement and MSS/BOS detection with correct TF
         if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-            actual_displacement_tf = confirmation_tf if confirmation_tf and df_confirmation is not df else entry_tf
-            actual_structure_tf = structure_tf if structure_tf and df_structure is not df else entry_tf
+            actual_displacement_tf = entry_tf if confirmation_tf_fallback else confirmation_tf
+            actual_structure_tf = entry_tf if structure_tf_fallback else structure_tf
             
             TimeframeDebugLogger.log_component_source("Displacement", actual_displacement_tf, 1 if displacement_detected else 0)
             TimeframeDebugLogger.log_component_source("MSS/BOS (Structure Break)", actual_structure_tf, 1 if structure_broken else 0)
             
             # Log warnings if fallback occurred
-            if df_structure is df and structure_tf and structure_tf.lower() != entry_tf.lower():
+            if structure_tf_fallback and structure_tf:
                 logger.warning(f"⚠️ FALLBACK: Structure break detected on {entry_tf} (expected {structure_tf})")
-            if df_confirmation is df and confirmation_tf and confirmation_tf.lower() != entry_tf.lower():
+            if confirmation_tf_fallback and confirmation_tf:
                 logger.warning(f"⚠️ FALLBACK: Displacement detected on {entry_tf} (expected {confirmation_tf})")
 
         # Add structure_break and displacement to ict_components for Entry Scenarios
@@ -4984,9 +5004,9 @@ class ICTSignalEngine:
                     # Use pre-calculated volume_ratio from dataframe (uses median)
                     volume_ratio = df['volume_ratio'].iloc[-1]
                     volume_spike = volume_ratio > 2.0
-                elif 'volume' in df.columns and len(df) >= 20:
+                elif 'volume' in df.columns and len(df) >= MIN_CANDLES_FOR_ANALYSIS:
                     # Fallback: calculate using median
-                    volume_median = df['volume'].rolling(20).median().iloc[-1]
+                    volume_median = df['volume'].rolling(MIN_CANDLES_FOR_ANALYSIS).median().iloc[-1]
                     current_volume = df['volume'].iloc[-1]
                     if volume_median > 0:
                         volume_ratio = current_volume / volume_median
@@ -5477,7 +5497,7 @@ class ICTSignalEngine:
         for tf_variant in [target_tf, target_tf.upper(), target_tf.lower()]:
             if tf_variant in mtf_data:
                 df = mtf_data[tf_variant]
-                if df is not None and not df.empty and len(df) >= 20:
+                if df is not None and not df.empty and len(df) >= MIN_CANDLES_FOR_ANALYSIS:
                     logger.info(f"✅ Using {target_tf} DataFrame ({len(df)} candles)")
                     return df
         
@@ -5517,7 +5537,7 @@ Get HTF bias based on entry timeframe hierarchy
             for tf_variant in [htf_bias_tf, htf_bias_tf.upper(), htf_bias_tf.replace('w', 'W').replace('d', 'D').replace('h', 'H')]:
                 if tf_variant in mtf_data:
                     df_htf = mtf_data[tf_variant]
-                    if df_htf is not None and not df_htf.empty and len(df_htf) >= 20:
+                    if df_htf is not None and not df_htf.empty and len(df_htf) >= MIN_CANDLES_FOR_ANALYSIS:
                         bias_components = self._detect_ict_components(df_htf, htf_bias_tf)
                         htf_bias = self._determine_market_bias(df_htf, bias_components, None)
                         htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
@@ -5528,7 +5548,7 @@ Get HTF bias based on entry timeframe hierarchy
             logger.warning(f"⚠️ {htf_bias_tf} not available, trying 1D fallback...")
             if '1d' in mtf_data or '1D' in mtf_data:
                 df_1d = mtf_data.get('1d') if mtf_data.get('1d') is not None else mtf_data.get('1D')
-                if df_1d is not None and not df_1d.empty and len(df_1d) >= 20:
+                if df_1d is not None and not df_1d.empty and len(df_1d) >= MIN_CANDLES_FOR_ANALYSIS:
                     # Determine bias from 1D
                     bias_components = self._detect_ict_components(df_1d, '1d')
                     htf_bias = self._determine_market_bias(df_1d, bias_components, None)
@@ -5540,7 +5560,7 @@ Get HTF bias based on entry timeframe hierarchy
             logger.warning("⚠️ 1D bias failed, trying 4H fallback...")
             if '4h' in mtf_data or '4H' in mtf_data:
                 df_4h = mtf_data.get('4h') if mtf_data.get('4h') is not None else mtf_data.get('4H')
-                if df_4h is not None and not df_4h.empty and len(df_4h) >= 20:
+                if df_4h is not None and not df_4h.empty and len(df_4h) >= MIN_CANDLES_FOR_ANALYSIS:
                     bias_components = self._detect_ict_components(df_4h, '4h')
                     htf_bias = self._determine_market_bias(df_4h, bias_components, None)
                     htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
