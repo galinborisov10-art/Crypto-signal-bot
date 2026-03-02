@@ -938,10 +938,31 @@ class ICTSignalEngine:
         if len(liquidity_zones) > 5:
             logger.info(f"      ... and {len(liquidity_zones) - 5} more zones")
         
+        # ✅ PHASE 2: MULTI-TIMEFRAME DATA EXTRACTION
+        # Extract multi-timeframe data per contract
+        if tf_hierarchy and mtf_data and isinstance(mtf_data, dict):
+            df_signal = df  # Signal TF (already have)
+            df_confirmation = mtf_data.get(tf_hierarchy.confirmation_tf)
+            df_structure = mtf_data.get(tf_hierarchy.structure_tf)
+            
+            logger.info(f"📊 Multi-TF Data Extraction:")
+            logger.info(f"   Signal TF ({tf_hierarchy.signal_tf}): {len(df_signal)} bars")
+            logger.info(f"   Confirmation TF ({tf_hierarchy.confirmation_tf}): {len(df_confirmation) if df_confirmation is not None else 'MISSING'} bars")
+            logger.info(f"   Structure TF ({tf_hierarchy.structure_tf}): {len(df_structure) if df_structure is not None else 'MISSING'} bars")
+        else:
+            # Fallback: Use signal TF for all (backward compatible)
+            logger.warning("⚠️ MTF data not available - using signal_tf for all components")
+            df_signal = df
+            df_confirmation = df
+            df_structure = df
+        
         # СТЪПКА 4: ICT COMPONENT DETECTION (with pre-calculated liquidity)
         logger.info("📊 Step 4: ICT Component Detection")
         raw_components = self._detect_ict_components(
-            df, entry_tf,  # ✅ STABILIZATION: Use entry_tf from hierarchy
+            df_signal=df_signal,  # ✅ PHASE 2: Signal TF data
+            df_confirmation=df_confirmation,  # ✅ PHASE 2: Confirmation TF data
+            df_structure=df_structure,  # ✅ PHASE 2: Structure TF data
+            timeframe=entry_tf,  # ✅ STABILIZATION: Use entry_tf from hierarchy
             liquidity_zones=liquidity_zones,  # ✅ Pass pre-calculated liquidity zones
             tf_hierarchy=tf_hierarchy  # ✅ STABILIZATION: Pass TF hierarchy for validation
         )
@@ -1062,16 +1083,29 @@ class ICTSignalEngine:
         bias_str, bias_confidence = self._calculate_pure_ict_bias_for_tf(df, symbol, entry_tf)
         bias = MarketBias[bias_str]  # Convert string to enum
         
-        # Detect structure break and displacement on entry timeframe
-        structure_broken = self._check_structure_break(df)
-        displacement_detected, displacement_strength = self._check_displacement(df)
+        # ✅ PHASE 2: Extract displacement and structure break from raw_components (already detected)
+        # Components already detected in _detect_ict_components() with correct TF routing
+        displacement_info = raw_components.get('displacement', {'detected': False, 'strength': 0, 'source_tf': entry_tf})
+        displacement_detected = displacement_info['detected']
+        displacement_strength = displacement_info['strength']
+        
+        structure_info = raw_components.get('structure_break', {'broken': False, 'type': None, 'source_tf': entry_tf})
+        structure_broken = structure_info['broken']
+        
+        # Store in ict_components
         ict_components["displacement"] = {"detected": displacement_detected, "strength": displacement_strength}
         ict_components["structure_break"] = {"type": "MSS" if structure_broken else None}
         
-        # ✅ STABILIZATION: Log displacement and MSS/BOS detection
+        # Log the source TFs for transparency
+        logger.info(f"   Displacement (from {displacement_info.get('source_tf', entry_tf)}): {displacement_detected}")
+        logger.info(f"   Structure Break (from {structure_info.get('source_tf', entry_tf)}): {structure_broken}")
+        
+        # ✅ STABILIZATION: Log displacement and MSS/BOS detection with correct TF
         if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-            TimeframeDebugLogger.log_component_source("Displacement", entry_tf, 1 if displacement_detected else 0)
-            TimeframeDebugLogger.log_component_source("MSS/BOS (Structure Break)", entry_tf, 1 if structure_broken else 0)
+            displacement_tf = displacement_info.get('source_tf', entry_tf)
+            structure_tf = structure_info.get('source_tf', entry_tf)
+            TimeframeDebugLogger.log_component_source("Displacement", displacement_tf, 1 if displacement_detected else 0)
+            TimeframeDebugLogger.log_component_source("MSS/BOS (Structure Break)", structure_tf, 1 if structure_broken else 0)
 
         # Add structure_break and displacement to ict_components for Entry Scenarios
         
@@ -2437,19 +2471,27 @@ class ICTSignalEngine:
     
     def _detect_ict_components(
         self,
-        df: pd.DataFrame,
-        timeframe: str,
+        df_signal: pd.DataFrame,  # ✅ PHASE 2: Explicit signal TF
+        df_confirmation: Optional[pd.DataFrame],  # ✅ PHASE 2: Confirmation TF
+        df_structure: Optional[pd.DataFrame],  # ✅ PHASE 2: Structure TF
+        timeframe: str,  # Signal timeframe
         liquidity_zones: Optional[List[Dict]] = None,
         tf_hierarchy: Optional['TimeframeHierarchy'] = None  # ✅ STABILIZATION: Pass TF hierarchy
     ) -> Dict[str, List]:
         """
-        Detect all ICT components with optional pre-calculated liquidity zones.
+        Detect all ICT components with multi-timeframe routing.
         
-        ✅ STABILIZATION PR: Now validates components come from correct timeframe
+        ✅ PHASE 2: Components now detected from correct timeframes:
+        - Structure Break → from df_structure (4h)
+        - Displacement → from df_confirmation (2h)
+        - Whale Blocks → from df_confirmation (2h)
+        - Order Blocks, FVGs → from df_signal (1h)
         
         Args:
-            df: DataFrame with candle data
-            timeframe: Timeframe string (e.g., '15m')
+            df_signal: DataFrame with signal TF candle data
+            df_confirmation: DataFrame with confirmation TF candle data (or None for fallback)
+            df_structure: DataFrame with structure TF candle data (or None for fallback)
+            timeframe: Signal timeframe string (e.g., '1h')
             liquidity_zones: (OPTIONAL) Pre-calculated liquidity zones from Step 3.
                              If None, calculates internally (backward compatible).
             tf_hierarchy: (OPTIONAL) TimeframeHierarchy object for validation
@@ -2472,16 +2514,32 @@ class ICTSignalEngine:
         # ✅ STABILIZATION: Log component detection timeframe
         if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
             logger.info("=" * 70)
-            logger.info(f"🔍 COMPONENT DETECTION - Timeframe: {timeframe}")
-            logger.info(f"   Expected Signal TF: {tf_hierarchy.signal_tf}")
+            logger.info(f"🔍 COMPONENT DETECTION - Multi-Timeframe Routing")
+            logger.info(f"   Signal TF: {tf_hierarchy.signal_tf}")
+            logger.info(f"   Confirmation TF: {tf_hierarchy.confirmation_tf}")
+            logger.info(f"   Structure TF: {tf_hierarchy.structure_tf}")
             logger.info("=" * 70)
         
+        # ✅ PHASE 2: Fallback handling - use signal TF if MTF data missing
+        if df_confirmation is None:
+            if tf_hierarchy:
+                logger.warning(f"⚠️ Confirmation TF ({tf_hierarchy.confirmation_tf}) data missing")
+                logger.warning(f"   Fallback: Using signal_tf for confirmation components")
+            df_confirmation = df_signal  # Backward compatible
+        
+        if df_structure is None:
+            if tf_hierarchy:
+                logger.warning(f"⚠️ Structure TF ({tf_hierarchy.structure_tf}) data missing")
+                logger.warning(f"   Fallback: Using signal_tf for structure components")
+            df_structure = df_signal  # Backward compatible
+        
+        # ✅ PHASE 2: SIGNAL TF COMPONENTS - Detect from signal_tf (1h)
         # Detect Order Blocks
         if self.config['use_order_blocks'] and self.ob_detector:
             try:
-                order_blocks = self.ob_detector.detect_order_blocks(df, timeframe)
+                order_blocks = self.ob_detector.detect_order_blocks(df_signal, timeframe)
                 components['order_blocks'] = order_blocks
-                logger.info(f"Detected {len(order_blocks)} order blocks on {timeframe}")
+                logger.info(f"Detected {len(order_blocks)} order blocks on {timeframe} (signal_tf)")
                 
                 # ✅ STABILIZATION: Validate timeframe if hierarchy provided
                 if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
@@ -2497,9 +2555,9 @@ class ICTSignalEngine:
         # Detect Fair Value Gaps
         if self.config['use_fvgs'] and self.fvg_detector:
             try:
-                fvgs = self.fvg_detector.detect_fvgs(df, timeframe)
+                fvgs = self.fvg_detector.detect_fvgs(df_signal, timeframe)
                 components['fvgs'] = fvgs
-                logger.info(f"Detected {len(fvgs)} FVGs on {timeframe}")
+                logger.info(f"Detected {len(fvgs)} FVGs on {timeframe} (signal_tf)")
                 
                 # ✅ STABILIZATION: Log component source
                 if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
@@ -2507,27 +2565,102 @@ class ICTSignalEngine:
             except Exception as e:
                 logger.error(f"FVG detection error: {e}")
         
+        # ✅ PHASE 2: CONFIRMATION TF COMPONENTS - Detect from confirmation_tf (2h)
         # Detect Whale Blocks
         if self.config['use_whale_blocks'] and self.whale_detector:
             try:
-                whale_blocks = self.whale_detector.detect_whale_blocks(df, timeframe)
+                confirmation_tf_str = tf_hierarchy.confirmation_tf if tf_hierarchy else timeframe
+                whale_blocks = self.whale_detector.detect_whale_blocks(df_confirmation, confirmation_tf_str)
                 components['whale_blocks'] = whale_blocks
-                logger.info(f"Detected {len(whale_blocks)} whale blocks on {timeframe}")
+                
+                if tf_hierarchy and df_confirmation is not df_signal:
+                    logger.info(f"Detected {len(whale_blocks)} whale blocks on {confirmation_tf_str} (confirmation_tf)")
+                else:
+                    logger.info(f"Detected {len(whale_blocks)} whale blocks on {timeframe} (signal_tf fallback)")
                 
                 # ✅ STABILIZATION: Log component source
                 if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-                    TimeframeDebugLogger.log_component_source("Whale Blocks", timeframe, len(whale_blocks))
+                    TimeframeDebugLogger.log_component_source("Whale Blocks", confirmation_tf_str, len(whale_blocks))
             except Exception as e:
                 logger.error(f"Whale detection error: {e}")
         
+        # ✅ PHASE 2: Detect Displacement from confirmation_tf
+        if tf_hierarchy and df_confirmation is not None:
+            try:
+                confirmation_tf_str = tf_hierarchy.confirmation_tf
+                displacement_detected, displacement_strength = self._check_displacement(df_confirmation)
+                
+                if df_confirmation is not df_signal:
+                    logger.info(f"   Displacement detected on {confirmation_tf_str} (confirmation_tf): {displacement_detected}")
+                else:
+                    logger.info(f"   Displacement detected on {timeframe} (signal_tf fallback): {displacement_detected}")
+                
+                # Store in components
+                components['displacement'] = {
+                    'detected': displacement_detected,
+                    'strength': displacement_strength,
+                    'source_tf': confirmation_tf_str if df_confirmation is not df_signal else timeframe
+                }
+            except Exception as e:
+                logger.error(f"Displacement detection error: {e}")
+                components['displacement'] = {'detected': False, 'strength': 0, 'source_tf': timeframe}
+        else:
+            # Fallback: detect from signal_tf
+            try:
+                displacement_detected, displacement_strength = self._check_displacement(df_signal)
+                logger.warning(f"   ⚠️ Using signal_tf for displacement detection (MTF data missing)")
+                components['displacement'] = {
+                    'detected': displacement_detected,
+                    'strength': displacement_strength,
+                    'source_tf': timeframe
+                }
+            except Exception as e:
+                logger.error(f"Displacement detection error: {e}")
+                components['displacement'] = {'detected': False, 'strength': 0, 'source_tf': timeframe}
+        
+        # ✅ PHASE 2: STRUCTURE TF COMPONENTS - Detect from structure_tf (4h)
+        # Detect Structure Break
+        if tf_hierarchy and df_structure is not None:
+            try:
+                structure_tf_str = tf_hierarchy.structure_tf
+                structure_broken = self._check_structure_break(df_structure)
+                
+                if df_structure is not df_signal:
+                    logger.info(f"   Structure Break detected on {structure_tf_str} (structure_tf): {structure_broken}")
+                else:
+                    logger.info(f"   Structure Break detected on {timeframe} (signal_tf fallback): {structure_broken}")
+                
+                # Store in components
+                components['structure_break'] = {
+                    'type': 'MSS' if structure_broken else None,
+                    'broken': structure_broken,
+                    'source_tf': structure_tf_str if df_structure is not df_signal else timeframe
+                }
+            except Exception as e:
+                logger.error(f"Structure break detection error: {e}")
+                components['structure_break'] = {'type': None, 'broken': False, 'source_tf': timeframe}
+        else:
+            # Fallback: detect from signal_tf
+            try:
+                structure_broken = self._check_structure_break(df_signal)
+                logger.warning(f"   ⚠️ Using signal_tf for structure break detection (MTF data missing)")
+                components['structure_break'] = {
+                    'type': 'MSS' if structure_broken else None,
+                    'broken': structure_broken,
+                    'source_tf': timeframe
+                }
+            except Exception as e:
+                logger.error(f"Structure break detection error: {e}")
+                components['structure_break'] = {'type': None, 'broken': False, 'source_tf': timeframe}
+        
         # ✅ LIQUIDITY ZONES & SWEEPS - Clear flow without duplication
-        # Step 1: Get or calculate liquidity zones
+        # Step 1: Get or calculate liquidity zones (from signal_tf)
         if liquidity_zones is None:
             # Calculate liquidity zones internally (backward compatible)
             if self.config['use_liquidity'] and self.liquidity_mapper:
                 try:
-                    liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df, timeframe)
-                    logger.info(f"Detected {len(liquidity_zones)} liquidity zones")
+                    liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df_signal, timeframe)
+                    logger.info(f"Detected {len(liquidity_zones)} liquidity zones on {timeframe} (signal_tf)")
                 except Exception as e:
                     logger.error(f"Liquidity detection error: {e}")
                     liquidity_zones = []
@@ -2541,12 +2674,12 @@ class ICTSignalEngine:
         if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
             TimeframeDebugLogger.log_component_source("Liquidity Zones", timeframe, len(liquidity_zones))
         
-        # Step 3: Calculate liquidity sweeps (ONCE) if zones exist
+        # Step 3: Calculate liquidity sweeps (ONCE) if zones exist (from signal_tf)
         if liquidity_zones and self.config.get('use_liquidity') and self.liquidity_mapper:
             try:
-                sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df, liquidity_zones)
+                sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df_signal, liquidity_zones)
                 components['liquidity_sweeps'] = sweeps
-                logger.info(f"Detected {len(sweeps)} liquidity sweeps on {timeframe}")
+                logger.info(f"Detected {len(sweeps)} liquidity sweeps on {timeframe} (signal_tf)")
                 
                 # ✅ STABILIZATION: Log liquidity sweeps source
                 if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
@@ -2557,12 +2690,12 @@ class ICTSignalEngine:
         else:
             components['liquidity_sweeps'] = []
         
-        # Detect Internal Liquidity Pools
+        # Detect Internal Liquidity Pools (from signal_tf)
         if self.ilp_detector:
             try:
-                ilp_analysis = self.ilp_detector.analyze(df)
+                ilp_analysis = self.ilp_detector.analyze(df_signal)
                 components['internal_liquidity'] = ilp_analysis.get('pools', [])
-                logger.info(f"Detected {len(components['internal_liquidity'])} ILPs on {timeframe}")
+                logger.info(f"Detected {len(components['internal_liquidity'])} ILPs on {timeframe} (signal_tf)")
                 
                 # ✅ STABILIZATION: Log ILP source
                 if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
@@ -2596,15 +2729,15 @@ class ICTSignalEngine:
             except Exception as e:
                 logger.error(f"ILP detection error: {e}")
         
-        # Detect Breaker Blocks
+        # Detect Breaker Blocks (from signal_tf)
         if self.breaker_detector and components.get('order_blocks'):
             try:
                 breaker_blocks = self.breaker_detector.detect_breaker_blocks(
-                    df,
+                    df_signal,
                     components['order_blocks']
                 )
                 components['breaker_blocks'] = breaker_blocks
-                logger.info(f"Detected {len(breaker_blocks)} breaker blocks on {timeframe}")
+                logger.info(f"Detected {len(breaker_blocks)} breaker blocks on {timeframe} (signal_tf)")
                 
                 # ✅ STABILIZATION: Log breaker blocks source
                 if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
@@ -2615,15 +2748,15 @@ class ICTSignalEngine:
         else:
             components['breaker_blocks'] = []
         
-        # Detect Mitigation Blocks  
+        # Detect Mitigation Blocks (from signal_tf)
         if self.ob_detector:
             try:
                 mitigation_blocks = self.ob_detector.detect_mitigation_blocks(
-                    df,
+                    df_signal,
                     components.get('order_blocks', [])
                 )
                 components['mitigation_blocks'] = mitigation_blocks
-                logger.info(f"Detected {len(mitigation_blocks)} mitigation blocks on {timeframe}")
+                logger.info(f"Detected {len(mitigation_blocks)} mitigation blocks on {timeframe} (signal_tf)")
                 
                 # ✅ STABILIZATION: Log mitigation blocks source
                 if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
@@ -2634,26 +2767,26 @@ class ICTSignalEngine:
         else:
             components['mitigation_blocks'] = []
         
-        # Detect SIBI/SSIB
+        # Detect SIBI/SSIB (from signal_tf)
         if self.sibi_ssib_detector:
             try:
                 sibi_ssib_zones = self.sibi_ssib_detector.detect_sibi_ssib(
-                    df,
+                    df_signal,
                     components.get('fvgs', []),
                     components.get('liquidity_zones', [])
                 )
                 components['sibi_ssib_zones'] = sibi_ssib_zones
-                logger.info(f"Detected {len(sibi_ssib_zones)} SIBI/SSIB zones")
+                logger.info(f"Detected {len(sibi_ssib_zones)} SIBI/SSIB zones (signal_tf)")
             except Exception as e:
                 logger.error(f"SIBI/SSIB detection error: {e}")
                 components['sibi_ssib_zones'] = []
         else:
             components['sibi_ssib_zones'] = []
         
-        # Run LuxAlgo Combined Analysis
+        # Run LuxAlgo Combined Analysis (from signal_tf)
         if self.luxalgo_combined:
             try:
-                luxalgo_result = self.luxalgo_combined.analyze(df)
+                luxalgo_result = self.luxalgo_combined.analyze(df_signal)
                 
                 # Ensure result is valid dict (defensive)
                 if not isinstance(luxalgo_result, dict):
