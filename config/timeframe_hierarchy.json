@@ -19,13 +19,14 @@
         "30m": {
             "entry_tf": "30m",
             "confirmation_tf": "1h",
-            "structure_tf": "1h",
-            "htf_bias_tf": "1h",
-            "description": "30m entry with 1h confirmation and bias",
-            "rationale": "1h provides structure and bias, 30m for entry timing",
+            "structure_tf": "2h",
+            "htf_bias_tf": "2h",
+            "description": "30m entry with 1h confirmation and 2h structure/bias",
+            "rationale": "2h provides structure and bias, 1h confirms setup, 30m for entry timing",
             "min_lookback": {
                 "30m": 100,
-                "1h": 50
+                "1h": 50,
+                "2h": 50
             }
         },
         "1h": {

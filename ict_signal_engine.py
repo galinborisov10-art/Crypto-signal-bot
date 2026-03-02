@@ -610,8 +610,8 @@ class ICTSignalEngine:
                 "30m": {
                     "entry_tf": "30m",
                     "confirmation_tf": "1h",
-                    "structure_tf": "1h",
-                    "htf_bias_tf": "1h"
+                    "structure_tf": "2h",
+                    "htf_bias_tf": "2h"
                 },
                 "1h": {
                     "entry_tf": "1h",
@@ -622,8 +622,8 @@ class ICTSignalEngine:
                 "2h": {
                     "entry_tf": "2h",
                     "confirmation_tf": "4h",
-                    "structure_tf": "4h",
-                    "htf_bias_tf": "4h"
+                    "structure_tf": "1d",
+                    "htf_bias_tf": "1d"
                 },
                 "3h": {
                     "entry_tf": "3h",
@@ -633,7 +633,7 @@ class ICTSignalEngine:
                 },
                 "4h": {
                     "entry_tf": "4h",
-                    "confirmation_tf": "4h",
+                    "confirmation_tf": "1d",
                     "structure_tf": "1d",
                     "htf_bias_tf": "1d"
                 },
