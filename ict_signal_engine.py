@@ -3504,12 +3504,12 @@ class ICTSignalEngine:
         # Check for Displacement
         displacement_detected, displacement_strength = self._check_displacement(confirmation_df)
         
-        # Check for Liquidity Sweep (if liquidity_map available)
+        # Check for Liquidity Sweep (if liquidity_mapper available)
         has_sweep = False
-        if self.liquidity_map and len(confirmation_df) >= 50:
+        if self.liquidity_mapper and len(confirmation_df) >= 50:
             try:
-                liquidity_zones = self.liquidity_map.detect_liquidity_zones(confirmation_df, symbol)
-                sweeps = self.liquidity_map.detect_liquidity_sweeps(confirmation_df, liquidity_zones)
+                liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(confirmation_df, symbol)
+                sweeps = self.liquidity_mapper.detect_liquidity_sweeps(confirmation_df, liquidity_zones)
                 has_sweep = len(sweeps) > 0
             except Exception as e:
                 logger.debug(f"Liquidity sweep check failed: {e}")
