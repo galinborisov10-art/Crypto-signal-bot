@@ -1405,14 +1405,14 @@ class ICTSignalEngine:
             if poi_ref:
                 entry_setup['poi_ref'] = poi_ref
             
-            logger.info(f"   ✅ Selected Scenario: {entry_scenario_result['scenario']}")
-            logger.info(f"      • Score: {entry_scenario_result['score']}/100")
+            logger.info(f"   ✅ Selected Scenario: {entry_scenario_result.get('scenario', 'UNKNOWN')}")
+            logger.info(f"      • Score: {entry_scenario_result.get('score', 0)}/100")
             logger.info(f"      • Entry Price: ${entry_scenario_result['entry_zone']['center']:.4f}")
             logger.info(f"      • Entry Range: ${entry_scenario_result['entry_zone']['low']:.4f} - ${entry_scenario_result['entry_zone']['high']:.4f}")
             logger.info(f"      • Distance: {entry_scenario_result['entry_zone']['distance_pct']:.1f}%")
-            logger.info(f"      • Triggers: {', '.join(entry_scenario_result['triggers'])} ({entry_scenario_result['trigger_strength']})")
-            logger.info(f"      • Position Size Advisory: {entry_scenario_result['position_size_advisory']}%")
-            logger.info(f"      • Reasoning: {entry_scenario_result['reasoning']}")
+            logger.info(f"      • Triggers: {', '.join(entry_scenario_result.get('triggers', []))} ({entry_scenario_result.get('trigger_strength', 'UNKNOWN')})")
+            logger.info(f"      • Position Size Advisory: {entry_scenario_result.get('position_size_advisory', 100)}%")
+            logger.info(f"      • Reasoning: {entry_scenario_result.get('reasoning', 'N/A')}")
             logger.info(f"      • POI Type: {entry_scenario_result.get('poi_type', 'NONE')}")
             
             # Log invalidation anchor info
