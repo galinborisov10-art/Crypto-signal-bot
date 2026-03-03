@@ -807,7 +807,7 @@ class ICTSignalEngine:
                         entry_price = cached_signal.entry_price
                         distance_pct = abs(entry_price - current_price) / current_price
                         
-                        MAX_ENTRY_DISTANCE_PCT = 0.07  # 5% max (universal limit, consistent with line 2578)
+                        MAX_ENTRY_DISTANCE_PCT = 0.07  # 7% max (universal limit)
                         if distance_pct > MAX_ENTRY_DISTANCE_PCT:
                             logger.warning(
                                 f"⚠️ Cached signal entry too far: {distance_pct*100:.1f}% > 7.0% MAX "
@@ -1007,7 +1007,7 @@ class ICTSignalEngine:
         
         # СТЪПКА 5: COMPONENT FILTERING (NEW) - Filter for quality
         logger.info("📊 Step 5: Component Filtering (Quality Focus)")
-        ict_components = self._filter_quality_components(raw_components)
+        ict_components = self._filter_quality_components(raw_components, timeframe)
         
         # ✅ STABILIZATION PR: COMPREHENSIVE DEBUG LOGGING & VALIDATION
         if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
@@ -2837,28 +2837,47 @@ class ICTSignalEngine:
         
         return components
     
-    def _filter_quality_components(self, raw_components: Dict) -> Dict:
+    def _filter_quality_components(self, raw_components: Dict, timeframe: str) -> Dict:
         """
         Filter ICT components to keep only high-quality ones.
         
-        Quality criteria:
-        - Order Blocks: MEDIUM or STRONG only (volume_ratio >= 1.5)
+        ✅ SINGLE HARD GATE: This is the ONLY place where strength and age are hard filtered.
+        
+        Quality criteria (timeframe-based):
+        - Order Blocks: Strength + Age thresholds by timeframe
+          * 15m-2h: min_ob_strength=30, max_component_age=30
+          * 4h-1w: min_ob_strength=35, max_component_age=40
         - FVG Zones: Unfilled only (fill_percentage < 70%)
         - Whale Blocks: Confidence >= 50%
-        - Liquidity Sweeps: Recent only (candles_ago <= 20)
+        - Liquidity Sweeps: Age threshold by timeframe
         - BSL/SSL: Strength >= 0.5
         - Swing High/Low: Recent and strong
         - Liquidity Zones: Active pools only
         
         Args:
             raw_components: All detected components from Step 4
+            timeframe: Current analysis timeframe for threshold selection
         
         Returns:
             Filtered components (quality only)
         """
+        # ✅ CHANGE 1: Timeframe-based thresholds (SINGLE HARD GATE)
+        if timeframe in ['15m', '30m', '1h', '2h']:
+            min_ob_strength = 30
+            max_component_age = 30
+        elif timeframe in ['4h', '1d', '1w']:
+            min_ob_strength = 35
+            max_component_age = 40
+        else:
+            # Fallback for any unexpected timeframe
+            min_ob_strength = 30
+            max_component_age = 30
+        
+        logger.info(f"   🔧 Filter thresholds for {timeframe}: OB strength≥{min_ob_strength}, age≤{max_component_age} candles")
+        
         filtered = {}
         
-        # Filter Order Blocks (MEDIUM+ only)
+        # Filter Order Blocks (strength + age)
         raw_obs = raw_components.get('order_blocks', [])
         filtered_obs = []
         
@@ -2880,12 +2899,27 @@ class ICTSignalEngine:
                 else:
                     strength = None
                 
+                if hasattr(ob, 'candles_ago'):
+                    candles_ago = ob.candles_ago
+                elif isinstance(ob, dict):
+                    candles_ago = ob.get('candles_ago', None)
+                else:
+                    candles_ago = None
+                
                 # If strength field missing, keep the component (don't filter aggressively)
                 if strength is None:
                     logger.debug(f"   ⚠️ Order Block missing 'strength' field - keeping component")
                     filtered_obs.append(ob)
-                elif strength >= 40:  # MEDIUM = 40+, STRONG = 60+
-                    filtered_obs.append(ob)
+                # Apply BOTH strength and age filters
+                elif strength >= min_ob_strength:
+                    # Check age if available
+                    if candles_ago is None:
+                        # If age missing, keep the component
+                        filtered_obs.append(ob)
+                    elif candles_ago <= max_component_age:
+                        # Both strength and age pass
+                        filtered_obs.append(ob)
+                    # else: reject due to age
             except Exception as e:
                 logger.warning(f"   ⚠️ Error filtering Order Block: {e} - keeping component")
                 filtered_obs.append(ob)
@@ -2958,7 +2992,7 @@ class ICTSignalEngine:
         
         filtered['whale_blocks'] = filtered_whales
         
-        # Filter Liquidity Sweeps (recent only)
+        # Filter Liquidity Sweeps (age threshold by timeframe)
         raw_sweeps = raw_components.get('liquidity_sweeps', [])
         filtered_sweeps = []
         
@@ -2983,7 +3017,7 @@ class ICTSignalEngine:
                 if candles_ago is None:
                     logger.debug(f"   ⚠️ Liquidity Sweep missing 'candles_ago' field - keeping component")
                     filtered_sweeps.append(sweep)
-                elif candles_ago <= 20:
+                elif candles_ago <= max_component_age:  # Use timeframe-based threshold
                     filtered_sweeps.append(sweep)
             except Exception as e:
                 logger.warning(f"   ⚠️ Error filtering Liquidity Sweep: {e} - keeping component")
@@ -3757,12 +3791,12 @@ class ICTSignalEngine:
            - Search for: Bullish FVG, Bullish OB, or Support level
            - Zone must be < current_price * 0.995 (at least 0.5% below)
         
-        3. Distance constraints (UNIVERSAL 5% MAX):
-           - HARD REJECT: > 5% from current price (TOO_FAR - stale signal)
-           - Buffer zone: 3% - 5% from current price (VALID_WAIT - needs pullback)
+        3. Distance constraints (UNIVERSAL 7% MAX):
+           - HARD REJECT: > 7% from current price (TOO_FAR - stale signal)
+           - Buffer zone: 3% - 7% from current price (VALID_WAIT - needs pullback)
            - Optimal range: 0.5% - 3% from current price (VALID_NEAR - best entry)
            - Very close: < 0.5% from current price (TOO_LATE - warning only)
-           - Universal 5% maximum applies to ALL timeframes (15m - 1w)
+           - Universal 7% maximum applies to ALL timeframes (15m - 1w)
         
         4. Entry buffer: ±0.2% around zone boundaries
         
@@ -3783,8 +3817,8 @@ class ICTSignalEngine:
             }
             
             status codes:
-            - 'TOO_FAR': Entry zone too far (> 5% universal max - HARD REJECT)
-            - 'VALID_WAIT': Entry zone in buffer (3% - 5% - wait for pullback)
+            - 'TOO_FAR': Entry zone too far (> 7% universal max - HARD REJECT)
+            - 'VALID_WAIT': Entry zone in buffer (3% - 7% - wait for pullback)
             - 'VALID_NEAR': Entry zone in optimal range (0.5% - 3% - price approaching)
             - 'TOO_LATE': Price already passed the entry zone (< 0.5% - warning only)
             - 'NO_ZONE': No valid entry zone found (converted to fallback in calling code)
@@ -3794,7 +3828,7 @@ class ICTSignalEngine:
         # A signal with 20% entry distance is equally stale on any timeframe
         # Applies to both automatic signals (1h, 2h, 4h, 1d) and manual analysis (all TFs)
         min_distance_pct = 0.005  # 0.5% minimum (unchanged)
-        max_distance_pct = 0.050  # 5% UNIVERSAL MAX (all timeframes)
+        max_distance_pct = 0.070  # 7% UNIVERSAL MAX (increased from 5%)
         entry_buffer_pct = 0.002  # 0.2% buffer (unchanged)
         
         valid_zones = []

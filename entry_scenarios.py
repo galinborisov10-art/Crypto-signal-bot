@@ -351,7 +351,7 @@ def _calculate_probability_rollback(
     probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
     
     # Distance penalty (closer is better, penalty increases with distance)
-    distance_penalty_factor = min(distance_pct / 5.0, 1.0)  # 0% to 5% distance
+    distance_penalty_factor = min(distance_pct / 7.0, 1.0)  # 0% to 7% distance
     probability -= distance_penalty_factor * PROBABILITY_CONTRIBUTIONS['distance_penalty']
     
     # Clamp between 0.0 and 1.0
@@ -379,8 +379,8 @@ def _calculate_probability_pullback(
     trigger_count_normalized = _normalize_trigger_count(len(triggers), max_triggers=3)
     probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
     
-    # Distance penalty (0% to 5% distance)
-    distance_penalty_factor = min(distance_pct / 5.0, 1.0)
+    # Distance penalty (0% to 7% distance)
+    distance_penalty_factor = min(distance_pct / 7.0, 1.0)
     probability -= distance_penalty_factor * PROBABILITY_CONTRIBUTIONS['distance_penalty']
     
     # Clamp between 0.0 and 1.0
@@ -568,6 +568,10 @@ def _validate_continuation_behavior(
 ) -> Tuple[bool, str]:
     """
     Validate CONTINUATION behavioral requirements
+    
+    ✅ SINGLE-GATE: Only validates CORE structure behavior
+    - No age gates (filtered in _filter_quality_components)
+    - Extension check is behavioral (not age-based)
 
     Returns:
         (is_eligible, reason)
@@ -594,12 +598,10 @@ def _validate_continuation_behavior(
     if disp_strength < 0.5:
         return False, f"Weak displacement ({disp_strength:.2f} < 0.5 minimum)"
 
-    # 4. Check break recency (only when candles_ago field is present)
-    candles_ago = structure_break.get('candles_ago')
-    if candles_ago is not None and candles_ago > 20:
-        return False, f"Structure break too old ({candles_ago} candles ago)"
+    # ✅ REMOVED: Age check (filtered in _filter_quality_components)
 
-    # 5. Check price extension (only when price key is present)
+    # 4. Check price extension (only when price key is present)
+    # This is behavioral validation, not age-based filtering
     break_price = structure_break.get('price')
     extension_pct = 0.0
     if break_price is not None:
@@ -620,6 +622,11 @@ def _validate_pullback_behavior(
 ) -> Tuple[bool, str]:
     """
     Validate PULLBACK behavioral requirements
+    
+    ✅ SINGLE-GATE: Only validates CORE structure behavior
+    - No strength gates (used for scoring only)
+    - No age gates (filtered in _filter_quality_components)
+    - No distance gates (validated in entry zone calculation)
 
     Returns:
         (is_eligible, reason)
@@ -654,11 +661,11 @@ def _validate_pullback_behavior(
     if structure_break and structure_break.get('type') == 'CHOCH':
         return False, "Structure flip (CHOCH) invalidates pullback"
 
-    # 5. Check distance to POI
-    if distance_pct > 5.0:
-        return False, f"POI too far ({distance_pct:.1f}% > 5% maximum)"
+    # ✅ REMOVED: Distance check (validated in entry zone calculation)
+    # ✅ REMOVED: Strength check (used for scoring only)
+    # ✅ REMOVED: Age check (filtered in _filter_quality_components)
 
-    return True, f"PULLBACK behavior valid (impulse {disp_strength:.2f}, distance {distance_pct:.1f}%)"
+    return True, f"PULLBACK behavior valid (impulse {disp_strength:.2f})"
 
 
 def _validate_reversal_behavior(
@@ -668,19 +675,22 @@ def _validate_reversal_behavior(
 ) -> Tuple[bool, str]:
     """
     Validate REVERSAL behavioral requirements (sequential pattern)
+    
+    ✅ SINGLE-GATE: Only validates CORE structure behavior
+    - No age gates (filtered in _filter_quality_components)
+    - Sequence timing validated behaviorally when available
 
     Returns:
         (is_eligible, reason)
     """
-    # 1. Check sweep exists and is recent
+    # 1. Check sweep exists
     if not sweeps:
         return False, "No liquidity sweep"
 
     sweep = sweeps[0]
     sweep_candles_ago = sweep.get('candles_ago', 999) if hasattr(sweep, 'get') else getattr(sweep, 'candles_ago', 999)
 
-    if sweep_candles_ago > 10:
-        return False, f"Sweep too old ({sweep_candles_ago} candles ago)"
+    # ✅ REMOVED: Age check (filtered in _filter_quality_components)
 
     # 2. Check structure flip exists
     if not structure_break or structure_break.get('type') not in ['CHOCH', 'MSS']:
@@ -697,7 +707,7 @@ def _validate_reversal_behavior(
     if disp_strength < 0.5:
         return False, f"Weak reversal displacement ({disp_strength:.2f} < 0.5 minimum)"
 
-    # 4. Validate sequence: Sweep → Flip → Displacement
+    # 4. Validate sequence: Sweep → Flip → Displacement (when timing data available)
     # Valid: flip_candles_ago < sweep_candles_ago (flip is more recent = occurred after sweep)
     # Only enforce when flip timing data is available
     if flip_candles_ago is not None:
@@ -731,6 +741,9 @@ def _validate_rollback_behavior(
 ) -> Tuple[bool, str]:
     """
     Validate ROLLBACK behavioral requirements
+    
+    ✅ SINGLE-GATE: Only validates CORE structure behavior
+    - No age gates (filtered in _filter_quality_components)
 
     Returns:
         (is_eligible, reason)
@@ -739,12 +752,9 @@ def _validate_rollback_behavior(
     if not structure_break or structure_break.get('type') not in ['BOS', 'MSS']:
         return False, "No structure break"
 
-    # 2. Check break recency (only when candles_ago field is present)
-    candles_ago = structure_break.get('candles_ago')
-    if candles_ago is not None and candles_ago > 25:
-        return False, f"Structure break too old ({candles_ago} candles ago)"
+    # ✅ REMOVED: Age check (filtered in _filter_quality_components)
 
-    # 3. Check price is near break level (only when price key is present)
+    # 2. Check price is near break level (only when price key is present)
     break_price = structure_break.get('price')
     distance_to_break = 0.0
     if break_price is not None:
@@ -752,7 +762,7 @@ def _validate_rollback_behavior(
         if distance_to_break > 0.5:
             return False, f"Price not at break level (distance: {distance_to_break:.1f}% > 0.5%)"
 
-    # 4. Verify price had moved away from break — REQUIRED for rollback
+    # 3. Verify price had moved away from break — REQUIRED for rollback
     displacement = ict_components.get('displacement', {})
     if not displacement.get('detected'):
         return False, "No movement away from break level"
@@ -760,6 +770,9 @@ def _validate_rollback_behavior(
     disp_strength = displacement.get('strength', 0.0)
     if disp_strength < 0.3:
         return False, f"Insufficient movement from break ({disp_strength:.2f} < 0.3)"
+
+    # Get candles_ago for logging (optional field)
+    candles_ago = structure_break.get('candles_ago', 'N/A')
 
     return True, f"ROLLBACK behavior valid (break {candles_ago} candles ago, distance {distance_to_break:.2f}%)"
 
@@ -1019,15 +1032,28 @@ def _score_pullback_scenario(
     if not poi_candidates:
         return None, None
     
-    # Filter by minimum quality
-    poi_candidates = [p for p in poi_candidates if p['quality'] >= POI_QUALITY['min_acceptable']]
+    # ✅ CHANGE 4: Weighted POI selection (no hard quality rejection)
+    # Calculate weighted score for each POI: distance_score * 0.6 + strength * 0.4
+    for poi in poi_candidates:
+        distance_pct = poi['distance_pct']
+        strength = poi['quality']
+        
+        # Distance score: (7 - distance_pct) / 7 * 100
+        # Closer distance = higher score (max 100 at 0%, min ~0 at 7%)
+        distance_score = max(0, (7.0 - distance_pct) / 7.0 * 100)
+        
+        # Weighted score: 60% distance, 40% strength
+        weighted_score = distance_score * 0.6 + strength * 0.4
+        
+        poi['weighted_score'] = weighted_score
+        poi['distance_score'] = distance_score
     
-    if not poi_candidates:
-        logger.debug("   PULLBACK: no POI with acceptable quality")
-        return None, None
+    # Select best POI by weighted score (no minimum quality gate)
+    best_poi = max(poi_candidates, key=lambda x: x['weighted_score'])
     
-    # Select best POI (highest quality, then closest)
-    best_poi = max(poi_candidates, key=lambda x: (x['quality'], -x['distance_pct']))
+    logger.debug(f"   PULLBACK: Selected POI - type={best_poi['type']}, "
+                 f"distance={best_poi['distance_pct']:.1f}%, strength={best_poi['quality']:.0f}, "
+                 f"weighted_score={best_poi['weighted_score']:.1f}")
 
     # ✅ BEHAVIORAL CORE GATE
     is_eligible, reason = _validate_pullback_behavior(

@@ -89,14 +89,14 @@ REVERSAL_WEIGHTS = {
 # ROLLBACK
 ROLLBACK_DISTANCE = {
     'min_pct': 0.01,    # 1.0%
-    'max_pct': 0.05,    # 5.0%
+    'max_pct': 0.07,    # 7.0% (increased from 5%)
     'buffer_pct': 0.002 # 0.2%
 }
 
 # PULLBACK
 PULLBACK_DISTANCE = {
     'min_pct': 0.002,   # 0.2%
-    'max_pct': 0.05,    # 5.0%
+    'max_pct': 0.07,    # 7.0% (increased from 5%)
     'buffer_pct': 0.002 # 0.2%
 }
 
@@ -110,7 +110,7 @@ CONTINUATION_DISTANCE = {
 # REVERSAL
 REVERSAL_DISTANCE = {
     'min_pct': 0.002,   # 0.2% (to POI)
-    'max_pct': 0.05,    # 5.0% (to break level)
+    'max_pct': 0.07,    # 7.0% (to break level, increased from 5%)
     'buffer_pct': 0.002 # 0.2%
 }
 
