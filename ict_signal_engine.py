@@ -5642,8 +5642,8 @@ Get HTF bias based on entry timeframe hierarchy
                 htf_bias_tf = hierarchy.get('htf_bias_tf', '1d')
                 logger.info(f"✅ Using HTF bias TF: {htf_bias_tf} for {entry_timeframe} entry")
             else:
-                # Fallback: 1H/2H→1D, 4H/1D→1W
-                htf_bias_tf = '1w' if entry_tf_normalized in ['4h', '1d'] else '1d'
+                # Fallback: use 1d for all entries without hierarchy config
+                htf_bias_tf = '1d'
                 logger.warning(f"⚠️ {entry_timeframe} not in config, using: {htf_bias_tf}")
             
             # Try to get data for the HTF bias timeframe
