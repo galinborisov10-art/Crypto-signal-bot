@@ -351,7 +351,7 @@ def _calculate_probability_rollback(
     probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
     
     # Distance penalty (closer is better, penalty increases with distance)
-    distance_penalty_factor = min(distance_pct / 5.0, 1.0)  # 0% to 5% distance
+    distance_penalty_factor = min(distance_pct / 7.0, 1.0)  # 0% to 7% distance
     probability -= distance_penalty_factor * PROBABILITY_CONTRIBUTIONS['distance_penalty']
     
     # Clamp between 0.0 and 1.0
@@ -379,8 +379,8 @@ def _calculate_probability_pullback(
     trigger_count_normalized = _normalize_trigger_count(len(triggers), max_triggers=3)
     probability += trigger_count_normalized * PROBABILITY_CONTRIBUTIONS['trigger_count']
     
-    # Distance penalty (0% to 5% distance)
-    distance_penalty_factor = min(distance_pct / 5.0, 1.0)
+    # Distance penalty (0% to 7% distance)
+    distance_penalty_factor = min(distance_pct / 7.0, 1.0)
     probability -= distance_penalty_factor * PROBABILITY_CONTRIBUTIONS['distance_penalty']
     
     # Clamp between 0.0 and 1.0
@@ -620,6 +620,15 @@ def _validate_pullback_behavior(
 ) -> Tuple[bool, str]:
     """
     Validate PULLBACK behavioral requirements
+    
+    CORE BEHAVIORAL VALIDATION ONLY (no strength/age/distance gates):
+    - POI existence
+    - Prior impulse (displacement)
+    - Impulse direction matches bias
+    - No structure flip (CHOCH)
+    
+    Note: Distance is validated in entry zone calculation (single gate at 7%).
+          Strength is used for scoring, not rejection.
 
     Returns:
         (is_eligible, reason)
@@ -654,9 +663,7 @@ def _validate_pullback_behavior(
     if structure_break and structure_break.get('type') == 'CHOCH':
         return False, "Structure flip (CHOCH) invalidates pullback"
 
-    # 5. Check distance to POI
-    if distance_pct > 5.0:
-        return False, f"POI too far ({distance_pct:.1f}% > 5% maximum)"
+    # ✅ REMOVED: Distance gate - handled in entry zone calculation (single gate at 7%)
 
     return True, f"PULLBACK behavior valid (impulse {disp_strength:.2f}, distance {distance_pct:.1f}%)"
 
@@ -668,19 +675,27 @@ def _validate_reversal_behavior(
 ) -> Tuple[bool, str]:
     """
     Validate REVERSAL behavioral requirements (sequential pattern)
+    
+    CORE BEHAVIORAL VALIDATION ONLY (no age gates):
+    - Liquidity sweep existence
+    - Structure flip (CHOCH/MSS)
+    - Displacement after flip
+    - Sequential validation (Sweep → Flip → Displacement)
+    
+    Note: Component age is filtered in _filter_quality_components (single gate).
+          Scenarios validate CORE structure only.
 
     Returns:
         (is_eligible, reason)
     """
-    # 1. Check sweep exists and is recent
+    # 1. Check sweep exists
     if not sweeps:
         return False, "No liquidity sweep"
 
     sweep = sweeps[0]
     sweep_candles_ago = sweep.get('candles_ago', 999) if hasattr(sweep, 'get') else getattr(sweep, 'candles_ago', 999)
 
-    if sweep_candles_ago > 10:
-        return False, f"Sweep too old ({sweep_candles_ago} candles ago)"
+    # ✅ REMOVED: Age gate - handled in _filter_quality_components (single gate)
 
     # 2. Check structure flip exists
     if not structure_break or structure_break.get('type') not in ['CHOCH', 'MSS']:
@@ -1019,15 +1034,17 @@ def _score_pullback_scenario(
     if not poi_candidates:
         return None, None
     
-    # Filter by minimum quality
-    poi_candidates = [p for p in poi_candidates if p['quality'] >= POI_QUALITY['min_acceptable']]
+    # ✅ REMOVED: Hard quality filter - strength filtering done in _filter_quality_components (single gate)
+    # Strength is used for selection priority, not hard rejection
     
-    if not poi_candidates:
-        logger.debug("   PULLBACK: no POI with acceptable quality")
-        return None, None
-    
-    # Select best POI (highest quality, then closest)
+    # ✅ STRENGTH-FIRST POI SELECTION (recommended compromise)
+    # Select by highest strength first, distance as tiebreaker
+    # This is cleaner than weighted scoring while still favoring quality
     best_poi = max(poi_candidates, key=lambda x: (x['quality'], -x['distance_pct']))
+    
+    logger.debug(f"   PULLBACK: Selected POI - type={best_poi['type']}, "
+                 f"strength={best_poi['quality']:.0f}, "
+                 f"distance={best_poi['distance_pct']:.1f}%")
 
     # ✅ BEHAVIORAL CORE GATE
     is_eligible, reason = _validate_pullback_behavior(
