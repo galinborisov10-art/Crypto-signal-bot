@@ -19,13 +19,14 @@
         "30m": {
             "entry_tf": "30m",
             "confirmation_tf": "1h",
-            "structure_tf": "1h",
-            "htf_bias_tf": "1h",
-            "description": "30m entry with 1h confirmation and bias",
-            "rationale": "1h provides structure and bias, 30m for entry timing",
+            "structure_tf": "2h",
+            "htf_bias_tf": "2h",
+            "description": "30m entry with 1h confirmation and 2h structure/bias",
+            "rationale": "2h provides structure and bias, 1h confirms setup, 30m for entry timing",
             "min_lookback": {
                 "30m": 100,
-                "1h": 50
+                "1h": 50,
+                "2h": 50
             }
         },
         "1h": {
@@ -44,13 +45,14 @@
         "2h": {
             "entry_tf": "2h",
             "confirmation_tf": "4h",
-            "structure_tf": "4h",
-            "htf_bias_tf": "4h",
-            "description": "2h entries with 4h confirmation and bias",
-            "rationale": "4h provides structure and bias, 2h for entry timing",
+            "structure_tf": "1d",
+            "htf_bias_tf": "1d",
+            "description": "2h entries with 4h confirmation and 1d structure/bias",
+            "rationale": "1d provides structure and bias, 4h confirms setup, 2h for entry timing",
             "min_lookback": {
                 "2h": 100,
-                "4h": 50
+                "4h": 50,
+                "1d": 20
             }
         },
         "3h": {
@@ -68,11 +70,11 @@
         },
         "4h": {
             "entry_tf": "4h",
-            "confirmation_tf": "4h",
+            "confirmation_tf": "1d",
             "structure_tf": "1d",
             "htf_bias_tf": "1d",
-            "description": "4h entries with 4h confirmation and 1d bias",
-            "rationale": "1d provides major trend and bias, 4h both confirms and executes (swing trading)",
+            "description": "4h entries with 1d confirmation and bias",
+            "rationale": "1d provides structure, bias and confirmation, 4h for entry timing (swing trading)",
             "min_lookback": {
                 "4h": 100,
                 "1d": 20
