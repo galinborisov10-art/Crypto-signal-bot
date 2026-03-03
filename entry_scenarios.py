@@ -1040,6 +1040,10 @@ def _score_pullback_scenario(
     # ✅ STRENGTH-FIRST POI SELECTION (recommended compromise)
     # Select by highest strength first, distance as tiebreaker
     # This is cleaner than weighted scoring while still favoring quality
+    if not poi_candidates:  # Defensive check (should not happen after line 1034)
+        logger.warning("   ⚠️ PULLBACK: POI candidates list empty after filtering")
+        return None, None
+    
     best_poi = max(poi_candidates, key=lambda x: (x['quality'], -x['distance_pct']))
     
     logger.debug(f"   PULLBACK: Selected POI - type={best_poi['type']}, "

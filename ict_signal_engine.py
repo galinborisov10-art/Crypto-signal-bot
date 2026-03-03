@@ -2863,12 +2863,13 @@ class ICTSignalEngine:
             Filtered components (quality only)
         """
         # Determine timeframe-based thresholds (SINGLE HARD GATE)
+        # Note: Thresholds are hardcoded per requirements (no new config files)
         if timeframe in ['15m', '30m', '1h', '2h']:
-            min_ob_strength = 30
-            max_component_age = 30
+            min_ob_strength = 30  # Lower threshold for faster timeframes
+            max_component_age = 30  # Fresher components needed
         elif timeframe in ['4h', '1d', '1w']:
-            min_ob_strength = 35
-            max_component_age = 40
+            min_ob_strength = 35  # Higher quality for slower timeframes
+            max_component_age = 40  # Older components acceptable
         else:
             # Fallback for unexpected timeframes
             min_ob_strength = 30
@@ -2918,6 +2919,10 @@ class ICTSignalEngine:
                     filtered_obs.append(ob)
                 elif strength >= min_ob_strength and candles_ago <= max_component_age:
                     filtered_obs.append(ob)
+                else:
+                    # Component filtered out - log for debugging
+                    logger.debug(f"   ❌ Order Block filtered: strength={strength} (min={min_ob_strength}), "
+                                f"age={candles_ago} (max={max_component_age})")
             except Exception as e:
                 logger.warning(f"   ⚠️ Error filtering Order Block: {e} - keeping component")
                 filtered_obs.append(ob)
