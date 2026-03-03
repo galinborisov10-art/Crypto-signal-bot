@@ -3607,11 +3607,22 @@ class ICTSignalEngine:
             except Exception as e:
                 logger.debug(f"   Could not check sweeps: {e}")
         
+        # Check for Whale Blocks (if whale detector available)
+        has_whale_blocks = False
+        if self.whale_detector and WHALE_AVAILABLE:
+            try:
+                # Detect whale blocks on confirmation timeframe
+                whale_blocks = self.whale_detector.detect_whale_blocks(df, confirmation_tf)
+                has_whale_blocks = len(whale_blocks) > 0
+            except Exception as e:
+                logger.debug(f"   Could not check whale blocks: {e}")
+        
         # Check if we have at least one confirmation
         has_confirmation = (
             has_structure_break or 
             has_displacement or 
-            (has_sweep and has_displacement)  # Sweep + Displacement
+            (has_sweep and has_displacement) or  # Sweep + Displacement
+            has_whale_blocks  # Whale Blocks
         )
         
         # Calculate modifier
@@ -3622,6 +3633,7 @@ class ICTSignalEngine:
         logger.info(f"      • MSS/BOS: {'✅ Yes' if has_structure_break else '❌ No'}")
         logger.info(f"      • Displacement: {'✅ Yes' if has_displacement else '❌ No'} (strength: {displacement_strength:.2f}%)")
         logger.info(f"      • Sweep: {'✅ Yes' if has_sweep else '❌ No'}")
+        logger.info(f"      • Whale Blocks: {'✅ Yes' if has_whale_blocks else '❌ No'}")
         logger.info(f"      • Has Confirmation: {'✅ Yes' if has_confirmation else '❌ No'}")
         logger.info(f"      • Confidence Modifier: {confidence_modifier:+.1%}")
         
