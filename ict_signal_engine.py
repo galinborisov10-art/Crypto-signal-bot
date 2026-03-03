@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 import logging
 from entry_scenarios import select_best_entry_scenario
-from entry_scenario_config import STRUCTURE_ALIGNMENT, MIN_PROBABILITY_THRESHOLDS, DEFAULT_MIN_PROBABILITY_THRESHOLD
+from entry_scenario_config import MIN_PROBABILITY_THRESHOLDS, DEFAULT_MIN_PROBABILITY_THRESHOLD
 import json
 import os
 
@@ -1151,7 +1151,6 @@ class ICTSignalEngine:
         # СТЪПКА 6b: Apply confidence penalty for NEUTRAL/RANGING bias (NO EARLY EXIT)
         # ✅ FIX #1: HTF is now a soft constraint (penalty) instead of hard block
         confidence_penalty = 0.0  # Track penalty for Step 10 confidence calculation
-        entry_tf_structure = None  # Tracks entry TF structure for structure alignment modifier
 
         if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
             logger.warning(f"⚠️ Step 6b: {symbol} bias is {bias.value} - RANGING market detected")
@@ -1161,7 +1160,7 @@ class ICTSignalEngine:
             if htf_bias in ['BULLISH', 'BEARISH']:
                 logger.info(f"   → HTF bias is {htf_bias} (directional) - using HTF bias for scenario direction")
                 logger.info(f"   → Entry TF structure ({bias.value}) = pullback/consolidation in HTF trend")
-                entry_tf_structure = bias.value  # Save original entry TF structure for modifier
+                # Override bias with HTF direction (structure is informational context only)
                 bias = MarketBias[htf_bias]  # Override bias with HTF direction
                 logger.info(f"   → Bias overridden to {bias.value} (from HTF)")
             else:
@@ -1395,45 +1394,11 @@ class ICTSignalEngine:
                 confidence=None
             )
 
-        # ✅ STRUCTURE ALIGNMENT MODIFIER: Adjust probability based on HTF vs Entry TF alignment
-        # entry_tf_structure is set only when entry TF was RANGING/NEUTRAL and HTF is directional
-        if entry_scenario_result and entry_tf_structure is not None:
-            # entry_tf_structure is always RANGING or NEUTRAL here (set in Step 6b above)
-            if entry_tf_structure in ('RANGING', 'NEUTRAL'):
-                structure_modifier = STRUCTURE_ALIGNMENT['ranging_penalty']
-            else:
-                structure_modifier = STRUCTURE_ALIGNMENT['opposite']
-
-            base_probability = entry_scenario_result.get('probability', 0.5)
-            adjusted_probability = base_probability * structure_modifier
-            threshold = MIN_PROBABILITY_THRESHOLDS.get(entry_scenario_result.get('scenario', ''), DEFAULT_MIN_PROBABILITY_THRESHOLD)
-
-            logger.info(f"   📊 Structure Alignment Modifier:")
-            logger.info(f"      Entry TF structure: {entry_tf_structure} vs HTF: {htf_bias}")
-            logger.info(f"      Structure modifier: {structure_modifier:.2f}")
-            logger.info(f"      Adjusted probability: {base_probability:.3f} → {adjusted_probability:.3f} (threshold: {threshold:.3f})")
-
-            if adjusted_probability >= threshold:
-                logger.info(f"   ✅ Probability {adjusted_probability:.3f} >= Threshold {threshold:.3f} → SIGNAL")
-                entry_scenario_result['probability'] = adjusted_probability
-                entry_scenario_result['structure_modifier'] = structure_modifier
-            else:
-                logger.info(f"   ⚠️ Probability {adjusted_probability:.3f} < Threshold {threshold:.3f} → NO TRADE (structure modifier rejection)")
-                context = self._extract_context_data(df, bias)
-                mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
-                return self._create_no_trade_message(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    reason=f"Structure alignment probability below threshold",
-                    details=f"Adjusted probability {adjusted_probability:.3f} < threshold {threshold:.3f}. Entry TF: {entry_tf_structure}, HTF: {htf_bias}.",
-                    mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
-                    current_price=context['current_price'],
-                    price_change_24h=context['price_change_24h'],
-                    rsi=context['rsi'],
-                    signal_direction=context['signal_direction'],
-                    confidence=None
-                )
-
+        # ✅ REMOVED: Structure alignment modifier
+        # Per specification: Structure = only context, does NOT block signals, does NOT filter scenarios
+        # Structure should NOT participate in scenario selection or probability adjustment
+        # Only 2 hard gates allowed: (1) No core → no scenario, (2) Confidence threshold
+        
         if entry_scenario_result:
             # Store poi_ref if available
             if poi_ref:
