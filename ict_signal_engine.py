@@ -1365,7 +1365,8 @@ class ICTSignalEngine:
             bias=bias_str,
             ict_components=ict_components,
             entry_zone=entry_zone,
-            timeframe=timeframe
+            timeframe=timeframe,
+            tf_hierarchy=tf_hierarchy if TIMEFRAME_CONTRACT_AVAILABLE else None
         )
         
         # 🚫 CRITICAL: AUTO mode requires valid entry scenario

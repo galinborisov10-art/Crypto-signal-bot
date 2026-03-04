@@ -6,10 +6,13 @@ Author: galinborisov10-art
 Date: 2026-02-10
 """
 
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from dataclasses import dataclass
 import logging
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from timeframe_contract import TimeframeHierarchy
 
 from entry_scenario_config import (
     TRIGGER_WEIGHTS,
@@ -160,7 +163,8 @@ def select_best_entry_scenario(
     bias: str,
     ict_components: Dict,
     entry_zone: Dict,
-    timeframe: str
+    timeframe: str,
+    tf_hierarchy: Optional['TimeframeHierarchy'] = None
 ) -> Tuple[Optional[Dict], Any]:
     """
     Evaluate all 4 ICT entry scenarios and select the best one.
@@ -203,13 +207,23 @@ def select_best_entry_scenario(
     logger.info(f"Triggers detected: {triggers}")
     logger.info(f"Trigger score: {trigger_score} ({trigger_strength})")
     
+    # ✅ Extract timeframes per Timeframe Contract layer
+    signal_tf = timeframe  # Entry layer (OB, FVG, Liquidity, Sweeps)
+    confirmation_tf = tf_hierarchy.confirmation_tf if tf_hierarchy else timeframe  # Confirmation layer (BOS/MSS, Displacement)
+    structure_tf = tf_hierarchy.structure_tf if tf_hierarchy else timeframe  # Structure layer (HTF Bias only - not used in scenarios)
+    
+    logger.info(f"🔍 Timeframe Contract Layers:")
+    logger.info(f"   Entry Layer (signal_tf): {signal_tf} → OB, FVG, Liquidity, Sweeps")
+    logger.info(f"   Confirmation Layer (confirmation_tf): {confirmation_tf} → BOS/MSS, Displacement")
+    logger.info(f"   Structure Layer (structure_tf): {structure_tf} → HTF Bias only (context)")
+    
     # Evaluate all 4 scenarios
     scenarios = {}
     poi_refs = {}
     
     # 1. ROLLBACK
     rollback_dict, rollback_ref = _score_rollback_scenario(
-        current_price, bias, ict_components, triggers, trigger_score
+        current_price, bias, ict_components, triggers, trigger_score, signal_tf
     )
     if rollback_dict:
         scenarios['ROLLBACK'] = rollback_dict
@@ -227,7 +241,7 @@ def select_best_entry_scenario(
     
     # 3. CONTINUATION
     continuation_dict, continuation_ref = _score_continuation_scenario(
-        current_price, bias, ict_components, triggers, trigger_score, trigger_strength, timeframe
+        current_price, bias, ict_components, triggers, trigger_score, trigger_strength, signal_tf
     )
     if continuation_dict:
         scenarios['CONTINUATION'] = continuation_dict
@@ -236,7 +250,7 @@ def select_best_entry_scenario(
     
     # 4. REVERSAL
     reversal_dict, reversal_ref = _score_reversal_scenario(
-        current_price, bias, ict_components, triggers, trigger_score
+        current_price, bias, ict_components, triggers, trigger_score, signal_tf
     )
     if reversal_dict:
         scenarios['REVERSAL'] = reversal_dict
@@ -728,7 +742,8 @@ def _validate_pullback_behavior(
 def _validate_reversal_behavior(
     sweeps: List,
     structure_break: Dict,
-    displacement: Dict
+    displacement: Dict,
+    timeframe: str
 ) -> Tuple[bool, str]:
     """
     Validate REVERSAL behavioral requirements (sequential pattern)
@@ -792,7 +807,8 @@ def _validate_reversal_behavior(
 def _validate_rollback_behavior(
     structure_break: Dict,
     current_price: float,
-    ict_components: Dict
+    ict_components: Dict,
+    timeframe: str
 ) -> Tuple[bool, str]:
     """
     Validate ROLLBACK behavioral requirements
@@ -840,7 +856,8 @@ def _score_rollback_scenario(
     bias: str,
     ict_components: Dict,
     triggers: List[str],
-    trigger_score: int
+    trigger_score: int,
+    timeframe: str
 ) -> Tuple[Optional[Dict], Any]:
     """
     Evaluate ROLLBACK scenario: retest to structure break level
@@ -854,7 +871,8 @@ def _score_rollback_scenario(
     is_eligible, reason = _validate_rollback_behavior(
         structure_break=sb,
         current_price=current_price,
-        ict_components=ict_components
+        ict_components=ict_components,
+        timeframe=timeframe
     )
 
     if not is_eligible:
@@ -1310,7 +1328,8 @@ def _score_reversal_scenario(
     bias: str,
     ict_components: Dict,
     triggers: List[str],
-    trigger_score: int
+    trigger_score: int,
+    timeframe: str
 ) -> Tuple[Optional[Dict], Any]:
     """
     Score REVERSAL scenario: market structure flip with liquidity sweep
@@ -1325,7 +1344,8 @@ def _score_reversal_scenario(
     is_eligible, reason = _validate_reversal_behavior(
         sweeps=sweeps,
         structure_break=sb,
-        displacement=disp
+        displacement=disp,
+        timeframe=timeframe
     )
 
     if not is_eligible:
