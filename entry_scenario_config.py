@@ -120,8 +120,8 @@ REVERSAL_DISTANCE = {
 POI_QUALITY = {
     'OB': 45,        # Order Block (lowered from 90 - matches MEDIUM strength)
     'FVG': 60,       # Fair Value Gap (lowered from 80 - matches detection min)
-    'BSL': 50,       # Buy Side Liquidity (lowered from 70)
-    'SSL': 50,       # Sell Side Liquidity (lowered from 70)
+    'BSL': 50,        # Buy Side Liquidity (uses confidence * 100)
+    'SSL': 50,        # Sell Side Liquidity (uses confidence * 100)
     'min_acceptable': 40  # Reject POI below this (lowered from 65)
 }
 

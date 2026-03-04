@@ -1117,7 +1117,7 @@ def _score_pullback_scenario(
             distance_pct = abs(liq_price - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
                 # Use actual component strength instead of hardcoded quality
-                liq_strength = _safe_get(liq, 'strength', 70)
+                liq_strength = _safe_get(liq, 'confidence', 0.7) * 100
                 poi_candidates.append({
                     'type': 'BSL',
                     'price': liq_price,
@@ -1132,7 +1132,7 @@ def _score_pullback_scenario(
             distance_pct = abs(liq_price - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
                 # Use actual component strength instead of hardcoded quality
-                liq_strength = _safe_get(liq, 'strength', 70)
+                liq_strength = _safe_get(liq, 'confidence', 0.7) * 100
                 poi_candidates.append({
                     'type': 'SSL',
                     'price': liq_price,
