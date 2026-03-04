@@ -708,12 +708,10 @@ def _validate_pullback_behavior(
 
     # 2. Check for prior impulse (displacement) — REQUIRED for pullback
     displacement = ict_components.get('displacement', {})
-    if not displacement.get('detected'):
-        return False, "No impulse (displacement not detected)"
+    # REMOVED: Displacement detection gate (confirmation layer)
 
     disp_strength = displacement.get('strength', 0.0)
-    if disp_strength < 0.4:
-        return False, f"Weak impulse ({disp_strength:.2f} < 0.4 minimum)"
+    # REMOVED: Weak impulse check (confirmation layer)
 
     # 3. Check impulse direction matches bias
     poi_price = poi.get('price', poi.get('center', current_price))
@@ -762,20 +760,17 @@ def _validate_reversal_behavior(
     if sweep_candles_ago > max_sweep_age:
         return False, f"Sweep too old ({sweep_candles_ago} candles ago, max {max_sweep_age} for {timeframe})"
 
-    # 2. Check structure flip exists
-    if not structure_break or structure_break.get('type') not in ['CHOCH', 'MSS']:
-        return False, "No structure flip (CHOCH/MSS)"
+    # 2. Structure flip is CONFIRMATION layer (non-blocking)
+    # REMOVED: Structure flip gate (confirmation layer check removed)
 
     # Use None when candles_ago is absent so conditional checks can be skipped
     flip_candles_ago = structure_break.get('candles_ago')
 
-    # 3. Check displacement — REQUIRED after structure flip
-    if not displacement or not displacement.get('detected'):
-        return False, "No displacement after structure flip"
+    # 3. Displacement is CONFIRMATION layer (non-blocking)
+    # REMOVED: Displacement gate (confirmation layer check removed)
 
     disp_strength = displacement.get('strength', 0.0)
-    if disp_strength < 0.5:
-        return False, f"Weak reversal displacement ({disp_strength:.2f} < 0.5 minimum)"
+    # REMOVED: Weak displacement check (confirmation layer)
 
     # 4. Validate sequence: Sweep → Flip → Displacement
     # Valid: flip_candles_ago < sweep_candles_ago (flip is more recent = occurred after sweep)
@@ -976,6 +971,50 @@ def _score_rollback_scenario(
 # PULLBACK SCENARIO SCORING
 # ============================================================
 
+
+
+# ============================================================
+# CONFIRMATION LAYER - Helper Function
+# ============================================================
+
+def _check_confirmation_layer(
+    structure_break: Dict,
+    displacement: Dict,
+    sweeps: List = None
+) -> bool:
+    """
+    Check if ANY confirmation component is present.
+    
+    Confirmation components (mid TF):
+    - MSS (Market Structure Shift)
+    - BOS (Break of Structure)
+    - CHOCH (Change of Character)
+    - Displacement (strong momentum)
+    - Sweep + Displacement combo
+    
+    Returns:
+        True if at least ONE confirmation component is present
+    """
+    # 1. Check MSS/BOS/CHOCH (structure break)
+    if structure_break and structure_break.get('type') in ['MSS', 'BOS', 'CHOCH']:
+        return True
+    
+    # 2. Check Displacement (with minimum strength threshold)
+    if displacement and displacement.get('detected'):
+        strength = displacement.get('strength', 0)
+        if strength >= 0.3:  # Minimum threshold for confirmation
+            return True
+    
+    # 3. Check Sweep + Displacement combo
+    if sweeps and len(sweeps) > 0:
+        if displacement and displacement.get('detected'):
+            strength = displacement.get('strength', 0)
+            if strength >= 0.2:  # Lower threshold when combined with sweep
+                return True
+    
+    return False
+
+
 def _score_pullback_scenario(
     current_price: float,
     bias: str,
@@ -1114,6 +1153,27 @@ def _score_pullback_scenario(
     # Select best POI (highest quality, then closest)
     best_poi = max(poi_candidates, key=lambda x: (x['quality'], -x['distance_pct']))
 
+
+    # ============================================================
+    # CONFIRMATION LAYER MODIFIER (±8%)
+    # ============================================================
+    disp = ict_components.get('displacement', {})
+    sb = ict_components.get('structure_break')
+    
+    confirmation_present = _check_confirmation_layer(
+        structure_break=sb,
+        displacement=disp,
+        sweeps=None  # PULLBACK doesn't require sweep
+    )
+    
+    pullback_confirmation_modifier = 0.0
+    if confirmation_present:
+        pullback_confirmation_modifier = 0.08
+        logger.info(f"   ✅ Confirmation layer present: +8%")
+    else:
+        pullback_confirmation_modifier = -0.08
+        logger.info(f"   ⚠️  No confirmation layer: -8%")
+
     # ✅ BEHAVIORAL CORE GATE
     is_eligible, reason = _validate_pullback_behavior(
         poi=best_poi,
@@ -1143,11 +1203,21 @@ def _score_pullback_scenario(
         distance_pct=distance_pct,
         structure_present=structure_present
     )
+
+    # Apply confirmation layer modifier (±8%)
+    probability += pullback_confirmation_modifier
+    probability = max(0.0, min(1.0, probability))  # Clamp to [0, 1]
+    
     
     logger.debug(f"   PULLBACK probability: {probability:.3f}")
+    logger.debug(f"   PULLBACK probability: {probability:.3f}")
+    
     
     # ✅ Extract poi_ref (remove from dict)
+    # ✅ Extract poi_ref (remove from dict)
     poi_ref = best_poi.pop('_ref', None)
+    poi_ref = best_poi.pop('_ref', None)
+    
     
     # ✅ Create safe poi_data
     poi_data = _create_safe_poi_data(best_poi['type'], poi_ref)
@@ -1354,6 +1424,26 @@ def _score_reversal_scenario(
 
     logger.info(f"✅ REVERSAL: {reason}")
 
+
+    # ============================================================
+    # CONFIRMATION LAYER MODIFIER (±8%)
+    # ============================================================
+    confirmation_present = _check_confirmation_layer(
+        structure_break=sb,
+        displacement=disp,
+        sweeps=sweeps
+    )
+    
+    base_confirmation_modifier = 0.0
+    if REVERSAL_SETTINGS.get('use_confirmation_modifier', False):
+        modifier_pct = REVERSAL_SETTINGS.get('confirmation_modifier_pct', 0.08)
+        if confirmation_present:
+            base_confirmation_modifier = modifier_pct
+            logger.info(f"   ✅ Confirmation layer present: +{modifier_pct*100:.0f}%")
+        else:
+            base_confirmation_modifier = -modifier_pct
+            logger.info(f"   ⚠️  No confirmation layer: -{modifier_pct*100:.0f}%")
+
     # Check for liquidity sweep (required)
     if REVERSAL_SETTINGS['require_sweep']:
         if 'LIQUIDITY_SWEEP' not in triggers:
@@ -1529,6 +1619,10 @@ def _score_reversal_scenario(
         displacement_strength=displacement_strength,
         triggers=triggers
     )
+
+    # Apply confirmation layer modifier (±8%)
+    probability += base_confirmation_modifier
+    probability = max(0.0, min(1.0, probability))  # Clamp to [0, 1]
     
     logger.debug(f"   REVERSAL probability: {probability:.3f}")
     

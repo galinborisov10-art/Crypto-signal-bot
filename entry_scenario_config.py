@@ -191,9 +191,11 @@ STRUCTURE_ALIGNMENT = {
 # REVERSAL DETECTION SETTINGS
 # ============================================================
 REVERSAL_SETTINGS = {
-    'require_sweep': True,           # Must have liquidity sweep
-    'require_structure_flip': True,  # Must have MSS/CHOCH in opposite direction
-    'displacement_bonus': True       # Bonus if displacement in reversal direction
+    'require_sweep': True,              # Entry layer: Must have liquidity sweep
+    'require_structure_flip': False,    # REMOVED: Structure flip is confirmation layer
+    'use_confirmation_modifier': True,  # Use ±8% probability modifier
+    'confirmation_modifier_pct': 0.08,  # ±8% based on confirmation presence
+    'displacement_bonus': True          # Bonus if displacement in reversal direction
 }
 
 # ============================================================
