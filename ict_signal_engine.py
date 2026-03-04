@@ -807,20 +807,23 @@ class ICTSignalEngine:
                         entry_price = cached_signal.entry_price
                         distance_pct = abs(entry_price - current_price) / current_price
                         
-                        MAX_ENTRY_DISTANCE_PCT = 0.07  # 5% max (universal limit, consistent with line 2578)
-                        if distance_pct > MAX_ENTRY_DISTANCE_PCT:
-                            logger.warning(
-                                f"⚠️ Cached signal entry too far: {distance_pct*100:.1f}% > 7.0% MAX "
-                                f"(entry: ${entry_price:.4f}, current: ${current_price:.4f}) "
-                                f"- invalidating cache and re-analyzing"
-                            )
-                            # Don't return cache, continue to full analysis below
-                        else:
-                            logger.info(
-                                f"✅ Using cached signal for {symbol} {timeframe} "
-                                f"(entry {distance_pct*100:.1f}% away - within limits)"
-                            )
-                            return cached_signal
+                        # ✅ REMOVED: Distance re-validation now handled by timeframe-adaptive limits
+                        # Cache distance check is redundant - scenarios already validated distance properly
+                        # Only keep freshness check (time_ago_min), remove distance check
+                        # MAX_ENTRY_DISTANCE_PCT = 0.07  # 5% max (universal limit, consistent with line 2578)
+                        # if distance_pct > MAX_ENTRY_DISTANCE_PCT:
+                        #     logger.warning(
+                        #         f"⚠️ Cached signal entry too far: {distance_pct*100:.1f}% > 7.0% MAX "
+                        #         f"(entry: ${entry_price:.4f}, current: ${current_price:.4f}) "
+                        #         f"- invalidating cache and re-analyzing"
+                        #     )
+                        #     # Don't return cache, continue to full analysis below
+                        # else:
+                        logger.info(
+                            f"✅ Using cached signal for {symbol} {timeframe} "
+                            f"(entry {distance_pct*100:.1f}% away - within limits)"
+                        )
+                        return cached_signal
             except Exception as e:
                 logger.warning(f"Cache error: {e}")
         
@@ -1256,25 +1259,13 @@ class ICTSignalEngine:
                 confidence=None
             )
         
-        # ✅ NEW: Reject signals with entry zones too far (exceeds universal 5% max)
+        # ✅ SOFT CONSTRAINT: TOO_FAR now only warns, doesn't block signal
+        # Distance will be handled by timeframe-adaptive limits in entry zone calculation
         if entry_status == 'TOO_FAR':
-            logger.info(f"❌ BLOCKED at Step 7: Entry zone too far from current price")
-            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7, reason: Entry distance exceeds 7% universal maximum)")
-            context = self._extract_context_data(df, bias)
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
-            
-            return self._create_no_trade_message(
-                symbol=symbol,
-                timeframe=timeframe,
-                reason=f"Entry zone validation failed: {entry_status}",
-                details=f"Entry zone too far from current price (exceeds universal 7% maximum for all timeframes).",
-                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
-                current_price=context['current_price'],
-                price_change_24h=context['price_change_24h'],
-                rsi=context['rsi'],
-                signal_direction=context['signal_direction'],
-                confidence=None
-            )
+            distance_pct = entry_zone.get('distance_pct', 0) * 100 if entry_zone else 0
+            logger.warning(f"⚠️ Entry zone far from current price ({distance_pct:.1f}%)")
+            logger.info(f"   → Continuing to scenarios (distance check is now timeframe-adaptive)")
+            # Continue to scenarios - don't hard block here
         
         # ✅ HARD BLOCK for AUTO mode: No ICT zone means NO SIGNAL
         if entry_status == 'NO_ZONE' or entry_zone is None:
@@ -1364,6 +1355,10 @@ class ICTSignalEngine:
         
         # ✅ Entry Scenario Scoring (merged from old Step 8.1)
         logger.info("   🎯 Applying Entry Scenario Scoring...")
+        
+        # ✅ CRITICAL: Enrich components with candles_ago BEFORE passing to scenarios
+        # This fixes "999 candles ago" issue - components have timestamp but scenarios need candles_ago
+        ict_components = self._enrich_components_with_recency(ict_components, df)
         
         entry_scenario_result, poi_ref = select_best_entry_scenario(
             current_price=current_price,
@@ -2972,19 +2967,18 @@ class ICTSignalEngine:
         
         for sweep in raw_sweeps:
             try:
-                if hasattr(sweep, 'candles_ago'):
-                    candles_ago = sweep.candles_ago
+                # KEEP quality checks (strength, type, etc.)
+                if hasattr(sweep, 'strength'):
+                    strength = sweep.strength
                 elif isinstance(sweep, dict):
-                    candles_ago = sweep.get('candles_ago', None)
+                    strength = sweep.get('strength', 0)
                 else:
-                    candles_ago = None
+                    strength = 0
                 
-                # If candles_ago field missing, keep the component
-                if candles_ago is None:
-                    logger.debug(f"   ⚠️ Liquidity Sweep missing 'candles_ago' field - keeping component")
+                # Apply quality threshold - KEEP THIS
+                if strength >= 0.5:
                     filtered_sweeps.append(sweep)
-                elif candles_ago <= 20:
-                    filtered_sweeps.append(sweep)
+                # REMOVED: candles_ago <= 20 check (moved to entry_scenarios.py with adaptive thresholds)
             except Exception as e:
                 logger.warning(f"   ⚠️ Error filtering Liquidity Sweep: {e} - keeping component")
                 filtered_sweeps.append(sweep)
@@ -3063,6 +3057,117 @@ class ICTSignalEngine:
                         f"({kept_pct:.0f}% kept)")
         
         return filtered
+    
+    def _enrich_components_with_recency(self, ict_components: dict, df: pd.DataFrame) -> dict:
+        """
+        Add candles_ago field to all ICT components based on timestamp or candle_index.
+        
+        This fixes the "999 candles ago" issue where components have timestamp/candle_index
+        but scenarios expect candles_ago field.
+        
+        Args:
+            ict_components: Dict of detected ICT components (from Step 4)
+            df: DataFrame with datetime index (current candle data)
+            
+        Returns:
+            Enriched components dict with candles_ago added to each component
+            
+        Example:
+            Input sweep: {'type': 'BSL', 'timestamp': '2026-03-01 10:00:00'}
+            Output sweep: {'type': 'BSL', 'timestamp': '2026-03-01 10:00:00', 'candles_ago': 15}
+        """
+        current_time = df.index[-1]
+        current_index = len(df) - 1
+        
+        def calc_candles_ago(component):
+            """Calculate candles_ago from timestamp or candle_index"""
+            # Try timestamp first (most components have this)
+            if hasattr(component, 'timestamp'):
+                try:
+                    comp_time = component.timestamp
+                    if isinstance(comp_time, str):
+                        comp_time = pd.to_datetime(comp_time)
+                    # Find index of closest timestamp
+                    time_diff = abs(df.index - comp_time)
+                    comp_index = time_diff.argmin()
+                    return current_index - comp_index
+                except Exception as e:
+                    logger.debug(f"   Could not calculate from timestamp: {e}")
+            
+            # Try candle_index (FVGs have this)
+            if hasattr(component, 'candle_index'):
+                return current_index - component.candle_index
+            
+            # Try dict format (Order Blocks, Sweeps)
+            if isinstance(component, dict):
+                if 'timestamp' in component:
+                    try:
+                        comp_time = pd.to_datetime(component['timestamp'])
+                        time_diff = abs(df.index - comp_time)
+                        comp_index = time_diff.argmin()
+                        return current_index - comp_index
+                    except:
+                        pass
+                if 'candle_index' in component:
+                    return current_index - component['candle_index']
+                if 'index' in component:
+                    return current_index - component['index']
+            
+            return None
+        
+        # Enrich liquidity sweeps
+        if 'liquidity_sweeps' in ict_components:
+            enriched = 0
+            for sweep in ict_components['liquidity_sweeps']:
+                candles_ago = calc_candles_ago(sweep)
+                if candles_ago is not None:
+                    if isinstance(sweep, dict):
+                        sweep['candles_ago'] = candles_ago
+                    else:
+                        sweep.candles_ago = candles_ago
+                    enriched += 1
+            if enriched > 0:
+                logger.debug(f"   Enriched {enriched} liquidity sweeps with candles_ago")
+        
+        # Enrich order blocks
+        if 'order_blocks' in ict_components:
+            enriched = 0
+            for ob in ict_components['order_blocks']:
+                candles_ago = calc_candles_ago(ob)
+                if candles_ago is not None:
+                    if isinstance(ob, dict):
+                        ob['candles_ago'] = candles_ago
+                    else:
+                        ob.candles_ago = candles_ago
+                    enriched += 1
+            if enriched > 0:
+                logger.debug(f"   Enriched {enriched} order blocks with candles_ago")
+        
+        # Enrich FVGs
+        if 'fvgs' in ict_components:
+            enriched = 0
+            for fvg in ict_components['fvgs']:
+                candles_ago = calc_candles_ago(fvg)
+                if candles_ago is not None:
+                    if isinstance(fvg, dict):
+                        fvg['candles_ago'] = candles_ago
+                    else:
+                        fvg.candles_ago = candles_ago
+                    enriched += 1
+            if enriched > 0:
+                logger.debug(f"   Enriched {enriched} FVGs with candles_ago")
+        
+        # Enrich structure break
+        if 'structure_break' in ict_components:
+            sb = ict_components['structure_break']
+            if isinstance(sb, dict) and sb.get('type'):
+                candles_ago = calc_candles_ago(sb)
+                if candles_ago is not None:
+                    sb['candles_ago'] = candles_ago
+                    logger.debug(f"   Enriched structure break with candles_ago: {candles_ago}")
+        
+        logger.info(f"   ✅ Enriched components with recency data (candles_ago)")
+        return ict_components
     
     def _save_analysis_json(self, symbol: str, timestamp: datetime, analysis_data: Dict) -> None:
         """
@@ -3794,7 +3899,29 @@ class ICTSignalEngine:
         # A signal with 20% entry distance is equally stale on any timeframe
         # Applies to both automatic signals (1h, 2h, 4h, 1d) and manual analysis (all TFs)
         min_distance_pct = 0.005  # 0.5% minimum (unchanged)
-        max_distance_pct = 0.050  # 5% UNIVERSAL MAX (all timeframes)
+        
+        # ✅ TIMEFRAME-ADAPTIVE distance limits
+        # Higher timeframes naturally have larger candles and wider structures
+        # Conservative approach: ≤2h = 5%, 4h-1d = 10%, ≥3d = 12-15%
+        # APPROVED VALUES (user confirmed):
+        TIMEFRAME_DISTANCE_LIMITS = {
+            '1m': 0.03,   # 3%
+            '5m': 0.04,   # 4%
+            '15m': 0.05,  # 5%
+            '30m': 0.05,  # 5%
+            '1h': 0.05,   # 5%
+            '2h': 0.05,   # 5%
+            '4h': 0.10,   # 10%
+            '6h': 0.10,   # 10%
+            '8h': 0.10,   # 10%
+            '12h': 0.10,  # 10%
+            '1d': 0.10,   # 10%
+            '3d': 0.12,   # 12%
+            '1w': 0.15    # 15%
+        }
+        max_distance_pct = TIMEFRAME_DISTANCE_LIMITS.get(timeframe, 0.10)  # Default 10%
+        
+        logger.info(f"   → Distance limits for {timeframe}: min={min_distance_pct*100:.1f}%, max={max_distance_pct*100:.1f}%")
         entry_buffer_pct = 0.002  # 0.2% buffer (unchanged)
         
         valid_zones = []

@@ -34,6 +34,68 @@ from entry_scenario_config import (
 logger = logging.getLogger(__name__)
 
 
+# ===================================================================
+# TIMEFRAME-ADAPTIVE RECENCY THRESHOLDS
+# ===================================================================
+# Components on higher timeframes naturally have older candles_ago values.
+# A 50-candle-old component on 1d = 50 days (acceptable for swing trades)
+# A 50-candle-old component on 15m = 12.5 hours (too stale)
+#
+# APPROVED VALUES (conservative approach):
+# - 1d timeframe: max 50 candles
+# - 1w timeframe: max 70 candles
+# ===================================================================
+
+RECENCY_THRESHOLDS = {
+    # Structure Break recency for CONTINUATION scenario
+    'structure_break_continuation': {
+        '1m': 15, '5m': 20, '15m': 25, '30m': 30,
+        '1h': 40, '2h': 50, '4h': 60, '6h': 60,
+        '8h': 60, '12h': 70, '1d': 50, '3d': 60, '1w': 70
+    },
+    
+    # Structure Break recency for ROLLBACK scenario (slightly more lenient)
+    'structure_break_rollback': {
+        '1m': 20, '5m': 25, '15m': 30, '30m': 35,
+        '1h': 50, '2h': 60, '4h': 70, '6h': 70,
+        '8h': 70, '12h': 80, '1d': 60, '3d': 70, '1w': 80
+    },
+    
+    # Liquidity Sweep recency for REVERSAL scenario
+    'liquidity_sweep': {
+        '1m': 10, '5m': 15, '15m': 20, '30m': 25,
+        '1h': 30, '2h': 40, '4h': 50, '6h': 50,
+        '8h': 50, '12h': 60, '1d': 50, '3d': 60, '1w': 70
+    },
+    
+    # General component filtering (Order Blocks, FVGs)
+    'component_general': {
+        '1m': 20, '5m': 25, '15m': 30, '30m': 35,
+        '1h': 50, '2h': 60, '4h': 70, '6h': 70,
+        '8h': 70, '12h': 80, '1d': 60, '3d': 70, '1w': 80
+    }
+}
+
+def get_recency_threshold(component_type: str, timeframe: str) -> int:
+    """
+    Get timeframe-adaptive recency threshold for specific component type.
+    
+    Args:
+        component_type: One of 'structure_break_continuation', 'structure_break_rollback',
+                       'liquidity_sweep', 'component_general'
+        timeframe: Trading timeframe (e.g., '1d', '4h', '1h')
+        
+    Returns:
+        Maximum candles_ago threshold for this component/timeframe combination
+        
+    Example:
+        get_recency_threshold('liquidity_sweep', '1d') → 50
+        get_recency_threshold('liquidity_sweep', '1h') → 30
+    """
+    thresholds = RECENCY_THRESHOLDS.get(component_type, RECENCY_THRESHOLDS['component_general'])
+    return thresholds.get(timeframe, 50)  # Default 50 if timeframe not found
+
+
 # ============================================================
 # SCENARIO PRIORITY - For Deterministic Tie-Breaking (Phase 2)
 # ============================================================
@@ -596,8 +658,10 @@ def _validate_continuation_behavior(
 
     # 4. Check break recency (only when candles_ago field is present)
     candles_ago = structure_break.get('candles_ago')
-    if candles_ago is not None and candles_ago > 20:
-        return False, f"Structure break too old ({candles_ago} candles ago)"
+    if candles_ago is not None:
+        max_age = get_recency_threshold('structure_break_continuation', timeframe)
+        if candles_ago > max_age:
+            return False, f"Structure break too old ({candles_ago} candles ago, max {max_age} for {timeframe})"
 
     # 5. Check price extension (only when price key is present)
     break_price = structure_break.get('price')
@@ -679,8 +743,9 @@ def _validate_reversal_behavior(
     sweep = sweeps[0]
     sweep_candles_ago = sweep.get('candles_ago', 999) if hasattr(sweep, 'get') else getattr(sweep, 'candles_ago', 999)
 
-    if sweep_candles_ago > 10:
-        return False, f"Sweep too old ({sweep_candles_ago} candles ago)"
+    max_sweep_age = get_recency_threshold('liquidity_sweep', timeframe)
+    if sweep_candles_ago > max_sweep_age:
+        return False, f"Sweep too old ({sweep_candles_ago} candles ago, max {max_sweep_age} for {timeframe})"
 
     # 2. Check structure flip exists
     if not structure_break or structure_break.get('type') not in ['CHOCH', 'MSS']:
@@ -741,8 +806,10 @@ def _validate_rollback_behavior(
 
     # 2. Check break recency (only when candles_ago field is present)
     candles_ago = structure_break.get('candles_ago')
-    if candles_ago is not None and candles_ago > 25:
-        return False, f"Structure break too old ({candles_ago} candles ago)"
+    if candles_ago is not None:
+        max_age = get_recency_threshold('structure_break_rollback', timeframe)
+        if candles_ago > max_age:
+            return False, f"Structure break too old ({candles_ago} candles ago, max {max_age} for {timeframe})"
 
     # 3. Check price is near break level (only when price key is present)
     break_price = structure_break.get('price')
