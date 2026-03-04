@@ -1023,12 +1023,14 @@ def _score_pullback_scenario(
     trigger_score: int,
     entry_zone: Dict
 ) -> Tuple[Optional[Dict], Any]:
-    logger.debug("🔍 PULLBACK: Starting evaluation...")
     """
     Score PULLBACK scenario: retracement to POI (OB/FVG/BSL/SSL)
     
     Returns tuple: (scenario_dict, poi_ref) OR (None, None) if invalid
     """
+    # DEBUG: PULLBACK evaluation started
+    logger.info("🔍 PULLBACK: Starting evaluation...")
+    logger.info(f"🔍 PULLBACK: bias={bias}, current_price={current_price}")
     poi_candidates = []
     is_bullish = bias.upper() == "BULLISH"
     is_bearish = bias.upper() == "BEARISH"
