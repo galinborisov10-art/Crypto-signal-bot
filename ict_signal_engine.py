@@ -1401,7 +1401,7 @@ class ICTSignalEngine:
                 entry_setup['poi_ref'] = poi_ref
             
             logger.info(f"   ✅ Selected Scenario: {entry_scenario_result['scenario']}")
-            logger.info(f"      • Score: {entry_scenario_result['score']}/100")
+            logger.info(f"      • Score: {int(entry_scenario_result['probability'] * 100)}/100")
             logger.info(f"      • Entry Price: ${entry_scenario_result['entry_zone']['center']:.4f}")
             logger.info(f"      • Entry Range: ${entry_scenario_result['entry_zone']['low']:.4f} - ${entry_scenario_result['entry_zone']['high']:.4f}")
             logger.info(f"      • Distance: {entry_scenario_result['entry_zone']['distance_pct']:.1f}%")
@@ -2092,7 +2092,7 @@ class ICTSignalEngine:
         # CREATE SIGNAL
         # ✅ Entry scenario already selected in Step 8.1
         if entry_scenario_result:
-            logger.info(f"🎯 Using Entry Scenario from Step 8.1: {entry_scenario_result['scenario']} (score: {entry_scenario_result['score']})")
+            logger.info(f"🎯 Using Entry Scenario from Step 8.1: {entry_scenario_result['scenario']} (score: {int(entry_scenario_result['probability'] * 100)})")
         else:
             logger.info("⚠️ No entry scenario from Step 8.1 (score < 60)")
 
@@ -2134,7 +2134,7 @@ class ICTSignalEngine:
             reasoning=reasoning,
             warnings=warnings,
             entry_scenario=entry_scenario_result['scenario'] if entry_scenario_result else None,
-            entry_scenario_score=entry_scenario_result['score'] if entry_scenario_result else 0,
+            entry_scenario_score=int(entry_scenario_result['probability'] * 100) if entry_scenario_result else 0,
             entry_scenario_reasoning=entry_scenario_result['reasoning'] if entry_scenario_result else "",
             entry_scenario_triggers=entry_scenario_result.get("triggers", []) if entry_scenario_result else [],
             zone_explanations=zone_explanations
@@ -2246,7 +2246,7 @@ class ICTSignalEngine:
                 },
                 'entry_scenario': {
                     'scenario': entry_scenario_result.get('scenario', 'N/A') if entry_scenario_result else 'N/A',
-                    'score': entry_scenario_result.get('score', 0) if entry_scenario_result else 0,
+                    'score': int(entry_scenario_result.get('probability', 0) * 100) if entry_scenario_result else 0,
                     'entry_price': entry_price,
                 },
                 'risk_management': {
@@ -4974,7 +4974,7 @@ class ICTSignalEngine:
             mtf_consensus_data=mtf_consensus_data,
             entry_zone=None,  # ✅ None for HOLD (not empty dict)
             entry_scenario=entry_scenario_result['scenario'] if entry_scenario_result else None,
-            entry_scenario_score=entry_scenario_result['score'] if entry_scenario_result else 0,
+            entry_scenario_score=int(entry_scenario_result['probability'] * 100) if entry_scenario_result else 0,
             entry_scenario_reasoning=entry_scenario_result['reasoning'] if entry_scenario_result else "",
             entry_scenario_triggers=entry_scenario_result.get("triggers", []) if entry_scenario_result else [],
             entry_status='HOLD',  # ✅ HOLD status
