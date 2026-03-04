@@ -1150,7 +1150,7 @@ def _score_pullback_scenario(
     poi_candidates = [p for p in poi_candidates if p['quality'] >= POI_QUALITY['min_acceptable']]
     
     if not poi_candidates:
-        logger.debug("   PULLBACK: no POI with acceptable quality")
+        logger.info("   PULLBACK: no POI with acceptable quality")
         return None, None
     
     # Select best POI (highest quality, then closest)
