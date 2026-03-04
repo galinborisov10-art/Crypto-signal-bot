@@ -3062,9 +3062,12 @@ class ICTSignalEngine:
         
         for sweep in raw_sweeps:
             try:
-                # Keep all sweeps - recency filtering delegated to entry_scenarios.py
-                # with timeframe-adaptive thresholds (Step 5 = quality only)
-                filtered_sweeps.append(sweep)
+                strength = sweep.get('strength', 0) if isinstance(sweep, dict) else getattr(sweep, 'strength', 0)
+
+                # Apply quality threshold (KEEP strength filter)
+                # REMOVED: candles_ago <= 20 check (moved to entry_scenarios.py with timeframe-adaptive thresholds)
+                if strength >= 0.5:
+                    filtered_sweeps.append(sweep)
             except Exception as e:
                 logger.warning(f"   ⚠️ Error filtering Liquidity Sweep: {e} - keeping component")
                 filtered_sweeps.append(sweep)
