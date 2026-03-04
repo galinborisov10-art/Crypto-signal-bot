@@ -925,7 +925,7 @@ def _score_rollback_scenario(
         distance_pct=distance_pct
     )
     
-    logger.debug(f"   ROLLBACK probability: {probability:.3f}")
+    logger.info(f"   ROLLBACK probability: {probability:.3f}")
     
     # Build entry zone
     buffer = ROLLBACK_DISTANCE['buffer_pct']
@@ -1209,8 +1209,8 @@ def _score_pullback_scenario(
     probability = max(0.0, min(1.0, probability))  # Clamp to [0, 1]
     
     
-    logger.debug(f"   PULLBACK probability: {probability:.3f}")
-    logger.debug(f"   PULLBACK probability: {probability:.3f}")
+    logger.info(f"   PULLBACK probability: {probability:.3f}")
+    logger.info(f"   PULLBACK probability: {probability:.3f}")
     
     
     # ✅ Extract poi_ref (remove from dict)
@@ -1339,7 +1339,7 @@ def _score_continuation_scenario(
         clear_path=clear_path
     )
     
-    logger.debug(f"   CONTINUATION probability: {probability:.3f}")
+    logger.info(f"   CONTINUATION probability: {probability:.3f}")
     
     # Calculate entry price
     retracement = CONTINUATION_DISTANCE['retracement_pct']
@@ -1624,7 +1624,7 @@ def _score_reversal_scenario(
     probability += base_confirmation_modifier
     probability = max(0.0, min(1.0, probability))  # Clamp to [0, 1]
     
-    logger.debug(f"   REVERSAL probability: {probability:.3f}")
+    logger.info(f"   REVERSAL probability: {probability:.3f}")
     
     # Build entry zone
     buffer = REVERSAL_DISTANCE['buffer_pct']
