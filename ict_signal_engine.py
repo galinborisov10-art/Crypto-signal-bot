@@ -1902,6 +1902,7 @@ class ICTSignalEngine:
             }
             
             # Evaluate Entry Gating (ESB §2.1)
+            logger.info(f"📋 Entry Gating Context: {signal_context}")
             entry_allowed = evaluate_entry_gating(signal_context.copy())  # Use copy to ensure immutability
             
             if not entry_allowed:
@@ -7232,33 +7233,18 @@ Get HTF bias based on entry timeframe hierarchy
         """
         Check if an active breaker block exists in signal direction
         
+        DISABLED: Breaker blocks are CONFIRMATION, not BLOCKERS.
+        This gate was incorrectly blocking valid signals.
+        
         Args:
             ict_components: Dictionary of ICT components
             signal_type: Signal type (BUY, SELL, STRONG_BUY, STRONG_SELL)
             
         Returns:
-            bool: True if breaker block is active in signal direction
+            bool: Always False (gate disabled)
         """
-        try:
-            breaker_blocks = ict_components.get('breaker_blocks', [])
-            
-            # Get signal direction
-            signal_direction = signal_type.value if hasattr(signal_type, 'value') else str(signal_type)
-            
-            for bb in breaker_blocks:
-                # Check if breaker block aligns with signal direction
-                bb_type = bb.get('type', '') if isinstance(bb, dict) else getattr(bb, 'type', '')
-                bb_type_str = bb_type.value if hasattr(bb_type, 'value') else str(bb_type)
-                
-                if 'BUY' in signal_direction and 'BULLISH' in bb_type_str:
-                    return True
-                if 'SELL' in signal_direction and 'BEARISH' in bb_type_str:
-                    return True
-            
-            return False
-        except Exception as e:
-            logger.warning(f"Error checking breaker block: {e}")
-            return False
+        # Gate disabled - breaker blocks should not block signals
+        return False
     
     def _check_active_signal(self, symbol: str, timeframe: str) -> bool:
         """
