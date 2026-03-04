@@ -1023,6 +1023,7 @@ def _score_pullback_scenario(
     trigger_score: int,
     entry_zone: Dict
 ) -> Tuple[Optional[Dict], Any]:
+    logger.debug("🔍 PULLBACK: Starting evaluation...")
     """
     Score PULLBACK scenario: retracement to POI (OB/FVG/BSL/SSL)
     
