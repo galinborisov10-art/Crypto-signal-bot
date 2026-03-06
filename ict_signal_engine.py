@@ -1221,14 +1221,19 @@ class ICTSignalEngine:
             sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
         logger.info(f"      • S/R Levels: {sr_count}")
         
-        entry_zone, entry_status = self._calculate_ict_compliant_entry_zone(
-            current_price=current_price,
-            direction=bias_str,
-            fvg_zones=fvg_zones,
-            order_blocks=order_blocks,
-            sr_levels=sr_levels,
-            timeframe=timeframe
-        )
+        # ✅ REFACTORED: Scenarios create their own entry_zones
+        # entry_zone, entry_status = self._calculate_ict_compliant_entry_zone(
+        #     current_price=current_price,
+        #     direction=bias_str,
+        #     fvg_zones=fvg_zones,
+        #     order_blocks=order_blocks,
+        #     sr_levels=sr_levels,
+        #     timeframe=timeframe
+        # )
+        
+        # Temporary placeholder - scenarios will create actual entry_zone
+        entry_zone = {}
+        entry_status = 'PENDING_SCENARIO'
         
         logger.info(f"   → Entry Zone Status: {entry_status}")
         if entry_zone:
@@ -1237,9 +1242,9 @@ class ICTSignalEngine:
             logger.info(f"      • Source: {entry_zone.get('source', 'UNKNOWN')}")
             logger.info(f"      • Quality: {entry_zone.get('quality', 0)}")
         
-        # ✅ UPDATED: Only reject for TOO_LATE (timing issue), not NO_ZONE (distance issue)
-        # Validate entry zone timing
-        if entry_status == 'TOO_LATE':
+        # ✅ VALIDATION MOVED: Now happens after scenario selection
+        # Old validation code (before refactor) - commented out
+        # if entry_status == 'TOO_LATE':
             logger.info(f"❌ BLOCKED at Step 7: Entry zone validation failed (TOO_LATE)")
             logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7, reason: Price already passed entry zone)")
             context = self._extract_context_data(df, bias)
@@ -1261,14 +1266,14 @@ class ICTSignalEngine:
         
         # ✅ SOFT CONSTRAINT: TOO_FAR now only warns, doesn't block signal
         # Distance will be handled by timeframe-adaptive limits in entry zone calculation
-        if entry_status == 'TOO_FAR':
+        if False and entry_status == 'TOO_FAR':  # ✅ DISABLED: Validation moved after scenarios
             distance_pct = entry_zone.get('distance_pct', 0) * 100 if entry_zone else 0
             logger.warning(f"⚠️ Entry zone far from current price ({distance_pct:.1f}%)")
             logger.info(f"   → Continuing to scenarios (distance check is now timeframe-adaptive)")
             # Continue to scenarios - don't hard block here
         
         # ✅ HARD BLOCK for AUTO mode: No ICT zone means NO SIGNAL
-        if entry_status == 'NO_ZONE' or entry_zone is None:
+        if False and (entry_status == 'NO_ZONE' or entry_zone is None):  # ✅ DISABLED: Validation moved after scenarios
             # 🚫 CRITICAL: AUTO mode does NOT allow fallback entries
             if is_auto:
                 logger.info(f"❌ BLOCKED at Step 7: No ICT zone found and AUTO mode active")
@@ -1336,22 +1341,16 @@ class ICTSignalEngine:
             entry_status = 'VALID_FALLBACK'
             logger.info(f"✅ Fallback entry zone created at ${entry_zone['center']:.2f}")
         
-        # Log successful entry zone validation
-        logger.info(f"✅ Entry zone validated ({entry_status})")
+        # ✅ REMOVED: Entry zone validation now happens after scenarios
+        # logger.info(f"✅ Entry zone validated ({entry_status})")
         
-        # Extract entry price from entry zone for Step 8
-        entry_price = entry_zone.get('center', current_price)
-        logger.info(f"   → Entry Price: ${entry_price:.2f} (from entry zone)")
+        # ✅ REMOVED: Entry price now extracted from scenario result
+        # entry_price = entry_zone.get('center', current_price)
+        # logger.info(f"   → Entry Price: ${entry_price:.2f} (from entry zone)")
         
-        # Keep existing entry setup for SL calculation (fallback)
-        entry_setup = self._identify_entry_setup(df, ict_components, bias)
-        if not entry_setup:
-            # Use entry_zone as fallback entry_setup
-            entry_setup = {
-                'type': f"{bias_str.lower()}_zone",
-                'price_zone': (entry_zone['low'], entry_zone['high']),
-                'source': entry_zone['source']
-            }
+        # ✅ REFACTORED: entry_setup now created from scenario result
+        # Skip entry_setup creation here - will be created after scenario selection
+        entry_setup = None  # Will be populated from scenario's entry_zone
         
         # ✅ Entry Scenario Scoring (merged from old Step 8.1)
         logger.info("   🎯 Applying Entry Scenario Scoring...")
@@ -4183,9 +4182,6 @@ class ICTSignalEngine:
                             zones_behind.append(ob)
             
             if zones_behind:
-                logger.warning(f"❌ Entry zones exist but price already passed them (TOO_LATE)")
-                return None, 'TOO_LATE'
-            else:
                 logger.warning(f"❌ No valid entry zones found in acceptable range (NO_ZONE)")
                 return None, 'NO_ZONE'
         

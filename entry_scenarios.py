@@ -67,8 +67,8 @@ RECENCY_THRESHOLDS = {
     # Liquidity Sweep recency for REVERSAL scenario
     'liquidity_sweep': {
         '1m': 10, '5m': 15, '15m': 20, '30m': 25,
-        '1h': 30, '2h': 40, '4h': 50, '6h': 50,
-        '8h': 50, '12h': 60, '1d': 50, '3d': 60, '1w': 70
+        '1h': 50, '2h': 70, '4h': 100, '6h': 100,  # Increased for realistic sweep detection
+        '8h': 100, '12h': 100, '1d': 100, '3d': 120, '1w': 150  # Extended for higher TFs
     },
     
     # General component filtering (Order Blocks, FVGs)
@@ -640,53 +640,106 @@ def _validate_continuation_behavior(
     displacement: Dict,
     current_price: float,
     bias: str,
-    timeframe: str
+    timeframe: str,
+    ict_components: Dict = None,
+    recent_candles: List = None
 ) -> Tuple[bool, str]:
     """
     Validate CONTINUATION behavioral requirements
+    
+    CORE (ALL 3 required):
+    1. HTF Bias aligned (implicit via bias parameter)
+    2. Reaction from OB or liquidity
+    3. Impulse (candle body > average)
+    
+    BONUS (adds probability):
+    - Displacement
+    - FVG
+    - BOS/MSS
 
     Returns:
         (is_eligible, reason)
     """
-    # 1. Check structure break exists
-    if not structure_break or structure_break.get('type') not in ['MSS', 'BOS']:
-        return False, "No structure break (BOS/MSS)"
-
-    # 2. Check structure direction matches bias using explicit direction field
-    direction = structure_break.get('direction')
-    if direction is not None:
-        if bias == 'BULLISH' and direction != 'BULLISH':
-            return False, f"Structure direction '{direction}' does not match BULLISH bias"
-        if bias == 'BEARISH' and direction != 'BEARISH':
-            return False, f"Structure direction '{direction}' does not match BEARISH bias"
-    else:
-        logger.warning("Structure break has no 'direction' field, skipping direction check")
-
-    # 3. Check displacement exists and meets minimum
-    if not displacement or not displacement.get('detected'):
-        return False, "No displacement after break"
-
-    disp_strength = displacement.get('strength', 0.0)
-    if disp_strength < 0.5:
-        return False, f"Weak displacement ({disp_strength:.2f} < 0.5 minimum)"
-
-    # 4. Check break recency (only when candles_ago field is present)
-    candles_ago = structure_break.get('candles_ago')
-    if candles_ago is not None:
-        max_age = get_recency_threshold('structure_break_continuation', timeframe)
-        if candles_ago > max_age:
-            return False, f"Structure break too old ({candles_ago} candles ago, max {max_age} for {timeframe})"
-
-    # 5. Check price extension (only when price key is present)
-    break_price = structure_break.get('price')
-    extension_pct = 0.0
-    if break_price is not None:
-        extension_pct = abs(current_price - break_price) / break_price * 100
-        max_ext = MAX_EXTENSION_PCT.get(timeframe, MAX_EXTENSION_PCT['default'])
-        if extension_pct > max_ext:
-            return False, f"Overextended {extension_pct:.1f}% (max {max_ext}% for {timeframe})"
-
-    return True, f"CONTINUATION behavior valid (displacement {disp_strength:.2f}, extension {extension_pct:.1f}%)"
+    # ✅ CORE 1: HTF Bias assumed aligned (checked in signal engine)
+    
+    # ✅ CORE 2: Check reaction from OB or liquidity
+    if ict_components is None or recent_candles is None:
+        logger.warning("⚠️ CONTINUATION: Missing ict_components or recent_candles, falling back to displacement check")
+        # Fallback to displacement-only check
+        if not displacement or not displacement.get('detected'):
+            return False, "No displacement and no component data"
+        disp_strength = displacement.get('strength', 0.0)
+        if disp_strength < 0.3:
+            return False, f"Weak displacement ({disp_strength:.2f} < 0.3)"
+        return True, f"CONTINUATION valid (fallback): displacement {disp_strength:.2f}"
+    
+    reaction_found = False
+    reaction_source = None
+    reaction_candle_idx = None
+    
+    obs = ict_components.get('order_blocks', [])
+    liq_zones = ict_components.get('liquidity_zones', [])
+    
+    # Check last 5 candles for reaction
+    for idx in range(max(0, len(recent_candles) - 5), len(recent_candles)):
+        candle = recent_candles[idx]
+        
+        # Check OBs
+        for ob in obs:
+            ob_type = str(ob.type if hasattr(ob, "type") else (_safe_get(ob, "type", "") if isinstance(ob, dict) else "")).upper()
+            
+            if bias == 'BULLISH' and 'BULLISH' in ob_type:
+                if _candle_reacted_from_zone(candle, ob, 'BULLISH'):
+                    reaction_found = True
+                    reaction_source = "Bullish OB"
+                    reaction_candle_idx = idx
+                    break
+            
+            elif bias == 'BEARISH' and 'BEARISH' in ob_type:
+                if _candle_reacted_from_zone(candle, ob, 'BEARISH'):
+                    reaction_found = True
+                    reaction_source = "Bearish OB"
+                    reaction_candle_idx = idx
+                    break
+        
+        if reaction_found:
+            break
+        
+        # Check liquidity zones
+        for liq in liq_zones:
+            liq_type = str(liq.type if hasattr(liq, "type") else (_safe_get(liq, "type", "") if isinstance(liq, dict) else "")).upper()
+            
+            if bias == 'BULLISH' and 'BSL' in liq_type:
+                if _candle_reacted_from_liquidity(candle, liq, 'BULLISH'):
+                    reaction_found = True
+                    reaction_source = "BSL"
+                    reaction_candle_idx = idx
+                    break
+            
+            elif bias == 'BEARISH' and 'SSL' in liq_type:
+                if _candle_reacted_from_liquidity(candle, liq, 'BEARISH'):
+                    reaction_found = True
+                    reaction_source = "SSL"
+                    reaction_candle_idx = idx
+                    break
+        
+        if reaction_found:
+            break
+    
+    if not reaction_found:
+        return False, "No reaction from OB or liquidity in recent candles"
+    
+    # ✅ CORE 3: Check impulse (candle body > average)
+    avg_body = _calculate_avg_body(recent_candles[-20:])
+    reaction_candle = recent_candles[reaction_candle_idx]
+    reaction_body = abs(reaction_candle['close'] - reaction_candle['open'])
+    
+    if reaction_body < avg_body * 1.2:  # At least 20% larger than average
+        return False, f"No impulse: reaction body {reaction_body:.6f} < avg {avg_body:.6f} * 1.2"
+    
+    impulse_ratio = reaction_body / avg_body if avg_body > 0 else 0
+    
+    return True, f"CONTINUATION valid: {reaction_source} + impulse ({impulse_ratio:.1f}x avg)"
 
 
 def _validate_pullback_behavior(
@@ -694,47 +747,50 @@ def _validate_pullback_behavior(
     ict_components: Dict,
     current_price: float,
     bias: str,
-    distance_pct: float
+    distance_pct: float,
+    recent_candles: List = None
 ) -> Tuple[bool, str]:
     """
     Validate PULLBACK behavioral requirements
+    
+    CORE (ALL 3 required):
+    1. POI exists
+    2. Retest + rejection confirmed
+    3. Bias aligned
 
     Returns:
         (is_eligible, reason)
     """
-    # 1. Check POI exists
+    # ✅ CORE 1: POI exists
     if not poi:
         return False, "No POI (Order Block or FVG)"
-
-    # 2. Check for prior impulse (displacement) — REQUIRED for pullback
-    displacement = ict_components.get('displacement', {})
-    # REMOVED: Displacement detection gate (confirmation layer)
-
-    disp_strength = displacement.get('strength', 0.0)
-    # REMOVED: Weak impulse check (confirmation layer)
-
-    # 3. Check impulse direction matches bias
-    poi_price = poi.get('price', poi.get('center', current_price))
-
-    if bias == 'BULLISH':
-        # For bullish pullback, POI should be below current price (we moved up, now pulling back)
-        if poi_price >= current_price:
-            return False, "POI not below price for bullish pullback"
-    else:
-        # For bearish pullback, POI should be above current price (we moved down, now pulling back)
-        if poi_price <= current_price:
-            return False, "POI not above price for bearish pullback"
-
-    # 4. Check for structure flip (CHOCH invalidates pullback)
+    
+    # ✅ CORE 2: Retest + rejection
+    if recent_candles is None or len(recent_candles) < 5:
+        logger.warning("⚠️ PULLBACK: No recent_candles, falling back to distance check")
+        # Fallback: check if price is close enough for potential retest
+        if distance_pct > 2.0:
+            return False, f"POI too far for retest ({distance_pct:.1f}% > 2%)"
+        if distance_pct < 0.3:
+            return False, f"POI too close, no retest yet ({distance_pct:.1f}% < 0.3%)"
+        return True, f"PULLBACK valid (fallback): POI at {distance_pct:.1f}% distance"
+    
+    retested, rejection_strength = _check_poi_retest(poi, recent_candles, bias)
+    
+    if not retested:
+        return False, "POI not retested yet (waiting for price to touch and reject)"
+    
+    if rejection_strength < 0.002:  # 0.2% minimum rejection
+        return False, f"Weak rejection from POI ({rejection_strength*100:.2f}% < 0.2%)"
+    
+    # ✅ CORE 3: Bias alignment (implicit in retest direction check)
+    
+    # ✅ BONUS: Check for CHOCH (invalidates pullback)
     structure_break = ict_components.get('structure_break', {})
     if structure_break and structure_break.get('type') == 'CHOCH':
         return False, "Structure flip (CHOCH) invalidates pullback"
-
-    # 5. Check distance to POI
-    if distance_pct > 5.0:
-        return False, f"POI too far ({distance_pct:.1f}% > 5% maximum)"
-
-    return True, f"PULLBACK behavior valid (impulse {disp_strength:.2f}, distance {distance_pct:.1f}%)"
+    
+    return True, f"PULLBACK valid: POI retested with {rejection_strength*100:.1f}% rejection"
 
 
 def _validate_reversal_behavior(
@@ -822,22 +878,27 @@ def _validate_rollback_behavior(
         if candles_ago > max_age:
             return False, f"Structure break too old ({candles_ago} candles ago, max {max_age} for {timeframe})"
 
-    # 3. Check price is near break level (only when price key is present)
+    # 3. Check price returned to break level (0.5-1.5%)
     break_price = structure_break.get('price')
     distance_to_break = 0.0
     if break_price is not None:
         distance_to_break = abs(current_price - break_price) / break_price * 100
-        if distance_to_break > 0.5:
-            return False, f"Price not at break level (distance: {distance_to_break:.1f}% > 0.5%)"
+        
+        if distance_to_break < 0.5:
+            return False, f"Too close to break (distance: {distance_to_break:.2f}% < 0.5%)"
+        
+        if distance_to_break > 1.5:
+            return False, f"Too far from break (distance: {distance_to_break:.1f}% > 1.5%)"
 
-    # 4. Verify price had moved away from break — REQUIRED for rollback
+    # 4. Verify price had moved away from break (BONUS, not gate)
     displacement = ict_components.get('displacement', {})
-    if not displacement.get('detected'):
-        return False, "No movement away from break level"
-
-    disp_strength = displacement.get('strength', 0.0)
-    if disp_strength < 0.3:
-        return False, f"Insufficient movement from break ({disp_strength:.2f} < 0.3)"
+    disp_strength = 0.0
+    if displacement and displacement.get('detected'):
+        disp_strength = displacement.get('strength', 0.0)
+        if disp_strength < 0.2:
+            logger.info(f"   ⚠️ Weak displacement ({disp_strength:.2f}), but allowing rollback")
+    else:
+        logger.info(f"   ℹ️ No displacement detected for rollback")
 
     return True, f"ROLLBACK behavior valid (break {candles_ago} candles ago, distance {distance_to_break:.2f}%)"
 
@@ -960,7 +1021,11 @@ def _score_rollback_scenario(
         'position_size_advisory': POSITION_SIZE['ROLLBACK'],
         'poi_type': 'NONE',
         'poi_data': {},
-        'invalidation_anchor': invalidation_anchor
+        'invalidation_anchor': invalidation_anchor,
+        'stop_loss_logic': {
+            'type': 'beyond_break',
+            'buffer_pct': 1.0
+        }
     }
     
     return scenario_dict, None
@@ -976,6 +1041,100 @@ def _score_rollback_scenario(
 # ============================================================
 # CONFIRMATION LAYER - Helper Function
 # ============================================================
+
+
+
+# ═══════════════════════════════════════════════════════════
+# HELPER FUNCTIONS FOR REFINED CORE VALIDATION
+# ═══════════════════════════════════════════════════════════
+
+def _candle_reacted_from_zone(candle: Dict, zone, bias: str) -> bool:
+    """Check if single candle reacted from OB zone"""
+    zone_low = zone.zone_low if hasattr(zone, 'zone_low') else (_safe_get(zone, 'zone_low') if isinstance(zone, dict) else None)
+    zone_high = zone.zone_high if hasattr(zone, 'zone_high') else (_safe_get(zone, 'zone_high') if isinstance(zone, dict) else None)
+    
+    if zone_low is None or zone_high is None:
+        return False
+    
+    # Did candle touch zone?
+    touched = candle['low'] <= zone_high and candle['high'] >= zone_low
+    
+    if not touched:
+        return False
+    
+    # Did it close outside showing rejection?
+    if bias == 'BULLISH':
+        return candle['close'] > zone_high and candle['close'] > candle['open']
+    else:
+        return candle['close'] < zone_low and candle['close'] < candle['open']
+
+
+def _candle_reacted_from_liquidity(candle: Dict, liq, bias: str) -> bool:
+    """Check if single candle reacted from liquidity level"""
+    liq_price = liq.price if hasattr(liq, 'price') else (_safe_get(liq, 'price') if isinstance(liq, dict) else None)
+    
+    if liq_price is None:
+        return False
+    
+    # Did candle touch liquidity?
+    touched = candle['low'] <= liq_price <= candle['high']
+    
+    if not touched:
+        return False
+    
+    # Did it reject?
+    if bias == 'BULLISH':
+        return candle['close'] > liq_price and candle['close'] > candle['open']
+    else:
+        return candle['close'] < liq_price and candle['close'] < candle['open']
+
+
+def _calculate_avg_body(candles: List) -> float:
+    """Calculate average candle body size"""
+    if not candles:
+        return 0.0
+    
+    bodies = [abs(c['close'] - c['open']) for c in candles if 'close' in c and 'open' in c]
+    
+    if not bodies:
+        return 0.0
+    
+    return sum(bodies) / len(bodies)
+
+
+def _check_poi_retest(poi: Dict, candles: List, bias: str) -> Tuple[bool, float]:
+    """
+    Check if POI was retested with rejection
+    
+    Returns:
+        (retested: bool, rejection_strength: float)
+    """
+    poi_low = poi.get('low')
+    poi_high = poi.get('high')
+    
+    if poi_low is None or poi_high is None:
+        return False, 0.0
+    
+    # Check last 5 candles for retest
+    for candle in candles[-5:]:
+        # Did candle touch POI?
+        touched = candle['low'] <= poi_high and candle['high'] >= poi_low
+        
+        if touched:
+            if bias == 'BULLISH':
+                # Expect bounce UP from POI
+                if candle['close'] > poi_high:
+                    rejection = (candle['close'] - poi_high) / poi_high
+                    return True, rejection
+            else:
+                # Expect bounce DOWN from POI
+                if candle['close'] < poi_low:
+                    rejection = (poi_low - candle['close']) / poi_low
+                    return True, rejection
+    
+    return False, 0.0
+
+
 
 def _check_confirmation_layer(
     structure_break: Dict,
@@ -1257,7 +1416,11 @@ def _score_pullback_scenario(
         'position_size_advisory': POSITION_SIZE['PULLBACK'],
         'poi_type': best_poi['type'],
         'poi_data': poi_data,
-        'invalidation_anchor': invalidation_anchor
+        'invalidation_anchor': invalidation_anchor,
+        'stop_loss_logic': {
+            'type': 'beyond_poi',
+            'buffer_pct': 1.0
+        }
     }
     
     return scenario_dict, poi_ref
@@ -1290,7 +1453,9 @@ def _score_continuation_scenario(
         displacement=disp,
         current_price=current_price,
         bias=bias,
-        timeframe=timeframe
+        timeframe=timeframe,
+        ict_components=ict_components,
+        recent_candles=ict_components.get('candles', []) if ict_components else []
     )
 
     if not is_eligible:
@@ -1386,7 +1551,11 @@ def _score_continuation_scenario(
         'position_size_advisory': position_size,
         'poi_type': 'NONE',
         'poi_data': {},
-        'invalidation_anchor': invalidation_anchor
+        'invalidation_anchor': invalidation_anchor,
+        'stop_loss_logic': {
+            'type': 'below_ob',
+            'buffer_pct': 0.5
+        }
     }
     
     return scenario_dict, None
@@ -1662,7 +1831,11 @@ def _score_reversal_scenario(
         'position_size_advisory': POSITION_SIZE['REVERSAL'],
         'poi_type': 'NONE',
         'poi_data': {},
-        'invalidation_anchor': invalidation_anchor
+        'invalidation_anchor': invalidation_anchor,
+        'stop_loss_logic': {
+            'type': 'beyond_sweep',
+            'buffer_pct': 0.5
+        }
     }
     
     return scenario_dict, None
