@@ -934,8 +934,8 @@ class ICTSignalEngine:
         # Add detailed logging for liquidity zones
         logger.info(f"   📍 Detected {len(liquidity_zones)} liquidity zones:")
         for i, zone in enumerate(liquidity_zones[:5]):  # Log first 5
-            zone_type = zone.get('type', 'N/A') if isinstance(zone, dict) else getattr(zone, 'type', 'N/A')
-            zone_price = zone.get('price', 0) if isinstance(zone, dict) else getattr(zone, 'price', 0)
+            zone_type = zone.get('zone_type', 'N/A') if isinstance(zone, dict) else getattr(zone, 'zone_type', 'N/A')
+            zone_price = zone.get('price_level', 0) if isinstance(zone, dict) else getattr(zone, 'price_level', 0)
             zone_strength = zone.get('strength', 0) if isinstance(zone, dict) else getattr(zone, 'strength', 0)
             logger.info(f"      • Zone {i+1}: {zone_type} at ${zone_price:,.2f} (strength: {zone_strength:.2f})")
         if len(liquidity_zones) > 5:
