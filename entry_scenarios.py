@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from dataclasses import dataclass
 import logging
 from datetime import datetime
+import copy
 
 if TYPE_CHECKING:
     from timeframe_contract import TimeframeHierarchy
@@ -507,8 +508,8 @@ def select_best_entry_scenario(
             f"   Probability: {best_probability:.3f} < Threshold: {threshold:.3f}"
         )
         
-        # Create copy and add pending metadata
-        pending_scenario_dict = best_scenario_dict.copy()
+        # Create deep copy and add pending metadata to avoid mutating original
+        pending_scenario_dict = copy.deepcopy(best_scenario_dict)
         pending_scenario_dict['pending_only'] = True
         pending_scenario_dict['pending_reason'] = 'below_probability_threshold'
         pending_scenario_dict['required_threshold'] = threshold
