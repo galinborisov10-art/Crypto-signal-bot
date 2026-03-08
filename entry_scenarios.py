@@ -158,6 +158,220 @@ def _get_ob_center(ob: Any) -> float:
     return (zone_low + zone_high) / 2.0
 
 
+def select_entry_zone_for_scenario(
+    scenario_name: str,
+    scenario_data: Dict,
+    ict_components: Dict,
+    current_price: float
+) -> Optional[Dict]:
+    """
+    Return entry zone dict for the given scenario.
+    Extracts and reuses existing entry-zone construction logic.
+    
+    Args:
+        scenario_name: One of 'ROLLBACK', 'PULLBACK', 'CONTINUATION', 'REVERSAL'
+        scenario_data: The scenario dict returned by scenario scoring functions
+        ict_components: ICT components dict
+        current_price: Current market price
+        
+    Returns:
+        Entry zone dict with fields: center, low, high, source, quality, distance_pct, distance_price
+        or None if entry zone cannot be determined
+    """
+    # The entry zone is already computed by the scenario scoring functions
+    # and stored in scenario_data['entry_zone']
+    # This function exists for API compatibility and future refactoring
+    return scenario_data.get('entry_zone')
+
+
+def is_entry_triggered(
+    scenario_name: str,
+    scenario_data: Dict,
+    entry_zone: Dict,
+    current_price: float,
+    ict_components: Dict,
+    bias: str,
+    timeframe: str,
+    recent_candles: List = None
+) -> Tuple[bool, str]:
+    """
+    Check if entry trigger conditions are met for a pending setup.
+    Extracted from existing validation logic to maintain identical behavior.
+    
+    Args:
+        scenario_name: 'ROLLBACK', 'PULLBACK', 'CONTINUATION', or 'REVERSAL'
+        scenario_data: Stored scenario data from setup detection
+        entry_zone: Entry zone from scenario
+        current_price: Current market price
+        ict_components: Current ICT components
+        bias: Market bias
+        timeframe: Trading timeframe
+        recent_candles: Recent candle data for reaction checks
+        
+    Returns:
+        Tuple[bool, str]: (is_triggered, reason)
+    """
+    if not entry_zone:
+        return False, "No entry zone defined"
+    
+    entry_center = entry_zone.get('center')
+    if not entry_center:
+        return False, "Invalid entry zone (no center)"
+    
+    # Calculate current distance to entry zone
+    distance_pct = abs(current_price - entry_center) / current_price * 100
+    
+    # Scenario-specific trigger logic (extracted from existing validation functions)
+    if scenario_name == 'ROLLBACK':
+        # ROLLBACK triggers when price reaches break level (within tolerance)
+        # Check if price is within entry zone
+        entry_low = entry_zone.get('low', entry_center * 0.999)
+        entry_high = entry_zone.get('high', entry_center * 1.001)
+        
+        is_bullish = bias.upper() == 'BULLISH'
+        
+        # For BULLISH: price should reach down to entry zone (below current)
+        # For BEARISH: price should reach up to entry zone (above current)
+        if is_bullish:
+            # Price reached entry zone from above
+            price_in_zone = entry_low <= current_price <= entry_high
+        else:
+            # Price reached entry zone from below
+            price_in_zone = entry_low <= current_price <= entry_high
+        
+        if price_in_zone:
+            return True, f"ROLLBACK triggered: Price reached break level @ ${entry_center:.2f}"
+        
+        # Check if getting closer (for pending state)
+        if distance_pct < 1.5:  # Within 1.5% is "close"
+            return False, f"ROLLBACK pending: {distance_pct:.2f}% away from entry"
+        
+        return False, f"ROLLBACK pending: {distance_pct:.2f}% away from entry"
+    
+    elif scenario_name == 'PULLBACK':
+        # PULLBACK triggers when POI is retested with rejection
+        # Use existing POI retest logic
+        if recent_candles is None or len(recent_candles) < 5:
+            # Fallback: check distance
+            if distance_pct < 0.3:
+                return True, f"PULLBACK triggered: Price at POI (distance {distance_pct:.2f}%)"
+            return False, f"PULLBACK pending: Waiting for retest (distance {distance_pct:.2f}%)"
+        
+        # Check if POI was retested in recent candles
+        poi_dict = {
+            'low': entry_zone.get('low'),
+            'high': entry_zone.get('high')
+        }
+        retested, rejection_strength = _check_poi_retest(poi_dict, recent_candles, bias)
+        
+        if retested and rejection_strength >= 0.002:
+            return True, f"PULLBACK triggered: POI retested with {rejection_strength*100:.1f}% rejection"
+        
+        if distance_pct < 1.0:
+            return False, "PULLBACK pending: Price near POI, waiting for rejection"
+        
+        return False, f"PULLBACK pending: {distance_pct:.2f}% from POI"
+    
+    elif scenario_name == 'CONTINUATION':
+        # CONTINUATION triggers when price reacts from OB/liquidity with impulse
+        # Use existing continuation validation logic
+        if recent_candles is None or len(recent_candles) < 10:
+            # Fallback: check if price is near entry zone
+            if distance_pct < 0.5:
+                return True, f"CONTINUATION triggered: Price at entry zone"
+            return False, f"CONTINUATION pending: {distance_pct:.2f}% from entry"
+        
+        # Check for reaction from OB or liquidity in recent candles
+        obs = ict_components.get('order_blocks', [])
+        liq_zones = ict_components.get('liquidity_zones', [])
+        
+        reaction_found = False
+        reaction_source = None
+        reaction_candle_idx = None
+        
+        # Check last 5 candles for reaction
+        for idx, candle in enumerate(recent_candles[-5:]):
+            # Check OBs
+            for ob in obs:
+                ob_type = str(ob.type if hasattr(ob, "type") else (_safe_get(ob, "type", "") if isinstance(ob, dict) else "")).upper()
+                
+                if bias.upper() == 'BULLISH' and 'BULLISH' in ob_type:
+                    if _candle_reacted_from_zone(candle, ob, 'BULLISH'):
+                        reaction_found = True
+                        reaction_source = "Bullish OB"
+                        reaction_candle_idx = idx
+                        break
+                elif bias.upper() == 'BEARISH' and 'BEARISH' in ob_type:
+                    if _candle_reacted_from_zone(candle, ob, 'BEARISH'):
+                        reaction_found = True
+                        reaction_source = "Bearish OB"
+                        reaction_candle_idx = idx
+                        break
+            
+            if reaction_found:
+                break
+            
+            # Check liquidity zones
+            for liq in liq_zones:
+                liq_type = str(liq.type if hasattr(liq, "type") else (_safe_get(liq, "type", "") if isinstance(liq, dict) else "")).upper()
+                
+                if bias.upper() == 'BULLISH' and 'BSL' in liq_type:
+                    if _candle_reacted_from_liquidity(candle, liq, 'BULLISH'):
+                        reaction_found = True
+                        reaction_source = "BSL"
+                        reaction_candle_idx = idx
+                        break
+                elif bias.upper() == 'BEARISH' and 'SSL' in liq_type:
+                    if _candle_reacted_from_liquidity(candle, liq, 'BEARISH'):
+                        reaction_found = True
+                        reaction_source = "SSL"
+                        reaction_candle_idx = idx
+                        break
+            
+            if reaction_found:
+                break
+        
+        if not reaction_found:
+            return False, "CONTINUATION pending: No reaction from OB or liquidity yet"
+        
+        # Check impulse (candle body > average)
+        avg_body = _calculate_avg_body(recent_candles[-20:])
+        reaction_candle = recent_candles[-5 + reaction_candle_idx]
+        reaction_body = abs(reaction_candle['close'] - reaction_candle['open'])
+        
+        if reaction_body < avg_body * 1.2:
+            return False, f"CONTINUATION pending: Weak impulse ({reaction_body:.6f} < {avg_body:.6f} * 1.2)"
+        
+        return True, f"CONTINUATION triggered: {reaction_source} reaction with impulse"
+    
+    elif scenario_name == 'REVERSAL':
+        # REVERSAL triggers when all components are present and price near entry
+        # Check if sweep, structure flip, and displacement are all present
+        sweeps = ict_components.get('liquidity_sweeps', [])
+        sb = ict_components.get('structure_break')
+        disp = ict_components.get('displacement', {})
+        
+        # Validate behavior using existing function
+        is_eligible, reason = _validate_reversal_behavior(
+            sweeps=sweeps,
+            structure_break=sb,
+            displacement=disp,
+            timeframe=timeframe
+        )
+        
+        if not is_eligible:
+            return False, f"REVERSAL pending: {reason}"
+        
+        # Check if price is near entry zone
+        if distance_pct < 1.0:
+            return True, f"REVERSAL triggered: All components present, price at entry"
+        
+        return False, f"REVERSAL pending: Components valid, {distance_pct:.2f}% from entry"
+    
+    else:
+        return False, f"Unknown scenario: {scenario_name}"
+
+
 def select_best_entry_scenario(
     current_price: float,
     bias: str,
