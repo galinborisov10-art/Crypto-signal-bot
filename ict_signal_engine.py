@@ -1214,14 +1214,16 @@ class ICTSignalEngine:
         # Check for active setup first
         active_setup = setup_manager.get_setup(symbol, timeframe)
         
-        # Prepare components for later use
+        # Prepare bias string
         bias_str = bias.value if hasattr(bias, 'value') else str(bias)
-        fvg_zones = ict_components.get('fvgs', [])
-        order_blocks = ict_components.get('order_blocks', [])
-        sr_levels = ict_components.get('luxalgo_sr', {})
         
         # ✅ CRITICAL: Enrich components with candles_ago BEFORE any processing
         ict_components = self._enrich_components_with_recency(ict_components, df)
+        
+        # Extract components after enrichment
+        fvg_zones = ict_components.get('fvgs', [])
+        order_blocks = ict_components.get('order_blocks', [])
+        sr_levels = ict_components.get('luxalgo_sr', {})
         
         # Recent candles for trigger validation
         recent_candles = []
@@ -1392,7 +1394,9 @@ class ICTSignalEngine:
         
         if not entry_scenario_result:
             # This should not happen given the guards above, but handle defensively
-            logger.error("❌ CRITICAL: entry_scenario_result is None after Step 7")
+            path_info = "PATH A (active setup)" if active_setup else "PATH B (new detection)"
+            logger.error(f"❌ CRITICAL: entry_scenario_result is None after Step 7 ({path_info})")
+            logger.error(f"   → Debug: active_setup={active_setup is not None}, bias={bias_str}, price=${current_price:.2f}")
             return None
         
         # Log selected scenario details

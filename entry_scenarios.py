@@ -293,7 +293,13 @@ def is_entry_triggered(
         for idx, candle in enumerate(recent_candles[-5:]):
             # Check OBs
             for ob in obs:
-                ob_type = str(ob.type if hasattr(ob, "type") else (_safe_get(ob, "type", "") if isinstance(ob, dict) else "")).upper()
+                # Safely extract ob_type
+                if hasattr(ob, "type"):
+                    ob_type = str(ob.type).upper()
+                elif isinstance(ob, dict):
+                    ob_type = str(_safe_get(ob, "type", "")).upper()
+                else:
+                    ob_type = ""
                 
                 if bias.upper() == 'BULLISH' and 'BULLISH' in ob_type:
                     if _candle_reacted_from_zone(candle, ob, 'BULLISH'):
