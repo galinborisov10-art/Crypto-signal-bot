@@ -160,7 +160,7 @@ class SetupStateManager:
             del self._setups[key]
             return False
         
-        logger.debug(
+        logger.info(
             f"⏳ SETUP_PENDING_ENTRY scenario={setup.scenario_name} tf={timeframe} "
             f"symbol={symbol} ttl_remaining={setup.ttl_remaining}"
         )
