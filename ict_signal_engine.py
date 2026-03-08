@@ -24,8 +24,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 import logging
-from entry_scenarios import select_best_entry_scenario
+from entry_scenarios import select_best_entry_scenario, is_entry_triggered, select_entry_zone_for_scenario
 from entry_scenario_config import MIN_PROBABILITY_THRESHOLDS, DEFAULT_MIN_PROBABILITY_THRESHOLD
+from setup_state_manager import get_setup_manager
 import json
 import os
 
@@ -1200,93 +1201,136 @@ class ICTSignalEngine:
         logger.info(f"   → Confidence modifier: {confirmation_modifier:+.1%}")
         # Store for later use in confidence calculation
         
-        # СТЪПКА 7: ENTRY SCENARIO SELECTION (merged Step 8 + Step 8.1)
-        logger.info("🎯 Step 7: Entry Scenario Selection")
+        # СТЪПКА 7: ENTRY SCENARIO SELECTION (with Setup State Machine)
+        logger.info("🎯 Step 7: Entry Scenario Selection (State Machine)")
         
         # Get current price
         current_price = df['close'].iloc[-1]
         logger.info(f"   → Current Price: ${current_price:.2f}")
         
-        # Calculate ICT-compliant entry zone
+        # Get setup state manager
+        setup_manager = get_setup_manager()
+        
+        # Check for active setup first
+        active_setup = setup_manager.get_setup(symbol, timeframe)
+        
+        # Prepare bias string
         bias_str = bias.value if hasattr(bias, 'value') else str(bias)
+        
+        # ✅ CRITICAL: Enrich components with candles_ago BEFORE any processing
+        ict_components = self._enrich_components_with_recency(ict_components, df)
+        
+        # Extract components after enrichment
         fvg_zones = ict_components.get('fvgs', [])
         order_blocks = ict_components.get('order_blocks', [])
         sr_levels = ict_components.get('luxalgo_sr', {})
         
-        logger.info(f"   → Available ICT Components (after filtering):")
-        logger.info(f"      • Order Blocks: {len(order_blocks)}")
-        logger.info(f"      • FVG Zones: {len(fvg_zones)}")
-        sr_count = 0
-        if sr_levels and isinstance(sr_levels, dict):
-            sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
-        logger.info(f"      • S/R Levels: {sr_count}")
+        # Recent candles for trigger validation
+        recent_candles = []
+        if len(df) >= 20:
+            recent_candles = df[['open', 'high', 'low', 'close']].tail(20).to_dict('records')
         
-        # ✅ REFACTORED: Scenarios create their own entry_zones
-        # entry_zone, entry_status = self._calculate_ict_compliant_entry_zone(
-        #     current_price=current_price,
-        #     direction=bias_str,
-        #     fvg_zones=fvg_zones,
-        #     order_blocks=order_blocks,
-        #     sr_levels=sr_levels,
-        #     timeframe=timeframe
-        # )
-        
-        # Temporary placeholder - scenarios will create actual entry_zone
+        entry_scenario_result = None
+        poi_ref = None
         entry_zone = {}
-        entry_status = 'PENDING_SCENARIO'
         
-        logger.info(f"   → Entry Zone Status: {entry_status}")
-        if entry_zone:
-            logger.info(f"      • Zone Center: ${entry_zone.get('center', 0):.2f}")
-            logger.info(f"      • Zone Range: ${entry_zone.get('low', 0):.2f} - ${entry_zone.get('high', 0):.2f}")
-            logger.info(f"      • Source: {entry_zone.get('source', 'UNKNOWN')}")
-            logger.info(f"      • Quality: {entry_zone.get('quality', 0)}")
-        
-        # ✅ VALIDATION MOVED: Now happens after scenario selection
-        # Old validation code (before refactor) - commented out
-        # if entry_status == 'TOO_LATE':
-            logger.info(f"❌ BLOCKED at Step 7: Entry zone validation failed (TOO_LATE)")
-            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 7, reason: Price already passed entry zone)")
-            context = self._extract_context_data(df, bias)
-            # Calculate MTF consensus for detailed breakdown
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
+        if active_setup and active_setup.ttl_remaining > 0:
+            # ============================================================
+            # PATH A: Active setup exists - check entry trigger
+            # ============================================================
+            logger.info(f"   → Active setup found: {active_setup.scenario_name} (TTL: {active_setup.ttl_remaining})")
+            logger.info(f"      • Entry zone: ${active_setup.entry_zone.get('center', 0):.2f}")
             
-            return self._create_no_trade_message(
-                symbol=symbol,
+            # Check if entry trigger conditions are met
+            is_triggered, trigger_reason = is_entry_triggered(
+                scenario_name=active_setup.scenario_name,
+                scenario_data=active_setup.scenario_data,
+                entry_zone=active_setup.entry_zone,
+                current_price=current_price,
+                ict_components=ict_components,
+                bias=bias_str,
                 timeframe=timeframe,
-                reason=f"Entry zone validation failed: {entry_status}",
-                details=f"Current price: ${current_price:.2f}. Price already passed the entry zone.",
-                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
-                current_price=context['current_price'],
-                price_change_24h=context['price_change_24h'],
-                rsi=context['rsi'],
-                signal_direction=context['signal_direction'],
-                confidence=None
+                recent_candles=recent_candles
             )
-        
-        # ✅ SOFT CONSTRAINT: TOO_FAR now only warns, doesn't block signal
-        # Distance will be handled by timeframe-adaptive limits in entry zone calculation
-        if False and entry_status == 'TOO_FAR':  # ✅ DISABLED: Validation moved after scenarios
-            distance_pct = entry_zone.get('distance_pct', 0) * 100 if entry_zone else 0
-            logger.warning(f"⚠️ Entry zone far from current price ({distance_pct:.1f}%)")
-            logger.info(f"   → Continuing to scenarios (distance check is now timeframe-adaptive)")
-            # Continue to scenarios - don't hard block here
-        
-        # ✅ HARD BLOCK for AUTO mode: No ICT zone means NO SIGNAL
-        if False and (entry_status == 'NO_ZONE' or entry_zone is None):  # ✅ DISABLED: Validation moved after scenarios
-            # 🚫 CRITICAL: AUTO mode does NOT allow fallback entries
-            if is_auto:
-                logger.info(f"❌ BLOCKED at Step 7: No ICT zone found and AUTO mode active")
-                logger.info(f"   → AUTO signals require valid ICT entry zones (no fallback)")
-                logger.error(f"❌ No ICT zone in optimal range - AUTO signal BLOCKED")
+            
+            if is_triggered:
+                # ✅ ENTRY TRIGGERED - Emit signal
+                logger.info(f"   ✅ ENTRY TRIGGER MET: {trigger_reason}")
+                
+                # Mark as triggered (removes from active store)
+                setup_manager.mark_triggered(symbol, timeframe)
+                
+                # Use stored scenario data for signal emission
+                entry_scenario_result = active_setup.scenario_data
+                entry_zone = active_setup.entry_zone
+                
+                # Continue to SL/TP/RR validation (downstream steps)
+            else:
+                # Entry trigger not met yet - decrement TTL and wait
+                logger.info(f"   ⏳ SETUP_PENDING_ENTRY: {trigger_reason}")
+                
+                still_active = setup_manager.decrement_ttl(symbol, timeframe)
+                
+                if not still_active:
+                    # Setup expired - will re-detect on next cycle
+                    logger.info(f"   ⌛ Setup expired, will re-evaluate on next cycle")
+                
+                # Return NO_TRADE (setup pending, not ready to signal)
                 context = self._extract_context_data(df, bias)
                 mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
                 
                 return self._create_no_trade_message(
                     symbol=symbol,
                     timeframe=timeframe,
-                    reason=f"No ICT entry zone found (AUTO mode)",
-                    details=f"AUTO signals require valid ICT zones. No zone found in optimal range for {symbol}.",
+                    reason=f"Setup pending entry trigger",
+                    details=f"{active_setup.scenario_name} setup detected at ${active_setup.entry_zone.get('center', 0):.2f}, waiting for entry trigger. {trigger_reason}",
+                    mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                    current_price=context['current_price'],
+                    price_change_24h=context['price_change_24h'],
+                    rsi=context['rsi'],
+                    signal_direction=context['signal_direction'],
+                    confidence=None
+                )
+        else:
+            # ============================================================
+            # PATH B: No active setup - run scenario detection
+            # ============================================================
+            logger.info(f"   → No active setup - running scenario detection")
+            
+            logger.info(f"   → Available ICT Components (after filtering):")
+            logger.info(f"      • Order Blocks: {len(order_blocks)}")
+            logger.info(f"      • FVG Zones: {len(fvg_zones)}")
+            sr_count = 0
+            if sr_levels and isinstance(sr_levels, dict):
+                sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
+            logger.info(f"      • S/R Levels: {sr_count}")
+            
+            # Temporary placeholder - scenarios will create actual entry_zone
+            entry_zone_placeholder = {}
+            
+            # Run scenario selection
+            entry_scenario_result, poi_ref = select_best_entry_scenario(
+                current_price=current_price,
+                bias=bias_str,
+                ict_components=ict_components,
+                entry_zone=entry_zone_placeholder,
+                timeframe=timeframe,
+                tf_hierarchy=tf_hierarchy if TIMEFRAME_CONTRACT_AVAILABLE else None
+            )
+            
+            # Check if scenario was found
+            if not entry_scenario_result or (entry_scenario_result.get('scenario') == 'N/A'):
+                logger.info(f"❌ No valid entry scenario found (all scenarios failed validation)")
+                logger.info(f"   → No setup to create")
+                logger.error(f"❌ No valid scenario scored above minimum - Signal BLOCKED (no valid scenario)")
+                context = self._extract_context_data(df, bias)
+                mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
+                
+                return self._create_no_trade_message(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    reason=f"No valid entry scenario",
+                    details=f"No scenario scored above minimum threshold for {symbol}.",
                     mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
                     current_price=context['current_price'],
                     price_change_24h=context['price_change_24h'],
@@ -1295,134 +1339,92 @@ class ICTSignalEngine:
                     confidence=None
                 )
             
-            # ✅ MANUAL/DEBUG MODE: Allow fallback with warning
-            logger.info(f"⚠️ Step 7 Warning: No ICT zone in optimal range, using fallback (MANUAL mode)")
-            # ✅ NON-INVASIVE DIAGNOSTIC LOGGING
-            logger.warning(f"⚠️ No ICT zone found in optimal range (0.5-7%) for {symbol}")
-            logger.info(f"   → Creating fallback entry zone at current price ${current_price:.2f}")
-            logger.debug(f"   → Fallback zone: ±1% from current price")
-            logger.info(f"   → FALLBACK allowed only in MANUAL/DEBUG mode")
+            # Valid scenario found - get entry zone
+            entry_zone = entry_scenario_result.get('entry_zone', {})
             
-            # Diagnostic: Log available ICT components
-            sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
-            logger.debug(f"   → Available ICT components:")
-            logger.debug(f"      - Order Blocks: {len(order_blocks)}")
-            logger.debug(f"      - FVG Zones: {len(fvg_zones)}")
-            logger.debug(f"      - S/R Levels: {sr_count}")
-            
-            # Create fallback entry zone based on current price with small buffer
-            fallback_distance = 0.01  # 1% from current price
-            if bias_str == 'BEARISH':
-                # BEARISH: Entry above current price
-                entry_zone = {
-                    'source': 'FALLBACK',
-                    'low': current_price * (1 + fallback_distance * 0.8),
-                    'high': current_price * (1 + fallback_distance * 1.2),
-                    'center': current_price * (1 + fallback_distance),
-                    'quality': 40,  # Low quality for fallback
-                    'distance_pct': fallback_distance * 100,
-                    'distance_price': current_price * fallback_distance,
-                    'distance_out_of_range': False,  # Within optimal range
-                    'distance_comment': None
-                }
-            else:  # BULLISH
-                # BULLISH: Entry below current price
-                entry_zone = {
-                    'source': 'FALLBACK',
-                    'low': current_price * (1 - fallback_distance * 1.2),
-                    'high': current_price * (1 - fallback_distance * 0.8),
-                    'center': current_price * (1 - fallback_distance),
-                    'quality': 40,  # Low quality for fallback
-                    'distance_pct': fallback_distance * 100,
-                    'distance_price': current_price * fallback_distance,
-                    'distance_out_of_range': False,  # Within optimal range
-                    'distance_comment': None
-                }
-            entry_status = 'VALID_FALLBACK'
-            logger.info(f"✅ Fallback entry zone created at ${entry_zone['center']:.2f}")
-        
-        # ✅ REMOVED: Entry zone validation now happens after scenarios
-        # logger.info(f"✅ Entry zone validated ({entry_status})")
-        
-        # ✅ REMOVED: Entry price now extracted from scenario result
-        # entry_price = entry_zone.get('center', current_price)
-        # logger.info(f"   → Entry Price: ${entry_price:.2f} (from entry zone)")
-        
-        # ✅ REFACTORED: entry_setup now created from scenario result
-        # Skip entry_setup creation here - will be created after scenario selection
-        entry_setup = None  # Will be populated from scenario's entry_zone
-        
-        # ✅ Entry Scenario Scoring (merged from old Step 8.1)
-        logger.info("   🎯 Applying Entry Scenario Scoring...")
-        
-        # ✅ CRITICAL: Enrich components with candles_ago BEFORE passing to scenarios
-        # This fixes "999 candles ago" issue - components have timestamp but scenarios need candles_ago
-        ict_components = self._enrich_components_with_recency(ict_components, df)
-        
-        entry_scenario_result, poi_ref = select_best_entry_scenario(
-            current_price=current_price,
-            bias=bias_str,
-            ict_components=ict_components,
-            entry_zone=entry_zone,
-            timeframe=timeframe,
-            tf_hierarchy=tf_hierarchy if TIMEFRAME_CONTRACT_AVAILABLE else None
-        )
-        
-        # 🚫 CRITICAL: AUTO mode requires valid entry scenario
-        if not entry_scenario_result or (entry_scenario_result.get('scenario') == 'N/A'):
-            logger.info(f"❌ BLOCKED at Step 7: No valid entry scenario (required for all signals)")
-            logger.info(f"   → All signals require scored entry scenarios (no fallback)")
-            logger.error(f"❌ No valid scenario scored above minimum - Signal BLOCKED (no valid scenario)")
-            context = self._extract_context_data(df, bias)
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
-            
-            return self._create_no_trade_message(
-                symbol=symbol,
+            # Check if entry trigger is immediately true
+            is_triggered, trigger_reason = is_entry_triggered(
+                scenario_name=entry_scenario_result.get('scenario'),
+                scenario_data=entry_scenario_result,
+                entry_zone=entry_zone,
+                current_price=current_price,
+                ict_components=ict_components,
+                bias=bias_str,
                 timeframe=timeframe,
-                reason=f"No valid entry scenario (AUTO mode)",
-                details=f"AUTO signals require valid ICT scenarios. No scenario scored above minimum for {symbol}.",
-                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
-                current_price=context['current_price'],
-                price_change_24h=context['price_change_24h'],
-                rsi=context['rsi'],
-                signal_direction=context['signal_direction'],
-                confidence=None
+                recent_candles=recent_candles
             )
-
-        # ✅ REMOVED: Structure alignment modifier
-        # Per specification: Structure = only context, does NOT block signals, does NOT filter scenarios
-        # Structure should NOT participate in scenario selection or probability adjustment
-        # Only 2 hard gates allowed: (1) No core → no scenario, (2) Confidence threshold
+            
+            if is_triggered:
+                # Entry trigger immediately true - emit signal
+                logger.info(f"   ✅ ENTRY TRIGGERED IMMEDIATELY: {trigger_reason}")
+                # Continue to SL/TP/RR validation
+            else:
+                # Create pending setup
+                logger.info(f"   → Setup detected but entry not triggered yet: {trigger_reason}")
+                
+                setup = setup_manager.create_setup(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    scenario_name=entry_scenario_result.get('scenario'),
+                    scenario_data=entry_scenario_result,
+                    entry_zone=entry_zone
+                )
+                
+                # Return NO_TRADE (setup created, waiting for trigger)
+                context = self._extract_context_data(df, bias)
+                mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
+                
+                return self._create_no_trade_message(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    reason=f"Setup detected, waiting for entry trigger",
+                    details=f"{entry_scenario_result.get('scenario')} setup created at ${entry_zone.get('center', 0):.2f}. {trigger_reason}",
+                    mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                    current_price=context['current_price'],
+                    price_change_24h=context['price_change_24h'],
+                    rsi=context['rsi'],
+                    signal_direction=context['signal_direction'],
+                    confidence=None
+                )
         
-        if entry_scenario_result:
-            # Store poi_ref if available
-            if poi_ref:
-                entry_setup['poi_ref'] = poi_ref
-            
-            logger.info(f"   ✅ Selected Scenario: {entry_scenario_result['scenario']}")
-            logger.info(f"      • Score: {int(entry_scenario_result['probability'] * 100)}/100")
-            logger.info(f"      • Entry Price: ${entry_scenario_result['entry_zone']['center']:.4f}")
-            logger.info(f"      • Entry Range: ${entry_scenario_result['entry_zone']['low']:.4f} - ${entry_scenario_result['entry_zone']['high']:.4f}")
-            logger.info(f"      • Distance: {entry_scenario_result['entry_zone']['distance_pct']:.1f}%")
-            logger.info(f"      • Triggers: {', '.join(entry_scenario_result['triggers'])} ({entry_scenario_result['trigger_strength']})")
-            logger.info(f"      • Position Size Advisory: {entry_scenario_result['position_size_advisory']}%")
-            logger.info(f"      • Reasoning: {entry_scenario_result['reasoning']}")
-            logger.info(f"      • POI Type: {entry_scenario_result.get('poi_type', 'NONE')}")
-            
-            # Log invalidation anchor info
-            anchor = entry_scenario_result.get('invalidation_anchor', {})
-            if anchor:
-                logger.info(f"      • Anchor: {anchor.get('type')} @ ${anchor.get('price', 0):.4f}")
-            
-            # Override entry_zone with scenario result
-            entry_zone = entry_scenario_result['entry_zone']
-            # ✅ IMPORTANT: Update entry_price after scenario override
-            entry_price = entry_zone.get('center', entry_price)
-            logger.info(f"   → Updated Entry Price: ${entry_price:.2f} (from scenario entry zone)")
-        else:
-            logger.warning("   ⚠️ No valid scenario scored above minimum - using initial entry_zone")
+        # ============================================================
+        # COMMON PATH: entry_scenario_result is now set (either from active setup or new detection)
+        # Continue to logging and downstream validation
+        # ============================================================
         
-        logger.info(f"✅ PASSED Step 7: Entry scenario selected (price: ${entry_price:.2f})")
+        if not entry_scenario_result:
+            # This should not happen given the guards above, but handle defensively
+            path_info = "PATH A (active setup)" if active_setup else "PATH B (new detection)"
+            logger.error(f"❌ CRITICAL: entry_scenario_result is None after Step 7 ({path_info})")
+            logger.error(f"   → Debug: active_setup={active_setup is not None}, bias={bias_str}, price=${current_price:.2f}")
+            return None
+        
+        # Log selected scenario details
+        logger.info(f"   ✅ Selected Scenario: {entry_scenario_result['scenario']}")
+        logger.info(f"      • Score: {int(entry_scenario_result['probability'] * 100)}/100")
+        logger.info(f"      • Entry Price: ${entry_scenario_result['entry_zone']['center']:.4f}")
+        logger.info(f"      • Entry Range: ${entry_scenario_result['entry_zone']['low']:.4f} - ${entry_scenario_result['entry_zone']['high']:.4f}")
+        logger.info(f"      • Distance: {entry_scenario_result['entry_zone']['distance_pct']:.1f}%")
+        logger.info(f"      • Triggers: {', '.join(entry_scenario_result['triggers'])} ({entry_scenario_result['trigger_strength']})")
+        logger.info(f"      • Position Size Advisory: {entry_scenario_result['position_size_advisory']}%")
+        logger.info(f"      • Reasoning: {entry_scenario_result['reasoning']}")
+        logger.info(f"      • POI Type: {entry_scenario_result.get('poi_type', 'NONE')}")
+        
+        # Log invalidation anchor info
+        anchor = entry_scenario_result.get('invalidation_anchor', {})
+        if anchor:
+            logger.info(f"      • Anchor: {anchor.get('type')} @ ${anchor.get('price', 0):.4f}")
+        
+        # Extract entry_price from scenario result
+        entry_price = entry_zone.get('center', current_price)
+        logger.info(f"   → Entry Price: ${entry_price:.2f} (from scenario entry zone)")
+        
+        # Create entry_setup dict for downstream use
+        entry_setup = {}
+        if poi_ref:
+            entry_setup['poi_ref'] = poi_ref
+        
+        logger.info(f"✅ PASSED Step 7: Entry scenario triggered (price: ${entry_price:.2f})")
         
         # СТЪПКА 8: SL POSITIONING (renamed from Step 9)
         logger.info("🔍 Step 8: Stop Loss Positioning")
