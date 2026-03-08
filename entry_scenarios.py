@@ -477,26 +477,21 @@ def select_best_entry_scenario(
         poi_refs['REVERSAL'] = reversal_ref
         logger.info(f"REVERSAL probability: {reversal_dict.get('probability', 0):.3f}")
     
-    # Step 1: Filter by eligible flag
-    eligible_scenarios = {
-        k: v for k, v in scenarios.items() 
-        if v.get('eligible', False)
-    }
-    
-    if not eligible_scenarios:
-        logger.warning("⚠️ No eligible scenarios (all failed behavioral core validation)")
+    # Step 1: Check if any scenarios were detected
+    if not scenarios:
+        logger.warning("⚠️ No scenarios detected (all failed behavioral validation)")
         return None, None
     
     # Step 2: Select highest probability with deterministic tie-breaking
-    # If multiple scenarios have equal probability, priority is used
+    # Select from ALL scenarios (behavioral validation already passed if they're in the dict)
     best_scenario_name = max(
-        eligible_scenarios,
+        scenarios,
         key=lambda k: (
-            eligible_scenarios[k].get('probability', 0),  # Primary: highest probability
+            scenarios[k].get('probability', 0),  # Primary: highest probability
             -SCENARIO_PRIORITY.get(k, 999)  # Tie-break: scenario priority (negative for descending)
         )
     )
-    best_scenario_dict = eligible_scenarios[best_scenario_name]
+    best_scenario_dict = scenarios[best_scenario_name]
     best_probability = best_scenario_dict.get('probability', 0)
     best_poi_ref = poi_refs.get(best_scenario_name)
     
@@ -504,12 +499,23 @@ def select_best_entry_scenario(
     threshold = MIN_PROBABILITY_THRESHOLDS.get(best_scenario_name, 0.60)
     
     if best_probability < threshold:
+        # Below threshold - return as PENDING candidate (no immediate trade)
         logger.warning(
-            f"⚠️ Best scenario {best_scenario_name} probability {best_probability:.3f} "
-            f"< threshold {threshold:.3f} → NO TRADE"
+            f"⚠️ Best scenario {best_scenario_name} below threshold → returning as PENDING (no immediate trade)"
         )
-        return None, None
+        logger.warning(
+            f"   Probability: {best_probability:.3f} < Threshold: {threshold:.3f}"
+        )
+        
+        # Create copy and add pending metadata
+        pending_scenario_dict = best_scenario_dict.copy()
+        pending_scenario_dict['pending_only'] = True
+        pending_scenario_dict['pending_reason'] = 'below_probability_threshold'
+        pending_scenario_dict['required_threshold'] = threshold
+        
+        return pending_scenario_dict, best_poi_ref
     
+    # Step 4: Eligible scenario above threshold - immediate entry candidate
     logger.info("=" * 60)
     logger.info(f"🏆 BEST SCENARIO: {best_scenario_name} (probability: {best_probability:.3f}, threshold: {threshold:.3f})")
     logger.info(f"   Reasoning: {best_scenario_dict['reasoning']}")
