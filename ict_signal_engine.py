@@ -1322,8 +1322,9 @@ class ICTSignalEngine:
         # ── Step 7A: Detect pattern (WHAT the market is doing) ──────────────
         pattern_name = None
         pattern_probability = 0.0
+        pattern_confluence = None
         if PATTERN_DETECTOR_AVAILABLE:
-            pattern_name, pattern_probability = detect_scenario_pattern(
+            pattern_name, pattern_probability, pattern_confluence = detect_scenario_pattern(
                 current_price=current_price,
                 bias=bias_str,
                 mtf_components=mtf_components,
@@ -1390,10 +1391,20 @@ class ICTSignalEngine:
 
         logger.info(f"✅ Step 7B: Entry zone calculated from {poi_entry_result.get('poi_type', 'POI')}")
 
+        # Build scenario display text: include subtype (e.g. STRUCTURE_RETEST) and confluence
+        _poi_subtype = poi_entry_result.get('subtype')
+        _scenario_text = poi_entry_result['scenario']
+        if _poi_subtype:
+            _scenario_text += f" ({_poi_subtype})"
+        if pattern_confluence:
+            _other_patterns = [p for p in pattern_confluence if p != pattern_name]
+            if _other_patterns:
+                _scenario_text += f" + {', '.join(_other_patterns)}"
+
         # Build entry_scenario_result compatible with downstream steps
         entry_zone = poi_entry_result['entry_zone']
         entry_scenario_result = {
-            'scenario': poi_entry_result['scenario'],
+            'scenario': _scenario_text,
             'eligible': True,
             'entry_zone': entry_zone,
             'probability': pattern_probability,
@@ -1404,6 +1415,8 @@ class ICTSignalEngine:
             'poi_type': poi_entry_result.get('poi_type', 'NONE'),
             'poi_data': poi_entry_result.get('poi_data', {}),
             'invalidation_anchor': poi_entry_result.get('invalidation_anchor', {}),
+            'subtype': _poi_subtype,
+            'confluence': pattern_confluence,
         }
 
         # ── Trigger check: used as confidence modifier only (not a gate) ────────

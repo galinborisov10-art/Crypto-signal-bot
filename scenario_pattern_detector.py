@@ -44,6 +44,9 @@ from entry_scenario_config import (
     CONTINUATION_DISTANCE,
     POI_QUALITY,
     REVERSAL_SETTINGS,
+    PULLBACK_REQUIREMENTS,
+    CONSOLIDATION_CHECK,
+    PATTERN_CONFLUENCE,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,10 +54,15 @@ logger = logging.getLogger(__name__)
 # Scenario priority for deterministic tie-breaking (lower = higher priority)
 PATTERN_PRIORITY = {
     'REVERSAL': 1,
-    'ROLLBACK': 2,
-    'PULLBACK': 3,
-    'CONTINUATION': 4,
+    'PULLBACK': 2,
+    'CONTINUATION': 3,
 }
+
+# Minimum displacement strength required for PULLBACK (Fix #1)
+MIN_DISPLACEMENT_FOR_PULLBACK = PULLBACK_REQUIREMENTS.get('min_displacement_strength', 0.35)
+
+# Small epsilon to prevent division by zero in consolidation ratio calculation (Fix #2)
+_CONSOLIDATION_EPSILON = 0.001
 
 # HTF bias mismatch penalty: if HTF bias is known and contradicts signal bias,
 # reduce probability by this factor (not a gate - still emits signal with lower confidence)
@@ -70,7 +78,7 @@ def detect_scenario_pattern(
     # Backward-compat alias (ignored when mtf_components is an MTF dict)
     ict_components: Optional[Dict] = None,
     timeframe: Optional[str] = None,
-) -> Tuple[Optional[str], float]:
+) -> Tuple[Optional[str], float, Optional[List[str]]]:
     """
     Detect the most probable market pattern WITHOUT computing entry zones.
 
@@ -87,7 +95,10 @@ def detect_scenario_pattern(
         tf_hierarchy: Optional timeframe hierarchy from TimeframeContract
 
     Returns:
-        Tuple[Optional[str], float]: (pattern_name, probability) or (None, 0.0)
+        Tuple[Optional[str], float, Optional[List[str]]]:
+            (pattern_name, probability, confluent_patterns) or (None, 0.0, None)
+        confluent_patterns is a list of pattern keys that scored ≥ min_probability_for_confluence,
+        or None when no multi-pattern confluence was detected.
     """
     logger.info("=" * 60)
     logger.info("🔍 Step 7A: Scenario Pattern Detection (MTF)")
@@ -134,10 +145,11 @@ def detect_scenario_pattern(
     logger.info(f"   Triggers: {all_triggers} (score: {trigger_score + struct_trigger_score}, strength: {trigger_strength})")
 
     # Score all patterns
-    pattern_scores: Dict[str, float] = {}
+    # Internal dict uses granular keys; merged into external keys below.
+    internal_scores: Dict[str, float] = {}
 
-    # --- ROLLBACK ---
-    rollback_prob = _score_rollback_pattern(
+    # --- PULLBACK (STRUCTURE_RETEST) - formerly ROLLBACK ---
+    retest_prob = _score_pullback_structure_retest(
         current_price=current_price,
         bias=bias,
         signal_comps=signal_comps,
@@ -148,13 +160,13 @@ def detect_scenario_pattern(
         timeframe=_effective_tf,
         tf_hierarchy=tf_hierarchy,
     )
-    if rollback_prob > 0:
-        pattern_scores['ROLLBACK'] = rollback_prob
-        logger.info(f"   ROLLBACK probability: {rollback_prob:.3f}")
+    if retest_prob > 0:
+        internal_scores['PULLBACK_RETEST'] = retest_prob
+        logger.info(f"   PULLBACK (STRUCTURE_RETEST) probability: {retest_prob:.3f}")
     else:
-        logger.info(f"   ROLLBACK: not detected")
+        logger.info(f"   PULLBACK (STRUCTURE_RETEST): not detected")
 
-    # --- PULLBACK (REQUIRES OB or BSL/SSL) ---
+    # --- PULLBACK (OB/BSL/SSL RETRACEMENT, REQUIRES OB or BSL/SSL) ---
     pullback_prob = _score_pullback_pattern(
         current_price=current_price,
         bias=bias,
@@ -166,10 +178,21 @@ def detect_scenario_pattern(
         tf_hierarchy=tf_hierarchy,
     )
     if pullback_prob > 0:
-        pattern_scores['PULLBACK'] = pullback_prob
-        logger.info(f"   PULLBACK probability: {pullback_prob:.3f}")
+        internal_scores['PULLBACK_OB'] = pullback_prob
+        logger.info(f"   PULLBACK (OB_RETRACEMENT) probability: {pullback_prob:.3f}")
     else:
-        logger.info(f"   PULLBACK: not detected (missing OB or BSL/SSL)")
+        logger.info(f"   PULLBACK (OB_RETRACEMENT): not detected (missing OB or BSL/SSL, or insufficient displacement)")
+
+    # Merge PULLBACK variants → select the best sub-type
+    pattern_scores: Dict[str, float] = {}
+    _pullback_variants = {k: v for k, v in internal_scores.items() if k.startswith('PULLBACK_')}
+    if _pullback_variants:
+        _best_pb_key = max(_pullback_variants, key=_pullback_variants.get)
+        pattern_scores['PULLBACK'] = _pullback_variants[_best_pb_key]
+        logger.info(
+            f"   PULLBACK probability: {pattern_scores['PULLBACK']:.3f} "
+            f"(subtype: {'STRUCTURE_RETEST' if _best_pb_key == 'PULLBACK_RETEST' else 'OB_RETRACEMENT'})"
+        )
 
     # --- CONTINUATION (REQUIRES OB or BSL/SSL) ---
     continuation_prob = _score_continuation_pattern(
@@ -209,7 +232,12 @@ def detect_scenario_pattern(
 
     if not pattern_scores:
         logger.warning("⚠️ No pattern detected - no valid ICT structure found")
-        return None, 0.0
+        return None, 0.0, None
+
+    # ── Fix #6: Multi-pattern confluence detection ────────────────────────
+    _min_conf = PATTERN_CONFLUENCE.get('min_probability_for_confluence', 0.50)
+    valid_patterns = [k for k, v in pattern_scores.items() if v >= _min_conf]
+    confluence_detected = len(valid_patterns) > 1
 
     # Select best pattern with deterministic tie-breaking
     best_pattern = max(
@@ -221,6 +249,14 @@ def detect_scenario_pattern(
     )
     best_prob = pattern_scores[best_pattern]
 
+    # Apply confluence bonus
+    if confluence_detected:
+        confluence_bonus = PATTERN_CONFLUENCE.get('bonus', 0.15)
+        logger.info(
+            f"✅ Multi-pattern confluence: {valid_patterns} → +{confluence_bonus:.0%} probability bonus"
+        )
+        best_prob = min(1.0, best_prob + confluence_bonus)
+
     # Apply minimum probability threshold
     threshold = MIN_PROBABILITY_THRESHOLDS.get(best_pattern, 0.40)
     if best_prob < threshold:
@@ -228,12 +264,14 @@ def detect_scenario_pattern(
             f"⚠️ Best pattern {best_pattern} probability {best_prob:.3f} "
             f"< threshold {threshold:.3f} → no valid pattern"
         )
-        return None, 0.0
+        return None, 0.0, None
 
     logger.info("=" * 60)
     logger.info(f"🏆 DETECTED PATTERN: {best_pattern} (probability: {best_prob:.3f})")
+    if confluence_detected:
+        logger.info(f"   Confluent patterns: {valid_patterns}")
     logger.info("=" * 60)
-    return best_pattern, best_prob
+    return best_pattern, best_prob, (valid_patterns if confluence_detected else None)
 
 
 # ============================================================
@@ -275,7 +313,7 @@ def _apply_htf_bias_penalty(probability: float, htf_bias_str: str, bias: str, pa
 # PATTERN SCORING FUNCTIONS
 # ============================================================
 
-def _score_rollback_pattern(
+def _score_pullback_structure_retest(
     current_price: float,
     bias: str,
     signal_comps: Dict,
@@ -287,7 +325,8 @@ def _score_rollback_pattern(
     tf_hierarchy: Optional['TimeframeHierarchy'] = None,
 ) -> float:
     """
-    Score ROLLBACK pattern: BOS/MSS detected → market retracing to structure break.
+    Score PULLBACK (STRUCTURE_RETEST) pattern: BOS/MSS detected → market retracing to structure break.
+    Formerly known as ROLLBACK. Now a subtype of PULLBACK per ICT methodology.
     Uses structure_tf for BOS/MSS, signal_tf for entry POIs.
     """
     # ✅ Structure from structure_tf
@@ -303,7 +342,7 @@ def _score_rollback_pattern(
     if sb_direction and sb_direction != bias_upper:
         structure_tf_label = tf_hierarchy.structure_tf if tf_hierarchy else 'structure_tf'
         logger.debug(
-            f"   ROLLBACK: Structure direction mismatch "
+            f"   PULLBACK_RETEST: Structure direction mismatch "
             f"(structure_tf={structure_tf_label}, direction={sb_direction} != bias={bias_upper})"
         )
         return 0.0
@@ -316,7 +355,7 @@ def _score_rollback_pattern(
         timeframe=timeframe,
     )
     if not is_eligible:
-        logger.debug(f"   ROLLBACK behavior invalid: {reason}")
+        logger.debug(f"   PULLBACK_RETEST behavior invalid: {reason}")
         return 0.0
 
     # Calculate probability
@@ -344,7 +383,7 @@ def _score_rollback_pattern(
     )
 
     # ✅ HTF Bias alignment check (-20% penalty, NOT a gate)
-    probability = _apply_htf_bias_penalty(probability, htf_bias_str, bias, 'ROLLBACK', tf_hierarchy)
+    probability = _apply_htf_bias_penalty(probability, htf_bias_str, bias, 'PULLBACK_RETEST', tf_hierarchy)
     return probability
 
 
@@ -441,6 +480,17 @@ def _score_pullback_pattern(
         logger.debug("   PULLBACK: no OB or BSL/SSL found on signal_tf (FVG alone insufficient for SL placement)")
         return 0.0
 
+    # ── Fix #1: PULLBACK requires prior displacement (ICT principle) ──────
+    disp = structure_comps.get('displacement', {})
+    displacement_strength = disp.get('strength', 0) if disp.get('detected') else 0
+    if displacement_strength < MIN_DISPLACEMENT_FOR_PULLBACK:
+        logger.info(
+            f"❌ PULLBACK rejected: insufficient prior displacement "
+            f"({displacement_strength:.2f} < {MIN_DISPLACEMENT_FOR_PULLBACK:.2f})"
+        )
+        return 0.0
+    logger.info(f"✅ PULLBACK valid: prior displacement {displacement_strength:.2f}")
+
     # Calculate probability
     structure_present = 'MSS/BOS' in triggers
     from entry_scenarios import _calculate_probability_pullback
@@ -453,7 +503,6 @@ def _score_pullback_pattern(
 
     # Confirmation modifier using structure_tf data
     sb = structure_comps.get('structure_break')
-    disp = structure_comps.get('displacement', {})
     confirmation_present = _check_confirmation_layer(
         structure_break=sb,
         displacement=disp,
@@ -585,9 +634,75 @@ def _score_continuation_pattern(
         clear_path=clear_path,
     )
 
+    # ── Fix #2: CONTINUATION consolidation check (ICT principle) ──────────
+    candles = signal_comps.get('candles', [])
+    recent_consolidation = _check_for_consolidation(candles, displacement_strength, timeframe)
+    if not recent_consolidation:
+        penalty = CONSOLIDATION_CHECK['consolidation_penalty']
+        logger.info(
+            f"⚠️ CONTINUATION: no prior consolidation detected → "
+            f"applying {(1 - penalty):.0%} penalty"
+        )
+        probability = probability * penalty
+    else:
+        logger.info("✅ CONTINUATION valid: consolidation detected before breakout")
+    probability = max(0.0, min(1.0, probability))
+
     # ✅ HTF Bias alignment check (-20% penalty, NOT a gate)
     probability = _apply_htf_bias_penalty(probability, htf_bias_str, bias, 'CONTINUATION', tf_hierarchy)
     return probability
+
+
+def _check_for_consolidation(
+    candles: List,
+    displacement_strength: float,
+    timeframe: str,
+) -> bool:
+    """
+    Check if recent price action shows consolidation/pause before continuation.
+
+    Consolidation = tight range with low volatility relative to displacement.
+    Uses a compression ratio: recent_range_pct / displacement_strength.
+    If this ratio < max_range_ratio (0.40), consolidation is detected.
+
+    Args:
+        candles: Recent candle data (each candle: dict with 'high', 'low', 'close' keys)
+        displacement_strength: Strength of prior displacement (0-1 scale)
+        timeframe: Current timeframe for lookback period selection
+
+    Returns:
+        True if consolidation detected, False otherwise
+    """
+    if not candles or len(candles) < 5:
+        return False
+
+    lookback = CONSOLIDATION_CHECK['lookback_candles'].get(timeframe, 5)
+    recent_candles = candles[-lookback:]
+
+    # Validate candles have the required keys
+    if not all('high' in c and 'low' in c for c in recent_candles):
+        return False
+
+    # Reference price for normalization (use last candle's close or high)
+    last_candle = recent_candles[-1]
+    ref_price = last_candle.get('close') or last_candle.get('high', 0)
+    if ref_price <= 0:
+        return False
+
+    # Recent range as fraction of price (dimensionless 0-1 scale)
+    recent_high = max(c['high'] for c in recent_candles)
+    recent_low = min(c['low'] for c in recent_candles)
+    recent_range = (recent_high - recent_low) / ref_price
+
+    # Consolidation if recent range < 40% of displacement strength
+    compression_ratio = recent_range / (displacement_strength + _CONSOLIDATION_EPSILON)
+    is_consolidating = compression_ratio < CONSOLIDATION_CHECK['max_range_ratio']
+
+    logger.debug(
+        f"   Consolidation check: compression_ratio={compression_ratio:.3f}, "
+        f"threshold={CONSOLIDATION_CHECK['max_range_ratio']}"
+    )
+    return is_consolidating
 
 
 def _score_reversal_pattern(
