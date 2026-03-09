@@ -67,8 +67,8 @@ RECENCY_THRESHOLDS = {
     # Liquidity Sweep recency for REVERSAL scenario
     'liquidity_sweep': {
         '1m': 10, '5m': 15, '15m': 20, '30m': 25,
-        '1h': 50, '2h': 70, '4h': 100, '6h': 100,  # Increased for realistic sweep detection
-        '8h': 100, '12h': 100, '1d': 100, '3d': 120, '1w': 150  # Extended for higher TFs
+        '1h': 100, '2h': 150, '4h': 200, '6h': 100,  # Increased for realistic sweep detection
+        '8h': 100, '12h': 100, '1d': 200, '3d': 120, '1w': 150  # Extended for higher TFs
     },
     
     # General component filtering (Order Blocks, FVGs)
@@ -1033,7 +1033,7 @@ def _validate_reversal_behavior(
     sweep_candles_ago = sweep.get('candles_ago', 999) if hasattr(sweep, 'get') else getattr(sweep, 'candles_ago', 999)
 
     max_sweep_age = get_recency_threshold('liquidity_sweep', timeframe)
-    if sweep_candles_ago > max_sweep_age:
+    if sweep_candles_ago > max_sweep_age * 2:  # Relaxed: only extremely old
         return False, f"Sweep too old ({sweep_candles_ago} candles ago, max {max_sweep_age} for {timeframe})"
 
     # 2. Structure flip is CONFIRMATION layer (non-blocking)
