@@ -1232,7 +1232,7 @@ class ICTSignalEngine:
         logger.info(f"   → Confirmation found: {has_confirmation}")
         logger.info(f"   → Confidence modifier: {confirmation_modifier:+.1%}")
         # Store for later use in confidence calculation
-        
+
         # СТЪПКА 7: PATTERN DETECTION + ENTRY ZONE (7A + 7B)
         # Step 7A detects WHAT pattern the market is making (no entry info).
         # Step 7B calculates entry_zone + invalidation_anchor from the SAME POI.
@@ -1271,6 +1271,54 @@ class ICTSignalEngine:
             sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
         logger.info(f"      • S/R Levels: {sr_count}")
 
+        # ── Build MTF components dict for Step 7A/7B ─────────────────────────
+        # Signal TF: entry POIs (OBs, FVGs, liquidity zones)
+        # Structure TF: structure break, displacement (already in ict_components from _detect_ict_components)
+        # HTF Bias TF: bias string
+        _signal_tf_key = entry_tf if entry_tf else timeframe
+        _structure_tf_key = tf_hierarchy.structure_tf if tf_hierarchy else _signal_tf_key
+        _confirmation_tf_key = tf_hierarchy.confirmation_tf if tf_hierarchy else _signal_tf_key
+        _htf_bias_tf_key = tf_hierarchy.htf_bias_tf if tf_hierarchy else _signal_tf_key
+
+        # signal_tf components: entry POIs only
+        _signal_comps = {
+            'order_blocks': ict_components.get('order_blocks', []),
+            'fvgs': ict_components.get('fvgs', []),
+            'liquidity_zones': ict_components.get('liquidity_zones', []),
+            'liquidity_sweeps': ict_components.get('liquidity_sweeps', []),
+        }
+        # structure_tf components: structure break + displacement
+        # Note: 'bias' in structure_comps stores the HTF bias (from htf_bias_tf, which == structure_tf in most hierarchies)
+        _htf_bias_str = htf_bias if htf_bias else 'NEUTRAL'
+        _structure_comps = {
+            'structure_break': ict_components.get('structure_break', {}),
+            'displacement': ict_components.get('displacement', {}),
+            'bias': _htf_bias_str,  # HTF bias (not signal bias) for pattern scoring
+        }
+        # htf_bias_tf components: HTF bias string from _get_htf_bias_with_fallback
+        _htf_comps = {
+            'bias': _htf_bias_str,
+        }
+        # confirmation_tf: whale blocks if available
+        _confirmation_comps = {
+            'whale_blocks': ict_components.get('whale_blocks', []),
+        }
+
+        mtf_components = {_signal_tf_key: _signal_comps}
+        mtf_components[_structure_tf_key] = _structure_comps
+        if _htf_bias_tf_key != _structure_tf_key:
+            mtf_components[_htf_bias_tf_key] = _htf_comps
+        # When htf_bias_tf == structure_tf, bias is already embedded in _structure_comps
+        if _confirmation_tf_key not in mtf_components:
+            mtf_components[_confirmation_tf_key] = _confirmation_comps
+
+        logger.info(
+            f"   → MTF components built: "
+            f"signal={_signal_tf_key}({len(_signal_comps.get('order_blocks', []))} OBs), "
+            f"structure={_structure_tf_key}(sb={bool(_structure_comps.get('structure_break', {}).get('type'))}), "
+            f"htf={_htf_bias_tf_key}(bias={_htf_comps.get('bias', 'NEUTRAL')})"
+        )
+
         # ── Step 7A: Detect pattern (WHAT the market is doing) ──────────────
         pattern_name = None
         pattern_probability = 0.0
@@ -1278,8 +1326,8 @@ class ICTSignalEngine:
             pattern_name, pattern_probability = detect_scenario_pattern(
                 current_price=current_price,
                 bias=bias_str,
-                ict_components=ict_components,
-                timeframe=timeframe,
+                mtf_components=mtf_components,
+                signal_tf=_signal_tf_key,
                 tf_hierarchy=tf_hierarchy if TIMEFRAME_CONTRACT_AVAILABLE else None,
             )
         else:
@@ -1312,8 +1360,9 @@ class ICTSignalEngine:
                 pattern_name=pattern_name,
                 current_price=current_price,
                 bias=bias_str,
-                ict_components=ict_components,
-                timeframe=timeframe,
+                mtf_components=mtf_components,
+                signal_tf=_signal_tf_key,
+                tf_hierarchy=tf_hierarchy if TIMEFRAME_CONTRACT_AVAILABLE else None,
             )
         else:
             logger.warning("⚠️ POI calculator not available - cannot compute entry zone")

@@ -4,6 +4,11 @@ Step 7A: Scenario Pattern Detector
 Detects WHAT pattern the market is making WITHOUT computing entry zones.
 Returns pattern type + probability score only.
 
+Uses multi-timeframe ICT analysis according to the Timeframe Contract:
+  - Entry POIs (OB/FVG/BSL/SSL): from signal_tf
+  - Structure (BOS/MSS/Displacement): from structure_tf
+  - HTF Bias: from htf_bias_tf
+
 Patterns:
 - ROLLBACK: BOS/MSS detected → market retracing to structure break
 - PULLBACK: Trend with OB/BSL/SSL → retracement in trend direction
@@ -51,37 +56,82 @@ PATTERN_PRIORITY = {
     'CONTINUATION': 4,
 }
 
+# HTF bias mismatch penalty: if HTF bias is known and contradicts signal bias,
+# reduce probability by this factor (not a gate - still emits signal with lower confidence)
+HTF_BIAS_MISMATCH_PENALTY = 0.80  # -20%
+
 
 def detect_scenario_pattern(
     current_price: float,
     bias: str,
-    ict_components: Dict,
-    timeframe: str,
-    tf_hierarchy: Optional['TimeframeHierarchy'] = None
+    mtf_components: Dict,
+    signal_tf: str,
+    tf_hierarchy: Optional['TimeframeHierarchy'] = None,
+    # Backward-compat alias (ignored when mtf_components is an MTF dict)
+    ict_components: Optional[Dict] = None,
+    timeframe: Optional[str] = None,
 ) -> Tuple[Optional[str], float]:
     """
     Detect the most probable market pattern WITHOUT computing entry zones.
 
+    Uses multi-timeframe component routing per Timeframe Contract:
+      - Entry POIs  → signal_tf components
+      - Structure   → structure_tf components
+      - HTF Bias    → htf_bias_tf components
+
     Args:
         current_price: Current market price
         bias: Market bias ('BULLISH' or 'BEARISH')
-        ict_components: ICT analysis components (order_blocks, fvgs, liquidity_zones, etc.)
-        timeframe: Trading timeframe
-        tf_hierarchy: Optional timeframe hierarchy for multi-timeframe context
+        mtf_components: {timeframe: {components}} dict; or flat legacy dict
+        signal_tf: Entry timeframe key used for entry POIs
+        tf_hierarchy: Optional timeframe hierarchy from TimeframeContract
 
     Returns:
         Tuple[Optional[str], float]: (pattern_name, probability) or (None, 0.0)
     """
     logger.info("=" * 60)
-    logger.info("🔍 Step 7A: Scenario Pattern Detection")
+    logger.info("🔍 Step 7A: Scenario Pattern Detection (MTF)")
     logger.info("=" * 60)
 
-    # Detect triggers (common for all patterns)
+    # ── Resolve component dicts per timeframe ─────────────────────────────
+    # If mtf_components is a flat dict (legacy/backward-compat), treat it as signal_tf components
+    has_mtf_structure = _is_mtf_dict(mtf_components, signal_tf)
+
+    if has_mtf_structure and tf_hierarchy:
+        signal_comps = mtf_components.get(signal_tf, {})
+        structure_comps = mtf_components.get(tf_hierarchy.structure_tf, {})
+        htf_bias_comps = mtf_components.get(tf_hierarchy.htf_bias_tf, structure_comps)
+        confirmation_comps = mtf_components.get(tf_hierarchy.confirmation_tf, {})
+        _effective_tf = signal_tf
+        logger.info(
+            f"   MTF routing: signal={signal_tf}, "
+            f"structure={tf_hierarchy.structure_tf}, "
+            f"htf_bias={tf_hierarchy.htf_bias_tf}"
+        )
+    else:
+        # Flat dict (legacy) - use for all components
+        signal_comps = mtf_components
+        structure_comps = mtf_components
+        htf_bias_comps = mtf_components
+        confirmation_comps = mtf_components
+        _effective_tf = signal_tf or timeframe or '1h'
+        logger.debug("   Flat ict_components dict - no MTF separation")
+
+    # Extract HTF bias for penalty check
+    htf_bias_str = str(htf_bias_comps.get('bias', 'NEUTRAL')).upper()
+
+    # Detect triggers from signal_tf components (common for all patterns)
     triggers, trigger_score = _detect_triggers_weighted(
-        current_price, ict_components, bias, timeframe
+        current_price, signal_comps, bias, _effective_tf
     )
-    trigger_strength = _evaluate_trigger_strength(trigger_score)
-    logger.info(f"   Triggers: {triggers} (score: {trigger_score}, strength: {trigger_strength})")
+    # Also check structure triggers from structure_tf
+    struct_triggers, struct_trigger_score = _detect_triggers_weighted(
+        current_price, structure_comps, bias, _effective_tf
+    )
+    # Merge triggers (deduplicated)
+    all_triggers = list(set(triggers + struct_triggers))
+    trigger_strength = _evaluate_trigger_strength(trigger_score + struct_trigger_score)
+    logger.info(f"   Triggers: {all_triggers} (score: {trigger_score + struct_trigger_score}, strength: {trigger_strength})")
 
     # Score all patterns
     pattern_scores: Dict[str, float] = {}
@@ -90,10 +140,13 @@ def detect_scenario_pattern(
     rollback_prob = _score_rollback_pattern(
         current_price=current_price,
         bias=bias,
-        ict_components=ict_components,
-        triggers=triggers,
-        trigger_score=trigger_score,
-        timeframe=timeframe,
+        signal_comps=signal_comps,
+        structure_comps=structure_comps,
+        htf_bias_str=htf_bias_str,
+        triggers=all_triggers,
+        trigger_score=trigger_score + struct_trigger_score,
+        timeframe=_effective_tf,
+        tf_hierarchy=tf_hierarchy,
     )
     if rollback_prob > 0:
         pattern_scores['ROLLBACK'] = rollback_prob
@@ -105,9 +158,12 @@ def detect_scenario_pattern(
     pullback_prob = _score_pullback_pattern(
         current_price=current_price,
         bias=bias,
-        ict_components=ict_components,
-        triggers=triggers,
+        signal_comps=signal_comps,
+        structure_comps=structure_comps,
+        htf_bias_str=htf_bias_str,
+        triggers=all_triggers,
         trigger_score=trigger_score,
+        tf_hierarchy=tf_hierarchy,
     )
     if pullback_prob > 0:
         pattern_scores['PULLBACK'] = pullback_prob
@@ -119,10 +175,13 @@ def detect_scenario_pattern(
     continuation_prob = _score_continuation_pattern(
         current_price=current_price,
         bias=bias,
-        ict_components=ict_components,
-        triggers=triggers,
-        trigger_score=trigger_score,
-        timeframe=timeframe,
+        signal_comps=signal_comps,
+        structure_comps=structure_comps,
+        htf_bias_str=htf_bias_str,
+        triggers=all_triggers,
+        trigger_score=trigger_score + struct_trigger_score,
+        timeframe=_effective_tf,
+        tf_hierarchy=tf_hierarchy,
     )
     if continuation_prob > 0:
         pattern_scores['CONTINUATION'] = continuation_prob
@@ -134,10 +193,13 @@ def detect_scenario_pattern(
     reversal_prob = _score_reversal_pattern(
         current_price=current_price,
         bias=bias,
-        ict_components=ict_components,
-        triggers=triggers,
-        trigger_score=trigger_score,
-        timeframe=timeframe,
+        signal_comps=signal_comps,
+        structure_comps=structure_comps,
+        htf_bias_str=htf_bias_str,
+        triggers=all_triggers,
+        trigger_score=trigger_score + struct_trigger_score,
+        timeframe=_effective_tf,
+        tf_hierarchy=tf_hierarchy,
     )
     if reversal_prob > 0:
         pattern_scores['REVERSAL'] = reversal_prob
@@ -175,61 +237,102 @@ def detect_scenario_pattern(
 
 
 # ============================================================
+# INTERNAL HELPERS
+# ============================================================
+
+def _is_mtf_dict(d: Dict, signal_tf: str) -> bool:
+    """Return True if d is keyed by timeframe strings (MTF dict), not component names."""
+    if not d:
+        return False
+    # An MTF dict has timeframe strings as keys (e.g. '1h', '2h', '4h', '1d')
+    tf_like = {'1m', '5m', '15m', '30m', '1h', '2h', '3h', '4h', '6h', '8h', '12h', '1d', '3d', '1w'}
+    first_key = next(iter(d))
+    return first_key in tf_like or (signal_tf and signal_tf in d)
+
+
+def _apply_htf_bias_penalty(probability: float, htf_bias_str: str, bias: str, pattern: str, tf_hierarchy: Optional['TimeframeHierarchy'] = None) -> float:
+    """
+    Apply -20% penalty when HTF bias is known and contradicts the signal bias.
+    This is a SOFT check - it reduces probability but does NOT block the signal.
+    """
+    if htf_bias_str in ('NEUTRAL', 'RANGING', '') or htf_bias_str == 'UNKNOWN':
+        return probability
+
+    bias_upper = bias.upper()
+    if htf_bias_str == bias_upper:
+        return probability  # Aligned - no penalty
+
+    # Mismatch: HTF contradicts signal bias
+    htf_tf = tf_hierarchy.htf_bias_tf if tf_hierarchy else 'HTF'
+    logger.debug(
+        f"   {pattern}: HTF bias mismatch (signal={bias_upper}, "
+        f"HTF {htf_tf}={htf_bias_str}) → applying -20% penalty"
+    )
+    return probability * HTF_BIAS_MISMATCH_PENALTY
+
+
+# ============================================================
 # PATTERN SCORING FUNCTIONS
 # ============================================================
 
 def _score_rollback_pattern(
     current_price: float,
     bias: str,
-    ict_components: Dict,
+    signal_comps: Dict,
+    structure_comps: Dict,
+    htf_bias_str: str,
     triggers: List[str],
     trigger_score: int,
     timeframe: str,
+    tf_hierarchy: Optional['TimeframeHierarchy'] = None,
 ) -> float:
     """
-    Score ROLLBACK pattern: BOS/MSS with market retracing to structure break.
-    Returns probability (0.0 = not valid, >0.0 = valid).
+    Score ROLLBACK pattern: BOS/MSS detected → market retracing to structure break.
+    Uses structure_tf for BOS/MSS, signal_tf for entry POIs.
     """
-    sb = ict_components.get('structure_break')
+    # ✅ Structure from structure_tf
+    sb = structure_comps.get('structure_break')
 
-    # Requires structure break
+    # Requires structure break on structure_tf
     if not sb or not sb.get('type'):
         return 0.0
 
-    # Validate behavioral requirements
+    # ✅ Structure direction must match bias (HARD block - structure contradicts bias)
+    sb_direction = sb.get('direction', '').upper()
+    bias_upper = bias.upper()
+    if sb_direction and sb_direction != bias_upper:
+        structure_tf_label = tf_hierarchy.structure_tf if tf_hierarchy else 'structure_tf'
+        logger.debug(
+            f"   ROLLBACK: Structure direction mismatch "
+            f"(structure_tf={structure_tf_label}, direction={sb_direction} != bias={bias_upper})"
+        )
+        return 0.0
+
+    # Validate behavioral requirements using signal_tf context
     is_eligible, reason = _validate_rollback_behavior(
         structure_break=sb,
         current_price=current_price,
-        ict_components=ict_components,
+        ict_components=signal_comps,
         timeframe=timeframe,
     )
     if not is_eligible:
         logger.debug(f"   ROLLBACK behavior invalid: {reason}")
         return 0.0
 
-    # Check bias alignment with structure direction
-    sb_direction = sb.get('direction', '').upper()
-    bias_upper = bias.upper()
-    if sb_direction and sb_direction != bias_upper:
-        logger.debug(f"   ROLLBACK: structure direction {sb_direction} != bias {bias_upper}")
-        return 0.0
-
     # Calculate probability
     structure_strength = sb.get('strength', 50)
-    displacement = ict_components.get('displacement', {})
+    displacement = structure_comps.get('displacement', {})
     displacement_strength = displacement.get('strength', 0) if displacement.get('detected') else 0
 
     # Use break_level if available, else estimate distance from current price
     break_level = sb.get('break_level') or sb.get('price')
     if break_level and break_level > 0:
         distance_pct = abs(break_level - current_price) / current_price * 100
-        # Distance check
         if distance_pct < ROLLBACK_DISTANCE['min_pct'] * 100:
             return 0.0
         if distance_pct > ROLLBACK_DISTANCE['max_pct'] * 100:
             return 0.0
     else:
-        # No break_level in structure_break - use a default 2% distance for scoring
         distance_pct = 2.0
 
     from entry_scenarios import _calculate_probability_rollback
@@ -239,32 +342,38 @@ def _score_rollback_pattern(
         triggers=triggers,
         distance_pct=distance_pct,
     )
+
+    # ✅ HTF Bias alignment check (-20% penalty, NOT a gate)
+    probability = _apply_htf_bias_penalty(probability, htf_bias_str, bias, 'ROLLBACK', tf_hierarchy)
     return probability
 
 
 def _score_pullback_pattern(
     current_price: float,
     bias: str,
-    ict_components: Dict,
+    signal_comps: Dict,
+    structure_comps: Dict,
+    htf_bias_str: str,
     triggers: List[str],
     trigger_score: int,
+    tf_hierarchy: Optional['TimeframeHierarchy'] = None,
 ) -> float:
     """
-    Score PULLBACK pattern: trend retracement to OB or BSL/SSL.
+    Score PULLBACK pattern: trend retracement to OB or BSL/SSL on signal_tf.
     REQUIRES OB or BSL/SSL (FVG alone is insufficient per ICT principles).
-    Returns probability (0.0 = not valid, >0.0 = valid).
     """
     is_bullish = bias.upper() == 'BULLISH'
     is_bearish = bias.upper() == 'BEARISH'
 
-    obs = ict_components.get('order_blocks', [])
-    liq_zones = ict_components.get('liquidity_zones', [])
+    # ✅ Entry POIs from signal_tf
+    obs = signal_comps.get('order_blocks', [])
+    liq_zones = signal_comps.get('liquidity_zones', [])
 
     best_quality = 0.0
     best_distance = None
-    found_structural_poi = False  # OB or BSL/SSL (not FVG)
+    found_structural_poi = False
 
-    # Check Order Blocks
+    # Check Order Blocks from signal_tf
     for ob in obs:
         ob_type = str(
             ob.type if hasattr(ob, 'type') else
@@ -274,7 +383,6 @@ def _score_pullback_pattern(
         if ob_center <= 0:
             continue
 
-        # Bias-aligned OB on the retracement side
         if is_bullish and 'BULLISH' in ob_type and ob_center < current_price:
             distance_pct = abs(ob_center - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
@@ -295,7 +403,7 @@ def _score_pullback_pattern(
                         best_quality = quality
                         best_distance = distance_pct
 
-    # Check Liquidity zones (BSL/SSL only - these are structural boundaries)
+    # Check BSL/SSL from signal_tf
     for liq in liq_zones:
         liq_type = (
             liq.type if hasattr(liq, 'type') else
@@ -308,7 +416,6 @@ def _score_pullback_pattern(
         if liq_price <= 0:
             continue
 
-        # BULLISH pullback to BSL (below price), BEARISH pullback to SSL (above price)
         if is_bullish and 'BSL' in liq_type and liq_price < current_price:
             distance_pct = abs(liq_price - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
@@ -329,9 +436,9 @@ def _score_pullback_pattern(
                         best_quality = quality
                         best_distance = distance_pct
 
-    # CRITICAL: PULLBACK requires OB or BSL/SSL (FVG alone insufficient)
+    # CRITICAL: PULLBACK requires OB or BSL/SSL from signal_tf
     if not found_structural_poi:
-        logger.debug("   PULLBACK: no OB or BSL/SSL found (FVG alone insufficient for SL placement)")
+        logger.debug("   PULLBACK: no OB or BSL/SSL found on signal_tf (FVG alone insufficient for SL placement)")
         return 0.0
 
     # Calculate probability
@@ -344,9 +451,9 @@ def _score_pullback_pattern(
         structure_present=structure_present,
     )
 
-    # Confirmation modifier
-    sb = ict_components.get('structure_break')
-    disp = ict_components.get('displacement', {})
+    # Confirmation modifier using structure_tf data
+    sb = structure_comps.get('structure_break')
+    disp = structure_comps.get('displacement', {})
     confirmation_present = _check_confirmation_layer(
         structure_break=sb,
         displacement=disp,
@@ -358,27 +465,32 @@ def _score_pullback_pattern(
         probability -= 0.08
     probability = max(0.0, min(1.0, probability))
 
+    # ✅ HTF Bias alignment check (-20% penalty, NOT a gate)
+    probability = _apply_htf_bias_penalty(probability, htf_bias_str, bias, 'PULLBACK', tf_hierarchy)
     return probability
 
 
 def _score_continuation_pattern(
     current_price: float,
     bias: str,
-    ict_components: Dict,
+    signal_comps: Dict,
+    structure_comps: Dict,
+    htf_bias_str: str,
     triggers: List[str],
     trigger_score: int,
     timeframe: str,
+    tf_hierarchy: Optional['TimeframeHierarchy'] = None,
 ) -> float:
     """
     Score CONTINUATION pattern: momentum continuation after displacement.
-    REQUIRES OB or BSL/SSL near the displacement (FVG alone insufficient per ICT).
-    Returns probability (0.0 = not valid, >0.0 = valid).
+    Displacement is checked from structure_tf; OBs from signal_tf.
+    REQUIRES OB or BSL/SSL near the displacement.
     """
-    # Requires displacement trigger
+    # ✅ Displacement from structure_tf
     if 'DISPLACEMENT' not in triggers and 'MSS/BOS' not in triggers:
         return 0.0
 
-    disp = ict_components.get('displacement', {})
+    disp = structure_comps.get('displacement', {})
     displacement_detected = disp.get('detected', False)
     displacement_strength = disp.get('strength', 0.0)
 
@@ -386,14 +498,15 @@ def _score_continuation_pattern(
         return 0.0
 
     is_bullish = bias.upper() == 'BULLISH'
-    obs = ict_components.get('order_blocks', [])
-    liq_zones = ict_components.get('liquidity_zones', [])
+
+    # ✅ Entry POIs from signal_tf
+    obs = signal_comps.get('order_blocks', [])
+    liq_zones = signal_comps.get('liquidity_zones', [])
 
     # CRITICAL: CONTINUATION requires OB or BSL/SSL near the current displacement zone
     found_structural_poi = False
-    check_range_pct = CONTINUATION_DISTANCE['poi_check_range_pct'] * 100  # e.g. 3%
+    check_range_pct = CONTINUATION_DISTANCE['poi_check_range_pct'] * 100
 
-    # Check OBs near current price (within displacement zone)
     for ob in obs:
         ob_type = str(
             ob.type if hasattr(ob, 'type') else
@@ -403,7 +516,6 @@ def _score_continuation_pattern(
         if ob_center <= 0:
             continue
 
-        # OB should be in the right zone (behind price in trend direction)
         if is_bullish and 'BULLISH' in ob_type:
             distance_pct = abs(ob_center - current_price) / current_price * 100
             if distance_pct <= check_range_pct:
@@ -420,7 +532,6 @@ def _score_continuation_pattern(
                     found_structural_poi = True
                     break
 
-    # Check BSL/SSL near current price
     if not found_structural_poi:
         for liq in liq_zones:
             liq_type = (
@@ -448,12 +559,12 @@ def _score_continuation_pattern(
 
     if not found_structural_poi:
         logger.debug(
-            "   CONTINUATION: no OB or BSL/SSL near displacement "
+            "   CONTINUATION: no OB or BSL/SSL near displacement on signal_tf "
             "(FVG alone insufficient for SL placement)"
         )
         return 0.0
 
-    # Compute clear path (no OB directly ahead)
+    # Compute clear path (no OB directly ahead) using signal_tf OBs
     clear_path = True
     check_range = CONTINUATION_DISTANCE['poi_check_range_pct']
     for ob in obs:
@@ -465,7 +576,6 @@ def _score_continuation_pattern(
             clear_path = False
             break
 
-    # Calculate probability
     structure_present = 'MSS/BOS' in triggers
     from entry_scenarios import _calculate_probability_continuation
     probability = _calculate_probability_continuation(
@@ -474,24 +584,31 @@ def _score_continuation_pattern(
         structure_present=structure_present,
         clear_path=clear_path,
     )
+
+    # ✅ HTF Bias alignment check (-20% penalty, NOT a gate)
+    probability = _apply_htf_bias_penalty(probability, htf_bias_str, bias, 'CONTINUATION', tf_hierarchy)
     return probability
 
 
 def _score_reversal_pattern(
     current_price: float,
     bias: str,
-    ict_components: Dict,
+    signal_comps: Dict,
+    structure_comps: Dict,
+    htf_bias_str: str,
     triggers: List[str],
     trigger_score: int,
     timeframe: str,
+    tf_hierarchy: Optional['TimeframeHierarchy'] = None,
 ) -> float:
     """
     Score REVERSAL pattern: liquidity sweep followed by structure flip.
-    Returns probability (0.0 = not valid, >0.0 = valid).
+    Sweep + MSS/CHOCH from signal_tf; displacement from structure_tf.
     """
-    sweeps = ict_components.get('liquidity_sweeps', [])
-    sb = ict_components.get('structure_break')
-    disp = ict_components.get('displacement', {})
+    # ✅ Sweeps from signal_tf; structure from structure_tf
+    sweeps = signal_comps.get('liquidity_sweeps', [])
+    sb = structure_comps.get('structure_break')
+    disp = structure_comps.get('displacement', {})
 
     # Validate behavioral requirements
     is_eligible, reason = _validate_reversal_behavior(
@@ -510,15 +627,14 @@ def _score_reversal_pattern(
             logger.debug("   REVERSAL: no liquidity sweep trigger")
             return 0.0
 
-    # Require structure flip (MSS/CHOCH)
+    # Require structure flip (MSS/CHOCH) from structure_tf
     structure_flip = False
     if REVERSAL_SETTINGS.get('require_structure_flip', True):
         if not sb or sb.get('type') not in ['MSS', 'CHOCH']:
-            logger.debug("   REVERSAL: no MSS/CHOCH structure flip")
+            logger.debug("   REVERSAL: no MSS/CHOCH structure flip on structure_tf")
             return 0.0
         structure_flip = True
 
-    # Calculate probability
     sweep_present = bool(sweeps)
     displacement_strength = disp.get('strength', 0.0) if disp else 0.0
 
@@ -544,4 +660,21 @@ def _score_reversal_pattern(
             probability -= modifier_pct
         probability = max(0.0, min(1.0, probability))
 
+    # ✅ HTF Bias alignment check (-20% penalty, NOT a gate)
+    # For REVERSAL, HTF mismatch is expected (we're reversing against HTF), so smaller penalty
+    if htf_bias_str not in ('NEUTRAL', 'RANGING', '', 'UNKNOWN'):
+        bias_upper = bias.upper()
+        if htf_bias_str == bias_upper:
+            # Reversal aligned with HTF - unusual, small boost
+            pass
+        else:
+            # Reversal against HTF - this is normal for REVERSAL, apply smaller penalty
+            probability = probability * 0.90  # Only -10% for REVERSAL (vs -20% for trend patterns)
+            htf_tf = tf_hierarchy.htf_bias_tf if tf_hierarchy else 'HTF'
+            logger.debug(
+                f"   REVERSAL: trading against HTF bias ({htf_tf}={htf_bias_str}) "
+                f"→ -10% probability (normal for REVERSAL)"
+            )
+
     return probability
+

@@ -20,6 +20,9 @@ Date: 2026-03-09
 import logging
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from timeframe_contract import TimeframeHierarchy
+
 from entry_scenarios import (
     _safe_get,
     _get_ob_center,
@@ -34,6 +37,7 @@ from entry_scenario_config import (
     POI_QUALITY,
     POSITION_SIZE,
 )
+from scenario_pattern_detector import _is_mtf_dict
 
 logger = logging.getLogger(__name__)
 
@@ -50,19 +54,29 @@ def calculate_entry_zone_from_poi(
     pattern_name: str,
     current_price: float,
     bias: str,
-    ict_components: Dict,
-    timeframe: str,
+    ict_components: Optional[Dict] = None,
+    timeframe: Optional[str] = None,
+    # New MTF params
+    mtf_components: Optional[Dict] = None,
+    signal_tf: Optional[str] = None,
+    tf_hierarchy=None,
 ) -> Optional[Dict]:
     """
     Given a detected pattern, calculate the entry zone and invalidation anchor
     from a single, consistent POI.
 
+    Entry POIs are always sourced from signal_tf components (OBs, liquidity).
+    Structure context (structure_break, displacement) comes from structure_tf.
+
     Args:
         pattern_name: 'ROLLBACK', 'PULLBACK', 'CONTINUATION', or 'REVERSAL'
         current_price: Current market price
         bias: Market bias ('BULLISH' or 'BEARISH')
-        ict_components: ICT analysis components
-        timeframe: Trading timeframe
+        mtf_components: {timeframe: {components}} dict (preferred)
+        signal_tf: Entry timeframe key used for entry POIs
+        tf_hierarchy: TimeframeHierarchy from TimeframeContract (optional)
+        ict_components: Flat ICT components dict (legacy / backward-compat)
+        timeframe: Signal timeframe string (legacy)
 
     Returns:
         Dict with keys:
@@ -78,14 +92,28 @@ def calculate_entry_zone_from_poi(
     """
     logger.info(f"🎯 Step 7B: Entry Zone from POI for {pattern_name}")
 
+    # ── Resolve signal_tf components ──────────────────────────────────────
+    # Use mtf_components (new) if provided, else fall back to flat ict_components
+    if mtf_components and signal_tf:
+        if _is_mtf_dict(mtf_components, signal_tf):
+            _entry_comps = mtf_components.get(signal_tf, {})
+        else:
+            # Flat dict passed as mtf_components
+            _entry_comps = mtf_components
+    elif ict_components:
+        _entry_comps = ict_components
+    else:
+        logger.error("❌ No components provided to calculate_entry_zone_from_poi")
+        return None
+
     if pattern_name == 'PULLBACK':
-        return _calculate_pullback_entry_zone(current_price, bias, ict_components)
+        return _calculate_pullback_entry_zone(current_price, bias, _entry_comps)
     elif pattern_name == 'CONTINUATION':
-        return _calculate_continuation_entry_zone(current_price, bias, ict_components, timeframe)
+        return _calculate_continuation_entry_zone(current_price, bias, _entry_comps, timeframe or signal_tf or '1h')
     elif pattern_name == 'ROLLBACK':
-        return _calculate_rollback_entry_zone(current_price, bias, ict_components)
+        return _calculate_rollback_entry_zone(current_price, bias, _entry_comps)
     elif pattern_name == 'REVERSAL':
-        return _calculate_reversal_entry_zone(current_price, bias, ict_components)
+        return _calculate_reversal_entry_zone(current_price, bias, _entry_comps)
     else:
         logger.error(f"❌ Unknown pattern: {pattern_name}")
         return None
