@@ -37,6 +37,14 @@ from entry_scenario_config import (
 
 logger = logging.getLogger(__name__)
 
+# ── Rollback constants ──────────────────────────────────────────────────────
+# Default buffer when no explicit break_level is stored in structure_break
+ROLLBACK_DEFAULT_BUFFER = 0.01   # 1% retracement zone from current price
+
+# ── Reversal anchor buffer ─────────────────────────────────────────────────
+# How far beyond the sweep price to place the invalidation anchor
+REVERSAL_ANCHOR_BUFFER_PCT = 0.002  # 0.2% beyond sweep price
+
 
 def calculate_entry_zone_from_poi(
     pattern_name: str,
@@ -431,11 +439,11 @@ def _calculate_rollback_entry_zone(
         # No explicit break level: use current price as break zone with a small buffer
         # This allows ROLLBACK to work even when break_level isn't stored
         logger.warning("   ⚠️ ROLLBACK: no break_level in structure_break - estimating from current price")
-        # Estimate: price recently broke a level nearby, use a 1% retracement zone
+        # Estimate: price recently broke a level nearby, use ROLLBACK_DEFAULT_BUFFER retracement zone
         if is_bullish:
-            break_level = current_price * 0.99  # For BULLISH: break was below, entry is on retrace down
+            break_level = current_price * (1 - ROLLBACK_DEFAULT_BUFFER)
         else:
-            break_level = current_price * 1.01  # For BEARISH: break was above, entry is on retrace up
+            break_level = current_price * (1 + ROLLBACK_DEFAULT_BUFFER)
 
     # Distance check
     distance_pct = abs(break_level - current_price) / current_price * 100
@@ -559,7 +567,7 @@ def _calculate_reversal_entry_zone(
     }
 
     # Invalidation anchor: beyond the sweep level (same POI = the sweep zone)
-    anchor_price = sweep_price * (0.998 if is_bullish else 1.002)
+    anchor_price = sweep_price * (1 - REVERSAL_ANCHOR_BUFFER_PCT if is_bullish else 1 + REVERSAL_ANCHOR_BUFFER_PCT)
     invalidation_anchor = {
         'type': 'LIQUIDITY_LOW' if is_bullish else 'LIQUIDITY_HIGH',
         'price': float(anchor_price),

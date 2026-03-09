@@ -236,6 +236,15 @@ ATR_FALLBACK_PCT = 0.02  # 2% fallback when ATR calculation fails
 # Legacy constants removed - now using TimeframeContract
 # TIMEFRAME_MIN_SL_DISTANCE and TIMEFRAME_BUFFER_PCT moved to contract
 
+# ── Trigger Confidence Adjustment (Step 7 → Step 11 modifier) ──
+# Trigger is a SOFT modifier - it adjusts confidence but never blocks a signal
+TRIGGER_MET_CONFIDENCE_BONUS = 10.0     # +10% when entry trigger is confirmed
+TRIGGER_NOT_MET_CONFIDENCE_PENALTY = -5.0  # -5% when trigger not yet confirmed
+
+# ── Structure TP Snap Tolerance (Step 9) ──
+# Accept structure target if it is within ±30% of the 2.5 RR mathematical level
+STRUCTURE_TP_SNAP_TOLERANCE = 0.30
+
 
 class SignalType(Enum):
     """Signal types"""
@@ -555,7 +564,7 @@ class ICTSignalEngine:
     def _get_default_config(self) -> Dict:
         """Get default configuration"""
         return {
-            'min_confidence': 50,          # Min 55% confidence (auto) / 65% (manual)
+            'min_confidence': 55,          # Min 55% confidence (auto) / 65% (manual - applied in Step 12)
             'min_risk_reward': 2.5,        # Min 1:2.5 R:R
             'max_sl_distance_pct': 3.0,    # Max 3% SL distance
             'tp_multipliers': [3, 5, 8],   # TP at 3R, 5R, 8R (STRICT ICT)
@@ -1366,11 +1375,11 @@ class ICTSignalEngine:
             logger.warning(f"⚠️ Trigger check failed (non-blocking): {e}")
 
         # Store trigger result for confidence adjustment in Step 11
-        trigger_confidence_adjustment = 10.0 if is_triggered else -5.0
+        trigger_confidence_adjustment = TRIGGER_MET_CONFIDENCE_BONUS if is_triggered else TRIGGER_NOT_MET_CONFIDENCE_PENALTY
         if is_triggered:
-            logger.info(f"   ✅ Entry trigger MET: {trigger_reason} (+10% confidence)")
+            logger.info(f"   ✅ Entry trigger MET: {trigger_reason} (+{TRIGGER_MET_CONFIDENCE_BONUS:.0f}% confidence)")
         else:
-            logger.info(f"   ⚠️ Entry trigger NOT met: {trigger_reason} (-5% confidence)")
+            logger.info(f"   ⚠️ Entry trigger NOT met: {trigger_reason} ({TRIGGER_NOT_MET_CONFIDENCE_PENALTY:.0f}% confidence)")
 
         # Log selected scenario details
         logger.info(f"   ✅ Scenario: {entry_scenario_result['scenario']}")
@@ -1505,7 +1514,7 @@ class ICTSignalEngine:
                 struct_rr = abs(struct_tp - entry_price) / risk if risk > 0 else 0
                 if struct_rr >= 2.5:
                     # Accept if structure TP is within ±30% of 2.5 RR level
-                    if abs(struct_tp - tp_primary) / tp_primary <= 0.30:
+                    if abs(struct_tp - tp_primary) / tp_primary <= STRUCTURE_TP_SNAP_TOLERANCE:
                         tp_primary = struct_tp
                         logger.info(f"   → Snapped to structure target: ${tp_primary:.2f} (RR {struct_rr:.1f})")
                     else:
