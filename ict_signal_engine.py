@@ -931,7 +931,7 @@ class ICTSignalEngine:
                 'structure_tf': tf_hierarchy.structure_tf,
                 'htf_bias_tf': tf_hierarchy.htf_bias_tf,
                 'mode': tf_hierarchy.mode.value,
-                'description': f'{tf_hierarchy.signal_tf} signal with {tf_hierarchy.confirmation_tf} confirmation and {tf_hierarchy.structure_tf} structure'
+                'description': f'{tf_hierarchy.signal_tf} signal with {tf_hierarchy.confirmation_tf} confirmation and {tf_hierarchy.structure_tf} structure',
             }
             logger.info(f"✅ TF hierarchy from contract:")
             logger.info(f"   Entry: {hierarchy_info['entry_tf']}")
@@ -940,6 +940,7 @@ class ICTSignalEngine:
             logger.info(f"   HTF Bias: {hierarchy_info['htf_bias_tf']}")
             logger.info(f"   Mode: {hierarchy_info['mode']}")
             validated_confidence = initial_confidence
+
         else:
             # Fallback to legacy validation
             validated_confidence, tf_warnings, hierarchy_info = self._validate_mtf_hierarchy(
@@ -947,6 +948,10 @@ class ICTSignalEngine:
                 mtf_analysis=mtf_analysis if mtf_analysis else {},
                 confidence=initial_confidence
             )
+
+        # ✅ FIX: Extract entry_tf for component detection (AFTER if/else)
+        entry_tf = tf_hierarchy.signal_tf if tf_hierarchy else timeframe
+        logger.info(f"📊 Entry TF for component detection: {entry_tf}")
         
         # Store hierarchy info for later use in signal generation
         context_warnings = tf_warnings  # Will be added to signal warnings later
