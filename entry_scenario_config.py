@@ -254,3 +254,57 @@ MIN_TRIGGERS = {          # Legacy - validation script only (NOT used in Phase 2
 }
 
 PULLBACK_HIGH_QUALITY_THRESHOLD = 85  # Legacy - validation script only (NOT used in Phase 2)
+
+# ============================================================
+# PULLBACK Requirements (Fix #1)
+# ============================================================
+# ICT Principle: PULLBACK = Displacement → Retracement to POI → Continuation
+# Without prior displacement a retracement may just be range movement.
+PULLBACK_REQUIREMENTS = {
+    'min_displacement_strength': 0.35,  # Minimum prior displacement strength
+    'displacement_source': 'structure_tf',  # Must come from structure TF
+}
+
+# ============================================================
+# CONTINUATION Consolidation Check (Fix #2)
+# ============================================================
+# ICT Principle: CONTINUATION = Trend → Consolidation/Pause → Breakout from POI
+# Without prior consolidation, it's just displacement continuation.
+CONSOLIDATION_CHECK = {
+    'max_range_ratio': 0.40,   # Recent range < 40% of displacement strength = consolidation
+    'consolidation_penalty': 0.70,  # -30% probability when no consolidation detected
+    'lookback_candles': {
+        '5m': 8,
+        '15m': 6,
+        '1h': 5,
+        '4h': 4,
+        '1d': 3,
+    }
+}
+
+# ============================================================
+# Multi-Pattern Confluence (Fix #6)
+# ============================================================
+# ICT Principle: Best setups occur when multiple patterns align at the same POI.
+PATTERN_CONFLUENCE = {
+    'bonus': 0.15,                         # +15% probability for multi-pattern confluence
+    'min_probability_for_confluence': 0.50, # Pattern must be ≥50% to count for confluence
+}
+
+# ============================================================
+# Pattern Types with Subtypes (Fix #5)
+# ============================================================
+PATTERN_TYPES = {
+    'PULLBACK': {
+        'subtypes': ['STRUCTURE_RETEST', 'OB_RETRACEMENT', 'FVG_FILL'],
+        'description': 'Retracement to POI in trend direction'
+    },
+    'CONTINUATION': {
+        'subtypes': ['DISPLACEMENT_BREAKOUT'],
+        'description': 'Resumption after consolidation'
+    },
+    'REVERSAL': {
+        'subtypes': ['LIQUIDITY_SWEEP_REVERSAL', 'CHOCH_REVERSAL'],
+        'description': 'Change of direction after liquidity grab'
+    }
+}

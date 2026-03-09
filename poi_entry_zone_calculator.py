@@ -107,11 +107,24 @@ def calculate_entry_zone_from_poi(
         return None
 
     if pattern_name == 'PULLBACK':
-        return _calculate_pullback_entry_zone(current_price, bias, _entry_comps)
+        # Try OB/BSL/SSL-based pullback first (OB_RETRACEMENT subtype)
+        result = _calculate_pullback_entry_zone(current_price, bias, _entry_comps)
+        if result is not None:
+            result['subtype'] = 'OB_RETRACEMENT'
+            return result
+        # Fallback to structure break retest (STRUCTURE_RETEST subtype)
+        result = _calculate_pullback_structure_retest_entry_zone(current_price, bias, _entry_comps)
+        if result is not None:
+            result['subtype'] = 'STRUCTURE_RETEST'
+        return result
     elif pattern_name == 'CONTINUATION':
         return _calculate_continuation_entry_zone(current_price, bias, _entry_comps, timeframe or signal_tf or '1h')
     elif pattern_name == 'ROLLBACK':
-        return _calculate_rollback_entry_zone(current_price, bias, _entry_comps)
+        # Backward compatibility: ROLLBACK is now PULLBACK (STRUCTURE_RETEST)
+        result = _calculate_pullback_structure_retest_entry_zone(current_price, bias, _entry_comps)
+        if result is not None:
+            result['subtype'] = 'STRUCTURE_RETEST'
+        return result
     elif pattern_name == 'REVERSAL':
         return _calculate_reversal_entry_zone(current_price, bias, _entry_comps)
     else:
@@ -443,16 +456,17 @@ def _calculate_continuation_entry_zone(
 
 
 # ============================================================
-# ROLLBACK ENTRY ZONE (Structure break level)
+# PULLBACK (STRUCTURE_RETEST) ENTRY ZONE  (formerly ROLLBACK)
 # ============================================================
 
-def _calculate_rollback_entry_zone(
+def _calculate_pullback_structure_retest_entry_zone(
     current_price: float,
     bias: str,
     ict_components: Dict,
 ) -> Optional[Dict]:
     """
-    Calculate entry zone for ROLLBACK pattern.
+    Calculate entry zone for PULLBACK (STRUCTURE_RETEST) pattern.
+    Formerly _calculate_rollback_entry_zone.
     Uses structure break level for both entry and invalidation anchor.
     """
     sb = ict_components.get('structure_break')
@@ -465,8 +479,8 @@ def _calculate_rollback_entry_zone(
 
     if not break_level:
         # No explicit break level: use current price as break zone with a small buffer
-        # This allows ROLLBACK to work even when break_level isn't stored
-        logger.warning("   ⚠️ ROLLBACK: no break_level in structure_break - estimating from current price")
+        # This allows structure retest to work even when break_level isn't stored
+        logger.warning("   ⚠️ PULLBACK_RETEST: no break_level in structure_break - estimating from current price")
         # Estimate: price recently broke a level nearby, use ROLLBACK_DEFAULT_BUFFER retracement zone
         if is_bullish:
             break_level = current_price * (1 - ROLLBACK_DEFAULT_BUFFER)
@@ -476,18 +490,18 @@ def _calculate_rollback_entry_zone(
     # Distance check
     distance_pct = abs(break_level - current_price) / current_price * 100
     if distance_pct < ROLLBACK_DISTANCE['min_pct'] * 100:
-        logger.debug(f"   ROLLBACK: too close to break level ({distance_pct:.2f}%)")
+        logger.debug(f"   PULLBACK_RETEST: too close to break level ({distance_pct:.2f}%)")
         return None
     if distance_pct > ROLLBACK_DISTANCE['max_pct'] * 100:
-        logger.debug(f"   ROLLBACK: too far from break level ({distance_pct:.2f}%)")
+        logger.debug(f"   PULLBACK_RETEST: too far from break level ({distance_pct:.2f}%)")
         return None
 
     # Bias alignment check
     if is_bullish and break_level >= current_price:
-        logger.debug("   ROLLBACK: BULLISH but break_level above current price")
+        logger.debug("   PULLBACK_RETEST: BULLISH but break_level above current price")
         return None
     if not is_bullish and break_level <= current_price:
-        logger.debug("   ROLLBACK: BEARISH but break_level below current price")
+        logger.debug("   PULLBACK_RETEST: BEARISH but break_level below current price")
         return None
 
     buffer = ROLLBACK_DISTANCE['buffer_pct']
@@ -495,7 +509,7 @@ def _calculate_rollback_entry_zone(
         'center': break_level,
         'low': break_level * (1 - buffer),
         'high': break_level * (1 + buffer),
-        'source': f"ROLLBACK_{sb.get('type', 'BOS') if sb else 'BOS'}",
+        'source': f"PULLBACK_RETEST_{sb.get('type', 'BOS') if sb else 'BOS'}",
         'quality': int(sb.get('strength', 60)) if sb else 60,
         'distance_pct': distance_pct,
         'distance_price': abs(break_level - current_price),
@@ -514,7 +528,7 @@ def _calculate_rollback_entry_zone(
     }
 
     logger.info(
-        f"   ✅ ROLLBACK entry zone: ${break_level:.4f} "
+        f"   ✅ PULLBACK (STRUCTURE_RETEST) entry zone: ${break_level:.4f} "
         f"(structure break, distance {distance_pct:.1f}%)"
     )
     logger.info(
@@ -523,7 +537,7 @@ def _calculate_rollback_entry_zone(
     )
 
     return {
-        'scenario': 'ROLLBACK',
+        'scenario': 'PULLBACK',
         'entry_zone': entry_zone,
         'invalidation_anchor': invalidation_anchor,
         'poi_type': 'STRUCTURE_BREAK',
@@ -531,13 +545,17 @@ def _calculate_rollback_entry_zone(
             'type': sb.get('type', 'BOS') if sb else 'BOS',
             'break_level': float(break_level),
         },
-        'position_size_advisory': POSITION_SIZE['ROLLBACK'],
+        'position_size_advisory': POSITION_SIZE.get('PULLBACK', 100),
         'reasoning': (
-            f"Rollback to structure break @ ${break_level:.2f} "
+            f"Pullback to structure break @ ${break_level:.2f} "
             f"({distance_pct:.1f}% from current). "
             f"SL beyond break level @ ${anchor_price:.2f} (same POI)."
         ),
     }
+
+
+# Backward-compatibility alias
+_calculate_rollback_entry_zone = _calculate_pullback_structure_retest_entry_zone
 
 
 # ============================================================
