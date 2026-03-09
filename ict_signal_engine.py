@@ -24,11 +24,63 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 import logging
-from entry_scenarios import select_best_entry_scenario, is_entry_triggered, select_entry_zone_for_scenario
+from entry_scenarios import is_entry_triggered, select_entry_zone_for_scenario
 from entry_scenario_config import MIN_PROBABILITY_THRESHOLDS, DEFAULT_MIN_PROBABILITY_THRESHOLD
-from setup_state_manager import get_setup_manager
 import json
 import os
+
+# Step 7A: Pattern detection (new architecture)
+try:
+    from scenario_pattern_detector import detect_scenario_pattern
+    PATTERN_DETECTOR_AVAILABLE = True
+except ImportError:
+    PATTERN_DETECTOR_AVAILABLE = False
+    logging.warning("Scenario Pattern Detector not available")
+
+# Step 7B: POI entry zone calculator (new architecture)
+try:
+    from poi_entry_zone_calculator import calculate_entry_zone_from_poi
+    POI_CALCULATOR_AVAILABLE = True
+except ImportError:
+    POI_CALCULATOR_AVAILABLE = False
+    logging.warning("POI Entry Zone Calculator not available")
+
+# Signal deduplication
+try:
+    from signal_cache import is_signal_duplicate, load_sent_signals, save_sent_signals
+    SIGNAL_CACHE_AVAILABLE = True
+except ImportError:
+    SIGNAL_CACHE_AVAILABLE = False
+    logging.warning("Signal Cache not available - deduplication disabled")
+
+# Legacy ESB evaluators kept for backward compat (no longer used as hard gates)
+try:
+    from entry_gating_evaluator import evaluate_entry_gating
+    ENTRY_GATING_AVAILABLE = True
+except ImportError:
+    evaluate_entry_gating = None
+    ENTRY_GATING_AVAILABLE = False
+
+try:
+    from confidence_threshold_evaluator import evaluate_confidence_threshold
+    CONFIDENCE_THRESHOLD_AVAILABLE = True
+except ImportError:
+    evaluate_confidence_threshold = None
+    CONFIDENCE_THRESHOLD_AVAILABLE = False
+
+try:
+    from execution_eligibility_evaluator import evaluate_execution_eligibility
+    EXECUTION_ELIGIBILITY_AVAILABLE = True
+except ImportError:
+    evaluate_execution_eligibility = None
+    EXECUTION_ELIGIBILITY_AVAILABLE = False
+
+try:
+    from risk_admission_evaluator import evaluate_risk_admission
+    RISK_ADMISSION_AVAILABLE = True
+except ImportError:
+    evaluate_risk_admission = None
+    RISK_ADMISSION_AVAILABLE = False
 
 # ✅ STABILIZATION PR: Import centralized timeframe contract
 try:
@@ -53,35 +105,6 @@ try:
 except ImportError:
     COMPONENT_VALIDATOR_AVAILABLE = False
     logging.warning("Component TF Validator not available")
-
-# Import Entry Gating and Confidence Threshold evaluators (ESB v1.0 §2.1-2.2)
-try:
-    from entry_gating_evaluator import evaluate_entry_gating
-    ENTRY_GATING_AVAILABLE = True
-except ImportError:
-    ENTRY_GATING_AVAILABLE = False
-    logging.warning("Entry Gating Evaluator not available")
-
-try:
-    from confidence_threshold_evaluator import evaluate_confidence_threshold
-    CONFIDENCE_THRESHOLD_AVAILABLE = True
-except ImportError:
-    CONFIDENCE_THRESHOLD_AVAILABLE = False
-    logging.warning("Confidence Threshold Evaluator not available")
-
-try:
-    from execution_eligibility_evaluator import evaluate_execution_eligibility
-    EXECUTION_ELIGIBILITY_AVAILABLE = True
-except ImportError:
-    EXECUTION_ELIGIBILITY_AVAILABLE = False
-    logging.warning("Execution Eligibility Evaluator not available")
-
-try:
-    from risk_admission_evaluator import evaluate_risk_admission
-    RISK_ADMISSION_AVAILABLE = True
-except ImportError:
-    RISK_ADMISSION_AVAILABLE = False
-    logging.warning("Risk Admission Evaluator not available")
 
 # Import ICT modules
 try:
@@ -532,8 +555,8 @@ class ICTSignalEngine:
     def _get_default_config(self) -> Dict:
         """Get default configuration"""
         return {
-            'min_confidence': 50,          # Min 60% confidence (STRICT ICT)
-            'min_risk_reward': 3.0,        # Min 1:3 R:R (STRICT ICT)
+            'min_confidence': 50,          # Min 55% confidence (auto) / 65% (manual)
+            'min_risk_reward': 2.5,        # Min 1:2.5 R:R
             'max_sl_distance_pct': 3.0,    # Max 3% SL distance
             'tp_multipliers': [3, 5, 8],   # TP at 3R, 5R, 8R (STRICT ICT)
             'require_mtf_confluence': True, # Require MTF alignment (STRICT ICT)
@@ -1201,230 +1224,178 @@ class ICTSignalEngine:
         logger.info(f"   → Confidence modifier: {confirmation_modifier:+.1%}")
         # Store for later use in confidence calculation
         
-        # СТЪПКА 7: ENTRY SCENARIO SELECTION (with Setup State Machine)
-        logger.info("🎯 Step 7: Entry Scenario Selection (State Machine)")
-        
+        # СТЪПКА 7: PATTERN DETECTION + ENTRY ZONE (7A + 7B)
+        # Step 7A detects WHAT pattern the market is making (no entry info).
+        # Step 7B calculates entry_zone + invalidation_anchor from the SAME POI.
+        # Triggers are checked AFTER step 7B as a confidence modifier (not a gate).
+        logger.info("🎯 Step 7A+7B: Pattern Detection & Entry Zone Calculation")
+
         # Get current price
         current_price = df['close'].iloc[-1]
         logger.info(f"   → Current Price: ${current_price:.2f}")
-        
-        # Get setup state manager
-        setup_manager = get_setup_manager()
-        
-        # Check for active setup first
-        active_setup = setup_manager.get_setup(symbol, timeframe)
-        
+
         # Prepare bias string
         bias_str = bias.value if hasattr(bias, 'value') else str(bias)
-        
+
         # ✅ CRITICAL: Enrich components with candles_ago BEFORE any processing
         ict_components = self._enrich_components_with_recency(ict_components, df)
-        
+
         # Extract components after enrichment
         fvg_zones = ict_components.get('fvgs', [])
         order_blocks = ict_components.get('order_blocks', [])
         sr_levels = ict_components.get('luxalgo_sr', {})
-        
-        # Recent candles for trigger validation
+
+        # Recent candles for trigger validation (used as confidence modifier)
         recent_candles = []
         if len(df) >= 20:
             recent_candles = df[['open', 'high', 'low', 'close']].tail(20).to_dict('records')
-        
+
         entry_scenario_result = None
         poi_ref = None
         entry_zone = {}
-        
-        if active_setup and active_setup.ttl_remaining > 0:
-            # ============================================================
-            # PATH A: Active setup exists - check entry trigger
-            # ============================================================
-            logger.info(f"   → Active setup found: {active_setup.scenario_name} (TTL: {active_setup.ttl_remaining})")
-            logger.info(f"      • Entry zone: ${active_setup.entry_zone.get('center', 0):.2f}")
-            
-            # Check if entry trigger conditions are met
-            is_triggered, trigger_reason = is_entry_triggered(
-                scenario_name=active_setup.scenario_name,
-                scenario_data=active_setup.scenario_data,
-                entry_zone=active_setup.entry_zone,
+
+        logger.info(f"   → Available ICT Components (after enrichment):")
+        logger.info(f"      • Order Blocks: {len(order_blocks)}")
+        logger.info(f"      • FVG Zones: {len(fvg_zones)}")
+        sr_count = 0
+        if sr_levels and isinstance(sr_levels, dict):
+            sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
+        logger.info(f"      • S/R Levels: {sr_count}")
+
+        # ── Step 7A: Detect pattern (WHAT the market is doing) ──────────────
+        pattern_name = None
+        pattern_probability = 0.0
+        if PATTERN_DETECTOR_AVAILABLE:
+            pattern_name, pattern_probability = detect_scenario_pattern(
                 current_price=current_price,
-                ict_components=ict_components,
                 bias=bias_str,
+                ict_components=ict_components,
                 timeframe=timeframe,
-                recent_candles=recent_candles
+                tf_hierarchy=tf_hierarchy if TIMEFRAME_CONTRACT_AVAILABLE else None,
             )
-            
-            if is_triggered:
-                # ✅ ENTRY TRIGGERED - Emit signal
-                logger.info(f"   ✅ ENTRY TRIGGER MET: {trigger_reason}")
-                
-                # Mark as triggered (removes from active store)
-                setup_manager.mark_triggered(symbol, timeframe)
-                
-                # Use stored scenario data for signal emission
-                entry_scenario_result = active_setup.scenario_data
-                entry_zone = active_setup.entry_zone
-                
-                # Continue to SL/TP/RR validation (downstream steps)
-            else:
-                # Entry trigger not met yet - decrement TTL and wait
-                logger.info(f"   ⏳ SETUP_PENDING_ENTRY: {trigger_reason}")
-                
-                still_active = setup_manager.decrement_ttl(symbol, timeframe)
-                
-                if not still_active:
-                    # Setup expired - will re-detect on next cycle
-                    logger.info(f"   ⌛ Setup expired, will re-evaluate on next cycle")
-                
-                # Return NO_TRADE (setup pending, not ready to signal)
-                context = self._extract_context_data(df, bias)
-                mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
-                
-                return self._create_no_trade_message(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    reason=f"Setup pending entry trigger",
-                    details=f"{active_setup.scenario_name} setup detected at ${active_setup.entry_zone.get('center', 0):.2f}, waiting for entry trigger. {trigger_reason}",
-                    mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
-                    current_price=context['current_price'],
-                    price_change_24h=context['price_change_24h'],
-                    rsi=context['rsi'],
-                    signal_direction=context['signal_direction'],
-                    confidence=None
-                )
         else:
-            # ============================================================
-            # PATH B: No active setup - run scenario detection
-            # ============================================================
-            logger.info(f"   → No active setup - running scenario detection")
-            
-            logger.info(f"   → Available ICT Components (after filtering):")
-            logger.info(f"      • Order Blocks: {len(order_blocks)}")
-            logger.info(f"      • FVG Zones: {len(fvg_zones)}")
-            sr_count = 0
-            if sr_levels and isinstance(sr_levels, dict):
-                sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
-            logger.info(f"      • S/R Levels: {sr_count}")
-            
-            # Temporary placeholder - scenarios will create actual entry_zone
-            entry_zone_placeholder = {}
-            
-            # Run scenario selection
-            entry_scenario_result, poi_ref = select_best_entry_scenario(
+            logger.warning("⚠️ Pattern detector not available - using fallback logic")
+
+        if not pattern_name:
+            logger.info("❌ No valid pattern detected in Step 7A")
+            logger.error("❌ No valid pattern - Signal BLOCKED (no ICT structure)")
+            context = self._extract_context_data(df, bias)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason="No valid ICT pattern detected",
+                details=f"No ROLLBACK/PULLBACK/CONTINUATION/REVERSAL pattern found for {symbol} {timeframe}.",
+                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=None,
+            )
+
+        logger.info(f"✅ Step 7A: Pattern detected = {pattern_name} (probability: {pattern_probability:.3f})")
+
+        # ── Step 7B: Calculate entry zone from POI (SAME POI for entry + anchor) ─
+        poi_entry_result = None
+        if POI_CALCULATOR_AVAILABLE:
+            poi_entry_result = calculate_entry_zone_from_poi(
+                pattern_name=pattern_name,
                 current_price=current_price,
                 bias=bias_str,
                 ict_components=ict_components,
-                entry_zone=entry_zone_placeholder,
                 timeframe=timeframe,
-                tf_hierarchy=tf_hierarchy if TIMEFRAME_CONTRACT_AVAILABLE else None
             )
-            
-            # Check if scenario was found
-            if not entry_scenario_result or (entry_scenario_result.get('scenario') == 'N/A'):
-                logger.info(f"❌ No valid entry scenario found (all scenarios failed validation)")
-                logger.info(f"   → No setup to create")
-                logger.error(f"❌ No valid scenario scored above minimum - Signal BLOCKED (no valid scenario)")
-                context = self._extract_context_data(df, bias)
-                mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
-                
-                return self._create_no_trade_message(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    reason=f"No valid entry scenario",
-                    details=f"No scenario scored above minimum threshold for {symbol}.",
-                    mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
-                    current_price=context['current_price'],
-                    price_change_24h=context['price_change_24h'],
-                    rsi=context['rsi'],
-                    signal_direction=context['signal_direction'],
-                    confidence=None
-                )
-            
-            # Valid scenario found - get entry zone
-            entry_zone = entry_scenario_result.get('entry_zone', {})
-            
-            # Check if entry trigger is immediately true
+        else:
+            logger.warning("⚠️ POI calculator not available - cannot compute entry zone")
+
+        if not poi_entry_result:
+            logger.info(f"❌ Step 7B: No valid entry zone for {pattern_name} pattern")
+            logger.error(f"❌ No POI entry zone - Signal BLOCKED (no structural POI)")
+            context = self._extract_context_data(df, bias)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason=f"No structural POI for {pattern_name}",
+                details=(
+                    f"{pattern_name} pattern detected but no valid structural POI "
+                    f"(OB/BSL/SSL) available for {symbol} {timeframe}."
+                ),
+                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=None,
+            )
+
+        logger.info(f"✅ Step 7B: Entry zone calculated from {poi_entry_result.get('poi_type', 'POI')}")
+
+        # Build entry_scenario_result compatible with downstream steps
+        entry_zone = poi_entry_result['entry_zone']
+        entry_scenario_result = {
+            'scenario': poi_entry_result['scenario'],
+            'eligible': True,
+            'entry_zone': entry_zone,
+            'probability': pattern_probability,
+            'triggers': ict_components.get('_detected_triggers', []),
+            'trigger_strength': 'MEDIUM',
+            'reasoning': poi_entry_result.get('reasoning', ''),
+            'position_size_advisory': poi_entry_result.get('position_size_advisory', 100),
+            'poi_type': poi_entry_result.get('poi_type', 'NONE'),
+            'poi_data': poi_entry_result.get('poi_data', {}),
+            'invalidation_anchor': poi_entry_result.get('invalidation_anchor', {}),
+        }
+
+        # ── Trigger check: used as confidence modifier only (not a gate) ────────
+        is_triggered = False
+        trigger_reason = "Trigger check skipped"
+        try:
             is_triggered, trigger_reason = is_entry_triggered(
-                scenario_name=entry_scenario_result.get('scenario'),
+                scenario_name=pattern_name,
                 scenario_data=entry_scenario_result,
                 entry_zone=entry_zone,
                 current_price=current_price,
                 ict_components=ict_components,
                 bias=bias_str,
                 timeframe=timeframe,
-                recent_candles=recent_candles
+                recent_candles=recent_candles,
             )
-            
-            if is_triggered:
-                # Entry trigger immediately true - emit signal
-                logger.info(f"   ✅ ENTRY TRIGGERED IMMEDIATELY: {trigger_reason}")
-                # Continue to SL/TP/RR validation
-            else:
-                # Create pending setup
-                logger.info(f"   → Setup detected but entry not triggered yet: {trigger_reason}")
-                
-                setup = setup_manager.create_setup(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    scenario_name=entry_scenario_result.get('scenario'),
-                    scenario_data=entry_scenario_result,
-                    entry_zone=entry_zone
-                )
-                
-                # Return NO_TRADE (setup created, waiting for trigger)
-                context = self._extract_context_data(df, bias)
-                mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
-                
-                return self._create_no_trade_message(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    reason=f"Setup detected, waiting for entry trigger",
-                    details=f"{entry_scenario_result.get('scenario')} setup created at ${entry_zone.get('center', 0):.2f}. {trigger_reason}",
-                    mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
-                    current_price=context['current_price'],
-                    price_change_24h=context['price_change_24h'],
-                    rsi=context['rsi'],
-                    signal_direction=context['signal_direction'],
-                    confidence=None
-                )
-        
-        # ============================================================
-        # COMMON PATH: entry_scenario_result is now set (either from active setup or new detection)
-        # Continue to logging and downstream validation
-        # ============================================================
-        
-        if not entry_scenario_result:
-            # This should not happen given the guards above, but handle defensively
-            path_info = "PATH A (active setup)" if active_setup else "PATH B (new detection)"
-            logger.error(f"❌ CRITICAL: entry_scenario_result is None after Step 7 ({path_info})")
-            logger.error(f"   → Debug: active_setup={active_setup is not None}, bias={bias_str}, price=${current_price:.2f}")
-            return None
-        
+        except Exception as e:
+            logger.warning(f"⚠️ Trigger check failed (non-blocking): {e}")
+
+        # Store trigger result for confidence adjustment in Step 11
+        trigger_confidence_adjustment = 10.0 if is_triggered else -5.0
+        if is_triggered:
+            logger.info(f"   ✅ Entry trigger MET: {trigger_reason} (+10% confidence)")
+        else:
+            logger.info(f"   ⚠️ Entry trigger NOT met: {trigger_reason} (-5% confidence)")
+
         # Log selected scenario details
-        logger.info(f"   ✅ Selected Scenario: {entry_scenario_result['scenario']}")
-        logger.info(f"      • Score: {int(entry_scenario_result['probability'] * 100)}/100")
-        logger.info(f"      • Entry Price: ${entry_scenario_result['entry_zone']['center']:.4f}")
-        logger.info(f"      • Entry Range: ${entry_scenario_result['entry_zone']['low']:.4f} - ${entry_scenario_result['entry_zone']['high']:.4f}")
-        logger.info(f"      • Distance: {entry_scenario_result['entry_zone']['distance_pct']:.1f}%")
-        logger.info(f"      • Triggers: {', '.join(entry_scenario_result['triggers'])} ({entry_scenario_result['trigger_strength']})")
-        logger.info(f"      • Position Size Advisory: {entry_scenario_result['position_size_advisory']}%")
-        logger.info(f"      • Reasoning: {entry_scenario_result['reasoning']}")
+        logger.info(f"   ✅ Scenario: {entry_scenario_result['scenario']}")
+        logger.info(f"      • Pattern probability: {int(pattern_probability * 100)}/100")
+        logger.info(f"      • Entry Price: ${entry_zone['center']:.4f}")
+        logger.info(f"      • Entry Range: ${entry_zone['low']:.4f} - ${entry_zone['high']:.4f}")
+        logger.info(f"      • Distance: {entry_zone.get('distance_pct', 0):.1f}%")
         logger.info(f"      • POI Type: {entry_scenario_result.get('poi_type', 'NONE')}")
-        
+
         # Log invalidation anchor info
         anchor = entry_scenario_result.get('invalidation_anchor', {})
         if anchor:
-            logger.info(f"      • Anchor: {anchor.get('type')} @ ${anchor.get('price', 0):.4f}")
-        
+            logger.info(
+                f"      • Anchor: {anchor.get('type')} @ ${anchor.get('price', 0):.4f} "
+                f"(source: {anchor.get('source_type', 'N/A')})"
+            )
+
         # Extract entry_price from scenario result
         entry_price = entry_zone.get('center', current_price)
-        logger.info(f"   → Entry Price: ${entry_price:.2f} (from scenario entry zone)")
-        
+        logger.info(f"   → Entry Price: ${entry_price:.2f} (from POI entry zone)")
+
         # Create entry_setup dict for downstream use
         entry_setup = {}
-        if poi_ref:
-            entry_setup['poi_ref'] = poi_ref
-        
-        logger.info(f"✅ PASSED Step 7: Entry scenario triggered (price: ${entry_price:.2f})")
+
+        logger.info(f"✅ PASSED Step 7: Pattern={pattern_name}, Entry=${entry_price:.2f}")
         
         # СТЪПКА 8: SL POSITIONING (renamed from Step 9)
         logger.info("🔍 Step 8: Stop Loss Positioning")
@@ -1504,68 +1475,68 @@ class ICTSignalEngine:
         logger.info(f"   ✅ SL calculated: ${sl_price:.2f}")
         logger.info(f"✅ PASSED Step 8: Stop Loss positioned")
         
-        # СТЪПКА 9: TAKE PROFIT CALCULATION (renamed from Step 9b)
-        logger.info("🔍 Step 9: Take Profit Calculation")
-        
-        fibonacci_data = ict_components.get('fibonacci_data', {})
+        # СТЪПКА 9: TAKE PROFIT CALCULATION (single TP at 2.5 RR minimum)
+        logger.info("🔍 Step 9: Take Profit Calculation (single TP at 2.5 RR)")
+
         bias_str = bias.value if hasattr(bias, 'value') else str(bias)
-        
-        # Try to use structure-aware TP placement (PR #8)
+        risk = abs(entry_price - sl_price)
+        is_long = (bias == MarketBias.BULLISH)
+
+        # Calculate single TP at 2.5 RR minimum
+        tp_rr = max(self.config.get('min_risk_reward', 2.5), 2.5)
+        if is_long:
+            tp_primary = entry_price + (risk * tp_rr)
+        else:
+            tp_primary = entry_price - (risk * tp_rr)
+
+        # Optional: Try to snap to nearest structure target (±30% tolerance)
         try:
-            direction = 'LONG' if bias == MarketBias.BULLISH else 'SHORT'
-            tp_prices = self._calculate_smart_tp_with_structure_validation(
+            direction = 'LONG' if is_long else 'SHORT'
+            structure_tps = self._calculate_smart_tp_with_structure_validation(
                 entry_price=entry_price,
                 sl_price=sl_price,
                 direction=direction,
                 ict_components=ict_components,
-                timeframe=timeframe
+                timeframe=timeframe,
             )
-            logger.info(f"   → Structure-aware TPs: {[f'${tp:.2f}' for tp in tp_prices]}")
+            if structure_tps:
+                # Use first structure TP only if it's within 30% of the 2.5 RR target
+                struct_tp = structure_tps[0]
+                struct_rr = abs(struct_tp - entry_price) / risk if risk > 0 else 0
+                if struct_rr >= 2.5:
+                    # Accept if structure TP is within ±30% of 2.5 RR level
+                    if abs(struct_tp - tp_primary) / tp_primary <= 0.30:
+                        tp_primary = struct_tp
+                        logger.info(f"   → Snapped to structure target: ${tp_primary:.2f} (RR {struct_rr:.1f})")
+                    else:
+                        logger.info(f"   → Structure TP ${struct_tp:.2f} outside ±30% tolerance, using 2.5 RR")
+                else:
+                    logger.info(f"   → Structure TP RR {struct_rr:.1f} < 2.5, using minimum 2.5 RR")
         except Exception as e:
-            logger.warning(f"⚠️ Structure TP calculation failed: {e}")
-            # Fallback to original mathematical TP
-            tp_prices = self._calculate_tp_with_min_rr(
-                entry_price, sl_price, liquidity_zones, 
-                min_rr=3.0, 
-                fibonacci_data=fibonacci_data,
-                bias=bias_str,
-                timeframe=timeframe
-            )
-            logger.info(f"   → Mathematical TPs (fallback): {[f'${tp:.2f}' for tp in tp_prices]}")
-        
-        logger.info(f"✅ PASSED Step 9: Take Profit levels calculated")
-        
-        # СТЪПКА 10: RISK/REWARD VALIDATION (renamed from Step 10)
+            logger.debug(f"   Structure TP check failed (non-critical): {e}")
+
+        # Provide tp_prices as [tp_primary] for downstream compatibility
+        tp_prices = [tp_primary]
+        logger.info(f"   → TP (2.5 RR minimum): ${tp_primary:.2f}")
+        logger.info(f"✅ PASSED Step 9: Take Profit calculated")
+
+        # СТЪПКА 10: RISK/REWARD VALIDATION (HARD GATE #1 - RR >= 2.5)
         logger.info("🔍 Step 10: Risk/Reward Validation")
-        risk = abs(entry_price - sl_price)
-        
-        # ✅ FIX: Validate against TP2 (primary target) instead of TP1 (quick profit)
-        # This allows TP1 for fast scalping while ensuring TP2 meets quality standards
-        # Note: tp_prices array is [TP1, TP2, TP3], so tp_prices[1] is TP2
-        if len(tp_prices) >= 2:
-            # Use TP2 for quality validation (tp_prices[1] = second element = TP2)
-            reward = abs(tp_prices[1] - entry_price)
-            tp_label = "TP2"
-            logger.info(f"   → Validating R:R against TP2 (primary target)")
-        elif len(tp_prices) >= 1:
-            # Fallback to TP1 if only one TP exists
-            reward = abs(tp_prices[0] - entry_price)
-            tp_label = "TP1"
-            logger.info(f"   → Validating R:R against TP1 (single target)")
-        else:
-            reward = 0
-            tp_label = "N/A"
-        
+
+        reward = abs(tp_prices[0] - entry_price) if tp_prices else 0
         risk_reward_ratio = reward / risk if risk > 0 else 0
-        
+
         logger.info(f"   → Risk: ${risk:.2f}")
-        logger.info(f"   → Reward ({tp_label}): ${reward:.2f}")
+        logger.info(f"   → Reward (TP): ${reward:.2f}")
         logger.info(f"   → R:R Ratio: {risk_reward_ratio:.2f} (1:{risk_reward_ratio:.1f})")
-        logger.info(f"   → Minimum Required: {self.config['min_risk_reward']:.2f} (1:{self.config['min_risk_reward']:.0f})")
-        
+        logger.info(f"   → Minimum Required: {self.config['min_risk_reward']:.2f}")
+
         if risk_reward_ratio < self.config['min_risk_reward']:
-            logger.info(f"❌ BLOCKED at Step 10: R:R {risk_reward_ratio:.2f} < {self.config['min_risk_reward']} (1:{risk_reward_ratio:.1f} < 1:{self.config['min_risk_reward']:.0f})")
-            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 10, reason: Insufficient RR)")
+            logger.info(
+                f"❌ BLOCKED at Step 10: R:R {risk_reward_ratio:.2f} < "
+                f"{self.config['min_risk_reward']} "
+                f"(1:{risk_reward_ratio:.1f} < 1:{self.config['min_risk_reward']:.0f})"
+            )
             logger.error(f"❌ RR {risk_reward_ratio:.2f} < {self.config['min_risk_reward']} - сигналът НЕ СЕ ИЗПРАЩА")
             context = self._extract_context_data(df, bias)
             return self._create_no_trade_message(
@@ -1578,15 +1549,16 @@ class ICTSignalEngine:
                 price_change_24h=context['price_change_24h'],
                 rsi=context['rsi'],
                 signal_direction=context['signal_direction'],
-                confidence=None
+                confidence=None,
             )
-        
-        logger.info(f"✅ PASSED Step 10: RR validated ({risk_reward_ratio:.2f} >= {self.config['min_risk_reward']:.2f} → 1:{risk_reward_ratio:.1f} >= 1:{self.config['min_risk_reward']:.0f})")
-        
+
+        logger.info(
+            f"✅ PASSED Step 10: RR validated "
+            f"({risk_reward_ratio:.2f} >= {self.config['min_risk_reward']:.2f})"
+        )
+
         # СТЪПКА 11: ML CONFIDENCE ADJUSTMENT (consolidated from old Step 11*)
         logger.info("🔍 Step 11: ML Confidence Adjustment")
-        
-        # Calculate base confidence
         base_confidence = self._calculate_signal_confidence(
             ict_components, mtf_analysis, bias, structure_broken, 
             displacement_detected, risk_reward_ratio
@@ -1804,7 +1776,7 @@ class ICTSignalEngine:
         # ✅ Pre-ML confidence (before ML advisory layer runs)
         # ML will be applied AFTER all guards at the end of the pipeline
         confidence = confidence_after_context
-        
+
         # ✅ APPLY CONFIRMATION LAYER MODIFIER (±8%)
         logger.info(f"   📊 Applying Confirmation Layer Modifier")
         logger.info(f"   → Confidence before confirmation: {confidence:.1f}%")
@@ -1812,10 +1784,20 @@ class ICTSignalEngine:
         confidence = confidence + (confidence * confirmation_modifier)
         logger.info(f"   → Confirmation modifier: {confirmation_modifier:+.1%}")
         logger.info(f"   → Confidence after confirmation: {confidence:.1f}%")
-        
+
+        # ✅ APPLY TRIGGER CONFIDENCE ADJUSTMENT (soft modifier, not a gate)
+        # trigger_confidence_adjustment was set in Step 7: +10% if triggered, -5% if not
+        logger.info(f"   📊 Applying Trigger Confidence Modifier")
+        confidence = confidence + trigger_confidence_adjustment
+        if trigger_confidence_adjustment >= 0:
+            logger.info(f"   → Trigger met: +{trigger_confidence_adjustment:.0f}% confidence")
+        else:
+            logger.info(f"   → Trigger not met: {trigger_confidence_adjustment:.0f}% confidence")
+        logger.info(f"   → Confidence after trigger modifier: {confidence:.1f}%")
+
         confidence = max(0.0, min(100.0, confidence))
-        
-        logger.info(f"   → Confidence (after ML adjustments): {confidence:.1f}%")
+
+        logger.info(f"   → Confidence (after all adjustments): {confidence:.1f}%")
         logger.info(f"✅ PASSED Step 11: ML confidence adjustments applied")
         
         # СТЪПКА 12: FINAL VALIDATION (consolidated from Step 11.5, 11.5b, 11.6)
@@ -1839,12 +1821,12 @@ class ICTSignalEngine:
         # Structure and HTF bias are context only, not gates
         logger.info("   ✅ HTF bias is context only - does not block signals")
         
-        # 12c: Final Confidence Check (ONLY REMAINING HARD GATE)
+        # 12c: Final Confidence Check (HARD GATE #2)
         logger.info("   📊 Final Confidence Check")
-        
+
         # Determine min confidence based on signal type
-        # ✅ SPEC: 60% for auto, 70% for manual
-        min_confidence = 60 if is_auto else 70
+        # Updated thresholds: 55% for auto, 65% for manual
+        min_confidence = 55 if is_auto else 65
         mode = "Auto" if is_auto else "Manual"
         
         logger.info(f"   → Final Confidence: {confidence:.1f}%")
@@ -1869,196 +1851,90 @@ class ICTSignalEngine:
         
         logger.info(f"✅ PASSED Step 12: Final validation complete ({confidence:.1f}% >= {min_confidence}% - {mode} mode)")
         
-        # СТЪПКА 13: SIGNAL GENERATION (renamed from Step 12)
+        # СТЪПКА 13: SIGNAL GENERATION (HARD GATE #3 - Deduplication Only)
         logger.info("🔍 Step 13: Signal Generation")
         signal_strength = self._calculate_signal_strength(confidence, risk_reward_ratio, ict_components)
         signal_type = self._determine_signal_type(bias, signal_strength, confidence)
-        
+
         logger.info(f"   → Signal Type: {signal_type.value}")
         logger.info(f"   → Signal Strength: {signal_strength.value}")
         logger.info(f"   → Confidence: {confidence:.1f}%")
-        
-        # =========================================================================
-        # ✅ ESB v1.0 §2.1-2.2: ENTRY GATING & CONFIDENCE THRESHOLD EVALUATION
-        # =========================================================================
+
+        # ── Deduplication Gate (HARD GATE #3) ──────────────────────────────────
+        # Block if same symbol + timeframe + bias + entry within 1.5% in last 24h
+        signal_direction_str = signal_type.value if hasattr(signal_type, 'value') else str(signal_type)
+        is_dup = self._is_duplicate_signal(symbol, timeframe, entry_price, signal_direction_str)
+        if is_dup:
+            logger.info(f"⛔ BLOCKED at Step 13: Duplicate signal (same symbol+TF+bias+entry within 1.5%)")
+            logger.error(f"❌ Duplicate signal blocked - same setup already sent within 24h")
+            context = self._extract_context_data(df, bias)
+            mtf_consensus_data_dup = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason="Duplicate signal (same setup already sent)",
+                details=(
+                    f"Signal for {symbol} {timeframe} {signal_direction_str} "
+                    f"@ ${entry_price:.2f} already sent within last 24h (entry within 1.5%)."
+                ),
+                mtf_breakdown=mtf_consensus_data_dup.get("breakdown", {}),
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=confidence,
+            )
+        logger.info(f"✅ PASSED Deduplication: no duplicate found")
+
+        # ── ML Advisory Layer (confidence-only, non-blocking) ─────────────────
         logger.info("=" * 60)
-        logger.info("STEP 12.1: ENTRY GATING EVALUATION (ESB §2.1)")
+        logger.info("STEP 13.0: ML ADVISORY LAYER (PR-ML-8)")
         logger.info("=" * 60)
-        
-        if ENTRY_GATING_AVAILABLE:
-            # Build signal context for Entry Gating evaluation
-            signal_context = {
-                'symbol': symbol,
-                'timeframe': timeframe,
-                'direction': signal_type.value if hasattr(signal_type, 'value') else str(signal_type),
-                'raw_confidence': confidence,
-                
-                # Entry Gating fields
-                'system_state': self._get_system_state(),
-                'breaker_block_active': self._check_breaker_block_active(ict_components, signal_type),
-                'active_signal_exists': self._check_active_signal(symbol, timeframe),
-                'cooldown_active': self._check_cooldown(symbol, timeframe),
-                'market_state': self._get_market_state(symbol),
-                'signature_already_seen': self._check_signature(symbol, timeframe, signal_type, datetime.now())
-            }
-            
-            # Evaluate Entry Gating (ESB §2.1)
-            logger.info(f"📋 Entry Gating Context: {signal_context}")
-            entry_allowed = evaluate_entry_gating(signal_context.copy())  # Use copy to ensure immutability
-            
-            if not entry_allowed:
-                logger.info(f"⛔ Entry Gating BLOCKED: {symbol} {timeframe}")
-                logger.debug(f"Entry Gating context: {signal_context}")
-                return None  # HARD BLOCK
-            
-            logger.info(f"✅ PASSED Entry Gating: {symbol} {timeframe}")
-        else:
-            logger.warning("⚠️ Entry Gating evaluator not available - skipping check")
-        
-        # =========================================================================
-        logger.info("=" * 60)
-        logger.info("STEP 12.2: CONFIDENCE THRESHOLD EVALUATION (ESB §2.2)")
-        logger.info("=" * 60)
-        
-        if CONFIDENCE_THRESHOLD_AVAILABLE:
-            # Build signal context for Confidence Threshold evaluation
-            # Reuse same context from Entry Gating (only direction and raw_confidence are required)
-            confidence_context = {
-                'direction': signal_type.value if hasattr(signal_type, 'value') else str(signal_type),
-                'raw_confidence': confidence
-            }
-            
-            # Evaluate Confidence Threshold (ESB §2.2)
-            threshold_passed = evaluate_confidence_threshold(confidence_context.copy())  # Use copy to ensure immutability
-            
-            if not threshold_passed:
-                logger.info(f"⛔ Confidence Threshold BLOCKED: {symbol} {timeframe} (confidence: {confidence:.2f})")
-                return None  # HARD BLOCK
-            
-            logger.info(f"✅ PASSED Confidence Threshold: {symbol} {timeframe} (confidence: {confidence:.2f})")
-        else:
-            logger.warning("⚠️ Confidence Threshold evaluator not available - skipping check")
-        
-        # =========================================================================
-        logger.info("=" * 60)
-        logger.info("STEP 12.3: EXECUTION ELIGIBILITY EVALUATION (ESB §2.3)")
-        logger.info("=" * 60)
-        
-        if EXECUTION_ELIGIBILITY_AVAILABLE:
-            # Build execution context for Execution Eligibility evaluation
-            execution_context = {
-                'symbol': symbol,
-                'execution_state': self._get_execution_state(),
-                'execution_layer_available': self._check_execution_layer_available(),
-                'symbol_execution_locked': self._check_symbol_execution_lock(symbol),
-                'position_capacity_available': self._check_position_capacity(symbol, signal_type.value if hasattr(signal_type, 'value') else str(signal_type)),
-                'emergency_halt_active': self._check_emergency_halt()
-            }
-            
-            # Evaluate Execution Eligibility (ESB §2.3)
-            execution_allowed = evaluate_execution_eligibility(execution_context.copy())  # Use copy to ensure immutability
-            
-            if not execution_allowed:
-                logger.info(f"⛔ §2.3 Execution Eligibility BLOCKED: {symbol} {timeframe}")
-                logger.debug(f"Execution Eligibility context: {execution_context}")
-                return None  # HARD BLOCK
-            
-            logger.info(f"✅ PASSED Execution Eligibility: {symbol} {timeframe}")
-        else:
-            logger.warning("⚠️ Execution Eligibility evaluator not available - skipping check")
-        
-        # =========================================================================
-        logger.info("=" * 60)
-        logger.info("STEP 12.4: RISK ADMISSION EVALUATION (ESB §2.4)")
-        logger.info("=" * 60)
-        
-        if RISK_ADMISSION_AVAILABLE:
-            # Build risk context for Risk Admission evaluation
-            risk_context = {
-                'signal_risk': self._get_signal_risk(),
-                'total_open_risk': self._get_total_open_risk(),
-                'symbol_exposure': self._get_symbol_exposure(symbol),
-                'direction_exposure': self._get_direction_exposure(signal_type.value if hasattr(signal_type, 'value') else str(signal_type)),
-                'daily_loss': self._get_daily_loss()
-            }
-            
-            # Evaluate Risk Admission (ESB §2.4)
-            risk_admitted = evaluate_risk_admission(risk_context.copy())  # Use copy to ensure immutability
-            
-            if not risk_admitted:
-                logger.info(f"⛔ §2.4 Risk Admission BLOCKED: {symbol} {timeframe}")
-                logger.debug(f"Risk context: {risk_context}")
-                return None  # HARD BLOCK
-            
-            logger.info(f"✅ PASSED Risk Admission: {symbol} {timeframe}")
-        else:
-            logger.warning("⚠️ Risk Admission evaluator not available - skipping check")
-        
-        logger.info("=" * 60)
-        logger.info("✅ ALL EVALUATIONS PASSED (§2.1-2.4) - PROCEEDING TO SIGNAL CREATION")
-        logger.info("=" * 60)
-        
-        # =========================================================================
-        # END ENTRY GATING, CONFIDENCE THRESHOLD, EXECUTION ELIGIBILITY & RISK ADMISSION
-        # =========================================================================
-        
-        # ═══════════════════════════════════════════════════════════════
-        # ✅ PR-ML-8: ML ADVISORY LAYER (FINAL POSITION)
-        # ═══════════════════════════════════════════════════════════════
-        # ML runs LAST, after all strategy decisions, risk filters, and guards.
-        # ML acts ONLY as advisory layer that modifies confidence within bounds.
-        # ML NEVER influences signal direction, entry/SL/TP, or overrides guards.
-        # ═══════════════════════════════════════════════════════════════
-        logger.info("=" * 60)
-        logger.info("STEP 12.0: ML ADVISORY LAYER (PR-ML-8)")
-        logger.info("=" * 60)
-        
+
         # Strategy signal is now LOCKED - ML cannot change it
         strategy_signal = 'BUY' if bias == MarketBias.BULLISH else 'SELL' if bias == MarketBias.BEARISH else 'HOLD'
-        
+
         if self.use_ml and self.ml_engine and self.ml_engine.model is not None:
             try:
                 logger.info(f"🤖 Invoking ML Advisory (confidence-only modification)")
                 logger.info(f"   Strategy Signal (LOCKED): {strategy_signal}")
                 logger.info(f"   Base Confidence: {confidence:.1f}%")
-                
+
                 # Call new ML advisory method
                 ml_advisory = self.ml_engine.get_confidence_modifier(
                     analysis=ml_features,
                     final_signal=strategy_signal,
                     base_confidence=confidence
                 )
-                
+
                 # Apply ML modifier to confidence ONLY
                 original_confidence = confidence
                 confidence = confidence * ml_advisory['confidence_modifier']
-                
+
                 # Clamp to valid range
                 confidence = max(0.0, min(100.0, confidence))
-                
+
                 # Logging
                 logger.info(f"   ML Mode: {ml_advisory['mode']}")
                 logger.info(f"   ML Confidence: {ml_advisory['ml_confidence']:.1f}%")
                 logger.info(f"   Confidence Modifier: {ml_advisory['confidence_modifier']:.3f}x")
                 logger.info(f"   Confidence: {original_confidence:.1f}% → {confidence:.1f}%")
-                
+
                 # Log warnings if any
                 if ml_advisory['warnings']:
                     for warning in ml_advisory['warnings']:
                         logger.warning(f"⚠️ {warning}")
-                
+
                 logger.info(f"✅ ML Advisory complete (direction unchanged: {strategy_signal})")
-                
+
             except Exception as e:
                 logger.error(f"❌ ML Advisory error: {e}")
                 logger.info(f"✅ Continuing with ICT-only confidence: {confidence:.1f}%")
         else:
             logger.info("ℹ️ ML Advisory not available - using ICT-only confidence")
-        
+
         logger.info("=" * 60)
-        # ═══════════════════════════════════════════════════════════════
-        # END ML ADVISORY LAYER
-        # ═══════════════════════════════════════════════════════════════
+        # ── End ML Advisory Layer ─────────────────────────────────────────────
         
         # ✅ FIX 3: STEP 12a - Entry Timing Validation
         logger.info("🔍 Step 12a: Entry Timing Validation")
@@ -7259,14 +7135,39 @@ Get HTF bias based on entry timeframe hierarchy
         # For now, return False (no collision)
         return False
     
+    def _is_duplicate_signal(
+        self, symbol: str, timeframe: str, entry_price: float, direction: str
+    ) -> bool:
+        """
+        Check if a signal is a duplicate: same symbol + timeframe + direction + entry within 1.5%.
+
+        Uses the signal_cache module (sent_signals_cache.json) if available.
+        Returns True if a matching signal was sent within the last 24 hours.
+        """
+        if SIGNAL_CACHE_AVAILABLE:
+            try:
+                return is_signal_duplicate(
+                    symbol=symbol,
+                    signal_type=direction,
+                    timeframe=timeframe,
+                    entry_price=entry_price,
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Deduplication check failed (non-blocking): {e}")
+                return False
+
+        # Fallback: no deduplication if signal_cache is not available
+        logger.debug("Signal cache not available - deduplication skipped")
+        return False
+
     def _check_cooldown(self, symbol: str, timeframe: str) -> bool:
         """
         Check if cooldown is active for this symbol+timeframe
-        
+
         Args:
             symbol: Trading symbol
             timeframe: Timeframe
-            
+
         Returns:
             bool: True if cooldown is active
         """
