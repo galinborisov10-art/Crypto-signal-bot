@@ -2012,6 +2012,7 @@ class ICTSignalEngine:
         logger.info("=" * 60)
         # ── End ML Advisory Layer ─────────────────────────────────────────────
         
+        entry_status = "UNKNOWN"  # Default value
         # ✅ FIX 3: STEP 12a - Entry Timing Validation
         logger.info("🔍 Step 12a: Entry Timing Validation")
         is_valid, reason = self._validate_entry_timing(
