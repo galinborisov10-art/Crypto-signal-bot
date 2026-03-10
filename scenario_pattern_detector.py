@@ -418,14 +418,19 @@ def _score_pullback_pattern(
             ob.type if hasattr(ob, 'type') else
             (_safe_get(ob, 'type', '') if isinstance(ob, dict) else '')
         ).upper()
+        if 'BULLISH' not in ob_type and 'BEARISH' not in ob_type:
+            continue
         ob_center = _get_ob_center(ob)
-        if ob_center <= 0:
+        if ob_center is None or ob_center <= 0:
             continue
 
         if is_bullish and 'BULLISH' in ob_type and ob_center < current_price:
             distance_pct = abs(ob_center - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
-                quality = float(_safe_get(ob, 'strength', 70))
+                try:
+                    quality = float(_safe_get(ob, 'strength', 70) or 70)
+                except (TypeError, ValueError):
+                    quality = 70.0
                 if quality >= POI_QUALITY['min_acceptable']:
                     found_structural_poi = True
                     if quality > best_quality:
@@ -435,7 +440,10 @@ def _score_pullback_pattern(
         if is_bearish and 'BEARISH' in ob_type and ob_center > current_price:
             distance_pct = abs(ob_center - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
-                quality = float(_safe_get(ob, 'strength', 70))
+                try:
+                    quality = float(_safe_get(ob, 'strength', 70) or 70)
+                except (TypeError, ValueError):
+                    quality = 70.0
                 if quality >= POI_QUALITY['min_acceptable']:
                     found_structural_poi = True
                     if quality > best_quality:
@@ -444,21 +452,25 @@ def _score_pullback_pattern(
 
     # Check BSL/SSL from signal_tf
     for liq in liq_zones:
-        liq_type = (
+        liq_type = str(
             liq.type if hasattr(liq, 'type') else
             (_safe_get(liq, 'type', '') if isinstance(liq, dict) else '')
+            or ''
         ).upper()
         liq_price = (
             liq.price if hasattr(liq, 'price') else
             (_safe_get(liq, 'price', 0) if isinstance(liq, dict) else 0)
         )
-        if liq_price <= 0:
+        if liq_price is None or liq_price <= 0:
             continue
 
         if is_bullish and 'BSL' in liq_type and liq_price < current_price:
             distance_pct = abs(liq_price - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
-                quality = float(_safe_get(liq, 'confidence', 0.7)) * 100
+                try:
+                    quality = float(_safe_get(liq, 'confidence', 0.7) or 0.7) * 100
+                except (TypeError, ValueError):
+                    quality = 70.0
                 if quality >= POI_QUALITY['min_acceptable']:
                     found_structural_poi = True
                     if quality > best_quality:
@@ -468,7 +480,10 @@ def _score_pullback_pattern(
         if is_bearish and 'SSL' in liq_type and liq_price > current_price:
             distance_pct = abs(liq_price - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
-                quality = float(_safe_get(liq, 'confidence', 0.7)) * 100
+                try:
+                    quality = float(_safe_get(liq, 'confidence', 0.7) or 0.7) * 100
+                except (TypeError, ValueError):
+                    quality = 70.0
                 if quality >= POI_QUALITY['min_acceptable']:
                     found_structural_poi = True
                     if quality > best_quality:
@@ -562,13 +577,16 @@ def _score_continuation_pattern(
             (_safe_get(ob, 'type', '') if isinstance(ob, dict) else '')
         ).upper()
         ob_center = _get_ob_center(ob)
-        if ob_center <= 0:
+        if ob_center is None or ob_center <= 0:
             continue
 
         if is_bullish and 'BULLISH' in ob_type:
             distance_pct = abs(ob_center - current_price) / current_price * 100
             if distance_pct <= check_range_pct:
-                quality = float(_safe_get(ob, 'strength', 70))
+                try:
+                    quality = float(_safe_get(ob, 'strength', 70) or 70)
+                except (TypeError, ValueError):
+                    quality = 70.0
                 if quality >= POI_QUALITY['min_acceptable']:
                     found_structural_poi = True
                     break
@@ -576,22 +594,26 @@ def _score_continuation_pattern(
         if not is_bullish and 'BEARISH' in ob_type:
             distance_pct = abs(ob_center - current_price) / current_price * 100
             if distance_pct <= check_range_pct:
-                quality = float(_safe_get(ob, 'strength', 70))
+                try:
+                    quality = float(_safe_get(ob, 'strength', 70) or 70)
+                except (TypeError, ValueError):
+                    quality = 70.0
                 if quality >= POI_QUALITY['min_acceptable']:
                     found_structural_poi = True
                     break
 
     if not found_structural_poi:
         for liq in liq_zones:
-            liq_type = (
+            liq_type = str(
                 liq.type if hasattr(liq, 'type') else
                 (_safe_get(liq, 'type', '') if isinstance(liq, dict) else '')
+                or ''
             ).upper()
             liq_price = (
                 liq.price if hasattr(liq, 'price') else
                 (_safe_get(liq, 'price', 0) if isinstance(liq, dict) else 0)
             )
-            if liq_price <= 0:
+            if liq_price is None or liq_price <= 0:
                 continue
 
             if is_bullish and 'BSL' in liq_type:
@@ -618,6 +640,8 @@ def _score_continuation_pattern(
     check_range = CONTINUATION_DISTANCE['poi_check_range_pct']
     for ob in obs:
         ob_center = _get_ob_center(ob)
+        if ob_center is None or ob_center <= 0:
+            continue
         if is_bullish and current_price * (1 - check_range) <= ob_center <= current_price:
             clear_path = False
             break

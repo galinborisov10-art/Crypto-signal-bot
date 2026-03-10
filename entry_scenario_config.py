@@ -167,7 +167,7 @@ PROBABILITY_CONTRIBUTIONS = {
 # Minimum probability thresholds for each scenario
 MIN_PROBABILITY_THRESHOLDS = {
     'CONTINUATION': 0.65,
-    'PULLBACK': 0.60,
+    'PULLBACK': 0.45,
     'REVERSAL': 0.55,
     'ROLLBACK': 0.55
 }

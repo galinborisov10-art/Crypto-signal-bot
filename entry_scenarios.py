@@ -146,16 +146,43 @@ def _safe_get(obj, attr, default=None):
 def _get_ob_center(ob: Any) -> float:
     """
     Safely extract center price from Order Block object or dict.
-    
+
+    Tries zone_low/zone_high first, then falls back to bottom/top,
+    and finally to a direct 'center' or 'price' field. Returns 0.0
+    if no valid price fields are found so callers can skip with ``<= 0``.
+
     Args:
         ob: Order Block object or dictionary
-        
+
     Returns:
-        Center price (average of zone_low and zone_high)
+        Center price, or 0.0 when unavailable.
     """
-    zone_low = _safe_get(ob, 'zone_low', 0)
-    zone_high = _safe_get(ob, 'zone_high', 0)
-    return (zone_low + zone_high) / 2.0
+    zone_low = _safe_get(ob, 'zone_low', None)
+    zone_high = _safe_get(ob, 'zone_high', None)
+    if zone_low is not None and zone_high is not None:
+        try:
+            return (float(zone_low) + float(zone_high)) / 2.0
+        except (TypeError, ValueError):
+            pass
+
+    # Fall back to bottom/top field names used by some OB implementations
+    bottom = _safe_get(ob, 'bottom', None)
+    top = _safe_get(ob, 'top', None)
+    if bottom is not None and top is not None:
+        try:
+            return (float(bottom) + float(top)) / 2.0
+        except (TypeError, ValueError):
+            pass
+
+    # Last resort: direct center or price field
+    center = _safe_get(ob, 'center', None) or _safe_get(ob, 'price', None)
+    if center is not None:
+        try:
+            return float(center)
+        except (TypeError, ValueError):
+            pass
+
+    return 0.0
 
 
 def select_entry_zone_for_scenario(
