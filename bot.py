@@ -9255,6 +9255,120 @@ def _format_hold_signal(signal: ICTSignal, signal_source: str = "AUTO") -> str:
     return msg
 
 
+def format_v2_signal(signal, signal_source: str = "AUTO") -> str:
+    """
+    Форматира V2 сигнали (ICTSignalV2 - използва string signal_type)
+
+    Args:
+        signal: ICTSignalV2 object with string-based signal_type
+        signal_source: "AUTO", "MANUAL", "TEST"
+
+    Returns:
+        Formatted message string
+    """
+    # V2 signal_type is already a string: 'BUY', 'SELL', 'STRONG_BUY', 'STRONG_SELL'
+    signal_type_str = str(signal.signal_type)
+
+    signal_emoji = {
+        'BUY': '🟢',
+        'SELL': '🔴',
+        'STRONG_BUY': '💚',
+        'STRONG_SELL': '❤️',
+        'HOLD': '⚪'
+    }
+    emoji = signal_emoji.get(signal_type_str, '⚪')
+
+    if signal_type_str == 'HOLD':
+        return f"{emoji} <b>ICT HOLD</b>\n\n💡 Пазарът не е готов за вход.\nИзчакай по-добра setup."
+
+    is_sell = signal_type_str in ['SELL', 'STRONG_SELL']
+    tp_direction = "▼" if is_sell else "▲"
+
+    # Calculate TP percentages (V2 tp_prices may have only 1 TP)
+    tp_prices = signal.tp_prices if signal.tp_prices else []
+    if is_sell:
+        tp1_pct = ((signal.entry_price - tp_prices[0]) / signal.entry_price * 100) if len(tp_prices) > 0 else 0
+        tp2_pct = ((signal.entry_price - tp_prices[1]) / signal.entry_price * 100) if len(tp_prices) > 1 else 0
+        tp3_pct = ((signal.entry_price - tp_prices[2]) / signal.entry_price * 100) if len(tp_prices) > 2 else 0
+    else:
+        tp1_pct = ((tp_prices[0] - signal.entry_price) / signal.entry_price * 100) if len(tp_prices) > 0 else 0
+        tp2_pct = ((tp_prices[1] - signal.entry_price) / signal.entry_price * 100) if len(tp_prices) > 1 else 0
+        tp3_pct = ((tp_prices[2] - signal.entry_price) / signal.entry_price * 100) if len(tp_prices) > 2 else 0
+
+    source_badge = {
+        "AUTO": "🤖 АВТОМАТИЧЕН",
+        "MANUAL": "👤 РЪЧЕН",
+        "TEST": "🧪 ТЕСТОВ"
+    }.get(signal_source, "📊 СИГНАЛ")
+
+    timestamp_str = ""
+    if signal_source == "AUTO":
+        bg_tz = pytz.timezone('Europe/Sofia')
+        now = datetime.now(bg_tz)
+        timestamp_str = f"⏰ {now.strftime('%d.%m.%Y %H:%M')} (BG време)\n"
+
+    tp_section = ""
+    if len(tp_prices) > 0:
+        tp_section += f"{tp_direction} <b>Take Profit 1:</b> ${tp_prices[0]:,.2f} ({tp1_pct:+.2f}%)\n"
+    if len(tp_prices) > 1:
+        tp_section += f"{tp_direction} <b>Take Profit 2:</b> ${tp_prices[1]:,.2f} ({tp2_pct:+.2f}%)\n"
+    if len(tp_prices) > 2:
+        tp_section += f"{tp_direction} <b>Take Profit 3:</b> ${tp_prices[2]:,.2f} ({tp3_pct:+.2f}%)\n"
+
+    rr = getattr(signal, 'risk_reward_ratio', 0.0) or getattr(signal, 'rr_ratio', 0.0)
+
+    msg = f"""{emoji} <b>ICT {signal_type_str} SIGNAL</b> {emoji}
+{source_badge}
+{timestamp_str}
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📊 ОСНОВНА ИНФОРМАЦИЯ</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+💰 <b>Символ:</b> {signal.symbol}
+⏰ <b>Таймфрейм:</b> {signal.timeframe}
+🎯 <b>Увереност:</b> {signal.confidence:.1f}%
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>💼 TRADE SETUP</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>📍 ENTRY:</b> ${signal.entry_price:,.4f}
+
+<b>🛑 STOP LOSS:</b> ${signal.sl_price:,.4f}
+
+<b>🎯 TAKE PROFITS:</b>
+{tp_section}
+<b>⚖️ RISK/REWARD:</b> 1:{rr:.2f}
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📈 ICT V2 АНАЛИЗ</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>Bias:</b> {signal.market_bias}
+<b>Scenario:</b> {signal.scenario if signal.scenario else 'N/A'}
+"""
+
+    if signal.confirmations:
+        msg += "\n<b>✅ Потвърждения:</b>\n"
+        for c in signal.confirmations[:5]:
+            msg += f"  • {c}\n"
+
+    if signal.warnings:
+        msg += "\n<b>⚠️ Предупреждения:</b>\n"
+        for w in signal.warnings[:3]:
+            msg += f"  • {w}\n"
+
+    if signal.score_breakdown:
+        msg += "\n<b>📊 Score Breakdown:</b>\n"
+        for k, v in list(signal.score_breakdown.items())[:6]:
+            msg += f"  • {k}: {v}\n"
+
+    msg += "\n━━━━━━━━━━━━━━━━━━━━━━"
+    msg += "\n\n⚠️ <b>Disclaimer:</b> Автоматичен сигнал от V2 engine. Не е финансов съвет!"
+
+    return msg
+
+
 def format_standardized_signal(signal: ICTSignal, signal_source: str = "AUTO") -> str:
     """
     СТАНДАРТИЗИРАН формат за ВСИЧКИ типове сигнали (STRICT ICT)
@@ -11678,19 +11792,27 @@ async def auto_signal_job(timeframe: str, bot_instance):
                     is_auto=True  # ← Mark as auto signal
                 )
                 
-                # Handle NO_TRADE
-                if not ict_signal or (isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE'):
+                # Handle NO_TRADE - check both V1 ('type') and V2 ('action') dict formats
+                if not ict_signal or isinstance(ict_signal, dict):
+                    logger.debug(f"⚠️ Dict result for {symbol} {timeframe} (reason={ict_signal.get('reason', ict_signal.get('type', 'unknown')) if isinstance(ict_signal, dict) else 'none'}), skipping")
                     return None
-                
+
+                # Get signal_type as string - handles both V1 enum and V2 string
+                if not hasattr(ict_signal, 'signal_type'):
+                    logger.warning(f"⚠️ Incomplete signal for {symbol} {timeframe}")
+                    return None
+                sig_type = ict_signal.signal_type
+                signal_type_str = sig_type.value if hasattr(sig_type, 'value') else str(sig_type)
+
                 # Skip HOLD signals (informational only)
-                if hasattr(ict_signal, 'signal_type') and ict_signal.signal_type.value == 'HOLD':
+                if signal_type_str == 'HOLD':
                     return None
                 
                 # ✅ PERSISTENT DEDUPLICATION (PR #111)
                 if SIGNAL_CACHE_AVAILABLE:
                     is_dup, reason = is_signal_duplicate(
                         symbol=symbol,
-                        signal_type=ict_signal.signal_type.value,
+                        signal_type=signal_type_str,
                         timeframe=timeframe,
                         entry_price=ict_signal.entry_price,
                         confidence=ict_signal.confidence,
@@ -11707,7 +11829,7 @@ async def auto_signal_job(timeframe: str, bot_instance):
                     # Fallback to in-memory deduplication
                     if is_signal_already_sent(
                         symbol=symbol,
-                        signal_type=ict_signal.signal_type.value,
+                        signal_type=signal_type_str,
                         timeframe=timeframe,
                         confidence=ict_signal.confidence,
                         entry_price=ict_signal.entry_price,
@@ -11720,12 +11842,15 @@ async def auto_signal_job(timeframe: str, bot_instance):
                     'symbol': symbol,
                     'timeframe': timeframe,
                     'ict_signal': ict_signal,
+                    'signal_type_str': signal_type_str,
                     'confidence': ict_signal.confidence,
                     'df': df
                 }
                 
             except Exception as e:
+                import traceback
                 logger.error(f"❌ Auto signal analysis error for {symbol} {timeframe}: {e}")
+                logger.error(f"Traceback:\n{traceback.format_exc()}")
                 return None
         
         # Execute all tasks in parallel
@@ -11754,10 +11879,14 @@ async def auto_signal_job(timeframe: str, bot_instance):
         for sig in signals_to_send:
             symbol = sig['symbol']
             ict_signal = sig['ict_signal']
+            signal_type_str = sig.get('signal_type_str', '')
             df = sig['df']
             
-            # ✅ Format signal with AUTO source
-            signal_msg = format_standardized_signal(ict_signal, "AUTO")
+            # ✅ Format signal - use V2 formatter for ICTSignalV2, standard formatter for V1
+            if type(ict_signal).__name__ == 'ICTSignalV2':
+                signal_msg = format_v2_signal(ict_signal, "AUTO")
+            else:
+                signal_msg = format_standardized_signal(ict_signal, "AUTO")
             
             # Send message to owner
             try:
@@ -11795,10 +11924,10 @@ async def auto_signal_job(timeframe: str, bot_instance):
                 signal_id = record_signal(
                     symbol=symbol,
                     timeframe=timeframe,
-                    signal_type=ict_signal.signal_type.value,
+                    signal_type=signal_type_str,
                     confidence=ict_signal.confidence,
                     entry_price=ict_signal.entry_price,
-                    tp_price=ict_signal.tp_prices[0],
+                    tp_price=ict_signal.tp_prices[0] if ict_signal.tp_prices else 0,
                     sl_price=ict_signal.sl_price
                 )
                 logger.info(f"📊 AUTO-SIGNAL recorded to stats (ID: {signal_id})")
@@ -11808,25 +11937,41 @@ async def auto_signal_job(timeframe: str, bot_instance):
             # Log to ML journal for high confidence signals
             if ict_signal.confidence >= 60:  # FIX: Aligned with Telegram send threshold (was 65)
                 try:
+                    bias_obj = getattr(ict_signal, 'bias', None)
+                    if hasattr(bias_obj, 'value'):
+                        bias_str = bias_obj.value
+                    elif bias_obj:
+                        bias_str = str(bias_obj)
+                    else:
+                        bias_str = 'NEUTRAL'
+                    htf_bias_obj = getattr(ict_signal, 'htf_bias', None)
+                    if isinstance(htf_bias_obj, str):
+                        htf_bias_str = htf_bias_obj
+                    elif hasattr(htf_bias_obj, 'value'):
+                        htf_bias_str = htf_bias_obj.value
+                    elif htf_bias_obj:
+                        htf_bias_str = str(htf_bias_obj)
+                    else:
+                        htf_bias_str = None
                     analysis_data = {
-                        'market_bias': ict_signal.bias.value,  # Fixed: bias instead of market_bias
-                        'htf_bias': ict_signal.htf_bias if isinstance(ict_signal.htf_bias, str) else (ict_signal.htf_bias.value if ict_signal.htf_bias else None),
-                        'structure_broken': ict_signal.structure_broken,
-                        'displacement_detected': ict_signal.displacement_detected,
-                        'order_blocks_count': len(ict_signal.order_blocks),
-                        'liquidity_zones_count': len(ict_signal.liquidity_zones),
-                        'fvg_count': len(ict_signal.fair_value_gaps),
-                        'mtf_confluence': ict_signal.mtf_confluence,  # Fixed: mtf_confluence instead of mtf_confluence_score
-                        'whale_blocks': len(ict_signal.whale_blocks) if ict_signal.whale_blocks else 0
+                        'market_bias': bias_str,
+                        'htf_bias': htf_bias_str,
+                        'structure_broken': getattr(ict_signal, 'structure_broken', False),
+                        'displacement_detected': getattr(ict_signal, 'displacement_detected', False),
+                        'order_blocks_count': len(getattr(ict_signal, 'order_blocks', [])),
+                        'liquidity_zones_count': len(getattr(ict_signal, 'liquidity_zones', [])),
+                        'fvg_count': len(getattr(ict_signal, 'fair_value_gaps', [])),
+                        'mtf_confluence': getattr(ict_signal, 'mtf_confluence', 0),
+                        'whale_blocks': len(ict_signal.whale_blocks) if getattr(ict_signal, 'whale_blocks', None) else 0
                     }
                     
                     journal_id = log_trade_to_journal(
                         symbol=symbol,
                         timeframe=timeframe,
-                        signal_type=ict_signal.signal_type.value,
+                        signal_type=signal_type_str,
                         confidence=ict_signal.confidence,
                         entry_price=ict_signal.entry_price,
-                        tp_price=ict_signal.tp_prices[0],
+                        tp_price=ict_signal.tp_prices[0] if ict_signal.tp_prices else 0,
                         sl_price=ict_signal.sl_price,
                         analysis_data=analysis_data
                     )
