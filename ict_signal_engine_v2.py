@@ -40,7 +40,7 @@ from market_structure_detector import analyze_market_structure
 from orderflow_detector import analyze_orderflow
 from liquidity_detector import analyze_liquidity
 from candidate_generator import generate_candidates
-from confidence_scorer import score_candidate
+from confidence_scorer import score_candidate, score_rr
 from entry_calculator import calculate_entry_sl_tp, calculate_entry_zone
 from execution_quality_checker import check_execution_quality
 
@@ -469,7 +469,6 @@ class ICTSignalEngine:
         logger.info("📊 Step 8: Signal Validation")
 
         # Re-score with actual RR now that levels are known
-        from confidence_scorer import score_rr
         rr_pts_actual = score_rr(entry, sl, tp)
         # Update breakdown
         old_rr_pts = best_breakdown.get('rr', 0)

@@ -200,9 +200,9 @@ def calculate_tp(entry: float, sl: float, direction: str,
             if pool['type'] == 'BUY_SIDE_LIQUIDITY' and pool['price'] > entry:
                 all_targets.append(pool['price'])
     else:
-        for sl_pt in swing_lows:
-            if sl_pt['price'] < entry:
-                all_targets.append(sl_pt['price'])
+        for swing_low_pt in swing_lows:
+            if swing_low_pt['price'] < entry:
+                all_targets.append(swing_low_pt['price'])
         for pool in pools:
             if pool['type'] == 'SELL_SIDE_LIQUIDITY' and pool['price'] < entry:
                 all_targets.append(pool['price'])

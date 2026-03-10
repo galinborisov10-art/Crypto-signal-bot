@@ -124,6 +124,15 @@ CANDIDATES = {
 }
 
 # ─────────────────────────────────────────────
+# Confidence scoring proximity windows
+# ─────────────────────────────────────────────
+SCORING_PROXIMITY = {
+    'sweep_max_candles_ago':        12,    # Max sweep age for liquidity score
+    'sweep_pool_tolerance_mult':     5,    # Tolerance = entry * 0.005 * this
+    'pool_proximity_tolerance_mult': 10,   # Tolerance = entry * 0.005 * this
+}
+
+# ─────────────────────────────────────────────
 # Asset class detection (for spread limits)
 # ─────────────────────────────────────────────
 FOREX_SYMBOLS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'USDCHF',

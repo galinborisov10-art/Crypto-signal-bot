@@ -240,7 +240,11 @@ def detect_sweeps(df: pd.DataFrame, pools: List[Dict]) -> List[Dict]:
                     for k in range(1, rej_max + 1):
                         if i + k < n and closes[i + k] < price:
                             wick_size = highs[i] - closes[i]
-                            atr_approx = float(np.mean(highs[:i] - lows[:i]) + 1e-9)
+                            # Use fixed 14-candle lookback for consistent ATR approximation
+                            lookback_start = max(0, i - 14)
+                            atr_approx = float(np.mean(
+                                highs[lookback_start:i] - lows[lookback_start:i]
+                            ) + 1e-9)
                             strength = min(100, int((wick_size / atr_approx) * 50))
                             sweeps.append({
                                 'type':                 'BSL_SWEEP',
@@ -258,7 +262,11 @@ def detect_sweeps(df: pd.DataFrame, pools: List[Dict]) -> List[Dict]:
                     for k in range(1, rej_max + 1):
                         if i + k < n and closes[i + k] > price:
                             wick_size = closes[i] - lows[i]
-                            atr_approx = float(np.mean(highs[:i] - lows[:i]) + 1e-9)
+                            # Use fixed 14-candle lookback for consistent ATR approximation
+                            lookback_start = max(0, i - 14)
+                            atr_approx = float(np.mean(
+                                highs[lookback_start:i] - lows[lookback_start:i]
+                            ) + 1e-9)
                             strength = min(100, int((wick_size / atr_approx) * 50))
                             sweeps.append({
                                 'type':                 'SSL_SWEEP',

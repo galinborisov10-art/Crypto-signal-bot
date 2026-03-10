@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
 
-from ict_config import SCORING_WEIGHTS, RISK_REWARD
+from ict_config import SCORING_WEIGHTS, RISK_REWARD, SCORING_PROXIMITY
 
 logger = logging.getLogger(__name__)
 
@@ -161,10 +161,14 @@ def score_liquidity(sweeps: List[Dict], pools: List[Dict],
 
     # Fresh sweep in support of direction
     sweep_type = 'SSL_SWEEP' if candidate_direction == 'BUY' else 'BSL_SWEEP'
+    sweep_max_age = SCORING_PROXIMITY['sweep_max_candles_ago']
+    sweep_tol_mult = SCORING_PROXIMITY['sweep_pool_tolerance_mult']
+    pool_tol_mult  = SCORING_PROXIMITY['pool_proximity_tolerance_mult']
+
     fresh_sweep = next(
         (s for s in sweeps
-         if s['type'] == sweep_type and s['candles_ago'] <= 12
-         and abs(s['pool_price'] - preferred) <= tolerance * 5),
+         if s['type'] == sweep_type and s['candles_ago'] <= sweep_max_age
+         and abs(s['pool_price'] - preferred) <= tolerance * sweep_tol_mult),
         None
     )
     if fresh_sweep:
@@ -175,7 +179,7 @@ def score_liquidity(sweeps: List[Dict], pools: List[Dict],
     near_pool = next(
         (p for p in pools
          if p['type'] == pool_type
-         and abs(p['price'] - preferred) <= tolerance * 10),
+         and abs(p['price'] - preferred) <= tolerance * pool_tol_mult),
         None
     )
     if near_pool:

@@ -47,7 +47,7 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> float:
             (low  - prev_close).abs(),
         ], axis=1).max(axis=1)
 
-        atr = float(tr.rolling(period, min_periods=period // 2).mean().iloc[-1])
+        atr = float(tr.rolling(period, min_periods=period).mean().iloc[-1])
         return atr if not np.isnan(atr) else float((high - low).mean())
     except Exception as exc:
         logger.warning(f"⚠️ calculate_atr error: {exc}")
