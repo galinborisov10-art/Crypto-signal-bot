@@ -783,18 +783,23 @@ def _create_safe_poi_data(poi_type: str, poi_object: Any) -> Dict:
     poi_data = {'type': poi_type}
     
     if poi_type == 'OB' and poi_object:
-        zone_low = float(poi_object.zone_low if hasattr(poi_object, 'zone_low') else poi_object.get('zone_low', 0))
-        zone_high = float(poi_object.zone_high if hasattr(poi_object, 'zone_high') else poi_object.get('zone_high', 0))
+        _zl = poi_object.zone_low if hasattr(poi_object, 'zone_low') else (poi_object.get('zone_low') if isinstance(poi_object, dict) else None)
+        _zh = poi_object.zone_high if hasattr(poi_object, 'zone_high') else (poi_object.get('zone_high') if isinstance(poi_object, dict) else None)
+        zone_low = float(_zl or 0)
+        zone_high = float(_zh or 0)
+        _str = poi_object.strength if hasattr(poi_object, 'strength') else (poi_object.get('strength') if isinstance(poi_object, dict) else None)
         poi_data.update({
             'zone_low': zone_low,
             'zone_high': zone_high,
             'center': float((zone_low + zone_high) / 2),
-            'strength': float(poi_object.strength if hasattr(poi_object, 'strength') else 0.0),
+            'strength': float(_str or 0.0),
             'timeframe': str(poi_object.timeframe if hasattr(poi_object, 'timeframe') else 'unknown')
         })
     elif poi_type == 'FVG' and poi_object:
-        bottom = float(poi_object.bottom if hasattr(poi_object, 'bottom') else poi_object.get('bottom', 0))
-        top = float(poi_object.top if hasattr(poi_object, 'top') else poi_object.get('top', 0))
+        _bot = poi_object.bottom if hasattr(poi_object, 'bottom') else (poi_object.get('bottom') if isinstance(poi_object, dict) else None)
+        _top = poi_object.top if hasattr(poi_object, 'top') else (poi_object.get('top') if isinstance(poi_object, dict) else None)
+        bottom = float(_bot or 0)
+        top = float(_top or 0)
         poi_data.update({
             'bottom': bottom,
             'top': top,
@@ -802,9 +807,10 @@ def _create_safe_poi_data(poi_type: str, poi_object: Any) -> Dict:
             'timeframe': str(poi_object.timeframe if hasattr(poi_object, 'timeframe') else 'unknown')
         })
     elif poi_type == 'LIQUIDITY' and poi_object:
+        _price = poi_object.price if hasattr(poi_object, 'price') else (poi_object.get('price') if isinstance(poi_object, dict) else None)
         poi_data.update({
             'sweep_type': str(poi_object.sweep_type if hasattr(poi_object, 'sweep_type') else 'unknown'),
-            'price': float(poi_object.price if hasattr(poi_object, 'price') else 0.0),
+            'price': float(_price or 0.0),
             'raid_low': float(poi_object.raid_low) if hasattr(poi_object, 'raid_low') and poi_object.raid_low else None,
             'raid_high': float(poi_object.raid_high) if hasattr(poi_object, 'raid_high') and poi_object.raid_high else None
         })
@@ -1067,12 +1073,13 @@ def _validate_reversal_behavior(
     # REMOVED: Structure flip gate (confirmation layer check removed)
 
     # Use None when candles_ago is absent so conditional checks can be skipped
-    flip_candles_ago = structure_break.get('candles_ago')
+    # Guard against structure_break being None (confirmation layer is optional)
+    flip_candles_ago = structure_break.get('candles_ago') if structure_break else None
 
     # 3. Displacement is CONFIRMATION layer (non-blocking)
     # REMOVED: Displacement gate (confirmation layer check removed)
 
-    disp_strength = displacement.get('strength', 0.0)
+    disp_strength = (displacement or {}).get('strength', 0.0) or 0.0
     # REMOVED: Weak displacement check (confirmation layer)
 
     # 4. Validate sequence: Sweep → Flip → Displacement
@@ -1138,10 +1145,10 @@ def _validate_rollback_behavior(
             return False, f"Too far from break (distance: {distance_to_break:.1f}% > 1.5%)"
 
     # 4. Verify price had moved away from break (BONUS, not gate)
-    displacement = ict_components.get('displacement', {})
+    displacement = ict_components.get('displacement') or {}
     disp_strength = 0.0
     if displacement and displacement.get('detected'):
-        disp_strength = displacement.get('strength', 0.0)
+        disp_strength = displacement.get('strength', 0.0) or 0.0
         if disp_strength < 0.2:
             logger.info(f"   ⚠️ Weak displacement ({disp_strength:.2f}), but allowing rollback")
     else:
@@ -1219,11 +1226,11 @@ def _score_rollback_scenario(
     # ============================================================
     # PROBABILITY CALCULATION (Phase 2)
     # ============================================================
-    structure_strength = sb.get('strength', 50)
+    structure_strength = sb.get('strength', 50) or 50
     
     # Get displacement strength
-    displacement = ict_components.get('displacement', {})
-    displacement_strength = displacement.get('strength', 0) if displacement.get('detected') else 0
+    displacement = ict_components.get('displacement') or {}
+    displacement_strength = (displacement.get('strength', 0) or 0) if displacement.get('detected') else 0
     
     # Calculate probability using helper function
     probability = _calculate_probability_rollback(
@@ -1407,14 +1414,14 @@ def _check_confirmation_layer(
     
     # 2. Check Displacement (with minimum strength threshold)
     if displacement and displacement.get('detected'):
-        strength = displacement.get('strength', 0)
+        strength = displacement.get('strength', 0) or 0
         if strength >= 0.3:  # Minimum threshold for confirmation
             return True
     
     # 3. Check Sweep + Displacement combo
     if sweeps and len(sweeps) > 0:
         if displacement and displacement.get('detected'):
-            strength = displacement.get('strength', 0)
+            strength = displacement.get('strength', 0) or 0
             if strength >= 0.2:  # Lower threshold when combined with sweep
                 return True
     
@@ -1478,21 +1485,32 @@ def _score_pullback_scenario(
                 })
     
     # 2. Check FVGs
-    fvgs = ict_components.get('fvgs', [])
+    fvgs = ict_components.get('fvgs') or []
     for fvg in fvgs:
         fvg_type = getattr(fvg, 'type', None) or _safe_get(fvg, 'type', '')
-        fvg_center = (fvg.bottom if hasattr(fvg, 'bottom') else (_safe_get(fvg, 'bottom', 0) if isinstance(fvg, dict) else 0) + fvg.top if hasattr(fvg, 'top') else (_safe_get(fvg, 'top', 0) if isinstance(fvg, dict) else 0)) / 2
+        _fvg_bot = fvg.bottom if hasattr(fvg, 'bottom') else (_safe_get(fvg, 'bottom') if isinstance(fvg, dict) else None)
+        _fvg_top = fvg.top if hasattr(fvg, 'top') else (_safe_get(fvg, 'top') if isinstance(fvg, dict) else None)
+        try:
+            fvg_bottom = float(_fvg_bot or 0)
+            fvg_top_val = float(_fvg_top or 0)
+        except (TypeError, ValueError):
+            continue  # Skip FVG with non-numeric bounds
+        if fvg_bottom <= 0 and fvg_top_val <= 0:
+            continue  # Skip FVG with no price data
+        fvg_center = (fvg_bottom + fvg_top_val) / 2
+        if fvg_center <= 0:
+            continue
         
         if is_bullish and 'BULLISH' in str(fvg_type).upper() and fvg_center < current_price:
             distance_pct = abs(fvg_center - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
                 # Use actual component strength instead of hardcoded quality
-                fvg_strength = _safe_get(fvg, 'strength', 70)
+                fvg_strength = _safe_get(fvg, 'strength', 70) or 70
                 poi_candidates.append({
                     'type': 'FVG',
                     'price': fvg_center,
-                    'low': fvg.bottom if hasattr(fvg, 'bottom') else (_safe_get(fvg, 'bottom') if isinstance(fvg, dict) else None),
-                    'high': fvg.top if hasattr(fvg, 'top') else (_safe_get(fvg, 'top') if isinstance(fvg, dict) else None),
+                    'low': fvg_bottom,
+                    'high': fvg_top_val,
                     'distance_pct': distance_pct,
                     'quality': fvg_strength,
                     '_ref': fvg  # ← NEW: Store reference
@@ -1502,28 +1520,40 @@ def _score_pullback_scenario(
             distance_pct = abs(fvg_center - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
                 # Use actual component strength instead of hardcoded quality
-                fvg_strength = _safe_get(fvg, 'strength', 70)
+                fvg_strength = _safe_get(fvg, 'strength', 70) or 70
                 poi_candidates.append({
                     'type': 'FVG',
                     'price': fvg_center,
-                    'low': fvg.bottom if hasattr(fvg, 'bottom') else (_safe_get(fvg, 'bottom') if isinstance(fvg, dict) else None),
-                    'high': fvg.top if hasattr(fvg, 'top') else (_safe_get(fvg, 'top') if isinstance(fvg, dict) else None),
+                    'low': fvg_bottom,
+                    'high': fvg_top_val,
                     'distance_pct': distance_pct,
                     'quality': fvg_strength,
                     '_ref': fvg  # ← NEW: Store reference
                 })
     
     # 3. Check Liquidity zones (BSL/SSL)
-    liq_zones = ict_components.get('liquidity_zones', [])
+    liq_zones = ict_components.get('liquidity_zones') or []
     for liq in liq_zones:
-        liq_type = (liq.type if hasattr(liq, 'type') else (_safe_get(liq, 'type', '') if isinstance(liq, dict) else '')).upper()
-        liq_price = liq.price if hasattr(liq, 'price') else (liq.price if hasattr(liq, 'price') else (_safe_get(liq, 'price', 0) if isinstance(liq, dict) else 0) if isinstance(liq, dict) else 0)
+        _liq_type_raw = (
+            liq.type if hasattr(liq, 'type') else
+            (_safe_get(liq, 'type') if isinstance(liq, dict) else None)
+        )
+        liq_type = str(_liq_type_raw or '').upper()
+        _liq_price = liq.price if hasattr(liq, 'price') else (_safe_get(liq, 'price') if isinstance(liq, dict) else None)
+        if _liq_price is None:
+            continue
+        try:
+            liq_price = float(_liq_price)
+        except (TypeError, ValueError):
+            continue
+        if liq_price <= 0:
+            continue
         
         if is_bullish and 'BSL' in liq_type and liq_price < current_price:
             distance_pct = abs(liq_price - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
                 # Use actual component strength instead of hardcoded quality
-                liq_strength = _safe_get(liq, 'confidence', 0.7) * 100
+                liq_strength = float(_safe_get(liq, 'confidence', 0.7) or 0.7) * 100
                 poi_candidates.append({
                     'type': 'BSL',
                     'price': liq_price,
@@ -1538,7 +1568,7 @@ def _score_pullback_scenario(
             distance_pct = abs(liq_price - current_price) / current_price * 100
             if PULLBACK_DISTANCE['min_pct'] * 100 <= distance_pct <= PULLBACK_DISTANCE['max_pct'] * 100:
                 # Use actual component strength instead of hardcoded quality
-                liq_strength = _safe_get(liq, 'confidence', 0.7) * 100
+                liq_strength = float(_safe_get(liq, 'confidence', 0.7) or 0.7) * 100
                 poi_candidates.append({
                     'type': 'SSL',
                     'price': liq_price,
@@ -1742,8 +1772,8 @@ def _score_continuation_scenario(
     # ============================================================
     # PROBABILITY CALCULATION (Phase 2)
     # ============================================================
-    disp = ict_components.get('displacement', {})
-    displacement_strength = disp.get('strength', 0) if disp.get('detected') else 0
+    disp = ict_components.get('displacement') or {}
+    displacement_strength = (disp.get('strength', 0) or 0) if disp.get('detected') else 0
     structure_present = 'MSS/BOS' in triggers
     
     # Calculate probability using helper function
@@ -2028,8 +2058,8 @@ def _score_reversal_scenario(
     sweep_present = 'LIQUIDITY_SWEEP' in triggers
     
     # Get displacement strength
-    disp = ict_components.get('displacement', {})
-    displacement_strength = disp.get('strength', 0) if disp.get('detected') else 0
+    disp = ict_components.get('displacement') or {}
+    displacement_strength = (disp.get('strength', 0) or 0) if disp.get('detected') else 0
     
     # Calculate probability using helper function
     probability = _calculate_probability_reversal(

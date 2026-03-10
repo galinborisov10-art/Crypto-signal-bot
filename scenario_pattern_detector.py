@@ -359,9 +359,9 @@ def _score_pullback_structure_retest(
         return 0.0
 
     # Calculate probability
-    structure_strength = sb.get('strength', 50)
-    displacement = structure_comps.get('displacement', {})
-    displacement_strength = displacement.get('strength', 0) if displacement.get('detected') else 0
+    structure_strength = sb.get('strength', 50) or 50
+    displacement = structure_comps.get('displacement') or {}
+    displacement_strength = (displacement.get('strength', 0) or 0) if displacement.get('detected') else 0
 
     # Use break_level if available, else estimate distance from current price
     break_level = sb.get('break_level') or sb.get('price')
@@ -496,8 +496,8 @@ def _score_pullback_pattern(
         return 0.0
 
     # ── Fix #1: PULLBACK requires prior displacement (ICT principle) ──────
-    disp = structure_comps.get('displacement', {})
-    displacement_strength = disp.get('strength', 0) if disp.get('detected') else 0
+    disp = structure_comps.get('displacement') or {}
+    displacement_strength = (disp.get('strength', 0) or 0) if disp.get('detected') else 0
     if displacement_strength < MIN_DISPLACEMENT_FOR_PULLBACK:
         logger.info(
             f"❌ PULLBACK rejected: insufficient prior displacement "
@@ -554,9 +554,9 @@ def _score_continuation_pattern(
     if 'DISPLACEMENT' not in triggers and 'MSS/BOS' not in triggers:
         return 0.0
 
-    disp = structure_comps.get('displacement', {})
+    disp = structure_comps.get('displacement') or {}
     displacement_detected = disp.get('detected', False)
-    displacement_strength = disp.get('strength', 0.0)
+    displacement_strength = disp.get('strength', 0.0) or 0.0
 
     if not displacement_detected:
         return 0.0
@@ -745,9 +745,9 @@ def _score_reversal_pattern(
     Sweep + MSS/CHOCH from signal_tf; displacement from structure_tf.
     """
     # ✅ Sweeps from signal_tf; structure from structure_tf
-    sweeps = signal_comps.get('liquidity_sweeps', [])
+    sweeps = signal_comps.get('liquidity_sweeps') or []
     sb = structure_comps.get('structure_break')
-    disp = structure_comps.get('displacement', {})
+    disp = structure_comps.get('displacement') or {}
 
     # Validate behavioral requirements
     is_eligible, reason = _validate_reversal_behavior(
@@ -775,7 +775,7 @@ def _score_reversal_pattern(
         structure_flip = True
 
     sweep_present = bool(sweeps)
-    displacement_strength = disp.get('strength', 0.0) if disp else 0.0
+    displacement_strength = disp.get('strength', 0.0) or 0.0
 
     from entry_scenarios import _calculate_probability_reversal
     probability = _calculate_probability_reversal(
