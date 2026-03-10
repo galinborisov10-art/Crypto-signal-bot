@@ -9121,7 +9121,7 @@ def format_ict_signal(signal: ICTSignal) -> str:
 """
     
     # Add entry guidance if available (NEW - ICT-Compliant Entry Zones)
-    if signal.entry_zone and signal.entry_status:
+    if hasattr(signal, 'entry_zone') and hasattr(signal, 'entry_status') and signal.entry_zone and signal.entry_status:
         try:
             # Get current price from entry_price (or we could pass it separately)
             current_price = signal.entry_price
