@@ -167,17 +167,17 @@ class ChartGenerator:
     
     def _plot_candlesticks(self, ax, df: pd.DataFrame):
         """Plot OHLC candlesticks"""
-        for i, row in df.iterrows():
+        for idx, (i, row) in enumerate(df.iterrows()):
             color = self.COLORS['candle_up'] if row['close'] >= row['open'] else self.COLORS['candle_down']
             
             # High-Low line
-            ax.plot([i, i], [row['low'], row['high']], color=color, linewidth=1)
+            ax.plot([idx, idx], [row['low'], row['high']], color=color, linewidth=1)
             
             # Open-Close body
             height = abs(row['close'] - row['open'])
             bottom = min(row['open'], row['close'])
             ax.add_patch(patches.Rectangle(
-                (i - 0.3, bottom), 0.6, height,
+                (idx - 0.3, bottom), 0.6, height,
                 facecolor=color, edgecolor=color, linewidth=1
             ))
     
