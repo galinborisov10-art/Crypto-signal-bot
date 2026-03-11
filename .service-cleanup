@@ -1,0 +1,17 @@
+# Service Cleanup - 2026-03-11
+
+## Problem:
+Two systemd services were running simultaneously:
+- crypto-bot.service (disabled)
+- crypto-signal-bot.service (enabled)
+
+This caused duplicate bot processes.
+
+## Solution:
+- Stopped and disabled crypto-bot.service
+- Kept only crypto-signal-bot.service (enabled)
+
+## Result:
+✅ Single process running
+✅ No duplicate signals
+✅ Auto-restart working correctly
