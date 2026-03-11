@@ -14120,7 +14120,7 @@ async def auto_update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text("🔄 Рестартиране...")
         
         # Kill current process
-        subprocess.run(['pkill', '-f', 'bot.py'], timeout=5)
+        subprocess.run(['systemctl', 'restart', 'crypto-signal-bot.service'], timeout=10)
         
         # Wait a bit
         await asyncio.sleep(2)
@@ -14294,7 +14294,7 @@ async def test_system_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             problems_found.append(f"Множество инстанции: {len(pids)}")
             await update.message.reply_text(f"⚠️ Намерени {len(pids)} инстанции - отстранявам конфликт...")
             
-            subprocess.run(["pkill", "-9", "-f", "python3.*bot.py"], timeout=10)
+            subprocess.run(["systemctl", "restart", "crypto-signal-bot.service"], timeout=10)
             import time
             time.sleep(3)
             subprocess.run([f"{BASE_PATH}/bot-manager.sh", "start"], timeout=30)
