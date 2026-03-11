@@ -87,6 +87,7 @@ except Exception as e:
 
 # Админ модул
 import sys
+import fcntl
 # test deploy
 
 sys.path.append(f'{BASE_PATH}/admin')
@@ -19090,6 +19091,18 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
 
 
 if __name__ == "__main__":
+
+    # 🔒 Single instance lock
+    lock_file = "/tmp/crypto_bot.lock"
+    try:
+        lock_fd = open(lock_file, "w")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        print("✅ Single instance lock acquired")
+    except (IOError, OSError):
+        print("❌ Another bot instance is already running!")
+        import sys
+        sys.exit(1)
+
     main()
     
     
