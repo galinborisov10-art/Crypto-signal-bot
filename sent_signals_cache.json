@@ -13,7 +13,7 @@
   },
   "BTCUSDT_BUY_2h": {
     "timestamp": "2026-03-11T11:17:11.577931",
-    "last_checked": "2026-03-11T12:47:45.384566",
+    "last_checked": "2026-03-11T13:26:58.426819",
     "entry_price": 66319.25,
     "confidence": 71.50000000000001
   },
@@ -37,15 +37,15 @@
   },
   "ETHUSDT_STRONG_SELL_4h": {
     "timestamp": "2026-03-11T12:00:07.581004",
-    "last_checked": "2026-03-11T12:48:02.576252",
+    "last_checked": "2026-03-11T13:27:20.050785",
     "entry_price": 2037.978,
     "confidence": 90.60000000000001
   },
   "SOLUSDT_STRONG_SELL_4h": {
-    "timestamp": "2026-03-11T12:00:36.503305",
-    "last_checked": "2026-03-11T12:48:34.683918",
-    "entry_price": 85.3955,
-    "confidence": 97.0
+    "timestamp": "2026-03-11T13:22:54.690367",
+    "last_checked": "2026-03-11T13:27:48.956330",
+    "entry_price": 87.2135,
+    "confidence": 90.39599999999999
   },
   "BNBUSDT_SELL_1h": {
     "timestamp": "2026-03-11T12:00:44.639943",
@@ -55,7 +55,7 @@
   },
   "BNBUSDT_SELL_4h": {
     "timestamp": "2026-03-11T12:00:52.949306",
-    "last_checked": "2026-03-11T12:48:48.288018",
+    "last_checked": "2026-03-11T13:28:06.577806",
     "entry_price": 644.9961000000001,
     "confidence": 72.75
   },
