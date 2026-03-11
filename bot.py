@@ -3964,9 +3964,14 @@ def record_signal(symbol, timeframe, signal_type, confidence, entry_price=None, 
         
         # По символ
         if symbol not in stats['by_symbol']:
-            stats['by_symbol'][symbol] = {'count': 0, 'BUY': 0, 'SELL': 0}
+            stats['by_symbol'][symbol] = {'count': 0, 'BUY': 0, 'SELL': 0, 'STRONG_BUY': 0, 'STRONG_SELL': 0}
         stats['by_symbol'][symbol]['count'] += 1
-        stats['by_symbol'][symbol][signal_type] += 1
+        
+        # Normalize signal_type for stats
+        if signal_type in ['STRONG_BUY', 'STRONG_SELL', 'BUY', 'SELL']:
+            if signal_type not in stats['by_symbol'][symbol]:
+                stats['by_symbol'][symbol][signal_type] = 0
+            stats['by_symbol'][symbol][signal_type] += 1
         
         # По таймфрейм
         if timeframe not in stats['by_timeframe']:

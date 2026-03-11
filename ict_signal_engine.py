@@ -1311,8 +1311,21 @@ class ICTSignalEngine:
                 recent_sweeps = []
                 for sweep in ict_components['liquidity_sweeps']:
                     sweep_timestamp = sweep.timestamp if hasattr(sweep, 'timestamp') else sweep.get('timestamp')
-                    if sweep_timestamp and (df.index[-1] - sweep_timestamp).total_seconds() < 3600*4:  # Last 4 hours
-                        recent_sweeps.append(sweep)
+                    if sweep_timestamp:
+                        # Convert sweep_timestamp to Timestamp if needed
+                        try:
+                            import pandas as pd
+                            if isinstance(sweep_timestamp, (int, float)):
+                                sweep_ts = pd.Timestamp(sweep_timestamp, unit='s')
+                            else:
+                                sweep_ts = pd.Timestamp(sweep_timestamp)
+                            
+                            time_diff = (df.index[-1] - sweep_ts).total_seconds()
+                            if time_diff < 3600*4:  # Last 4 hours
+                                recent_sweeps.append(sweep)
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not parse sweep timestamp: {e}")
+                            continue
                 
                 if recent_sweeps:
                     last_sweep = recent_sweeps[-1]

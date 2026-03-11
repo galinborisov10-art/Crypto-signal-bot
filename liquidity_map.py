@@ -254,9 +254,11 @@ class LiquidityMapper:
                     # If it's a timestamp, convert to datetime
                     last_touch_dt = pd.to_datetime(zone.last_touch, unit='s')
                 else:
-                    last_touch_dt = zone.last_touch
+                    last_touch_dt = pd.Timestamp(zone.last_touch)
                 
-                days_ago = (df.index[-1] - last_touch_dt).days
+                # Ensure df.index[-1] is also a Timestamp
+                current_time = pd.Timestamp(df.index[-1])
+                days_ago = (current_time - last_touch_dt).days
                 score += max(0, 0.1 - (days_ago / 30) * 0.1)
             except (TypeError, AttributeError) as e:
                 logger.warning(f"Could not calculate days_ago for zone: {e}")

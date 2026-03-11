@@ -159,7 +159,9 @@ class ChartGenerator:
             return buf.getvalue()
             
         except Exception as e:
+            import traceback
             logger.error(f"Error generating chart: {e}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             plt.close('all')
             raise
     
