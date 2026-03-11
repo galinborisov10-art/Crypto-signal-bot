@@ -24,87 +24,37 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 import logging
-from entry_scenarios import is_entry_triggered, select_entry_zone_for_scenario
-from entry_scenario_config import MIN_PROBABILITY_THRESHOLDS, DEFAULT_MIN_PROBABILITY_THRESHOLD
+from entry_scenarios import select_best_entry_scenario
 import json
-import os
 
-# Step 7A: Pattern detection (new architecture)
-try:
-    from scenario_pattern_detector import detect_scenario_pattern
-    PATTERN_DETECTOR_AVAILABLE = True
-except ImportError:
-    PATTERN_DETECTOR_AVAILABLE = False
-    logging.warning("Scenario Pattern Detector not available")
-
-# Step 7B: POI entry zone calculator (new architecture)
-try:
-    from poi_entry_zone_calculator import calculate_entry_zone_from_poi
-    POI_CALCULATOR_AVAILABLE = True
-except ImportError:
-    POI_CALCULATOR_AVAILABLE = False
-    logging.warning("POI Entry Zone Calculator not available")
-
-# Signal deduplication
-try:
-    from signal_cache import is_signal_duplicate, load_sent_signals, save_sent_signals
-    SIGNAL_CACHE_AVAILABLE = True
-except ImportError:
-    SIGNAL_CACHE_AVAILABLE = False
-    logging.warning("Signal Cache not available - deduplication disabled")
-
-# Legacy ESB evaluators kept for backward compat (no longer used as hard gates)
+# Import Entry Gating and Confidence Threshold evaluators (ESB v1.0 §2.1-2.2)
 try:
     from entry_gating_evaluator import evaluate_entry_gating
     ENTRY_GATING_AVAILABLE = True
 except ImportError:
-    evaluate_entry_gating = None
     ENTRY_GATING_AVAILABLE = False
+    logging.warning("Entry Gating Evaluator not available")
 
 try:
     from confidence_threshold_evaluator import evaluate_confidence_threshold
     CONFIDENCE_THRESHOLD_AVAILABLE = True
 except ImportError:
-    evaluate_confidence_threshold = None
     CONFIDENCE_THRESHOLD_AVAILABLE = False
+    logging.warning("Confidence Threshold Evaluator not available")
 
 try:
     from execution_eligibility_evaluator import evaluate_execution_eligibility
     EXECUTION_ELIGIBILITY_AVAILABLE = True
 except ImportError:
-    evaluate_execution_eligibility = None
     EXECUTION_ELIGIBILITY_AVAILABLE = False
+    logging.warning("Execution Eligibility Evaluator not available")
 
 try:
     from risk_admission_evaluator import evaluate_risk_admission
     RISK_ADMISSION_AVAILABLE = True
 except ImportError:
-    evaluate_risk_admission = None
     RISK_ADMISSION_AVAILABLE = False
-
-# ✅ STABILIZATION PR: Import centralized timeframe contract
-try:
-    from timeframe_contract import (
-        TimeframeContract, 
-        TimeframeHierarchy, 
-        SignalMode, 
-        TimeframeDebugLogger
-    )
-    TIMEFRAME_CONTRACT_AVAILABLE = True
-except ImportError:
-    TIMEFRAME_CONTRACT_AVAILABLE = False
-    logging.warning("Timeframe Contract not available - using legacy hierarchy")
-
-# ✅ STABILIZATION PR: Import component validation layer
-try:
-    from component_tf_validator import (
-        ComponentTimeframeValidator,
-        CrossTimeframeContaminationDetector
-    )
-    COMPONENT_VALIDATOR_AVAILABLE = True
-except ImportError:
-    COMPONENT_VALIDATOR_AVAILABLE = False
-    logging.warning("Component TF Validator not available")
+    logging.warning("Risk Admission Evaluator not available")
 
 # Import ICT modules
 try:
@@ -223,7 +173,8 @@ except ImportError:
     CHART_GENERATOR_AVAILABLE = False
     logging.warning("ChartGenerator not available")
 
-# Get logger (do not configure - bot.py handles configuration)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -233,17 +184,15 @@ logger = logging.getLogger(__name__)
 
 ATR_FALLBACK_PCT = 0.02  # 2% fallback when ATR calculation fails
 
-# Legacy constants removed - now using TimeframeContract
-# TIMEFRAME_MIN_SL_DISTANCE and TIMEFRAME_BUFFER_PCT moved to contract
+TIMEFRAME_MIN_SL_DISTANCE = {
+    '15m': 0.003, '30m': 0.004, '1h': 0.005,
+    '2h': 0.007, '4h': 0.010, '1d': 0.015,
+}
 
-# ── Trigger Confidence Adjustment (Step 7 → Step 11 modifier) ──
-# Trigger is a SOFT modifier - it adjusts confidence but never blocks a signal
-TRIGGER_MET_CONFIDENCE_BONUS = 10.0     # +10% when entry trigger is confirmed
-TRIGGER_NOT_MET_CONFIDENCE_PENALTY = -5.0  # -5% when trigger not yet confirmed
-
-# ── Structure TP Snap Tolerance (Step 9) ──
-# Accept structure target if it is within ±30% of the 2.5 RR mathematical level
-STRUCTURE_TP_SNAP_TOLERANCE = 0.30
+TIMEFRAME_BUFFER_PCT = {
+    '15m': 0.001, '30m': 0.0015, '1h': 0.002,
+    '2h': 0.0025, '4h': 0.003, '1d': 0.005,
+}
 
 
 class SignalType(Enum):
@@ -272,19 +221,17 @@ class MarketBias(Enum):
     RANGING = "RANGING"
 
 
-def get_tp_multipliers_by_timeframe(timeframe: str) -> Tuple[float, float, float]:
+def get_tp_multipliers_by_timeframe(timeframe: str) -> tuple:
     """
-    Get TP multipliers based on timeframe category
-    
-    STABILIZATION PR: Now uses centralized timeframe contract
+    Get optimized TP multipliers based on timeframe volatility
     
     Strategy:
     - Lower TFs (1h, 2h): (1, 3, 5) - Quick validation, conservative targets
     - Higher TFs (4h, 1d): (2, 4, 6) - Capture trends, aggressive targets
     
     Reasoning:
-    - 1h/2h: Faster moves, quicker reversals -> Need fast TP hits
-    - 4h/1d: Stronger trends, more follow-through -> Can hold for bigger TPs
+    - 1h/2h: Faster moves, quicker reversals → Need fast TP hits
+    - 4h/1d: Stronger trends, more follow-through → Can hold for bigger TPs
     
     Args:
         timeframe: Candle timeframe (e.g., '1h', '4h', '1d')
@@ -298,15 +245,21 @@ def get_tp_multipliers_by_timeframe(timeframe: str) -> Tuple[float, float, float
         >>> get_tp_multipliers_by_timeframe('4h')
         (2.0, 4.0, 6.0)
     """
-    if TIMEFRAME_CONTRACT_AVAILABLE:
-        multipliers = TimeframeContract.get_tp_multipliers(timeframe)
-        category = TimeframeContract.get_tf_category(timeframe)
-        category_name = category.value if category else "UNKNOWN"
-        logger.info(f"📊 Using TPs {multipliers} for {timeframe} ({category_name})")
-        return multipliers
+    tf = timeframe.lower().strip()
+    
+    # Short-term: Conservative targets (1, 3, 5)
+    if tf in ['15m', '30m', '1h', '2h', '3h']:  # ← Added 3h
+        logger.info(f"📊 Using conservative TPs (1,3,5) for {timeframe}")
+        return (1.0, 3.0, 5.0)
+    
+    # Medium/Long-term: Aggressive targets (2, 4, 6)
+    elif tf in ['4h', '6h', '8h', '12h', '1d', '3d', '1w']:
+        logger.info(f"📊 Using aggressive TPs (2,4,6) for {timeframe}")
+        return (2.0, 4.0, 6.0)
+    
+    # Default: Conservative (safer)
     else:
-        # Fallback if contract not available (should not happen)
-        logger.warning(f"⚠️ TF Contract unavailable, using default conservative TPs for {timeframe}")
+        logger.warning(f"⚠️ Unknown timeframe {timeframe}, defaulting to conservative TPs (1,3,5)")
         return (1.0, 3.0, 5.0)
 
 
@@ -564,8 +517,8 @@ class ICTSignalEngine:
     def _get_default_config(self) -> Dict:
         """Get default configuration"""
         return {
-            'min_confidence': 55,          # Min 55% confidence (auto) / 65% (manual - applied in Step 12)
-            'min_risk_reward': 2.5,        # Min 1:2.5 R:R
+            'min_confidence': 50,          # Min 60% confidence (STRICT ICT)
+            'min_risk_reward': 3.0,        # Min 1:3 R:R (STRICT ICT)
             'max_sl_distance_pct': 3.0,    # Max 3% SL distance
             'tp_multipliers': [3, 5, 8],   # TP at 3R, 5R, 8R (STRICT ICT)
             'require_mtf_confluence': True, # Require MTF alignment (STRICT ICT)
@@ -643,8 +596,8 @@ class ICTSignalEngine:
                 "30m": {
                     "entry_tf": "30m",
                     "confirmation_tf": "1h",
-                    "structure_tf": "2h",
-                    "htf_bias_tf": "2h"
+                    "structure_tf": "1h",
+                    "htf_bias_tf": "1h"
                 },
                 "1h": {
                     "entry_tf": "1h",
@@ -655,8 +608,8 @@ class ICTSignalEngine:
                 "2h": {
                     "entry_tf": "2h",
                     "confirmation_tf": "4h",
-                    "structure_tf": "1d",
-                    "htf_bias_tf": "1d"
+                    "structure_tf": "4h",
+                    "htf_bias_tf": "4h"
                 },
                 "3h": {
                     "entry_tf": "3h",
@@ -666,7 +619,7 @@ class ICTSignalEngine:
                 },
                 "4h": {
                     "entry_tf": "4h",
-                    "confirmation_tf": "1d",
+                    "confirmation_tf": "4h",
                     "structure_tf": "1d",
                     "htf_bias_tf": "1d"
                 },
@@ -743,23 +696,22 @@ class ICTSignalEngine:
             logger.info(f"   Expected - Structure: {expected_structure_tf}, Confirmation: {expected_confirmation_tf}")
             logger.info(f"   Available: {available_tfs}")
             
-            # VALIDATION 1: Check Confirmation TF (INFORMATIONAL ONLY)
-            # Note: Confirmation layer analysis will apply ±8% modifier separately
+            # VALIDATION 1: Check Confirmation TF
             if expected_confirmation_tf:
                 if expected_confirmation_tf in available_tfs:
                     logger.info(f"   ✅ Confirmation TF ({expected_confirmation_tf}) present")
                     hierarchy_info['confirmation_tf_present'] = True
                 else:
-                    # ✅ Confirmation layer will handle this with -8% modifier
                     warning_msg = (
-                        f"ℹ️ Confirmation TF ({expected_confirmation_tf}) not available "
-                        f"- confirmation layer will apply -8% modifier"
+                        f"⚠️ Missing Confirmation TF ({expected_confirmation_tf}) "
+                        f"- intermediate pattern validation limited"
                     )
                     warnings.append(warning_msg)
+                    adjusted_confidence -= confirmation_penalty
                     hierarchy_info['confirmation_tf_present'] = False
-                    logger.info(f"   {warning_msg}")
+                    logger.warning(f"   {warning_msg} (-{confirmation_penalty*100:.0f}%)")
             
-            # VALIDATION 2: Check Structure TF (INFORMATIONAL ONLY - NO PENALTY)
+            # VALIDATION 2: Check Structure TF
             if expected_structure_tf:
                 if expected_structure_tf in available_tfs:
                     logger.info(f"   ✅ Structure TF ({expected_structure_tf}) present")
@@ -771,16 +723,16 @@ class ICTSignalEngine:
                     
                     if structure_bias:
                         hierarchy_info['structure_bias'] = structure_bias
-                        logger.info(f"   📊 Structure bias: {structure_bias} (context only)")
+                        logger.info(f"   📊 Structure bias: {structure_bias}")
                 else:
-                    # ✅ Structure is CONTEXT ONLY - does not apply penalty
                     warning_msg = (
-                        f"ℹ️ Structure TF ({expected_structure_tf}) not available "
-                        f"- structure context limited (no penalty applied)"
+                        f"⚠️ Missing Structure TF ({expected_structure_tf}) "
+                        f"- major trend validation limited"
                     )
                     warnings.append(warning_msg)
+                    adjusted_confidence -= structure_penalty
                     hierarchy_info['structure_tf_present'] = False
-                    logger.info(f"   {warning_msg}")
+                    logger.warning(f"   {warning_msg} (-{structure_penalty*100:.0f}%)")
             
             # VALIDATION 3: Check HTF Bias TF (informational only, no penalty)
             if expected_htf_bias_tf:
@@ -816,8 +768,8 @@ class ICTSignalEngine:
         """
         Generate ICT signal with UNIFIED analysis sequence
         
-        ЕДНАКВА последователност за ВСИЧКИ таймфремове (1w до 1m)
-        ЕДНАКВА логика за ръчни И автоматични сигнали
+        ✅ ЕДНАКВА последователност за ВСИЧКИ таймфремове (1w до 1m)
+        ✅ ЕДНАКВА логика за ръчни И автоматични сигнали
         """
         logger.info(f"🎯 Generating UNIFIED ICT signal for {symbol} on {timeframe}")
         
@@ -840,23 +792,20 @@ class ICTSignalEngine:
                         entry_price = cached_signal.entry_price
                         distance_pct = abs(entry_price - current_price) / current_price
                         
-                        # ✅ REMOVED: Distance re-validation now handled by timeframe-adaptive limits
-                        # Cache distance check is redundant - scenarios already validated distance properly
-                        # Only keep freshness check (time_ago_min), remove distance check
-                        # MAX_ENTRY_DISTANCE_PCT = 0.07  # 5% max (universal limit, consistent with line 2578)
-                        # if distance_pct > MAX_ENTRY_DISTANCE_PCT:
-                        #     logger.warning(
-                        #         f"⚠️ Cached signal entry too far: {distance_pct*100:.1f}% > 7.0% MAX "
-                        #         f"(entry: ${entry_price:.4f}, current: ${current_price:.4f}) "
-                        #         f"- invalidating cache and re-analyzing"
-                        #     )
-                        #     # Don't return cache, continue to full analysis below
-                        # else:
-                        logger.info(
-                            f"✅ Using cached signal for {symbol} {timeframe} "
-                            f"(entry {distance_pct*100:.1f}% away - within limits)"
-                        )
-                        return cached_signal
+                        MAX_ENTRY_DISTANCE_PCT = 0.07  # 5% max (universal limit, consistent with line 2578)
+                        if distance_pct > MAX_ENTRY_DISTANCE_PCT:
+                            logger.warning(
+                                f"⚠️ Cached signal entry too far: {distance_pct*100:.1f}% > 7.0% MAX "
+                                f"(entry: ${entry_price:.4f}, current: ${current_price:.4f}) "
+                                f"- invalidating cache and re-analyzing"
+                            )
+                            # Don't return cache, continue to full analysis below
+                        else:
+                            logger.info(
+                                f"✅ Using cached signal for {symbol} {timeframe} "
+                                f"(entry {distance_pct*100:.1f}% away - within limits)"
+                            )
+                            return cached_signal
             except Exception as e:
                 logger.warning(f"Cache error: {e}")
         
@@ -866,54 +815,20 @@ class ICTSignalEngine:
         
         df = self._prepare_dataframe(df)
         
-        # ═══════════════════════════════════════════════════════════
-        # ✅ STABILIZATION PR: CENTRALIZED TIMEFRAME HIERARCHY
-        # ═══════════════════════════════════════════════════════════
-        
-        # STEP 0: Establish Timeframe Contract
-        if TIMEFRAME_CONTRACT_AVAILABLE:
-            signal_mode = SignalMode.AUTOMATIC if is_auto else SignalMode.MANUAL
-            tf_hierarchy = TimeframeContract.get_hierarchy(timeframe, signal_mode)
-            
-            if not tf_hierarchy:
-                logger.error(
-                    f"❌ Unsupported timeframe '{timeframe}' for {signal_mode.value} signals. "
-                    f"Supported TFs: {TimeframeContract.get_supported_manual_timeframes() if signal_mode == SignalMode.MANUAL else TimeframeContract.get_supported_automatic_timeframes()}"
-                )
-                return None
-            
-            # Log the timeframe hierarchy being used
-            TimeframeDebugLogger.log_hierarchy_usage(tf_hierarchy, symbol)
-            
-            # Extract timeframes from hierarchy
-            entry_tf = tf_hierarchy.signal_tf
-            confirmation_tf = tf_hierarchy.confirmation_tf
-            structure_tf = tf_hierarchy.structure_tf
-            htf_bias_tf = tf_hierarchy.htf_bias_tf
-            
-            logger.info(f"✅ TF Contract established: Signal={entry_tf}, Confirmation={confirmation_tf}, Structure={structure_tf}, HTF_Bias={htf_bias_tf}")
-        else:
-            # Fallback to legacy behavior
-            logger.warning("⚠️ Timeframe Contract not available - using legacy hierarchy")
-            entry_tf = timeframe
-            confirmation_tf = None
-            structure_tf = None
-            htf_bias_tf = None
-            tf_hierarchy = None
-        
         # ═══════ УНИФИЦИРАНА ПОСЛЕДОВАТЕЛНОСТ (12 СТЪПКИ) ═══════
         
-        # СТЪПКА 1: HTF BIAS
+        # СТЪПКА 1: HTF BIAS (1D → 4H fallback)
+        # ✅ FIX: Define entry_tf from parameter
+        entry_tf = timeframe
+
         logger.info("📊 Step 1: HTF Bias")
-        if tf_hierarchy:
-            TimeframeDebugLogger.log_bias_timeframe(htf_bias_tf, "Calculating...")
-        htf_bias = self._get_htf_bias_with_fallback(symbol, mtf_data, htf_bias_tf if htf_bias_tf else timeframe)
+        htf_bias = self._get_htf_bias_with_fallback(symbol, mtf_data, timeframe)
         
         # СТЪПКА 2: MTF STRUCTURE (4H)
         logger.info("📊 Step 2: MTF Structure")
         mtf_analysis = self._analyze_mtf_confluence(df, mtf_data, symbol) if mtf_data is not None and isinstance(mtf_data, dict) else None
         
-        # ✅ STABILIZATION PR: TIMEFRAME HIERARCHY VALIDATION
+        # ✅ PR #4: СТЪПКА 6b: TIMEFRAME HIERARCHY VALIDATION (NEW)
         logger.info("=" * 60)
         logger.info("STEP 6b: TIMEFRAME HIERARCHY VALIDATION")
         logger.info("=" * 60)
@@ -923,35 +838,12 @@ class ICTSignalEngine:
         hierarchy_info = {}
         initial_confidence = 80.0  # Starting confidence before validation
         
-        # ✅ STABILIZATION: Populate hierarchy_info from TF contract
-        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-            hierarchy_info = {
-                'entry_tf': tf_hierarchy.signal_tf,
-                'confirmation_tf': tf_hierarchy.confirmation_tf,
-                'structure_tf': tf_hierarchy.structure_tf,
-                'htf_bias_tf': tf_hierarchy.htf_bias_tf,
-                'mode': tf_hierarchy.mode.value,
-                'description': f'{tf_hierarchy.signal_tf} signal with {tf_hierarchy.confirmation_tf} confirmation and {tf_hierarchy.structure_tf} structure',
-            }
-            logger.info(f"✅ TF hierarchy from contract:")
-            logger.info(f"   Entry: {hierarchy_info['entry_tf']}")
-            logger.info(f"   Confirmation: {hierarchy_info['confirmation_tf']}")
-            logger.info(f"   Structure: {hierarchy_info['structure_tf']}")
-            logger.info(f"   HTF Bias: {hierarchy_info['htf_bias_tf']}")
-            logger.info(f"   Mode: {hierarchy_info['mode']}")
-            validated_confidence = initial_confidence
-
-        else:
-            # Fallback to legacy validation
-            validated_confidence, tf_warnings, hierarchy_info = self._validate_mtf_hierarchy(
-                entry_tf=timeframe,
-                mtf_analysis=mtf_analysis if mtf_analysis else {},
-                confidence=initial_confidence
-            )
-
-        # ✅ FIX: Extract entry_tf for component detection (AFTER if/else)
-        entry_tf = tf_hierarchy.signal_tf if tf_hierarchy else timeframe
-        logger.info(f"📊 Entry TF for component detection: {entry_tf}")
+        # Perform TF hierarchy validation
+        validated_confidence, tf_warnings, hierarchy_info = self._validate_mtf_hierarchy(
+            entry_tf=timeframe,
+            mtf_analysis=mtf_analysis if mtf_analysis else {},
+            confidence=initial_confidence
+        )
         
         # Store hierarchy info for later use in signal generation
         context_warnings = tf_warnings  # Will be added to signal warnings later
@@ -965,202 +857,29 @@ class ICTSignalEngine:
         
         logger.info(f"📊 Confidence after TF validation: {validated_confidence:.1f}%")
         
-        # СТЪПКА 3: LIQUIDITY MAP (с cache fallback) - Calculate ONCE
-        logger.info("📊 Step 3: Liquidity Map")
+        # СТЪПКА 3: ENTRY MODEL (текущ TF)
+        logger.info(f"📊 Step 3: Entry Model ({timeframe})")
+        
+        # СТЪПКА 4: LIQUIDITY MAP (с cache fallback)
+        logger.info("📊 Step 4: Liquidity Map")
         liquidity_zones = self._get_liquidity_zones_with_fallback(df, symbol, timeframe)
         
-        # Add detailed logging for liquidity zones
-        logger.info(f"   📍 Detected {len(liquidity_zones)} liquidity zones:")
-        for i, zone in enumerate(liquidity_zones[:5]):  # Log first 5
-            zone_type = zone.get('zone_type', 'N/A') if isinstance(zone, dict) else getattr(zone, 'zone_type', 'N/A')
-            zone_price = zone.get('price_level', 0) if isinstance(zone, dict) else getattr(zone, 'price_level', 0)
-            zone_strength = zone.get('strength', 0) if isinstance(zone, dict) else getattr(zone, 'strength', 0)
-            logger.info(f"      • Zone {i+1}: {zone_type} at ${zone_price:,.2f} (strength: {zone_strength:.2f})")
-        if len(liquidity_zones) > 5:
-            logger.info(f"      ... and {len(liquidity_zones) - 5} more zones")
+        # СТЪПКА 5-7: ICT COMPONENTS
+        logger.info("📊 Steps 5-7: ICT Components")
+        ict_components = self._detect_ict_components(df, timeframe)
+        ict_components['liquidity_zones'] = liquidity_zones  # Add liquidity zones
         
-        # ✅ PHASE 2: MULTI-TIMEFRAME DATA EXTRACTION
-        # Extract multi-timeframe data per contract
-        mtf_data_available = False  # Track if MTF data is actually being used
-        
-        if tf_hierarchy and mtf_data and isinstance(mtf_data, dict):
-            df_signal = df  # Signal TF (already have)
-            df_confirmation = mtf_data.get(tf_hierarchy.confirmation_tf)
-            df_structure = mtf_data.get(tf_hierarchy.structure_tf)
-            
-            # Validate that we got valid DataFrames
-            if isinstance(df_confirmation, pd.DataFrame) and not df_confirmation.empty:
-                mtf_data_available = True
-            else:
-                df_confirmation = None
-            
-            if isinstance(df_structure, pd.DataFrame) and not df_structure.empty:
-                # Only mark as available if at least one MTF dataframe is valid
-                mtf_data_available = True
-            else:
-                df_structure = None
-            
-            logger.info(f"📊 Multi-TF Data Extraction:")
-            logger.info(f"   Signal TF ({tf_hierarchy.signal_tf}): {len(df_signal)} bars")
-            logger.info(f"   Confirmation TF ({tf_hierarchy.confirmation_tf}): {len(df_confirmation) if df_confirmation is not None else 'MISSING'} bars")
-            logger.info(f"   Structure TF ({tf_hierarchy.structure_tf}): {len(df_structure) if df_structure is not None else 'MISSING'} bars")
-        else:
-            # Fallback: Use signal TF for all (backward compatible)
-            logger.warning("⚠️ MTF data not available - using signal_tf for all components")
-            df_signal = df
-            df_confirmation = None  # Will trigger fallback in _detect_ict_components
-            df_structure = None  # Will trigger fallback in _detect_ict_components
-        
-        # СТЪПКА 4: ICT COMPONENT DETECTION (with pre-calculated liquidity)
-        logger.info("📊 Step 4: ICT Component Detection")
-        raw_components = self._detect_ict_components(
-            df_signal=df_signal,  # ✅ PHASE 2: Signal TF data
-            df_confirmation=df_confirmation,  # ✅ PHASE 2: Confirmation TF data
-            df_structure=df_structure,  # ✅ PHASE 2: Structure TF data
-            timeframe=entry_tf,  # ✅ STABILIZATION: Use entry_tf from hierarchy
-            liquidity_zones=liquidity_zones,  # ✅ Pass pre-calculated liquidity zones
-            tf_hierarchy=tf_hierarchy  # ✅ STABILIZATION: Pass TF hierarchy for validation
-        )
-        
-        # Add detailed logging for ALL 11 ICT components
-        logger.info(f"   🔍 Detected ICT components:")
-        logger.info(f"      • Order Blocks: {len(raw_components.get('order_blocks', []))}")
-        logger.info(f"      • FVG Zones: {len(raw_components.get('fvgs', []))}")
-        logger.info(f"      • Whale Blocks: {len(raw_components.get('whale_blocks', []))}")
-        logger.info(f"      • Breaker Blocks: {len(raw_components.get('breaker_blocks', []))}")
-        logger.info(f"      • Mitigation Blocks: {len(raw_components.get('mitigation_blocks', []))}")
-        logger.info(f"      • SIBI/SSIB Zones: {len(raw_components.get('sibi_ssib_zones', []))}")
-        logger.info(f"      • Liquidity Sweeps: {len(raw_components.get('liquidity_sweeps', []))}")
-        logger.info(f"      • Internal Liquidity: {len(raw_components.get('internal_liquidity', []))}")
-        logger.info(f"      • Liquidity Zones: {len(raw_components.get('liquidity_zones', []))}")
-        
-        # Count S/R levels from luxalgo_sr
-        sr_count = 0
-        luxalgo_sr = raw_components.get('luxalgo_sr', {})
-        if luxalgo_sr and isinstance(luxalgo_sr, dict):
-            sr_count = len(luxalgo_sr.get('support_zones', [])) + len(luxalgo_sr.get('resistance_zones', []))
-        logger.info(f"      • LuxAlgo S/R: {sr_count}")
-        
-        # Check fibonacci data
-        fib_data = raw_components.get('fibonacci_data', {})
-        has_fib = bool(fib_data and isinstance(fib_data, dict))
-        logger.info(f"      • Fibonacci Analysis: {'Yes' if has_fib else 'No'}")
-        
-        # СТЪПКА 5: COMPONENT FILTERING (NEW) - Filter for quality
-        logger.info("📊 Step 5: Component Filtering (Quality Focus)")
-        ict_components = self._filter_quality_components(raw_components)
-        
-        # ✅ STABILIZATION PR: COMPREHENSIVE DEBUG LOGGING & VALIDATION
-        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-            logger.info("")
-            logger.info("=" * 80)
-            logger.info("🔍 STABILIZATION: TIMEFRAME & COMPONENT INTEGRITY CHECK")
-            logger.info("=" * 80)
-            
-            # Comprehensive debug logging
-            TimeframeDebugLogger.log_comprehensive_signal_debug(
-                symbol=symbol,
-                hierarchy=tf_hierarchy,
-                components=ict_components,
-                bias="CALCULATING...",  # Will be calculated next
-                scenario=None  # Will be selected later
-            )
-            
-            # Component validation and contamination check
-            if COMPONENT_VALIDATOR_AVAILABLE:
-                logger.info("🔍 COMPONENT VALIDATION:")
-                
-                # Get bias string for validation (peek ahead - will be calculated next)
-                bias_peek = "BULLISH"  # Default, will be refined
-                
-                # Validate Order Blocks
-                obs = ict_components.get('order_blocks', [])
-                if obs:
-                    valid_obs, rejected_obs = ComponentTimeframeValidator.validate_component_list(
-                        obs, "Order Block", tf_hierarchy.signal_tf, bias_peek
-                    )
-                    ict_components['order_blocks'] = valid_obs
-                    if rejected_obs > 0:
-                        logger.warning(f"   ⚠️ Rejected {rejected_obs} invalid Order Blocks")
-                
-                # Validate FVGs
-                fvgs = ict_components.get('fvgs', [])
-                if fvgs:
-                    valid_fvgs, rejected_fvgs = ComponentTimeframeValidator.validate_component_list(
-                        fvgs, "FVG", tf_hierarchy.signal_tf, bias_peek
-                    )
-                    ict_components['fvgs'] = valid_fvgs
-                    if rejected_fvgs > 0:
-                        logger.warning(f"   ⚠️ Rejected {rejected_fvgs} invalid FVGs")
-                
-                # Validate Liquidity Zones
-                liq_zones = ict_components.get('liquidity_zones', [])
-                if liq_zones:
-                    valid_lz, rejected_lz = ComponentTimeframeValidator.validate_component_list(
-                        liq_zones, "Liquidity Zone", tf_hierarchy.signal_tf
-                    )
-                    ict_components['liquidity_zones'] = valid_lz
-                    if rejected_lz > 0:
-                        logger.warning(f"   ⚠️ Rejected {rejected_lz} invalid Liquidity Zones")
-                
-                # Validate Liquidity Sweeps
-                sweeps = ict_components.get('liquidity_sweeps', [])
-                if sweeps:
-                    valid_sweeps, rejected_sweeps = ComponentTimeframeValidator.validate_component_list(
-                        sweeps, "Liquidity Sweep", tf_hierarchy.signal_tf, bias_peek
-                    )
-                    ict_components['liquidity_sweeps'] = valid_sweeps
-                    if rejected_sweeps > 0:
-                        logger.warning(f"   ⚠️ Rejected {rejected_sweeps} invalid Liquidity Sweeps")
-                
-                # Cross-TF contamination check
-                contamination_issues = CrossTimeframeContaminationDetector.check_entry_scoring_contamination(
-                    ict_components,
-                    tf_hierarchy.signal_tf,
-                    tf_hierarchy.structure_tf,
-                    tf_hierarchy.htf_bias_tf
-                )
-                
-                CrossTimeframeContaminationDetector.log_contamination_check(
-                    contamination_issues,
-                    tf_hierarchy.signal_tf
-                )
-            
-            logger.info("=" * 80)
-            logger.info("")
-
-        
-        # СТЪПКА 6: BIAS DETERMINATION - Market Direction Analysis
-        logger.info("🔍 Step 6: Bias Determination")
+        # STEP 7: Bias Determination - START DIAGNOSTIC LOGGING
+        logger.info("🔍 Step 7: Bias Determination")
         
         # Calculate bias with diagnostic details
         # ✅ FIX: Use PURE structure-only bias (no OB/displacement)
         bias_str, bias_confidence = self._calculate_pure_ict_bias_for_tf(df, symbol, entry_tf)
         bias = MarketBias[bias_str]  # Convert string to enum
-        
-        # ✅ PHASE 2: Extract displacement and structure break from raw_components (already detected)
-        # Components already detected in _detect_ict_components() with correct TF routing
-        displacement_info = raw_components.get('displacement', {'detected': False, 'strength': 0, 'source_tf': entry_tf})
-        displacement_detected = displacement_info['detected']
-        displacement_strength = displacement_info['strength']
-        
-        structure_info = raw_components.get('structure_break', {'broken': False, 'type': None, 'source_tf': entry_tf})
-        structure_broken = structure_info['broken']
-        
-        # Store in ict_components
+        structure_broken = self._check_structure_break(df)
+        displacement_detected, displacement_strength = self._check_displacement(df)
         ict_components["displacement"] = {"detected": displacement_detected, "strength": displacement_strength}
         ict_components["structure_break"] = {"type": "MSS" if structure_broken else None}
-        
-        # Log the source TFs for transparency
-        logger.info(f"   Displacement (from {displacement_info.get('source_tf', entry_tf)}): {displacement_detected}")
-        logger.info(f"   Structure Break (from {structure_info.get('source_tf', entry_tf)}): {structure_broken}")
-        
-        # ✅ STABILIZATION: Log displacement and MSS/BOS detection with correct TF
-        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-            displacement_tf = displacement_info.get('source_tf', entry_tf)
-            structure_tf = structure_info.get('source_tf', entry_tf)
-            TimeframeDebugLogger.log_component_source("Displacement", displacement_tf, 1 if displacement_detected else 0)
-            TimeframeDebugLogger.log_component_source("MSS/BOS (Structure Break)", structure_tf, 1 if structure_broken else 0)
 
         # Add structure_break and displacement to ict_components for Entry Scenarios
         
@@ -1189,312 +908,85 @@ class ICTSignalEngine:
         logger.info(f"      • Displacement Detected: {displacement_detected}")
         logger.info(f"   → Final Bias: {bias.value}")
         
-        # СТЪПКА 6b: Apply confidence penalty for NEUTRAL/RANGING bias (NO EARLY EXIT)
+        # СТЪПКА 7b: Apply confidence penalty for NEUTRAL/RANGING bias (NO EARLY EXIT)
         # ✅ FIX #1: HTF is now a soft constraint (penalty) instead of hard block
-        confidence_penalty = 0.0  # Track penalty for Step 10 confidence calculation
-
+        confidence_penalty = 0.0  # Track penalty for Step 11 confidence calculation
+        
         if bias in [MarketBias.NEUTRAL, MarketBias.RANGING]:
-            logger.warning(f"⚠️ Step 6b: {symbol} bias is {bias.value} - RANGING market detected")
-
-            # Check if HTF bias provides clear directional guidance
-            # htf_bias is already a string from _get_htf_bias_with_fallback
-            if htf_bias in ['BULLISH', 'BEARISH']:
-                logger.info(f"   → HTF bias is {htf_bias} (directional) - using HTF bias for scenario direction")
-                logger.info(f"   → Entry TF structure ({bias.value}) = pullback/consolidation in HTF trend")
-                # Override bias with HTF direction (structure is informational context only)
-                bias = MarketBias[htf_bias]  # Override bias with HTF direction
-                logger.info(f"   → Bias overridden to {bias.value} (from HTF)")
-            else:
-                logger.info(f"   → HTF bias is also {htf_bias} - no directional guidance")
-                logger.info(f"   → Returning HOLD signal (no trade setup)")
-
-                # ✅ EARLY EXIT: RANGING + no directional HTF = HOLD (no trade)
-                return {
-                    'action': 'HOLD',
-                    'confidence': 0,
-                    'reason': 'RANGING_MARKET',
-                    'message': f'{symbol} market is RANGING on {timeframe}. No clear directional bias. Wait for breakout.',
-                    'bias': bias.value,
-                    'timeframe': timeframe,
-                    'symbol': symbol
-                }
+            logger.warning(f"⚠️ Step 7b: {symbol} bias is {bias.value} - RANGING market detected")
+            logger.info(f"   → RANGING market = no clear directional bias")
+            logger.info(f"   → Returning HOLD signal (no trade setup)")
+            
+            # ✅ EARLY EXIT: RANGING = HOLD (no trade)
+            return {
+                'action': 'HOLD',
+                'confidence': 0,
+                'reason': 'RANGING_MARKET',
+                'message': f'{symbol} market is RANGING on {timeframe}. No clear directional bias. Wait for breakout.',
+                'bias': bias.value,
+                'timeframe': timeframe,
+                'symbol': symbol
+            }
         else:
             # Directional bias (BULLISH/BEARISH) - no penalty
             confidence_penalty = 0.0
-            logger.info(f"✅ Step 6b: Directional bias {bias.value} - no penalty")
+            logger.info(f"✅ Step 7b: Directional bias {bias.value} - no penalty")
         
-        # ✅ CONTINUE TO STEP 7 (NO EARLY EXIT FOR DIRECTIONAL BIAS)
+        # ✅ CONTINUE TO STEP 8 (NO EARLY EXIT FOR DIRECTIONAL BIAS)
         # At this point, bias is guaranteed to be BULLISH or BEARISH
-        logger.info(f"✅ PASSED Step 6: Continuing with bias {bias.value} (penalty: {confidence_penalty*100:.0f}%)")
+        logger.info(f"✅ PASSED Step 7: Continuing with bias {bias.value} (penalty: {confidence_penalty*100:.0f}%)")
         
-        # СТЪПКА 6c: CONFIRMATION LAYER - Check for MSS/BOS/Displacement/Sweep
-        logger.info("🔍 Step 6c: Confirmation Layer Analysis")
-        has_confirmation, confirmation_modifier = self._analyze_confirmation_layer(
-            symbol=symbol,
-            confirmation_tf=confirmation_tf,
-            mtf_data=mtf_data
-        )
-        logger.info(f"   → Confirmation found: {has_confirmation}")
-        logger.info(f"   → Confidence modifier: {confirmation_modifier:+.1%}")
-        # Store for later use in confidence calculation
-
-        # СТЪПКА 7: PATTERN DETECTION + ENTRY ZONE (7A + 7B)
-        # Step 7A detects WHAT pattern the market is making (no entry info).
-        # Step 7B calculates entry_zone + invalidation_anchor from the SAME POI.
-        # Triggers are checked AFTER step 7B as a confidence modifier (not a gate).
-        logger.info("🎯 Step 7A+7B: Pattern Detection & Entry Zone Calculation")
-
+        # СТЪПКА 8: ENTRY CALCULATION WITH ICT-COMPLIANT ZONE
+        logger.info("🔍 Step 8: Entry Zone Validation")
+        
         # Get current price
         current_price = df['close'].iloc[-1]
         logger.info(f"   → Current Price: ${current_price:.2f}")
-
-        # Prepare bias string
+        
+        # Calculate ICT-compliant entry zone
         bias_str = bias.value if hasattr(bias, 'value') else str(bias)
-
-        # ✅ CRITICAL: Enrich components with candles_ago BEFORE any processing
-        ict_components = self._enrich_components_with_recency(ict_components, df)
-
-        # Extract components after enrichment
         fvg_zones = ict_components.get('fvgs', [])
         order_blocks = ict_components.get('order_blocks', [])
         sr_levels = ict_components.get('luxalgo_sr', {})
-
-        # Recent candles for trigger validation (used as confidence modifier)
-        recent_candles = []
-        if len(df) >= 20:
-            recent_candles = df[['open', 'high', 'low', 'close']].tail(20).to_dict('records')
-
-        entry_scenario_result = None
-        poi_ref = None
-        entry_zone = {}
-
-        logger.info(f"   → Available ICT Components (after enrichment):")
+        
+        logger.info(f"   → Available ICT Components:")
         logger.info(f"      • Order Blocks: {len(order_blocks)}")
         logger.info(f"      • FVG Zones: {len(fvg_zones)}")
         sr_count = 0
         if sr_levels and isinstance(sr_levels, dict):
             sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
         logger.info(f"      • S/R Levels: {sr_count}")
-
-        # ── Build MTF components dict for Step 7A/7B ─────────────────────────
-        # Signal TF: entry POIs (OBs, FVGs, liquidity zones)
-        # Structure TF: structure break, displacement (already in ict_components from _detect_ict_components)
-        # HTF Bias TF: bias string
-        _signal_tf_key = entry_tf if entry_tf else timeframe
-        _structure_tf_key = tf_hierarchy.structure_tf if tf_hierarchy else _signal_tf_key
-        _confirmation_tf_key = tf_hierarchy.confirmation_tf if tf_hierarchy else _signal_tf_key
-        _htf_bias_tf_key = tf_hierarchy.htf_bias_tf if tf_hierarchy else _signal_tf_key
-
-        # signal_tf components: entry POIs only
-        _signal_comps = {
-            'order_blocks': ict_components.get('order_blocks', []),
-            'fvgs': ict_components.get('fvgs', []),
-            'liquidity_zones': ict_components.get('liquidity_zones', []),
-            'liquidity_sweeps': ict_components.get('liquidity_sweeps', []),
-        }
-        # structure_tf components: structure break + displacement
-        # Note: 'bias' in structure_comps stores the HTF bias (from htf_bias_tf, which == structure_tf in most hierarchies)
-        _htf_bias_str = htf_bias if htf_bias else 'NEUTRAL'
-        _structure_comps = {
-            'structure_break': ict_components.get('structure_break', {}),
-            'displacement': ict_components.get('displacement', {}),
-            'bias': _htf_bias_str,  # HTF bias (not signal bias) for pattern scoring
-        }
-        # htf_bias_tf components: HTF bias string from _get_htf_bias_with_fallback
-        _htf_comps = {
-            'bias': _htf_bias_str,
-        }
-        # confirmation_tf: whale blocks if available
-        _confirmation_comps = {
-            'whale_blocks': ict_components.get('whale_blocks', []),
-        }
-
-        mtf_components = {_signal_tf_key: _signal_comps}
-        mtf_components[_structure_tf_key] = _structure_comps
-        if _htf_bias_tf_key != _structure_tf_key:
-            mtf_components[_htf_bias_tf_key] = _htf_comps
-        # When htf_bias_tf == structure_tf, bias is already embedded in _structure_comps
-        if _confirmation_tf_key not in mtf_components:
-            mtf_components[_confirmation_tf_key] = _confirmation_comps
-
-        logger.info(
-            f"   → MTF components built: "
-            f"signal={_signal_tf_key}({len(_signal_comps.get('order_blocks', []))} OBs), "
-            f"structure={_structure_tf_key}(sb={bool(_structure_comps.get('structure_break', {}).get('type'))}), "
-            f"htf={_htf_bias_tf_key}(bias={_htf_comps.get('bias', 'NEUTRAL')})"
+        
+        entry_zone, entry_status = self._calculate_ict_compliant_entry_zone(
+            current_price=current_price,
+            direction=bias_str,
+            fvg_zones=fvg_zones,
+            order_blocks=order_blocks,
+            sr_levels=sr_levels,
+            timeframe=timeframe
         )
-
-        # ── Step 7A: Detect pattern (WHAT the market is doing) ──────────────
-        pattern_name = None
-        pattern_probability = 0.0
-        pattern_confluence = None
-        if PATTERN_DETECTOR_AVAILABLE:
-            pattern_name, pattern_probability, pattern_confluence = detect_scenario_pattern(
-                current_price=current_price,
-                bias=bias_str,
-                mtf_components=mtf_components,
-                signal_tf=_signal_tf_key,
-                tf_hierarchy=tf_hierarchy if TIMEFRAME_CONTRACT_AVAILABLE else None,
-            )
-        else:
-            logger.warning("⚠️ Pattern detector not available - using fallback logic")
-
-        if not pattern_name:
-            logger.info("❌ No valid pattern detected in Step 7A")
-            logger.error("❌ No valid pattern - Signal BLOCKED (no ICT structure)")
+        
+        logger.info(f"   → Entry Zone Status: {entry_status}")
+        if entry_zone:
+            logger.info(f"      • Zone Center: ${entry_zone.get('center', 0):.2f}")
+            logger.info(f"      • Zone Range: ${entry_zone.get('low', 0):.2f} - ${entry_zone.get('high', 0):.2f}")
+            logger.info(f"      • Source: {entry_zone.get('source', 'UNKNOWN')}")
+            logger.info(f"      • Quality: {entry_zone.get('quality', 0)}")
+        
+        # ✅ UPDATED: Only reject for TOO_LATE (timing issue), not NO_ZONE (distance issue)
+        # Validate entry zone timing
+        if entry_status == 'TOO_LATE':
+            logger.info(f"❌ BLOCKED at Step 8: Entry zone validation failed (TOO_LATE)")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 8, reason: Price already passed entry zone)")
             context = self._extract_context_data(df, bias)
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
-            return self._create_no_trade_message(
-                symbol=symbol,
-                timeframe=timeframe,
-                reason="No valid ICT pattern detected",
-                details=f"No ROLLBACK/PULLBACK/CONTINUATION/REVERSAL pattern found for {symbol} {timeframe}.",
-                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
-                current_price=context['current_price'],
-                price_change_24h=context['price_change_24h'],
-                rsi=context['rsi'],
-                signal_direction=context['signal_direction'],
-                confidence=None,
-            )
-
-        logger.info(f"✅ Step 7A: Pattern detected = {pattern_name} (probability: {pattern_probability:.3f})")
-
-        # ── Step 7B: Calculate entry zone from POI (SAME POI for entry + anchor) ─
-        poi_entry_result = None
-        if POI_CALCULATOR_AVAILABLE:
-            poi_entry_result = calculate_entry_zone_from_poi(
-                pattern_name=pattern_name,
-                current_price=current_price,
-                bias=bias_str,
-                mtf_components=mtf_components,
-                signal_tf=_signal_tf_key,
-                tf_hierarchy=tf_hierarchy if TIMEFRAME_CONTRACT_AVAILABLE else None,
-            )
-        else:
-            logger.warning("⚠️ POI calculator not available - cannot compute entry zone")
-
-        if not poi_entry_result:
-            logger.info(f"❌ Step 7B: No valid entry zone for {pattern_name} pattern")
-            logger.error(f"❌ No POI entry zone - Signal BLOCKED (no structural POI)")
-            context = self._extract_context_data(df, bias)
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
-            return self._create_no_trade_message(
-                symbol=symbol,
-                timeframe=timeframe,
-                reason=f"No structural POI for {pattern_name}",
-                details=(
-                    f"{pattern_name} pattern detected but no valid structural POI "
-                    f"(OB/BSL/SSL) available for {symbol} {timeframe}."
-                ),
-                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
-                current_price=context['current_price'],
-                price_change_24h=context['price_change_24h'],
-                rsi=context['rsi'],
-                signal_direction=context['signal_direction'],
-                confidence=None,
-            )
-
-        logger.info(f"✅ Step 7B: Entry zone calculated from {poi_entry_result.get('poi_type', 'POI')}")
-
-        # Build scenario display text: include subtype (e.g. STRUCTURE_RETEST) and confluence
-        _poi_subtype = poi_entry_result.get('subtype')
-        _scenario_text = poi_entry_result['scenario']
-        if _poi_subtype:
-            _scenario_text += f" ({_poi_subtype})"
-        if pattern_confluence:
-            _other_patterns = [p for p in pattern_confluence if p != pattern_name]
-            if _other_patterns:
-                _scenario_text += f" + {', '.join(_other_patterns)}"
-
-        # Build entry_scenario_result compatible with downstream steps
-        entry_zone = poi_entry_result['entry_zone']
-        entry_scenario_result = {
-            'scenario': _scenario_text,
-            'eligible': True,
-            'entry_zone': entry_zone,
-            'probability': pattern_probability,
-            'triggers': ict_components.get('_detected_triggers', []),
-            'trigger_strength': 'MEDIUM',
-            'reasoning': poi_entry_result.get('reasoning', ''),
-            'position_size_advisory': poi_entry_result.get('position_size_advisory', 100),
-            'poi_type': poi_entry_result.get('poi_type', 'NONE'),
-            'poi_data': poi_entry_result.get('poi_data', {}),
-            'invalidation_anchor': poi_entry_result.get('invalidation_anchor', {}),
-            'subtype': _poi_subtype,
-            'confluence': pattern_confluence,
-        }
-
-        # ── Trigger check: used as confidence modifier only (not a gate) ────────
-        is_triggered = False
-        trigger_reason = "Trigger check skipped"
-        try:
-            is_triggered, trigger_reason = is_entry_triggered(
-                scenario_name=pattern_name,
-                scenario_data=entry_scenario_result,
-                entry_zone=entry_zone,
-                current_price=current_price,
-                ict_components=ict_components,
-                bias=bias_str,
-                timeframe=timeframe,
-                recent_candles=recent_candles,
-            )
-        except Exception as e:
-            logger.warning(f"⚠️ Trigger check failed (non-blocking): {e}")
-
-        # Store trigger result for confidence adjustment in Step 11
-        trigger_confidence_adjustment = TRIGGER_MET_CONFIDENCE_BONUS if is_triggered else TRIGGER_NOT_MET_CONFIDENCE_PENALTY
-        if is_triggered:
-            logger.info(f"   ✅ Entry trigger MET: {trigger_reason} (+{TRIGGER_MET_CONFIDENCE_BONUS:.0f}% confidence)")
-        else:
-            logger.info(f"   ⚠️ Entry trigger NOT met: {trigger_reason} ({TRIGGER_NOT_MET_CONFIDENCE_PENALTY:.0f}% confidence)")
-
-        # Log selected scenario details
-        logger.info(f"   ✅ Scenario: {entry_scenario_result['scenario']}")
-        logger.info(f"      • Pattern probability: {int(pattern_probability * 100)}/100")
-        logger.info(f"      • Entry Price: ${entry_zone['center']:.4f}")
-        logger.info(f"      • Entry Range: ${entry_zone['low']:.4f} - ${entry_zone['high']:.4f}")
-        logger.info(f"      • Distance: {entry_zone.get('distance_pct', 0):.1f}%")
-        logger.info(f"      • POI Type: {entry_scenario_result.get('poi_type', 'NONE')}")
-
-        # Log invalidation anchor info
-        anchor = entry_scenario_result.get('invalidation_anchor', {})
-        if anchor:
-            logger.info(
-                f"      • Anchor: {anchor.get('type')} @ ${anchor.get('price', 0):.4f} "
-                f"(source: {anchor.get('source_type', 'N/A')})"
-            )
-
-        # Extract entry_price from scenario result
-        entry_price = entry_zone.get('center', current_price)
-        logger.info(f"   → Entry Price: ${entry_price:.2f} (from POI entry zone)")
-
-        # Create entry_setup dict for downstream use
-        entry_setup = {}
-
-        logger.info(f"✅ PASSED Step 7: Pattern={pattern_name}, Entry=${entry_price:.2f}")
-        
-        # СТЪПКА 8: SL POSITIONING (renamed from Step 9)
-        logger.info("🔍 Step 8: Stop Loss Positioning")
-        
-        # Get invalidation_anchor (or create fallback)
-        invalidation_anchor = None
-        
-        if entry_scenario_result:
-            invalidation_anchor = entry_scenario_result.get('invalidation_anchor')
-        
-        # 🚫 CRITICAL: AUTO mode requires valid invalidation anchor
-        if not invalidation_anchor and is_auto:
-            logger.info(f"❌ BLOCKED at Step 8: No invalidation anchor and AUTO mode active")
-            logger.info(f"   → AUTO signals require valid invalidation anchors (no fallback SL)")
-            logger.error(f"❌ No invalidation anchor available - AUTO signal BLOCKED")
-            context = self._extract_context_data(df, bias)
-            mtf_consensus_data = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
+            # Calculate MTF consensus for detailed breakdown
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
             
             return self._create_no_trade_message(
                 symbol=symbol,
                 timeframe=timeframe,
-                reason=f"No invalidation anchor (AUTO mode)",
-                details=f"AUTO signals require valid invalidation anchors. No anchor available for {symbol}.",
+                reason=f"Entry zone validation failed: {entry_status}",
+                details=f"Current price: ${current_price:.2f}. Price already passed the entry zone.",
                 mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
                 current_price=context['current_price'],
                 price_change_24h=context['price_change_24h'],
@@ -1503,8 +995,149 @@ class ICTSignalEngine:
                 confidence=None
             )
         
+        # ✅ NEW: Reject signals with entry zones too far (exceeds universal 5% max)
+        if entry_status == 'TOO_FAR':
+            logger.info(f"❌ BLOCKED at Step 8: Entry zone too far from current price")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 8, reason: Entry distance exceeds 7% universal maximum)")
+            context = self._extract_context_data(df, bias)
+            mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
+            
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason=f"Entry zone validation failed: {entry_status}",
+                details=f"Entry zone too far from current price (exceeds universal 7% maximum for all timeframes).",
+                mtf_breakdown=mtf_consensus_data.get("breakdown", {}),
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=None
+            )
+        
+        # ✅ SOFT CONSTRAINT: Handle NO_ZONE case with fallback instead of rejection
+        if entry_status == 'NO_ZONE' or entry_zone is None:
+            logger.info(f"⚠️ Step 8 Warning: No ICT zone in optimal range, using fallback")
+            # ✅ NON-INVASIVE DIAGNOSTIC LOGGING
+            logger.warning(f"⚠️ No ICT zone found in optimal range (0.5-7%) for {symbol}")
+            logger.info(f"   → Creating fallback entry zone at current price ${current_price:.2f}")
+            logger.debug(f"   → Fallback zone: ±1% from current price")
+            
+            # Diagnostic: Log available ICT components
+            sr_count = len(sr_levels.get('support_zones', [])) + len(sr_levels.get('resistance_zones', []))
+            logger.debug(f"   → Available ICT components:")
+            logger.debug(f"      - Order Blocks: {len(order_blocks)}")
+            logger.debug(f"      - FVG Zones: {len(fvg_zones)}")
+            logger.debug(f"      - S/R Levels: {sr_count}")
+            
+            # Create fallback entry zone based on current price with small buffer
+            fallback_distance = 0.01  # 1% from current price
+            if bias_str == 'BEARISH':
+                # BEARISH: Entry above current price
+                entry_zone = {
+                    'source': 'FALLBACK',
+                    'low': current_price * (1 + fallback_distance * 0.8),
+                    'high': current_price * (1 + fallback_distance * 1.2),
+                    'center': current_price * (1 + fallback_distance),
+                    'quality': 40,  # Low quality for fallback
+                    'distance_pct': fallback_distance * 100,
+                    'distance_price': current_price * fallback_distance,
+                    'distance_out_of_range': False,  # Within optimal range
+                    'distance_comment': None
+                }
+            else:  # BULLISH
+                # BULLISH: Entry below current price
+                entry_zone = {
+                    'source': 'FALLBACK',
+                    'low': current_price * (1 - fallback_distance * 1.2),
+                    'high': current_price * (1 - fallback_distance * 0.8),
+                    'center': current_price * (1 - fallback_distance),
+                    'quality': 40,  # Low quality for fallback
+                    'distance_pct': fallback_distance * 100,
+                    'distance_price': current_price * fallback_distance,
+                    'distance_out_of_range': False,  # Within optimal range
+                    'distance_comment': None
+                }
+            entry_status = 'VALID_FALLBACK'
+            logger.info(f"✅ Fallback entry zone created at ${entry_zone['center']:.2f}")
+        
+        # Log successful entry zone validation
+        logger.info(f"✅ PASSED Step 8: Entry zone validated ({entry_status})")
+        
+        # Extract entry price from entry zone for Step 9
+        entry_price = entry_zone.get('center', current_price)
+        logger.info(f"   → Entry Price: ${entry_price:.2f} (from entry zone)")
+        
+        # Keep existing entry setup for SL calculation (fallback)
+        entry_setup = self._identify_entry_setup(df, ict_components, bias)
+        if not entry_setup:
+            # Use entry_zone as fallback entry_setup
+            entry_setup = {
+                'type': f"{bias_str.lower()}_zone",
+                'price_zone': (entry_zone['low'], entry_zone['high']),
+                'source': entry_zone['source']
+            }
+        
+        
+        # =========================================================================
+        # СТЪПКА 8.1: ENTRY SCENARIO SELECTION (ICT Scoring System)
+        # =========================================================================
+        logger.info("=" * 60)
+        logger.info("🎯 Step 8.1: Entry Scenario Selection (ICT Scoring System)")
+        logger.info("=" * 60)
+        
+        entry_scenario_result, poi_ref = select_best_entry_scenario(
+            current_price=current_price,
+            bias=bias_str,
+            ict_components=ict_components,
+            entry_zone=entry_zone,
+            timeframe=timeframe
+        )
+        
+        if entry_scenario_result:
+            # Store poi_ref if available
+            if poi_ref:
+                entry_setup['poi_ref'] = poi_ref
+            
+            logger.info(f"✅ Selected Scenario: {entry_scenario_result['scenario']}")
+            logger.info(f"   Score: {entry_scenario_result['score']}/100")
+            logger.info(f"   Entry Price: ${entry_scenario_result['entry_zone']['center']:.4f}")
+            logger.info(f"   Entry Range: ${entry_scenario_result['entry_zone']['low']:.4f} - ${entry_scenario_result['entry_zone']['high']:.4f}")
+            logger.info(f"   Distance: {entry_scenario_result['entry_zone']['distance_pct']:.1f}%")
+            logger.info(f"   Triggers: {', '.join(entry_scenario_result['triggers'])} ({entry_scenario_result['trigger_strength']})")
+            logger.info(f"   Position Size Advisory: {entry_scenario_result['position_size_advisory']}%")
+            logger.info(f"   Reasoning: {entry_scenario_result['reasoning']}")
+            logger.info(f"   POI Type: {entry_scenario_result.get('poi_type', 'NONE')}")
+            
+            # Log invalidation anchor info
+            anchor = entry_scenario_result.get('invalidation_anchor', {})
+            if anchor:
+                logger.info(f"   Anchor: {anchor.get('type')} @ ${anchor.get('price', 0):.4f}")
+            
+            # Override entry_zone with scenario result
+            entry_zone = entry_scenario_result['entry_zone']
+            # ✅ IMPORTANT: Update entry_price after scenario override
+            entry_price = entry_zone.get('center', entry_price)
+            logger.info(f"   → Updated Entry Price: ${entry_price:.2f} (from scenario entry zone)")
+
+            
+            logger.info(f"✅ Entry zone updated with {entry_scenario_result['scenario']} logic")
+        else:
+            logger.warning("⚠️ No valid scenario scored above minimum - using Step 8 entry_zone")
+        
+        logger.info("=" * 60)
+        # СТЪПКА 9: SL/TP + VALIDATION
+        logger.info("🔍 Step 9: SL/TP Calculation & Validation")
+        logger.info("=" * 60)
+        
+        # Get invalidation_anchor (or create fallback)
+        invalidation_anchor = None
+        
+        if entry_scenario_result:
+            invalidation_anchor = entry_scenario_result.get('invalidation_anchor')
+        
         if not invalidation_anchor:
-            logger.warning("   ⚠️ No anchor from Entry Scenario - creating fallback (MANUAL mode)")
+            logger.warning("⚠️ No anchor from Step 8.1 - creating fallback")
             
             swing_price = self._find_recent_swing_for_sl(df, bias, entry_price)
             
@@ -1544,75 +1177,74 @@ class ICTSignalEngine:
         )
         
         if sl_price is None:
-            logger.error("❌ BLOCKED at Step 8: SL calculation failed")
+            logger.error("❌ BLOCKED at Step 9: SL calculation failed")
             logger.error("❌ SL не може да бъде изчислен - сигналът НЕ СЕ ИЗПРАЩА")
             return None
         
-        logger.info(f"   ✅ SL calculated: ${sl_price:.2f}")
-        logger.info(f"✅ PASSED Step 8: Stop Loss positioned")
+        logger.info(f"✅ SL calculated: ${sl_price:.2f}")
         
-        # СТЪПКА 9: TAKE PROFIT CALCULATION (single TP at 2.5 RR minimum)
-        logger.info("🔍 Step 9: Take Profit Calculation (single TP at 2.5 RR)")
-
+        # ✅ TP calculation (PR #8 Enhanced: Structure-aware vs Mathematical)
+        logger.info("🔍 Step 9b: Take Profit Calculation")
+        
+        fibonacci_data = ict_components.get('fibonacci_data', {})
         bias_str = bias.value if hasattr(bias, 'value') else str(bias)
-        risk = abs(entry_price - sl_price)
-        is_long = (bias == MarketBias.BULLISH)
-
-        # Calculate single TP at 2.5 RR minimum
-        tp_rr = max(self.config.get('min_risk_reward', 2.5), 2.5)
-        if is_long:
-            tp_primary = entry_price + (risk * tp_rr)
-        else:
-            tp_primary = entry_price - (risk * tp_rr)
-
-        # Optional: Try to snap to nearest structure target (±30% tolerance)
+        
+        # Try to use structure-aware TP placement (PR #8)
         try:
-            direction = 'LONG' if is_long else 'SHORT'
-            structure_tps = self._calculate_smart_tp_with_structure_validation(
+            direction = 'LONG' if bias == MarketBias.BULLISH else 'SHORT'
+            tp_prices = self._calculate_smart_tp_with_structure_validation(
                 entry_price=entry_price,
                 sl_price=sl_price,
                 direction=direction,
                 ict_components=ict_components,
-                timeframe=timeframe,
+                timeframe=timeframe
             )
-            if structure_tps:
-                # Use first structure TP only if it's within 30% of the 2.5 RR target
-                struct_tp = structure_tps[0]
-                struct_rr = abs(struct_tp - entry_price) / risk if risk > 0 else 0
-                if struct_rr >= 2.5:
-                    # Accept if structure TP is within ±30% of 2.5 RR level
-                    if abs(struct_tp - tp_primary) / tp_primary <= STRUCTURE_TP_SNAP_TOLERANCE:
-                        tp_primary = struct_tp
-                        logger.info(f"   → Snapped to structure target: ${tp_primary:.2f} (RR {struct_rr:.1f})")
-                    else:
-                        logger.info(f"   → Structure TP ${struct_tp:.2f} outside ±30% tolerance, using 2.5 RR")
-                else:
-                    logger.info(f"   → Structure TP RR {struct_rr:.1f} < 2.5, using minimum 2.5 RR")
+            logger.info(f"   → Structure-aware TPs: {[f'${tp:.2f}' for tp in tp_prices]}")
         except Exception as e:
-            logger.debug(f"   Structure TP check failed (non-critical): {e}")
-
-        # Provide tp_prices as [tp_primary] for downstream compatibility
-        tp_prices = [tp_primary]
-        logger.info(f"   → TP (2.5 RR minimum): ${tp_primary:.2f}")
-        logger.info(f"✅ PASSED Step 9: Take Profit calculated")
-
-        # СТЪПКА 10: RISK/REWARD VALIDATION (HARD GATE #1 - RR >= 2.5)
-        logger.info("🔍 Step 10: Risk/Reward Validation")
-
-        reward = abs(tp_prices[0] - entry_price) if tp_prices else 0
-        risk_reward_ratio = reward / risk if risk > 0 else 0
-
-        logger.info(f"   → Risk: ${risk:.2f}")
-        logger.info(f"   → Reward (TP): ${reward:.2f}")
-        logger.info(f"   → R:R Ratio: {risk_reward_ratio:.2f} (1:{risk_reward_ratio:.1f})")
-        logger.info(f"   → Minimum Required: {self.config['min_risk_reward']:.2f}")
-
-        if risk_reward_ratio < self.config['min_risk_reward']:
-            logger.info(
-                f"❌ BLOCKED at Step 10: R:R {risk_reward_ratio:.2f} < "
-                f"{self.config['min_risk_reward']} "
-                f"(1:{risk_reward_ratio:.1f} < 1:{self.config['min_risk_reward']:.0f})"
+            logger.warning(f"⚠️ Structure TP calculation failed: {e}")
+            # Fallback to original mathematical TP
+            tp_prices = self._calculate_tp_with_min_rr(
+                entry_price, sl_price, liquidity_zones, 
+                min_rr=3.0, 
+                fibonacci_data=fibonacci_data,
+                bias=bias_str,
+                timeframe=timeframe
             )
+            logger.info(f"   → Mathematical TPs (fallback): {[f'${tp:.2f}' for tp in tp_prices]}")
+        
+        logger.info(f"✅ PASSED Step 9: SL/TP calculated and validated")
+        
+        # СТЪПКА 10: RR CHECK
+        logger.info("🔍 Step 10: Risk/Reward Validation")
+        risk = abs(entry_price - sl_price)
+        
+        # ✅ FIX: Validate against TP2 (primary target) instead of TP1 (quick profit)
+        # This allows TP1 for fast scalping while ensuring TP2 meets quality standards
+        # Note: tp_prices array is [TP1, TP2, TP3], so tp_prices[1] is TP2
+        if len(tp_prices) >= 2:
+            # Use TP2 for quality validation (tp_prices[1] = second element = TP2)
+            reward = abs(tp_prices[1] - entry_price)
+            tp_label = "TP2"
+            logger.info(f"   → Validating R:R against TP2 (primary target)")
+        elif len(tp_prices) >= 1:
+            # Fallback to TP1 if only one TP exists
+            reward = abs(tp_prices[0] - entry_price)
+            tp_label = "TP1"
+            logger.info(f"   → Validating R:R against TP1 (single target)")
+        else:
+            reward = 0
+            tp_label = "N/A"
+        
+        risk_reward_ratio = reward / risk if risk > 0 else 0
+        
+        logger.info(f"   → Risk: ${risk:.2f}")
+        logger.info(f"   → Reward ({tp_label}): ${reward:.2f}")
+        logger.info(f"   → R:R Ratio: {risk_reward_ratio:.2f} (1:{risk_reward_ratio:.1f})")
+        logger.info(f"   → Minimum Required: {self.config['min_risk_reward']:.2f} (1:{self.config['min_risk_reward']:.0f})")
+        
+        if risk_reward_ratio < self.config['min_risk_reward']:
+            logger.info(f"❌ BLOCKED at Step 10: R:R {risk_reward_ratio:.2f} < {self.config['min_risk_reward']} (1:{risk_reward_ratio:.1f} < 1:{self.config['min_risk_reward']:.0f})")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 10, reason: Insufficient RR)")
             logger.error(f"❌ RR {risk_reward_ratio:.2f} < {self.config['min_risk_reward']} - сигналът НЕ СЕ ИЗПРАЩА")
             context = self._extract_context_data(df, bias)
             return self._create_no_trade_message(
@@ -1625,16 +1257,13 @@ class ICTSignalEngine:
                 price_change_24h=context['price_change_24h'],
                 rsi=context['rsi'],
                 signal_direction=context['signal_direction'],
-                confidence=None,
+                confidence=None
             )
-
-        logger.info(
-            f"✅ PASSED Step 10: RR validated "
-            f"({risk_reward_ratio:.2f} >= {self.config['min_risk_reward']:.2f})"
-        )
-
-        # СТЪПКА 11: ML CONFIDENCE ADJUSTMENT (consolidated from old Step 11*)
-        logger.info("🔍 Step 11: ML Confidence Adjustment")
+        
+        logger.info(f"✅ PASSED Step 10: RR validated ({risk_reward_ratio:.2f} >= {self.config['min_risk_reward']:.2f} → 1:{risk_reward_ratio:.1f} >= 1:{self.config['min_risk_reward']:.0f})")
+        
+        # BASE CONFIDENCE
+        logger.info("🔍 Step 11: Confidence Calculation")
         base_confidence = self._calculate_signal_confidence(
             ict_components, mtf_analysis, bias, structure_broken, 
             displacement_detected, risk_reward_ratio
@@ -1701,8 +1330,8 @@ class ICTSignalEngine:
         except Exception as e:
             logger.warning(f"⚠️ Liquidity confidence adjustment failed: {e}")
         
-        # ✅ APPLY CONTEXT-AWARE FILTERS (Enhances confidence accuracy)
-        logger.info("   📊 Context-Aware Filtering")
+        # ✅ APPLY CONTEXT-AWARE FILTERS (NEW - Enhances confidence accuracy)
+        logger.info("📊 Step 11a: Context-Aware Filtering")
         context_warnings = []
         try:
             # Extract enhanced context (pass symbol for BTC correlation)
@@ -1715,7 +1344,7 @@ class ICTSignalEngine:
                 ict_components
             )
             
-            logger.info(f"   Context-aware confidence: {base_confidence:.1f}% → {confidence_after_context:.1f}%")
+            logger.info(f"Context-aware confidence: {base_confidence:.1f}% → {confidence_after_context:.1f}%")
             
         except Exception as e:
             logger.warning(f"Context filtering failed, using base confidence: {e}")
@@ -1723,7 +1352,7 @@ class ICTSignalEngine:
             context_warnings = []
         
         # ✅ DISTANCE PENALTY (Soft Constraint - FIX #4)
-        logger.info("   📊 Distance Penalty Check")
+        logger.info("📊 Step 11b: Distance Penalty Check")
         distance_penalty_applied = False
         
         if entry_zone:
@@ -1735,19 +1364,19 @@ class ICTSignalEngine:
                 logger.warning(f"⚠️ Entry very close to current price ({distance_pct:.1f}%) - low risk/reward potential")
                 confidence_after_context = confidence_after_context * 0.9  # Reduce by 10%
                 distance_penalty_applied = True
-                logger.info(f"   Distance penalty applied: confidence reduced by 10% → {confidence_after_context:.1f}%")
+                logger.info(f"Distance penalty applied: confidence reduced by 10% → {confidence_after_context:.1f}%")
                 context_warnings.append(f"⚠️ Entry very close to current price ({distance_pct:.1f}%) - low risk/reward")
             elif distance_pct > 10.0:
                 # Just informational - no penalty
-                logger.info(f"   ℹ️ Entry {distance_pct:.1f}% from current price - waiting for retracement")
+                logger.info(f"ℹ️ Entry {distance_pct:.1f}% from current price - waiting for retracement")
                 context_warnings.append(f"ℹ️ Entry {distance_pct:.1f}% from current price - valid ICT retracement setup")
         
         # ✅ HTF BIAS PENALTY (Soft Constraint - FIX #1)
-        logger.info("   📊 HTF Bias Penalty Check")
+        logger.info("📊 Step 11c: HTF Bias Penalty Check")
         if confidence_penalty > 0:
             logger.warning(f"⚠️ Applying HTF bias penalty: -{confidence_penalty*100:.0f}%")
             confidence_after_context = confidence_after_context * (1 - confidence_penalty)
-            logger.info(f"   HTF penalty applied: confidence reduced to {confidence_after_context:.1f}%")
+            logger.info(f"HTF penalty applied: confidence reduced to {confidence_after_context:.1f}%")
             
             # Add warning about HTF bias
             if confidence_penalty >= 0.40:
@@ -1757,8 +1386,8 @@ class ICTSignalEngine:
             elif confidence_penalty >= 0.20:
                 context_warnings.append("ℹ️ HTF bias unclear, relying on own structure")
         
-        # ✅ ML OPTIMIZATION (Existing ML logic)
-        logger.info("   📊 ML Optimization")
+        # СТЪПКА 11: ML OPTIMIZATION (ЗАПАЗВАМЕ existing logic)
+        logger.info("📊 Step 11: ML Optimization")
 
         ml_confidence_adjustment = 0.0
         ml_features = {}
@@ -1836,8 +1465,8 @@ class ICTSignalEngine:
             # END SHADOW MODE
             # ═══════════════════════════════════════════════════════════════
             
-            # ✅ ML RESTRICTIONS (STRICT ICT) - ICT Compliance Check
-            logger.info("   📊 ML ICT Compliance Check")
+            # ✅ ML RESTRICTIONS (STRICT ICT) - Step 11.25
+            logger.info("📊 Step 11.25: ML ICT Compliance Check")
             
             # 1. ML може само да прави SL по-консервативен (по-далеч от entry), НЕ по-близо
             # (В този код SL не се променя от ML, така че проверката не е необходима)
@@ -1852,64 +1481,86 @@ class ICTSignalEngine:
         # ✅ Pre-ML confidence (before ML advisory layer runs)
         # ML will be applied AFTER all guards at the end of the pipeline
         confidence = confidence_after_context
-
-        # ✅ APPLY CONFIRMATION LAYER MODIFIER (±8%)
-        logger.info(f"   📊 Applying Confirmation Layer Modifier")
-        logger.info(f"   → Confidence before confirmation: {confidence:.1f}%")
-        # Apply percentage-based adjustment (e.g., 80% * 1.08 = 86.4% for +8% modifier)
-        confidence = confidence + (confidence * confirmation_modifier)
-        logger.info(f"   → Confirmation modifier: {confirmation_modifier:+.1%}")
-        logger.info(f"   → Confidence after confirmation: {confidence:.1f}%")
-
-        # ✅ APPLY TRIGGER CONFIDENCE ADJUSTMENT (soft modifier, not a gate)
-        # trigger_confidence_adjustment was set in Step 7: +10% if triggered, -5% if not
-        logger.info(f"   📊 Applying Trigger Confidence Modifier")
-        confidence = confidence + trigger_confidence_adjustment
-        if trigger_confidence_adjustment >= 0:
-            logger.info(f"   → Trigger met: +{trigger_confidence_adjustment:.0f}% confidence")
-        else:
-            logger.info(f"   → Trigger not met: {trigger_confidence_adjustment:.0f}% confidence")
-        logger.info(f"   → Confidence after trigger modifier: {confidence:.1f}%")
-
         confidence = max(0.0, min(100.0, confidence))
-
-        logger.info(f"   → Confidence (after all adjustments): {confidence:.1f}%")
-        logger.info(f"✅ PASSED Step 11: ML confidence adjustments applied")
         
-        # СТЪПКА 12: FINAL VALIDATION (consolidated from Step 11.5, 11.5b, 11.6)
-        logger.info("🔍 Step 12: Final Validation")
+        logger.info(f"   → Confidence (before ML advisory): {confidence:.1f}%")
         
-        # 12a: MTF CONSENSUS CHECK (INFORMATIONAL ONLY - NOT A GATE)
-        logger.info("   📊 MTF Consensus Analysis (informational)")
-        mtf_consensus_data = self._calculate_mtf_consensus(
-            symbol, entry_tf, bias, mtf_data, tf_hierarchy  # ✅ STABILIZATION: Pass TF hierarchy
-        )
+        # СТЪПКА 11.5: MTF CONSENSUS CHECK (STRICT ICT)
+        logger.info("🔍 Step 11.5: MTF Consensus Validation")
+        mtf_consensus_data = self._calculate_mtf_consensus(symbol, timeframe, bias, mtf_data)
         
         logger.info(f"   → MTF Consensus: {mtf_consensus_data['consensus_pct']:.1f}%")
         logger.info(f"   → Aligned TFs: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}")
-        logger.info(f"   → This is INFORMATIONAL ONLY - does not block signals")
+        logger.info(f"   → Minimum Required: 50%")
         
-        # ✅ MTF consensus does NOT block - it's context information only
-        # Store for signal message, but doesn't affect eligibility
+        # Ако MTF consensus < 50%, confidence = 0 и сигналът НЕ СЕ ИЗПРАЩА
+        if mtf_consensus_data['consensus_pct'] < 50.0:
+            logger.info(f"❌ BLOCKED at Step 11.5: MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50%")
+            logger.info(f"✅ Generating NO_TRADE (blocked_at_step: 11.5, reason: Insufficient MTF consensus)")
+            logger.error(f"❌ MTF consensus {mtf_consensus_data['consensus_pct']:.1f}% < 50% - сигналът НЕ СЕ ИЗПРАЩА")
+            # Изпрати информативно съобщение
+            context = self._extract_context_data(df, bias)
+            return self._create_no_trade_message(
+                symbol=symbol,
+                timeframe=timeframe,
+                reason=f"Липса на MTF consensus ({mtf_consensus_data['consensus_pct']:.1f}%)",
+                details=f"Необходими: >=50% aligned TFs. Намерени: {mtf_consensus_data['aligned_count']}/{mtf_consensus_data['total_count']}",
+                mtf_breakdown=mtf_consensus_data['breakdown'],
+                current_price=context['current_price'],
+                price_change_24h=context['price_change_24h'],
+                rsi=context['rsi'],
+                signal_direction=context['signal_direction'],
+                confidence=confidence
+            )
         
-        # 12b: HTF Bias Direction Validation - REMOVED
-        # ✅ Per spec: Counter-HTF trades are ALLOWED
-        # Structure and HTF bias are context only, not gates
-        logger.info("   ✅ HTF bias is context only - does not block signals")
-        
-        # 12c: Final Confidence Check (HARD GATE #2)
-        logger.info("   📊 Final Confidence Check")
+        logger.info(f"✅ PASSED Step 11.5: MTF consensus validated ({mtf_consensus_data['consensus_pct']:.1f}% >= 50%)")
 
+        # ✅ NEW: HTF Bias Direction Validation (CRITICAL ICT PRINCIPLE)
+        logger.info("🔍 Step 11.5b: HTF Bias Direction Alignment")
+        
+        # Get HTF bias from earlier analysis
+        htf_bias_value = ict_components.get('htf_bias', 'NEUTRAL')
+        entry_bias_value = bias.value if hasattr(bias, 'value') else str(bias)
+        
+        logger.info(f"   → HTF Bias: {htf_bias_value}")
+        logger.info(f"   → Entry Bias: {entry_bias_value}")
+        
+        # ICT Rule: NEVER trade against HTF bias
+        if htf_bias_value in ['BULLISH', 'BEARISH'] and htf_bias_value != 'NEUTRAL':
+            if (htf_bias_value == 'BEARISH' and entry_bias_value == 'BULLISH') or \
+               (htf_bias_value == 'BULLISH' and entry_bias_value == 'BEARISH'):
+                logger.info(f"❌ BLOCKED at Step 11.5b: Counter-HTF trade detected!")
+                logger.info(f"   HTF ({hierarchy.get('htf_bias_tf', 'unknown')}) is {htf_bias_value}, but entry ({timeframe}) is {entry_bias_value}")
+                logger.error(f"❌ Counter-HTF trade: HTF {htf_bias_value} vs Entry {entry_bias_value} - BLOCKED")
+                
+                context = self._extract_context_data(df, bias)
+                return self._create_no_trade_message(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    reason=f"Counter-trend trade against HTF bias",
+                    details=f"HTF ({hierarchy.get('htf_bias_tf', 'unknown')}): {htf_bias_value}, Entry ({timeframe}): {entry_bias_value}. ICT principle: Never trade against HTF bias.",
+                    mtf_breakdown=mtf_consensus_data['breakdown'],
+                    current_price=context['current_price'],
+                    price_change_24h=context['price_change_24h'],
+                    rsi=context['rsi'],
+                    signal_direction=context['signal_direction'],
+                    confidence=confidence
+                )
+        
+        logger.info(f"✅ PASSED Step 11.5b: HTF bias aligned or neutral ({htf_bias_value})")
+        
+        # Confidence check (dynamic based on auto vs manual)
+        logger.info("🔍 Step 11.6: Final Confidence Check")
+        
         # Determine min confidence based on signal type
-        # Updated thresholds: 55% for auto, 65% for manual
-        min_confidence = 55 if is_auto else 65
+        min_confidence = 50 if is_auto else 55
         mode = "Auto" if is_auto else "Manual"
         
         logger.info(f"   → Final Confidence: {confidence:.1f}%")
         logger.info(f"   → Minimum Required: {min_confidence}% ({mode} mode)")
         
         if confidence < min_confidence:
-            logger.info(f"❌ BLOCKED at Step 12: Confidence {confidence:.1f}% < {min_confidence}% ({mode} mode)")
+            logger.info(f"❌ BLOCKED at Step 11.6: Confidence {confidence:.1f}% < {min_confidence}% ({mode} mode)")
             logger.error(f"❌ Confidence {confidence:.1f}% < {min_confidence}% - сигналът НЕ СЕ ИЗПРАЩА ({mode})")
             context = self._extract_context_data(df, bias)
             return self._create_no_trade_message(
@@ -1925,94 +1576,198 @@ class ICTSignalEngine:
                 confidence=confidence
             )
         
-        logger.info(f"✅ PASSED Step 12: Final validation complete ({confidence:.1f}% >= {min_confidence}% - {mode} mode)")
+        logger.info(f"✅ PASSED Step 11.6: Confidence validated ({confidence:.1f}% >= {min_confidence}% - {mode} mode)")
         
-        # СТЪПКА 13: SIGNAL GENERATION (HARD GATE #3 - Deduplication Only)
-        logger.info("🔍 Step 13: Signal Generation")
+        # СТЪПКА 12: FINAL SIGNAL GENERATION
+        logger.info("🔍 Step 12: Final Signal Generation")
         signal_strength = self._calculate_signal_strength(confidence, risk_reward_ratio, ict_components)
         signal_type = self._determine_signal_type(bias, signal_strength, confidence)
-
+        
         logger.info(f"   → Signal Type: {signal_type.value}")
         logger.info(f"   → Signal Strength: {signal_strength.value}")
         logger.info(f"   → Confidence: {confidence:.1f}%")
-
-        # ── Deduplication Gate (HARD GATE #3) ──────────────────────────────────
-        # Block if same symbol + timeframe + bias + entry within 1.5% in last 24h
-        signal_direction_str = signal_type.value if hasattr(signal_type, 'value') else str(signal_type)
-        is_dup = self._is_duplicate_signal(symbol, timeframe, entry_price, signal_direction_str)
-        if is_dup:
-            logger.info(f"⛔ BLOCKED at Step 13: Duplicate signal (same symbol+TF+bias+entry within 1.5%)")
-            logger.error(f"❌ Duplicate signal blocked - same setup already sent within 24h")
-            context = self._extract_context_data(df, bias)
-            mtf_consensus_data_dup = self._calculate_mtf_consensus(symbol, entry_tf, bias, mtf_data, tf_hierarchy)
-            return self._create_no_trade_message(
-                symbol=symbol,
-                timeframe=timeframe,
-                reason="Duplicate signal (same setup already sent)",
-                details=(
-                    f"Signal for {symbol} {timeframe} {signal_direction_str} "
-                    f"@ ${entry_price:.2f} already sent within last 24h (entry within 1.5%)."
-                ),
-                mtf_breakdown=mtf_consensus_data_dup.get("breakdown", {}),
-                current_price=context['current_price'],
-                price_change_24h=context['price_change_24h'],
-                rsi=context['rsi'],
-                signal_direction=context['signal_direction'],
-                confidence=confidence,
-            )
-        logger.info(f"✅ PASSED Deduplication: no duplicate found")
-
-        # ── ML Advisory Layer (confidence-only, non-blocking) ─────────────────
+        
+        # =========================================================================
+        # ✅ ESB v1.0 §2.1-2.2: ENTRY GATING & CONFIDENCE THRESHOLD EVALUATION
+        # =========================================================================
         logger.info("=" * 60)
-        logger.info("STEP 13.0: ML ADVISORY LAYER (PR-ML-8)")
+        logger.info("STEP 12.1: ENTRY GATING EVALUATION (ESB §2.1)")
         logger.info("=" * 60)
-
+        
+        if ENTRY_GATING_AVAILABLE:
+            # Build signal context for Entry Gating evaluation
+            signal_context = {
+                'symbol': symbol,
+                'timeframe': timeframe,
+                'direction': signal_type.value if hasattr(signal_type, 'value') else str(signal_type),
+                'raw_confidence': confidence,
+                
+                # Entry Gating fields
+                'system_state': self._get_system_state(),
+                'breaker_block_active': self._check_breaker_block_active(ict_components, signal_type),
+                'active_signal_exists': self._check_active_signal(symbol, timeframe),
+                'cooldown_active': self._check_cooldown(symbol, timeframe),
+                'market_state': self._get_market_state(symbol),
+                'signature_already_seen': self._check_signature(symbol, timeframe, signal_type, datetime.now())
+            }
+            
+            # Evaluate Entry Gating (ESB §2.1)
+            entry_allowed = evaluate_entry_gating(signal_context.copy())  # Use copy to ensure immutability
+            
+            if not entry_allowed:
+                logger.info(f"⛔ Entry Gating BLOCKED: {symbol} {timeframe}")
+                logger.debug(f"Entry Gating context: {signal_context}")
+                return None  # HARD BLOCK
+            
+            logger.info(f"✅ PASSED Entry Gating: {symbol} {timeframe}")
+        else:
+            logger.warning("⚠️ Entry Gating evaluator not available - skipping check")
+        
+        # =========================================================================
+        logger.info("=" * 60)
+        logger.info("STEP 12.2: CONFIDENCE THRESHOLD EVALUATION (ESB §2.2)")
+        logger.info("=" * 60)
+        
+        if CONFIDENCE_THRESHOLD_AVAILABLE:
+            # Build signal context for Confidence Threshold evaluation
+            # Reuse same context from Entry Gating (only direction and raw_confidence are required)
+            confidence_context = {
+                'direction': signal_type.value if hasattr(signal_type, 'value') else str(signal_type),
+                'raw_confidence': confidence
+            }
+            
+            # Evaluate Confidence Threshold (ESB §2.2)
+            threshold_passed = evaluate_confidence_threshold(confidence_context.copy())  # Use copy to ensure immutability
+            
+            if not threshold_passed:
+                logger.info(f"⛔ Confidence Threshold BLOCKED: {symbol} {timeframe} (confidence: {confidence:.2f})")
+                return None  # HARD BLOCK
+            
+            logger.info(f"✅ PASSED Confidence Threshold: {symbol} {timeframe} (confidence: {confidence:.2f})")
+        else:
+            logger.warning("⚠️ Confidence Threshold evaluator not available - skipping check")
+        
+        # =========================================================================
+        logger.info("=" * 60)
+        logger.info("STEP 12.3: EXECUTION ELIGIBILITY EVALUATION (ESB §2.3)")
+        logger.info("=" * 60)
+        
+        if EXECUTION_ELIGIBILITY_AVAILABLE:
+            # Build execution context for Execution Eligibility evaluation
+            execution_context = {
+                'symbol': symbol,
+                'execution_state': self._get_execution_state(),
+                'execution_layer_available': self._check_execution_layer_available(),
+                'symbol_execution_locked': self._check_symbol_execution_lock(symbol),
+                'position_capacity_available': self._check_position_capacity(symbol, signal_type.value if hasattr(signal_type, 'value') else str(signal_type)),
+                'emergency_halt_active': self._check_emergency_halt()
+            }
+            
+            # Evaluate Execution Eligibility (ESB §2.3)
+            execution_allowed = evaluate_execution_eligibility(execution_context.copy())  # Use copy to ensure immutability
+            
+            if not execution_allowed:
+                logger.info(f"⛔ §2.3 Execution Eligibility BLOCKED: {symbol} {timeframe}")
+                logger.debug(f"Execution Eligibility context: {execution_context}")
+                return None  # HARD BLOCK
+            
+            logger.info(f"✅ PASSED Execution Eligibility: {symbol} {timeframe}")
+        else:
+            logger.warning("⚠️ Execution Eligibility evaluator not available - skipping check")
+        
+        # =========================================================================
+        logger.info("=" * 60)
+        logger.info("STEP 12.4: RISK ADMISSION EVALUATION (ESB §2.4)")
+        logger.info("=" * 60)
+        
+        if RISK_ADMISSION_AVAILABLE:
+            # Build risk context for Risk Admission evaluation
+            risk_context = {
+                'signal_risk': self._get_signal_risk(),
+                'total_open_risk': self._get_total_open_risk(),
+                'symbol_exposure': self._get_symbol_exposure(symbol),
+                'direction_exposure': self._get_direction_exposure(signal_type.value if hasattr(signal_type, 'value') else str(signal_type)),
+                'daily_loss': self._get_daily_loss()
+            }
+            
+            # Evaluate Risk Admission (ESB §2.4)
+            risk_admitted = evaluate_risk_admission(risk_context.copy())  # Use copy to ensure immutability
+            
+            if not risk_admitted:
+                logger.info(f"⛔ §2.4 Risk Admission BLOCKED: {symbol} {timeframe}")
+                logger.debug(f"Risk context: {risk_context}")
+                return None  # HARD BLOCK
+            
+            logger.info(f"✅ PASSED Risk Admission: {symbol} {timeframe}")
+        else:
+            logger.warning("⚠️ Risk Admission evaluator not available - skipping check")
+        
+        logger.info("=" * 60)
+        logger.info("✅ ALL EVALUATIONS PASSED (§2.1-2.4) - PROCEEDING TO SIGNAL CREATION")
+        logger.info("=" * 60)
+        
+        # =========================================================================
+        # END ENTRY GATING, CONFIDENCE THRESHOLD, EXECUTION ELIGIBILITY & RISK ADMISSION
+        # =========================================================================
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ PR-ML-8: ML ADVISORY LAYER (FINAL POSITION)
+        # ═══════════════════════════════════════════════════════════════
+        # ML runs LAST, after all strategy decisions, risk filters, and guards.
+        # ML acts ONLY as advisory layer that modifies confidence within bounds.
+        # ML NEVER influences signal direction, entry/SL/TP, or overrides guards.
+        # ═══════════════════════════════════════════════════════════════
+        logger.info("=" * 60)
+        logger.info("STEP 12.0: ML ADVISORY LAYER (PR-ML-8)")
+        logger.info("=" * 60)
+        
         # Strategy signal is now LOCKED - ML cannot change it
         strategy_signal = 'BUY' if bias == MarketBias.BULLISH else 'SELL' if bias == MarketBias.BEARISH else 'HOLD'
-
+        
         if self.use_ml and self.ml_engine and self.ml_engine.model is not None:
             try:
                 logger.info(f"🤖 Invoking ML Advisory (confidence-only modification)")
                 logger.info(f"   Strategy Signal (LOCKED): {strategy_signal}")
                 logger.info(f"   Base Confidence: {confidence:.1f}%")
-
+                
                 # Call new ML advisory method
                 ml_advisory = self.ml_engine.get_confidence_modifier(
                     analysis=ml_features,
                     final_signal=strategy_signal,
                     base_confidence=confidence
                 )
-
+                
                 # Apply ML modifier to confidence ONLY
                 original_confidence = confidence
                 confidence = confidence * ml_advisory['confidence_modifier']
-
+                
                 # Clamp to valid range
                 confidence = max(0.0, min(100.0, confidence))
-
+                
                 # Logging
                 logger.info(f"   ML Mode: {ml_advisory['mode']}")
                 logger.info(f"   ML Confidence: {ml_advisory['ml_confidence']:.1f}%")
                 logger.info(f"   Confidence Modifier: {ml_advisory['confidence_modifier']:.3f}x")
                 logger.info(f"   Confidence: {original_confidence:.1f}% → {confidence:.1f}%")
-
+                
                 # Log warnings if any
                 if ml_advisory['warnings']:
                     for warning in ml_advisory['warnings']:
                         logger.warning(f"⚠️ {warning}")
-
+                
                 logger.info(f"✅ ML Advisory complete (direction unchanged: {strategy_signal})")
-
+                
             except Exception as e:
                 logger.error(f"❌ ML Advisory error: {e}")
                 logger.info(f"✅ Continuing with ICT-only confidence: {confidence:.1f}%")
         else:
             logger.info("ℹ️ ML Advisory not available - using ICT-only confidence")
-
-        logger.info("=" * 60)
-        # ── End ML Advisory Layer ─────────────────────────────────────────────
         
-        entry_status = "UNKNOWN"  # Default value
+        logger.info("=" * 60)
+        # ═══════════════════════════════════════════════════════════════
+        # END ML ADVISORY LAYER
+        # ═══════════════════════════════════════════════════════════════
+        
         # ✅ FIX 3: STEP 12a - Entry Timing Validation
         logger.info("🔍 Step 12a: Entry Timing Validation")
         is_valid, reason = self._validate_entry_timing(
@@ -2047,7 +1802,7 @@ class ICTSignalEngine:
         # CREATE SIGNAL
         # ✅ Entry scenario already selected in Step 8.1
         if entry_scenario_result:
-            logger.info(f"🎯 Using Entry Scenario from Step 8.1: {entry_scenario_result['scenario']} (score: {int(entry_scenario_result['probability'] * 100)})")
+            logger.info(f"🎯 Using Entry Scenario from Step 8.1: {entry_scenario_result['scenario']} (score: {entry_scenario_result['score']})")
         else:
             logger.info("⚠️ No entry scenario from Step 8.1 (score < 60)")
 
@@ -2089,7 +1844,7 @@ class ICTSignalEngine:
             reasoning=reasoning,
             warnings=warnings,
             entry_scenario=entry_scenario_result['scenario'] if entry_scenario_result else None,
-            entry_scenario_score=int(entry_scenario_result['probability'] * 100) if entry_scenario_result else 0,
+            entry_scenario_score=entry_scenario_result['score'] if entry_scenario_result else 0,
             entry_scenario_reasoning=entry_scenario_result['reasoning'] if entry_scenario_result else "",
             entry_scenario_triggers=entry_scenario_result.get("triggers", []) if entry_scenario_result else [],
             zone_explanations=zone_explanations
@@ -2173,60 +1928,6 @@ class ICTSignalEngine:
         
         logger.info(f"✅ PASSED Step 12b: News sentiment check ({news_check['sentiment_score']:.0f})")
         
-        # ═══════════════════════════════════════════════════════════
-        # 🆕 SAVE ANALYSIS TO JSON (for debugging and backtesting)
-        # ═══════════════════════════════════════════════════════════
-        try:
-            # Prepare analysis data for JSON export
-            analysis_data = {
-                'timestamp': datetime.now().isoformat(),
-                'symbol': symbol,
-                'timeframe': timeframe,
-                'htf_bias': htf_bias,
-                'mtf_consensus': {
-                    'consensus_pct': mtf_consensus_data.get('consensus_pct', 0),
-                    'aligned_count': mtf_consensus_data.get('aligned_count', 0),
-                    'total_count': mtf_consensus_data.get('total_count', 0),
-                },
-                'liquidity_zones_count': len(liquidity_zones),
-                'raw_components_count': {
-                    k: len(v) if isinstance(v, list) else 0 
-                    for k, v in raw_components.items() 
-                    if k not in ['fibonacci_data', 'luxalgo_sr', 'luxalgo_ict', 'luxalgo_combined']
-                },
-                'filtered_components_count': {
-                    k: len(v) if isinstance(v, list) else 0 
-                    for k, v in ict_components.items() 
-                    if k not in ['fibonacci_data', 'luxalgo_sr', 'luxalgo_ict', 'luxalgo_combined', 'displacement', 'structure_break', 'htf_bias']
-                },
-                'entry_scenario': {
-                    'scenario': entry_scenario_result.get('scenario', 'N/A') if entry_scenario_result else 'N/A',
-                    'score': int(entry_scenario_result.get('probability', 0) * 100) if entry_scenario_result else 0,
-                    'entry_price': entry_price,
-                },
-                'risk_management': {
-                    'sl_price': sl_price,
-                    'tp_prices': [float(tp) for tp in tp_prices],
-                    'risk_reward_ratio': risk_reward_ratio,
-                },
-                'confidence': {
-                    'base': base_confidence,
-                    'final': confidence,
-                },
-                'signal': {
-                    'type': signal_type.value if hasattr(signal_type, 'value') else str(signal_type),
-                    'strength': signal_strength.value if hasattr(signal_strength, 'value') else str(signal_strength),
-                    'confidence': confidence,
-                }
-            }
-            
-            # Save to JSON file
-            self._save_analysis_json(symbol, datetime.now(), analysis_data)
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to save analysis JSON (non-critical): {e}")
-        
-        # Return the final signal
-        logger.info(f"✅ PASSED Step 13: Signal generated successfully")
         return signal
     
     def _prepare_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -2348,13 +2049,7 @@ class ICTSignalEngine:
         
         # Sanity check 2: Minimum distance
         distance_pct = abs(anchor_price - entry_price) / entry_price
-        # Use contract-based minimum SL distance
-        if TIMEFRAME_CONTRACT_AVAILABLE:
-            min_distance = TimeframeContract.get_min_sl_distance(timeframe)
-            logger.debug(f"📏 Using contract MIN_SL_DISTANCE {min_distance:.3%} for {timeframe}")
-        else:
-            min_distance = 0.005  # Safe fallback
-            logger.warning(f"⚠️ Contract unavailable, using fallback MIN_SL_DISTANCE {min_distance:.3%}")
+        min_distance = TIMEFRAME_MIN_SL_DISTANCE.get(timeframe, 0.005)
         
         if distance_pct < min_distance:
             logger.warning(f"⚠️ Anchor too close ({distance_pct*100:.2f}% < {min_distance*100:.1f}%)")
@@ -2377,14 +2072,7 @@ class ICTSignalEngine:
             atr_value = entry_price * ATR_FALLBACK_PCT
         
         atr_buffer = atr_value * 0.25
-        # Use contract-based buffer percentage
-        if TIMEFRAME_CONTRACT_AVAILABLE:
-            buffer_pct = TimeframeContract.get_sl_buffer_pct(timeframe)
-            pct_buffer = entry_price * buffer_pct
-            logger.debug(f"📏 Using contract SL buffer {buffer_pct:.4%} for {timeframe}")
-        else:
-            pct_buffer = entry_price * 0.002  # Safe fallback
-            logger.warning(f"⚠️ Contract unavailable, using fallback SL buffer 0.2%")
+        pct_buffer = entry_price * TIMEFRAME_BUFFER_PCT.get(timeframe, 0.002)
         buffer = max(atr_buffer, pct_buffer)
         
         # Apply buffer
@@ -2401,30 +2089,11 @@ class ICTSignalEngine:
     
     def _detect_ict_components(
         self,
-        df_signal: pd.DataFrame,  # ✅ PHASE 2: Explicit signal TF
-        df_confirmation: Optional[pd.DataFrame],  # ✅ PHASE 2: Confirmation TF
-        df_structure: Optional[pd.DataFrame],  # ✅ PHASE 2: Structure TF
-        timeframe: str,  # Signal timeframe
-        liquidity_zones: Optional[List[Dict]] = None,
-        tf_hierarchy: Optional['TimeframeHierarchy'] = None  # ✅ STABILIZATION: Pass TF hierarchy
+        df: pd.DataFrame,
+        timeframe: str
     ) -> Dict[str, List]:
         """
-        Detect all ICT components with multi-timeframe routing.
-        
-        ✅ PHASE 2: Components now detected from correct timeframes:
-        - Structure Break → from df_structure (4h)
-        - Displacement → from df_confirmation (2h)
-        - Whale Blocks → from df_confirmation (2h)
-        - Order Blocks, FVGs → from df_signal (1h)
-        
-        Args:
-            df_signal: DataFrame with signal TF candle data
-            df_confirmation: DataFrame with confirmation TF candle data (or None for fallback)
-            df_structure: DataFrame with structure TF candle data (or None for fallback)
-            timeframe: Signal timeframe string (e.g., '1h')
-            liquidity_zones: (OPTIONAL) Pre-calculated liquidity zones from Step 3.
-                             If None, calculates internally (backward compatible).
-            tf_hierarchy: (OPTIONAL) TimeframeHierarchy object for validation
+        Detect all ICT components
         
         Returns dict with:
         - whale_blocks
@@ -2441,206 +2110,57 @@ class ICTSignalEngine:
             'internal_liquidity': []
         }
         
-        # ✅ STABILIZATION: Log component detection timeframe
-        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-            logger.info("=" * 70)
-            logger.info(f"🔍 COMPONENT DETECTION - Multi-Timeframe Routing")
-            logger.info(f"   Signal TF: {tf_hierarchy.signal_tf}")
-            logger.info(f"   Confirmation TF: {tf_hierarchy.confirmation_tf}")
-            logger.info(f"   Structure TF: {tf_hierarchy.structure_tf}")
-            logger.info("=" * 70)
-        
-        # ✅ PHASE 2: Fallback handling - use signal TF if MTF data missing
-        # Track whether we're using fallback data
-        using_confirmation_fallback = False
-        using_structure_fallback = False
-        
-        if df_confirmation is None:
-            if tf_hierarchy:
-                logger.warning(f"⚠️ Confirmation TF ({tf_hierarchy.confirmation_tf}) data missing")
-                logger.warning(f"   Fallback: Using signal_tf for confirmation components")
-            df_confirmation = df_signal  # Backward compatible
-            using_confirmation_fallback = True
-        
-        if df_structure is None:
-            if tf_hierarchy:
-                logger.warning(f"⚠️ Structure TF ({tf_hierarchy.structure_tf}) data missing")
-                logger.warning(f"   Fallback: Using signal_tf for structure components")
-            df_structure = df_signal  # Backward compatible
-            using_structure_fallback = True
-        
-        # ✅ PHASE 2: SIGNAL TF COMPONENTS - Detect from signal_tf (1h)
         # Detect Order Blocks
         if self.config['use_order_blocks'] and self.ob_detector:
             try:
-                order_blocks = self.ob_detector.detect_order_blocks(df_signal, timeframe)
+                order_blocks = self.ob_detector.detect_order_blocks(df, timeframe)
                 components['order_blocks'] = order_blocks
-                logger.info(f"Detected {len(order_blocks)} order blocks on {timeframe} (signal_tf)")
-                
-                # ✅ STABILIZATION: Validate timeframe if hierarchy provided
-                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-                    TimeframeDebugLogger.log_component_source("Order Blocks", timeframe, len(order_blocks))
-                    if timeframe.lower() != tf_hierarchy.signal_tf.lower():
-                        TimeframeDebugLogger.log_component_validation_error(
-                            "Order Blocks", timeframe, tf_hierarchy.signal_tf,
-                            "Components detected on wrong timeframe for entry signal"
-                        )
+                logger.info(f"Detected {len(order_blocks)} order blocks")
             except Exception as e:
                 logger.error(f"Order block detection error: {e}")
         
         # Detect Fair Value Gaps
         if self.config['use_fvgs'] and self.fvg_detector:
             try:
-                fvgs = self.fvg_detector.detect_fvgs(df_signal, timeframe)
+                fvgs = self.fvg_detector.detect_fvgs(df, timeframe)
                 components['fvgs'] = fvgs
-                logger.info(f"Detected {len(fvgs)} FVGs on {timeframe} (signal_tf)")
-                
-                # ✅ STABILIZATION: Log component source
-                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-                    TimeframeDebugLogger.log_component_source("FVGs", timeframe, len(fvgs))
+                logger.info(f"Detected {len(fvgs)} FVGs")
             except Exception as e:
                 logger.error(f"FVG detection error: {e}")
         
-        # ✅ PHASE 2: CONFIRMATION TF COMPONENTS - Detect from confirmation_tf (2h)
         # Detect Whale Blocks
         if self.config['use_whale_blocks'] and self.whale_detector:
             try:
-                # Determine actual TF to use for detection
-                if tf_hierarchy and not using_confirmation_fallback:
-                    whale_df = df_confirmation
-                    whale_tf = tf_hierarchy.confirmation_tf
-                    is_fallback = False
-                else:
-                    whale_df = df_signal
-                    whale_tf = timeframe
-                    is_fallback = True
-                
-                whale_blocks = self.whale_detector.detect_whale_blocks(whale_df, whale_tf)
+                whale_blocks = self.whale_detector.detect_whale_blocks(df, timeframe)
                 components['whale_blocks'] = whale_blocks
-                
-                if not is_fallback:
-                    logger.info(f"Detected {len(whale_blocks)} whale blocks on {whale_tf} (confirmation_tf)")
-                else:
-                    logger.info(f"Detected {len(whale_blocks)} whale blocks on {whale_tf} (signal_tf fallback)")
-                
-                # ✅ STABILIZATION: Log component source
-                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-                    TimeframeDebugLogger.log_component_source("Whale Blocks", whale_tf, len(whale_blocks))
+                logger.info(f"Detected {len(whale_blocks)} whale blocks")
             except Exception as e:
                 logger.error(f"Whale detection error: {e}")
         
-        # ✅ PHASE 2: Detect Displacement from confirmation_tf
-        if tf_hierarchy and not using_confirmation_fallback:
+        # Detect Liquidity Zones
+        if self.config['use_liquidity'] and self.liquidity_mapper:
             try:
-                confirmation_tf_str = tf_hierarchy.confirmation_tf
-                displacement_detected, displacement_strength = self._check_displacement(df_confirmation)
-                
-                logger.info(f"   Displacement detected on {confirmation_tf_str} (confirmation_tf): {displacement_detected}")
-                
-                # Store in components
-                components['displacement'] = {
-                    'detected': displacement_detected,
-                    'strength': displacement_strength,
-                    'source_tf': confirmation_tf_str
-                }
+                liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df)
+                components['liquidity_zones'] = liquidity_zones
+                logger.info(f"Detected {len(liquidity_zones)} liquidity zones")
+
+                # Detect Liquidity Sweeps
+                if liquidity_zones:
+                    try:
+                        sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df, liquidity_zones)
+                        components['liquidity_sweeps'] = sweeps
+                        logger.info(f"Detected {len(sweeps)} liquidity sweeps")
+                    except Exception as e:
+                        logger.error(f"Sweep detection error: {e}")
             except Exception as e:
-                logger.error(f"Displacement detection error: {e}")
-                components['displacement'] = {'detected': False, 'strength': 0, 'source_tf': timeframe}
-        else:
-            # Fallback: detect from signal_tf
-            try:
-                displacement_detected, displacement_strength = self._check_displacement(df_signal)
-                if using_confirmation_fallback:
-                    logger.warning(f"   ⚠️ Using signal_tf for displacement detection (MTF data missing)")
-                components['displacement'] = {
-                    'detected': displacement_detected,
-                    'strength': displacement_strength,
-                    'source_tf': timeframe
-                }
-            except Exception as e:
-                logger.error(f"Displacement detection error: {e}")
-                components['displacement'] = {'detected': False, 'strength': 0, 'source_tf': timeframe}
+                logger.error(f"Liquidity detection error: {e}")
         
-        # ✅ PHASE 2: STRUCTURE TF COMPONENTS - Detect from structure_tf (4h)
-        # Detect Structure Break
-        if tf_hierarchy and not using_structure_fallback:
-            try:
-                structure_tf_str = tf_hierarchy.structure_tf
-                structure_broken = self._check_structure_break(df_structure)
-                
-                logger.info(f"   Structure Break detected on {structure_tf_str} (structure_tf): {structure_broken}")
-                
-                # Store in components
-                components['structure_break'] = {
-                    'type': 'MSS' if structure_broken else None,
-                    'broken': structure_broken,
-                    'source_tf': structure_tf_str
-                }
-            except Exception as e:
-                logger.error(f"Structure break detection error: {e}")
-                components['structure_break'] = {'type': None, 'broken': False, 'source_tf': timeframe}
-        else:
-            # Fallback: detect from signal_tf
-            try:
-                structure_broken = self._check_structure_break(df_signal)
-                if using_structure_fallback:
-                    logger.warning(f"   ⚠️ Using signal_tf for structure break detection (MTF data missing)")
-                components['structure_break'] = {
-                    'type': 'MSS' if structure_broken else None,
-                    'broken': structure_broken,
-                    'source_tf': timeframe
-                }
-            except Exception as e:
-                logger.error(f"Structure break detection error: {e}")
-                components['structure_break'] = {'type': None, 'broken': False, 'source_tf': timeframe}
-        
-        # ✅ LIQUIDITY ZONES & SWEEPS - Clear flow without duplication
-        # Step 1: Get or calculate liquidity zones (from signal_tf)
-        if liquidity_zones is None:
-            # Calculate liquidity zones internally (backward compatible)
-            if self.config['use_liquidity'] and self.liquidity_mapper:
-                try:
-                    liquidity_zones = self.liquidity_mapper.detect_liquidity_zones(df_signal, timeframe)
-                    logger.info(f"Detected {len(liquidity_zones)} liquidity zones on {timeframe} (signal_tf)")
-                except Exception as e:
-                    logger.error(f"Liquidity detection error: {e}")
-                    liquidity_zones = []
-            else:
-                liquidity_zones = []
-        
-        # Step 2: Store liquidity zones in components
-        components['liquidity_zones'] = liquidity_zones
-        
-        # ✅ STABILIZATION: Log liquidity zones source
-        if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-            TimeframeDebugLogger.log_component_source("Liquidity Zones", timeframe, len(liquidity_zones))
-        
-        # Step 3: Calculate liquidity sweeps (ONCE) if zones exist (from signal_tf)
-        if liquidity_zones and self.config.get('use_liquidity') and self.liquidity_mapper:
-            try:
-                sweeps = self.liquidity_mapper.detect_liquidity_sweeps(df_signal, liquidity_zones)
-                components['liquidity_sweeps'] = sweeps
-                logger.info(f"Detected {len(sweeps)} liquidity sweeps on {timeframe} (signal_tf)")
-                
-                # ✅ STABILIZATION: Log liquidity sweeps source
-                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-                    TimeframeDebugLogger.log_component_source("Liquidity Sweeps (BSL/SSL)", timeframe, len(sweeps))
-            except Exception as e:
-                logger.error(f"Sweep detection error: {e}")
-                components['liquidity_sweeps'] = []
-        else:
-            components['liquidity_sweeps'] = []
-        
-        # Detect Internal Liquidity Pools (from signal_tf)
+        # Detect Internal Liquidity Pools
         if self.ilp_detector:
             try:
-                ilp_analysis = self.ilp_detector.analyze(df_signal)
+                ilp_analysis = self.ilp_detector.analyze(df)
                 components['internal_liquidity'] = ilp_analysis.get('pools', [])
-                logger.info(f"Detected {len(components['internal_liquidity'])} ILPs on {timeframe} (signal_tf)")
-                
-                # ✅ STABILIZATION: Log ILP source
-                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-                    TimeframeDebugLogger.log_component_source("Internal Liquidity Pools", timeframe, len(components['internal_liquidity']))
+                logger.info(f"Detected {len(components['internal_liquidity'])} ILPs")
                 
                 # Add ILP sweeps to liquidity_sweeps (quality filter)
                 ilp_swept_pools = ilp_analysis.get('swept_pools', [])
@@ -2670,64 +2190,56 @@ class ICTSignalEngine:
             except Exception as e:
                 logger.error(f"ILP detection error: {e}")
         
-        # Detect Breaker Blocks (from signal_tf)
+        # Detect Breaker Blocks
         if self.breaker_detector and components.get('order_blocks'):
             try:
                 breaker_blocks = self.breaker_detector.detect_breaker_blocks(
-                    df_signal,
+                    df,
                     components['order_blocks']
                 )
                 components['breaker_blocks'] = breaker_blocks
-                logger.info(f"Detected {len(breaker_blocks)} breaker blocks on {timeframe} (signal_tf)")
-                
-                # ✅ STABILIZATION: Log breaker blocks source
-                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-                    TimeframeDebugLogger.log_component_source("Breaker Blocks", timeframe, len(breaker_blocks))
+                logger.info(f"Detected {len(breaker_blocks)} breaker blocks")
             except Exception as e:
                 logger.error(f"Breaker block detection error: {e}")
                 components['breaker_blocks'] = []
         else:
             components['breaker_blocks'] = []
         
-        # Detect Mitigation Blocks (from signal_tf)
+        # Detect Mitigation Blocks  
         if self.ob_detector:
             try:
                 mitigation_blocks = self.ob_detector.detect_mitigation_blocks(
-                    df_signal,
+                    df,
                     components.get('order_blocks', [])
                 )
                 components['mitigation_blocks'] = mitigation_blocks
-                logger.info(f"Detected {len(mitigation_blocks)} mitigation blocks on {timeframe} (signal_tf)")
-                
-                # ✅ STABILIZATION: Log mitigation blocks source
-                if tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE:
-                    TimeframeDebugLogger.log_component_source("Mitigation Blocks", timeframe, len(mitigation_blocks))
+                logger.info(f"Detected {len(mitigation_blocks)} mitigation blocks")
             except Exception as e:
                 logger.error(f"Mitigation block detection error: {e}")
                 components['mitigation_blocks'] = []
         else:
             components['mitigation_blocks'] = []
         
-        # Detect SIBI/SSIB (from signal_tf)
+        # Detect SIBI/SSIB
         if self.sibi_ssib_detector:
             try:
                 sibi_ssib_zones = self.sibi_ssib_detector.detect_sibi_ssib(
-                    df_signal,
+                    df,
                     components.get('fvgs', []),
                     components.get('liquidity_zones', [])
                 )
                 components['sibi_ssib_zones'] = sibi_ssib_zones
-                logger.info(f"Detected {len(sibi_ssib_zones)} SIBI/SSIB zones (signal_tf)")
+                logger.info(f"Detected {len(sibi_ssib_zones)} SIBI/SSIB zones")
             except Exception as e:
                 logger.error(f"SIBI/SSIB detection error: {e}")
                 components['sibi_ssib_zones'] = []
         else:
             components['sibi_ssib_zones'] = []
         
-        # Run LuxAlgo Combined Analysis (from signal_tf)
+        # Run LuxAlgo Combined Analysis
         if self.luxalgo_combined:
             try:
-                luxalgo_result = self.luxalgo_combined.analyze(df_signal)
+                luxalgo_result = self.luxalgo_combined.analyze(df)
                 
                 # Ensure result is valid dict (defensive)
                 if not isinstance(luxalgo_result, dict):
@@ -2769,12 +2281,12 @@ class ICTSignalEngine:
             components['luxalgo_ict'] = {}
             components['luxalgo_combined'] = {}
         
-        # Run Fibonacci Analysis (from signal_tf)
+        # Run Fibonacci Analysis
         # Determine bias from existing components
         bias_str = self._determine_bias_from_components(components)
         if self.fibonacci_analyzer:
             try:
-                fibonacci_data = self.fibonacci_analyzer.analyze(df_signal, bias_str, lookback=50)
+                fibonacci_data = self.fibonacci_analyzer.analyze(df, bias_str, lookback=50)
                 components['fibonacci_data'] = fibonacci_data
                 
                 logger.info(f"Fibonacci analysis complete - "
@@ -2787,367 +2299,6 @@ class ICTSignalEngine:
             components['fibonacci_data'] = {}
         
         return components
-    
-    def _filter_quality_components(self, raw_components: Dict) -> Dict:
-        """
-        Filter ICT components to keep only high-quality ones.
-        
-        Quality criteria:
-        - Order Blocks: MEDIUM or STRONG only (volume_ratio >= 1.5)
-        - FVG Zones: Unfilled only (fill_percentage < 70%)
-        - Whale Blocks: Confidence >= 50%
-        - Liquidity Sweeps: Recent only (candles_ago <= 20)
-        - BSL/SSL: Strength >= 0.5
-        - Swing High/Low: Recent and strong
-        - Liquidity Zones: Active pools only
-        
-        Args:
-            raw_components: All detected components from Step 4
-        
-        Returns:
-            Filtered components (quality only)
-        """
-        filtered = {}
-        
-        # Filter Order Blocks (MEDIUM+ only)
-        raw_obs = raw_components.get('order_blocks', [])
-        filtered_obs = []
-        
-        # Debug: Log first OB to validate schema
-        if raw_obs:
-            first_ob = raw_obs[0]
-            if hasattr(first_ob, '__dict__'):
-                logger.debug(f"   🔍 First Order Block schema (object): {list(vars(first_ob).keys())}")
-            elif isinstance(first_ob, dict):
-                logger.debug(f"   🔍 First Order Block schema (dict): {list(first_ob.keys())}")
-        
-        for ob in raw_obs:
-            # Safe field access with defaults
-            try:
-                if hasattr(ob, 'strength'):
-                    strength = ob.strength
-                elif isinstance(ob, dict):
-                    strength = ob.get('strength', None)
-                else:
-                    strength = None
-                
-                # If strength field missing, keep the component (don't filter aggressively)
-                if strength is None:
-                    logger.debug(f"   ⚠️ Order Block missing 'strength' field - keeping component")
-                    filtered_obs.append(ob)
-                elif strength >= 40:  # MEDIUM = 40+, STRONG = 60+
-                    filtered_obs.append(ob)
-            except Exception as e:
-                logger.warning(f"   ⚠️ Error filtering Order Block: {e} - keeping component")
-                filtered_obs.append(ob)
-        
-        filtered['order_blocks'] = filtered_obs
-        
-        # Filter FVG Zones (unfilled only)
-        raw_fvgs = raw_components.get('fvgs', [])
-        filtered_fvgs = []
-        
-        # Debug: Log first FVG to validate schema
-        if raw_fvgs:
-            first_fvg = raw_fvgs[0]
-            if hasattr(first_fvg, '__dict__'):
-                logger.debug(f"   🔍 First FVG schema (object): {list(vars(first_fvg).keys())}")
-            elif isinstance(first_fvg, dict):
-                logger.debug(f"   🔍 First FVG schema (dict): {list(first_fvg.keys())}")
-        
-        for fvg in raw_fvgs:
-            try:
-                if hasattr(fvg, 'fill_percentage'):
-                    fill_pct = fvg.fill_percentage
-                elif isinstance(fvg, dict):
-                    fill_pct = fvg.get('fill_percentage', None)
-                else:
-                    fill_pct = None
-                
-                # If fill_percentage field missing, keep the component
-                if fill_pct is None:
-                    logger.debug(f"   ⚠️ FVG missing 'fill_percentage' field - keeping component")
-                    filtered_fvgs.append(fvg)
-                elif fill_pct < 70:
-                    filtered_fvgs.append(fvg)
-            except Exception as e:
-                logger.warning(f"   ⚠️ Error filtering FVG: {e} - keeping component")
-                filtered_fvgs.append(fvg)
-        
-        filtered['fvgs'] = filtered_fvgs
-        
-        # Filter Whale Blocks (confidence >= 50%)
-        raw_whales = raw_components.get('whale_blocks', [])
-        filtered_whales = []
-        
-        # Debug: Log first Whale Block to validate schema
-        if raw_whales:
-            first_whale = raw_whales[0]
-            if hasattr(first_whale, '__dict__'):
-                logger.debug(f"   🔍 First Whale Block schema (object): {list(vars(first_whale).keys())}")
-            elif isinstance(first_whale, dict):
-                logger.debug(f"   🔍 First Whale Block schema (dict): {list(first_whale.keys())}")
-        
-        for wb in raw_whales:
-            try:
-                if hasattr(wb, 'confidence'):
-                    confidence = wb.confidence
-                elif isinstance(wb, dict):
-                    confidence = wb.get('confidence', None)
-                else:
-                    confidence = None
-                
-                # If confidence field missing, keep the component
-                if confidence is None:
-                    logger.debug(f"   ⚠️ Whale Block missing 'confidence' field - keeping component")
-                    filtered_whales.append(wb)
-                elif confidence >= 50:
-                    filtered_whales.append(wb)
-            except Exception as e:
-                logger.warning(f"   ⚠️ Error filtering Whale Block: {e} - keeping component")
-                filtered_whales.append(wb)
-        
-        filtered['whale_blocks'] = filtered_whales
-        
-        # Filter Liquidity Sweeps (recent only)
-        raw_sweeps = raw_components.get('liquidity_sweeps', [])
-        filtered_sweeps = []
-        
-        # Debug: Log first Sweep to validate schema
-        if raw_sweeps:
-            first_sweep = raw_sweeps[0]
-            if hasattr(first_sweep, '__dict__'):
-                logger.debug(f"   🔍 First Liquidity Sweep schema (object): {list(vars(first_sweep).keys())}")
-            elif isinstance(first_sweep, dict):
-                logger.debug(f"   🔍 First Liquidity Sweep schema (dict): {list(first_sweep.keys())}")
-        
-        for sweep in raw_sweeps:
-            try:
-                # KEEP quality checks (strength, type, etc.)
-                if hasattr(sweep, 'strength'):
-                    strength = sweep.strength
-                elif isinstance(sweep, dict):
-                    strength = sweep.get('strength', 0)
-                else:
-                    strength = 0
-                
-                # Apply quality threshold - KEEP THIS
-                if strength >= 0.5:
-                    filtered_sweeps.append(sweep)
-                # REMOVED: candles_ago <= 20 check (moved to entry_scenarios.py with adaptive thresholds)
-            except Exception as e:
-                logger.warning(f"   ⚠️ Error filtering Liquidity Sweep: {e} - keeping component")
-                filtered_sweeps.append(sweep)
-        
-        filtered['liquidity_sweeps'] = filtered_sweeps
-        
-        # Filter BSL/SSL (strength >= 0.5) - if they exist
-        raw_bsl = raw_components.get('bsl_zones', [])
-        filtered_bsl = []
-        
-        for bsl in raw_bsl:
-            try:
-                if hasattr(bsl, 'strength'):
-                    strength = bsl.strength
-                elif isinstance(bsl, dict):
-                    strength = bsl.get('strength', None)
-                else:
-                    strength = None
-                
-                if strength is None:
-                    filtered_bsl.append(bsl)
-                elif strength >= 0.5:
-                    filtered_bsl.append(bsl)
-            except Exception as e:
-                logger.warning(f"   ⚠️ Error filtering BSL: {e} - keeping component")
-                filtered_bsl.append(bsl)
-        
-        filtered['bsl_zones'] = filtered_bsl
-        
-        raw_ssl = raw_components.get('ssl_zones', [])
-        filtered_ssl = []
-        
-        for ssl in raw_ssl:
-            try:
-                if hasattr(ssl, 'strength'):
-                    strength = ssl.strength
-                elif isinstance(ssl, dict):
-                    strength = ssl.get('strength', None)
-                else:
-                    strength = None
-                
-                if strength is None:
-                    filtered_ssl.append(ssl)
-                elif strength >= 0.5:
-                    filtered_ssl.append(ssl)
-            except Exception as e:
-                logger.warning(f"   ⚠️ Error filtering SSL: {e} - keeping component")
-                filtered_ssl.append(ssl)
-        
-        filtered['ssl_zones'] = filtered_ssl
-        
-        # Keep all other components as-is (no filtering)
-        for key in ['breaker_blocks', 'mitigation_blocks', 'sibi_ssib_zones', 'internal_liquidity',
-                    'liquidity_zones', 'luxalgo_sr', 'luxalgo_ict', 'luxalgo_combined', 
-                    'fibonacci_data', 'support_resistance']:
-            if key in raw_components:
-                filtered[key] = raw_components[key]
-        
-        # Log filtering results
-        logger.info(f"   🔍 Component Filtering Results:")
-        if raw_obs:
-            kept_pct = len(filtered['order_blocks']) / len(raw_obs) * 100
-            logger.info(f"      • Order Blocks: {len(raw_obs)} → {len(filtered['order_blocks'])} "
-                        f"({kept_pct:.0f}% kept)")
-        if raw_fvgs:
-            kept_pct = len(filtered['fvgs']) / len(raw_fvgs) * 100
-            logger.info(f"      • FVG Zones: {len(raw_fvgs)} → {len(filtered['fvgs'])} "
-                        f"({kept_pct:.0f}% kept)")
-        if raw_whales:
-            kept_pct = len(filtered['whale_blocks']) / len(raw_whales) * 100
-            logger.info(f"      • Whale Blocks: {len(raw_whales)} → {len(filtered['whale_blocks'])} "
-                        f"({kept_pct:.0f}% kept)")
-        if raw_sweeps:
-            kept_pct = len(filtered['liquidity_sweeps']) / len(raw_sweeps) * 100
-            logger.info(f"      • Liquidity Sweeps: {len(raw_sweeps)} → {len(filtered['liquidity_sweeps'])} "
-                        f"({kept_pct:.0f}% kept)")
-        
-        return filtered
-    
-    def _enrich_components_with_recency(self, ict_components: dict, df: pd.DataFrame) -> dict:
-        """
-        Add candles_ago field to all ICT components based on timestamp or candle_index.
-        
-        This fixes the "999 candles ago" issue where components have timestamp/candle_index
-        but scenarios expect candles_ago field.
-        
-        Args:
-            ict_components: Dict of detected ICT components (from Step 4)
-            df: DataFrame with datetime index (current candle data)
-            
-        Returns:
-            Enriched components dict with candles_ago added to each component
-            
-        Example:
-            Input sweep: {'type': 'BSL', 'timestamp': '2026-03-01 10:00:00'}
-            Output sweep: {'type': 'BSL', 'timestamp': '2026-03-01 10:00:00', 'candles_ago': 15}
-        """
-        current_time = df.index[-1]
-        current_index = len(df) - 1
-        
-        def calc_candles_ago(component):
-            """Calculate candles_ago from timestamp or candle_index"""
-            # Try timestamp first (most components have this)
-            if hasattr(component, 'timestamp'):
-                try:
-                    comp_time = component.timestamp
-                    if isinstance(comp_time, str):
-                        comp_time = pd.to_datetime(comp_time)
-                    # Find index of closest timestamp
-                    time_diff = abs(df.index - comp_time)
-                    comp_index = time_diff.argmin()
-                    return current_index - comp_index
-                except Exception as e:
-                    logger.debug(f"   Could not calculate from timestamp: {e}")
-            
-            # Try candle_index (FVGs have this)
-            if hasattr(component, 'candle_index'):
-                return current_index - component.candle_index
-            
-            # Try dict format (Order Blocks, Sweeps)
-            if isinstance(component, dict):
-                if 'timestamp' in component:
-                    try:
-                        comp_time = pd.to_datetime(component['timestamp'])
-                        time_diff = abs(df.index - comp_time)
-                        comp_index = time_diff.argmin()
-                        return current_index - comp_index
-                    except:
-                        pass
-                if 'candle_index' in component:
-                    return current_index - component['candle_index']
-                if 'index' in component:
-                    return current_index - component['index']
-            
-            return None
-        
-        # Enrich liquidity sweeps
-        if 'liquidity_sweeps' in ict_components:
-            enriched = 0
-            for sweep in ict_components['liquidity_sweeps']:
-                candles_ago = calc_candles_ago(sweep)
-                if candles_ago is not None:
-                    if isinstance(sweep, dict):
-                        sweep['candles_ago'] = candles_ago
-                    else:
-                        sweep.candles_ago = candles_ago
-                    enriched += 1
-            if enriched > 0:
-                logger.debug(f"   Enriched {enriched} liquidity sweeps with candles_ago")
-        
-        # Enrich order blocks
-        if 'order_blocks' in ict_components:
-            enriched = 0
-            for ob in ict_components['order_blocks']:
-                candles_ago = calc_candles_ago(ob)
-                if candles_ago is not None:
-                    if isinstance(ob, dict):
-                        ob['candles_ago'] = candles_ago
-                    else:
-                        ob.candles_ago = candles_ago
-                    enriched += 1
-            if enriched > 0:
-                logger.debug(f"   Enriched {enriched} order blocks with candles_ago")
-        
-        # Enrich FVGs
-        if 'fvgs' in ict_components:
-            enriched = 0
-            for fvg in ict_components['fvgs']:
-                candles_ago = calc_candles_ago(fvg)
-                if candles_ago is not None:
-                    if isinstance(fvg, dict):
-                        fvg['candles_ago'] = candles_ago
-                    else:
-                        fvg.candles_ago = candles_ago
-                    enriched += 1
-            if enriched > 0:
-                logger.debug(f"   Enriched {enriched} FVGs with candles_ago")
-        
-        # Enrich structure break
-        if 'structure_break' in ict_components:
-            sb = ict_components['structure_break']
-            if isinstance(sb, dict) and sb.get('type'):
-                candles_ago = calc_candles_ago(sb)
-                if candles_ago is not None:
-                    sb['candles_ago'] = candles_ago
-                    logger.debug(f"   Enriched structure break with candles_ago: {candles_ago}")
-        
-        logger.info(f"   ✅ Enriched components with recency data (candles_ago)")
-        return ict_components
-    
-    def _save_analysis_json(self, symbol: str, timestamp: datetime, analysis_data: Dict) -> None:
-        """
-        Save full analysis to JSON file for debugging and backtesting.
-        
-        Args:
-            symbol: Trading symbol
-            timestamp: Analysis timestamp
-            analysis_data: Complete analysis data including all components
-        """
-        try:
-            # Create logs directory if not exists
-            os.makedirs('logs/analysis_history', exist_ok=True)
-            
-            # Filename with timestamp
-            filename = f"logs/analysis_history/{symbol}_{timestamp.strftime('%Y%m%d_%H%M%S')}.json"
-            
-            # Write JSON
-            with open(filename, 'w') as f:
-                json.dump(analysis_data, f, indent=2, default=str)
-            
-            logger.debug(f"✅ Analysis saved to {filename}")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to save analysis JSON: {e}")
     
     def _analyze_mtf_confluence(
         self,
@@ -3193,48 +2344,28 @@ class ICTSignalEngine:
         symbol: str,
         primary_timeframe: str,
         target_bias: MarketBias,
-        mtf_data: Optional[Dict[str, pd.DataFrame]] = None,
-        tf_hierarchy: Optional['TimeframeHierarchy'] = None  # ✅ STABILIZATION: Use TF contract
+        mtf_data: Optional[Dict[str, pd.DataFrame]] = None
     ) -> Dict:
         """
         ✅ IMPROVED MTF Consensus:
         1. RANGING/NEUTRAL = ignored (not counted as conflicting)
-        2. Dynamic TF selection based on TF hierarchy contract
+        2. Dynamic TF selection based on entry TF
         3. Correct formula: aligned / (bullish + bearish) * 100
-        
-        ✅ STABILIZATION PR: Now uses centralized timeframe contract
         """
         
-        # ✅ STABILIZATION PR: MANDATORY use of TF contract (no legacy fallback)
-        if not (tf_hierarchy and TIMEFRAME_CONTRACT_AVAILABLE):
-            error_msg = (
-                f"❌ CRITICAL: Timeframe contract required but not available. "
-                f"Cannot calculate MTF consensus for {primary_timeframe}. "
-                f"Contract available: {TIMEFRAME_CONTRACT_AVAILABLE}, "
-                f"TF hierarchy: {tf_hierarchy is not None}"
-            )
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
+        # Dynamic MTF hierarchy based on entry timeframe
+        MTF_HIERARCHY = {
+            '5m':  ['5m', '15m', '30m', '1h'],
+            '15m': ['15m', '30m', '1h', '4h'],
+            '30m': ['30m', '1h', '2h', '4h'],
+            '1h':  ['1h', '2h', '4h', '1d'],
+            '2h':  ['2h', '4h', '1d'],
+            '4h':  ['4h', '1d'],
+            '1d':  ['1d', '1w']
+        }
         
-        # Use timeframes from the hierarchy contract
-        relevant_tfs = [
-            tf_hierarchy.signal_tf,
-            tf_hierarchy.confirmation_tf,
-            tf_hierarchy.structure_tf,
-            tf_hierarchy.htf_bias_tf
-        ]
-        # Remove duplicates while preserving order
-        unique_tfs = []
-        for tf in relevant_tfs:
-            if tf not in unique_tfs:
-                unique_tfs.append(tf)
-        relevant_tfs = unique_tfs
-        
-        logger.info(f"📊 MTF Consensus using TF Contract: {relevant_tfs}")
-        logger.info(f"   Signal TF: {tf_hierarchy.signal_tf}")
-        logger.info(f"   Confirmation TF: {tf_hierarchy.confirmation_tf}")
-        logger.info(f"   Structure TF: {tf_hierarchy.structure_tf}")
-        logger.info(f"   HTF Bias TF: {tf_hierarchy.htf_bias_tf}")
+        # Get relevant timeframes for this entry TF
+        relevant_tfs = MTF_HIERARCHY.get(primary_timeframe, ['1h', '4h', '1d'])
         
         # ✅ NORMALIZE target_bias to MarketBias enum
         if isinstance(target_bias, str):
@@ -3332,21 +2463,6 @@ class ICTSignalEngine:
             'bullish_votes': bullish_votes,
             'bearish_votes': bearish_votes
         }
-
-    def _calculate_bias(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Tuple[str, float]:
-        """
-        API compatibility method for regression suite.
-        Wraps _calculate_pure_ict_bias_for_tf() for backward compatibility.
-        
-        Args:
-            df: DataFrame with OHLCV data
-            symbol: Trading symbol
-            timeframe: Timeframe string
-        
-        Returns:
-            Tuple of (bias_direction, bias_score)
-        """
-        return self._calculate_pure_ict_bias_for_tf(df, symbol, timeframe)
 
     def _calculate_pure_ict_bias_for_tf(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Tuple[str, float]:
         """
@@ -3596,110 +2712,6 @@ class ICTSignalEngine:
         
         return detected, max_strength
     
-    def _analyze_confirmation_layer(
-        self,
-        symbol: str,
-        confirmation_tf: str,
-        mtf_data: Optional[Dict] = None
-    ) -> tuple:
-        """
-        ✅ NEW: Confirmation Layer Analysis
-        
-        Checks for MSS, BOS, Displacement, or Sweep + Displacement on confirmation_tf.
-        Returns confidence modifier: +8% if found, -8% if not found.
-        
-        NEVER returns None.
-        NEVER sets eligible = False.
-        NEVER blocks signals.
-        NEVER filters scenarios.
-        NEVER participates in probability.
-        NEVER applies threshold.
-        
-        This is ONLY a confidence modifier.
-        
-        Args:
-            symbol: Trading symbol
-            confirmation_tf: Confirmation timeframe
-            mtf_data: Multi-timeframe data dictionary
-        
-        Returns:
-            (has_confirmation: bool, confidence_modifier: float)
-        """
-        logger.info(f"🔍 Confirmation Layer Analysis on {confirmation_tf}")
-        
-        # Try to get confirmation TF data from mtf_data
-        if mtf_data is None or not isinstance(mtf_data, dict):
-            logger.warning(f"   ⚠️ No MTF data available for confirmation analysis")
-            return False, -0.08
-        
-        confirmation_data = mtf_data.get(confirmation_tf)
-        if confirmation_data is None or not isinstance(confirmation_data, pd.DataFrame):
-            logger.warning(f"   ⚠️ No data available for confirmation TF: {confirmation_tf}")
-            return False, -0.08
-        
-        df = confirmation_data
-        if len(df) < 5:
-            logger.warning(f"   ⚠️ Insufficient data on {confirmation_tf} for confirmation analysis")
-            return False, -0.08
-        
-        # Check for MSS/BOS (structure break)
-        has_structure_break = False
-        try:
-            has_structure_break = self._check_structure_break(df)
-        except Exception as e:
-            logger.debug(f"   Could not check structure break: {e}")
-        
-        # Check for Displacement
-        has_displacement = False
-        displacement_strength = 0.0
-        try:
-            has_displacement, displacement_strength = self._check_displacement(df)
-        except Exception as e:
-            logger.debug(f"   Could not check displacement: {e}")
-        
-        # Check for Sweep (if liquidity mapper available)
-        has_sweep = False
-        if self.liquidity_mapper and LIQUIDITY_AVAILABLE:
-            try:
-                # Quick check for recent sweeps
-                liquidity_zones = self.liquidity_mapper.map_liquidity(df, symbol)
-                recent_sweeps = [z for z in liquidity_zones if hasattr(z, 'swept') and z.swept]
-                has_sweep = len(recent_sweeps) > 0
-            except Exception as e:
-                logger.debug(f"   Could not check sweeps: {e}")
-        
-        # Check for Whale Blocks (if whale detector available)
-        has_whale_blocks = False
-        if self.whale_detector and WHALE_AVAILABLE:
-            try:
-                # Detect whale blocks on confirmation timeframe
-                whale_blocks = self.whale_detector.detect_whale_blocks(df, confirmation_tf)
-                has_whale_blocks = len(whale_blocks) > 0
-            except Exception as e:
-                logger.debug(f"   Could not check whale blocks: {e}")
-        
-        # Check if we have at least one confirmation
-        has_confirmation = (
-            has_structure_break or 
-            has_displacement or 
-            (has_sweep and has_displacement) or  # Sweep + Displacement
-            has_whale_blocks  # Whale Blocks
-        )
-        
-        # Calculate modifier
-        confidence_modifier = 0.08 if has_confirmation else -0.08
-        
-        # Log results
-        logger.info(f"   → Confirmation Layer Results:")
-        logger.info(f"      • MSS/BOS: {'✅ Yes' if has_structure_break else '❌ No'}")
-        logger.info(f"      • Displacement: {'✅ Yes' if has_displacement else '❌ No'} (strength: {displacement_strength:.2f}%)")
-        logger.info(f"      • Sweep: {'✅ Yes' if has_sweep else '❌ No'}")
-        logger.info(f"      • Whale Blocks: {'✅ Yes' if has_whale_blocks else '❌ No'}")
-        logger.info(f"      • Has Confirmation: {'✅ Yes' if has_confirmation else '❌ No'}")
-        logger.info(f"      • Confidence Modifier: {confidence_modifier:+.1%}")
-        
-        return has_confirmation, confidence_modifier
-    
     def _identify_entry_setup(
         self,
         df: pd.DataFrame,
@@ -3855,29 +2867,7 @@ class ICTSignalEngine:
         # A signal with 20% entry distance is equally stale on any timeframe
         # Applies to both automatic signals (1h, 2h, 4h, 1d) and manual analysis (all TFs)
         min_distance_pct = 0.005  # 0.5% minimum (unchanged)
-        
-        # ✅ TIMEFRAME-ADAPTIVE distance limits
-        # Higher timeframes naturally have larger candles and wider structures
-        # Conservative approach: ≤2h = 5%, 4h-1d = 10%, ≥3d = 12-15%
-        # APPROVED VALUES (user confirmed):
-        TIMEFRAME_DISTANCE_LIMITS = {
-            '1m': 0.03,   # 3%
-            '5m': 0.04,   # 4%
-            '15m': 0.05,  # 5%
-            '30m': 0.05,  # 5%
-            '1h': 0.05,   # 5%
-            '2h': 0.05,   # 5%
-            '4h': 0.10,   # 10%
-            '6h': 0.10,   # 10%
-            '8h': 0.10,   # 10%
-            '12h': 0.10,  # 10%
-            '1d': 0.10,   # 10%
-            '3d': 0.12,   # 12%
-            '1w': 0.15    # 15%
-        }
-        max_distance_pct = TIMEFRAME_DISTANCE_LIMITS.get(timeframe, 0.10)  # Default 10%
-        
-        logger.info(f"   → Distance limits for {timeframe}: min={min_distance_pct*100:.1f}%, max={max_distance_pct*100:.1f}%")
+        max_distance_pct = 0.050  # 5% UNIVERSAL MAX (all timeframes)
         entry_buffer_pct = 0.002  # 0.2% buffer (unchanged)
         
         valid_zones = []
@@ -4137,6 +3127,9 @@ class ICTSignalEngine:
                             zones_behind.append(ob)
             
             if zones_behind:
+                logger.warning(f"❌ Entry zones exist but price already passed them (TOO_LATE)")
+                return None, 'TOO_LATE'
+            else:
                 logger.warning(f"❌ No valid entry zones found in acceptable range (NO_ZONE)")
                 return None, 'NO_ZONE'
         
@@ -4390,32 +3383,19 @@ class ICTSignalEngine:
         timeframe = entry_setup.get('timeframe', '1h')
         
         # ✅ TIMEFRAME-BASED minimum SL distance (NOT fixed 3%!)
-        # ✅ STABILIZATION PR: Use TF contract for MIN_SL_DISTANCE
-        if TIMEFRAME_CONTRACT_AVAILABLE:
-            min_sl_pct = TimeframeContract.get_min_sl_distance(timeframe)
-            logger.info(f"📏 Using MIN_SL_DISTANCE {min_sl_pct:.2%} for {timeframe} (from contract)")
-        else:
-            # Fallback to hardcoded (should not happen)
-            MIN_SL_DISTANCE = {
-                '15m': 0.005,   # 0.5%
-                '30m': 0.0075,  # 0.75%
-                '1h': 0.010,    # 1.0%
-                '2h': 0.0125,   # 1.25%
-                '4h': 0.020,    # 2.0%
-                '1d': 0.030     # 3.0%
-            }
-            min_sl_pct = MIN_SL_DISTANCE.get(timeframe, 0.015)
-            logger.warning(f"⚠️ Using fallback MIN_SL_DISTANCE {min_sl_pct:.2%} for {timeframe}")
+        MIN_SL_DISTANCE = {
+            '15m': 0.005,   # 0.5%
+            '30m': 0.0075,  # 0.75%
+            '1h': 0.010,    # 1.0%
+            '2h': 0.0125,   # 1.25%
+            '4h': 0.020,    # 2.0%
+            '1d': 0.030     # 3.0%
+        }
+        min_sl_pct = MIN_SL_DISTANCE.get(timeframe, 0.015)
         
-        # ✅ STABILIZATION PR: Use TF contract for SL buffer
+        # ✅ ICT Buffer (small, structure-based - NOT 1.5 ATR!)
         atr = df['atr'].iloc[-1]
-        if TIMEFRAME_CONTRACT_AVAILABLE:
-            buffer_pct = TimeframeContract.get_sl_buffer_pct(timeframe)
-            logger.info(f"📏 Using SL buffer {buffer_pct:.3%} for {timeframe} (from contract)")
-        else:
-            buffer_pct = 0.002  # Fallback
-            logger.warning(f"⚠️ Using fallback SL buffer {buffer_pct:.3%}")
-        
+        buffer_pct = 0.002 if timeframe in ['15m', '30m', '1h'] else 0.003
         buffer = max(atr * 0.25, entry_price * buffer_pct)
         
         sl_price = None
@@ -4926,7 +3906,7 @@ class ICTSignalEngine:
             mtf_consensus_data=mtf_consensus_data,
             entry_zone=None,  # ✅ None for HOLD (not empty dict)
             entry_scenario=entry_scenario_result['scenario'] if entry_scenario_result else None,
-            entry_scenario_score=int(entry_scenario_result['probability'] * 100) if entry_scenario_result else 0,
+            entry_scenario_score=entry_scenario_result['score'] if entry_scenario_result else 0,
             entry_scenario_reasoning=entry_scenario_result['reasoning'] if entry_scenario_result else "",
             entry_scenario_triggers=entry_scenario_result.get("triggers", []) if entry_scenario_result else [],
             entry_status='HOLD',  # ✅ HOLD status
@@ -5699,8 +4679,8 @@ Get HTF bias based on entry timeframe hierarchy
                 htf_bias_tf = hierarchy.get('htf_bias_tf', '1d')
                 logger.info(f"✅ Using HTF bias TF: {htf_bias_tf} for {entry_timeframe} entry")
             else:
-                # Fallback: use 1d for all entries without hierarchy config
-                htf_bias_tf = '1d'
+                # Fallback: 1H/2H→1D, 4H/1D→1W
+                htf_bias_tf = '1w' if entry_tf_normalized in ['4h', '1d'] else '1d'
                 logger.warning(f"⚠️ {entry_timeframe} not in config, using: {htf_bias_tf}")
             
             # Try to get data for the HTF bias timeframe
@@ -5708,12 +4688,7 @@ Get HTF bias based on entry timeframe hierarchy
                 if tf_variant in mtf_data:
                     df_htf = mtf_data[tf_variant]
                     if df_htf is not None and not df_htf.empty and len(df_htf) >= 20:
-                        bias_components = self._detect_ict_components(
-                            df_signal=df_htf,
-                            df_confirmation=df_htf,  # Use same TF for bias calculation
-                            df_structure=df_htf,  # Use same TF for bias calculation
-                            timeframe=htf_bias_tf
-                        )
+                        bias_components = self._detect_ict_components(df_htf, htf_bias_tf)
                         htf_bias = self._determine_market_bias(df_htf, bias_components, None)
                         htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
                         logger.info(f"✅ HTF Bias from {htf_bias_tf.upper()}: {htf_bias_str}")
@@ -5725,12 +4700,7 @@ Get HTF bias based on entry timeframe hierarchy
                 df_1d = mtf_data.get('1d') if mtf_data.get('1d') is not None else mtf_data.get('1D')
                 if df_1d is not None and not df_1d.empty and len(df_1d) >= 20:
                     # Determine bias from 1D
-                    bias_components = self._detect_ict_components(
-                        df_signal=df_1d,
-                        df_confirmation=df_1d,  # Use same TF for bias calculation
-                        df_structure=df_1d,  # Use same TF for bias calculation
-                        timeframe='1d'
-                    )
+                    bias_components = self._detect_ict_components(df_1d, '1d')
                     htf_bias = self._determine_market_bias(df_1d, bias_components, None)
                     htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
                     logger.info(f"✅ HTF Bias from 1D: {htf_bias_str}")
@@ -5741,12 +4711,7 @@ Get HTF bias based on entry timeframe hierarchy
             if '4h' in mtf_data or '4H' in mtf_data:
                 df_4h = mtf_data.get('4h') if mtf_data.get('4h') is not None else mtf_data.get('4H')
                 if df_4h is not None and not df_4h.empty and len(df_4h) >= 20:
-                    bias_components = self._detect_ict_components(
-                        df_signal=df_4h,
-                        df_confirmation=df_4h,  # Use same TF for bias calculation
-                        df_structure=df_4h,  # Use same TF for bias calculation
-                        timeframe='4h'
-                    )
+                    bias_components = self._detect_ict_components(df_4h, '4h')
                     htf_bias = self._determine_market_bias(df_4h, bias_components, None)
                     htf_bias_str = htf_bias.value if hasattr(htf_bias, 'value') else str(htf_bias)
                     logger.info(f"✅ HTF Bias from 4H (fallback): {htf_bias_str}")
@@ -7184,18 +6149,33 @@ Get HTF bias based on entry timeframe hierarchy
         """
         Check if an active breaker block exists in signal direction
         
-        DISABLED: Breaker blocks are CONFIRMATION, not BLOCKERS.
-        This gate was incorrectly blocking valid signals.
-        
         Args:
             ict_components: Dictionary of ICT components
             signal_type: Signal type (BUY, SELL, STRONG_BUY, STRONG_SELL)
             
         Returns:
-            bool: Always False (gate disabled)
+            bool: True if breaker block is active in signal direction
         """
-        # Gate disabled - breaker blocks should not block signals
-        return False
+        try:
+            breaker_blocks = ict_components.get('breaker_blocks', [])
+            
+            # Get signal direction
+            signal_direction = signal_type.value if hasattr(signal_type, 'value') else str(signal_type)
+            
+            for bb in breaker_blocks:
+                # Check if breaker block aligns with signal direction
+                bb_type = bb.get('type', '') if isinstance(bb, dict) else getattr(bb, 'type', '')
+                bb_type_str = bb_type.value if hasattr(bb_type, 'value') else str(bb_type)
+                
+                if 'BUY' in signal_direction and 'BULLISH' in bb_type_str:
+                    return True
+                if 'SELL' in signal_direction and 'BEARISH' in bb_type_str:
+                    return True
+            
+            return False
+        except Exception as e:
+            logger.warning(f"Error checking breaker block: {e}")
+            return False
     
     def _check_active_signal(self, symbol: str, timeframe: str) -> bool:
         """
@@ -7212,39 +6192,14 @@ Get HTF bias based on entry timeframe hierarchy
         # For now, return False (no collision)
         return False
     
-    def _is_duplicate_signal(
-        self, symbol: str, timeframe: str, entry_price: float, direction: str
-    ) -> bool:
-        """
-        Check if a signal is a duplicate: same symbol + timeframe + direction + entry within 1.5%.
-
-        Uses the signal_cache module (sent_signals_cache.json) if available.
-        Returns True if a matching signal was sent within the last 24 hours.
-        """
-        if SIGNAL_CACHE_AVAILABLE:
-            try:
-                return is_signal_duplicate(
-                    symbol=symbol,
-                    signal_type=direction,
-                    timeframe=timeframe,
-                    entry_price=entry_price,
-                )
-            except Exception as e:
-                logger.warning(f"⚠️ Deduplication check failed (non-blocking): {e}")
-                return False
-
-        # Fallback: no deduplication if signal_cache is not available
-        logger.debug("Signal cache not available - deduplication skipped")
-        return False
-
     def _check_cooldown(self, symbol: str, timeframe: str) -> bool:
         """
         Check if cooldown is active for this symbol+timeframe
-
+        
         Args:
             symbol: Trading symbol
             timeframe: Timeframe
-
+            
         Returns:
             bool: True if cooldown is active
         """
