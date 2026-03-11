@@ -19091,15 +19091,16 @@ Last 7 days: {trend.get('wr_7d', 0):.1f}% {trend.get('trend_7d', '')}
 
 
 if __name__ == "__main__":
-
-    # 🔒 Single instance lock
+    # 🔒 Single instance lock - MUST keep file descriptor open!
     lock_file = "/tmp/crypto_bot.lock"
+    lock_fd = None
     try:
         lock_fd = open(lock_file, "w")
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         print("✅ Single instance lock acquired")
-    except (IOError, OSError):
-        print("❌ Another bot instance is already running!")
+        # IMPORTANT: Don't close lock_fd! Keep it open forever!
+    except (IOError, OSError) as e:
+        print(f"❌ Another bot instance is already running! Error: {e}")
         import sys
         sys.exit(1)
 

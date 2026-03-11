@@ -11,10 +11,28 @@
     "entry_price": 87.255,
     "confidence": 70.5
   },
-  "SOLUSDT_STRONG_SELL_1h": {
-    "timestamp": "2026-02-06T15:51:56.578156",
-    "last_checked": "2026-02-06T16:11:53.136523",
-    "entry_price": 87.255,
-    "confidence": 85.5
+  "BTCUSDT_BUY_2h": {
+    "timestamp": "2026-03-11T11:17:11.577931",
+    "last_checked": "2026-03-11T11:52:13.096449",
+    "entry_price": 66319.25,
+    "confidence": 71.50000000000001
+  },
+  "ETHUSDT_BUY_1h": {
+    "timestamp": "2026-03-11T11:17:25.509354",
+    "last_checked": "2026-03-11T11:52:24.370240",
+    "entry_price": 2012.7788999999998,
+    "confidence": 64.875
+  },
+  "ETHUSDT_BUY_2h": {
+    "timestamp": "2026-03-11T11:17:29.442768",
+    "last_checked": "2026-03-11T11:20:46.739230",
+    "entry_price": 2011.9968,
+    "confidence": 67.5
+  },
+  "SOLUSDT_BUY_2h": {
+    "timestamp": "2026-03-11T11:31:05.403527",
+    "last_checked": "2026-03-11T11:52:54.977799",
+    "entry_price": 80.005,
+    "confidence": 79.025
   }
 }
