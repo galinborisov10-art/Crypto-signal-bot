@@ -341,6 +341,43 @@ The `/ict` command will send:
 
 ---
 
+## 🔙 Rollback to Stable Version
+
+Ако ботът е нестабилен, можеш да се върнеш към последната работеща версия:
+
+### Бърз rollback:
+```bash
+cd /root/Crypto-signal-bot
+bash rollback_to_stable.sh
+```
+
+### Ръчен rollback:
+```bash
+cd /root/Crypto-signal-bot
+git branch backup-before-reset  # Safety backup
+git reset --hard 1f163c3        # Reset to stable version
+git push --force origin main    # Push to GitHub
+systemctl restart crypto-bot    # Restart service
+```
+
+### Възстановяване след rollback:
+```bash
+# Ако rollback-ът създаде проблеми:
+git reset --hard backup-before-reset-YYYYMMDD-HHMMSS
+git push --force origin main
+systemctl restart crypto-bot
+```
+
+### Какво се връща с rollback:
+- ✅ Стабилен signal engine (Feb 6, 2026)
+- ✅ Основни ICT компоненти (OB, FVG, Liquidity, Whale)
+- ✅ MTF analysis
+- ✅ Chart generation
+- ❌ Премахва Entry Scenarios system (Feb 7-Mar 11)
+- ❌ Премахва scenario pattern detection
+
+---
+
 ## 📜 Лиценз
 
 MIT License - свободно използване и модификация.
