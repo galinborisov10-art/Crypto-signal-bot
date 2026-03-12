@@ -69,7 +69,9 @@ try:
         encoding='utf-8'
     )
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    logging.getLogger().addHandler(file_handler)
+    logger = logging.getLogger()
+    if not logger.handlers:
+        logger.addHandler(file_handler)
     logger.info(f"📝 Rotating file logging enabled: {BASE_PATH}/bot.log (max 50MB, 3 backups)")
 except Exception as e:
     logger.warning(f"⚠️ Could not setup rotating file logging: {e}")
@@ -8573,7 +8575,7 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             
             # ✅ P8: CHECK COOLDOWN
-            if ict_signal and hasattr(ict_signal, 'signal_type'):
+            if ict_signal and hasattr(ict_signal, 'signal_type') and not isinstance(ict_signal, dict):
                 is_duplicate, cooldown_msg = check_signal_cooldown(
                     symbol=symbol,
                     signal_type=ict_signal.signal_type.value,
@@ -8588,6 +8590,15 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
             
             # Format with 13-point output
+            # Skip dict signals
+            if isinstance(ict_signal, dict):
+                await processing_msg.edit_text(
+                    f"⚠️ <b>No tradeable signal for {symbol}</b>\n\n"
+                    f"Market is in HOLD/RANGING phase.",
+                    parse_mode='HTML'
+                )
+                return
+
             signal_msg = format_ict_signal_13_point(ict_signal)
             
             # ============================================
@@ -11362,13 +11373,17 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             )
             
             # Handle NO_TRADE
-            if not ict_signal or (isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE'):
+            if not ict_signal:
                 return None
+
             
-            # Guard: Skip HOLD signals (informational only, no entry price)
+            # Skip dict signals (HOLD/RANGING/NO_TRADE)
+            if isinstance(ict_signal, dict):
+                return None
+
+            # Skip HOLD signals
             if hasattr(ict_signal, 'signal_type') and ict_signal.signal_type.value == 'HOLD':
                 return None
-            
             # ✅ PERSISTENT DEDUPLICATION (PR #111 + PR #112)
             if SIGNAL_CACHE_AVAILABLE:
                 is_dup, reason = is_signal_duplicate(
@@ -11403,7 +11418,7 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
                 'symbol': symbol,
                 'timeframe': timeframe,
                 'ict_signal': ict_signal,  # ✅ ICT Signal object!
-                'confidence': ict_signal.confidence,
+                'confidence': ict_signal.confidence if hasattr(ict_signal, 'confidence') else (ict_signal.get('confidence', 0) if isinstance(ict_signal, dict) else 0),
                 'df': df  # Store for chart generation
             }
             
@@ -11444,6 +11459,11 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
         symbol = sig['symbol']
         timeframe = sig['timeframe']
         ict_signal = sig['ict_signal']
+        
+        # Skip dict signals (HOLD/RANGING)
+        if isinstance(ict_signal, dict):
+            continue
+
         df = sig['df']
         
         # ✅ PR #3 FIX #2: Use AUTO source for auto signals
@@ -11499,6 +11519,10 @@ async def send_alert_signal(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"❌ Stats recording error in auto-signal: {e}")
         
         # Log to ML journal for high confidence signals
+        # Skip if ict_signal is dict (HOLD/RANGING)
+        if isinstance(ict_signal, dict):
+            continue
+
         if ict_signal.confidence >= 65:
             try:
                 analysis_data = {
@@ -11629,10 +11653,17 @@ async def auto_signal_job(timeframe: str, bot_instance):
                     is_auto=True  # ← Mark as auto signal
                 )
                 
-                # Handle NO_TRADE
-                if not ict_signal or (isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE'):
+                # Handle NO_TRADE or None
+                if not ict_signal:
                     return None
                 
+                if isinstance(ict_signal, dict) and ict_signal.get('type') == 'NO_TRADE':
+                    return None
+                
+                # Handle dict signals (HOLD/RANGING)
+                if isinstance(ict_signal, dict):
+                    return None
+
                 # Skip HOLD signals (informational only)
                 if hasattr(ict_signal, 'signal_type') and ict_signal.signal_type.value == 'HOLD':
                     return None
@@ -11671,7 +11702,7 @@ async def auto_signal_job(timeframe: str, bot_instance):
                     'symbol': symbol,
                     'timeframe': timeframe,
                     'ict_signal': ict_signal,
-                    'confidence': ict_signal.confidence,
+                    'confidence': ict_signal.confidence if hasattr(ict_signal, 'confidence') else (ict_signal.get('confidence', 0) if isinstance(ict_signal, dict) else 0),
                     'df': df
                 }
                 
@@ -11705,6 +11736,11 @@ async def auto_signal_job(timeframe: str, bot_instance):
         for sig in signals_to_send:
             symbol = sig['symbol']
             ict_signal = sig['ict_signal']
+            
+            # Skip dict signals (HOLD/RANGING)
+            if isinstance(ict_signal, dict):
+                continue
+
             df = sig['df']
             
             # ✅ Format signal with AUTO source
@@ -11756,6 +11792,10 @@ async def auto_signal_job(timeframe: str, bot_instance):
             except Exception as e:
                 logger.error(f"❌ Stats recording error in auto-signal: {e}")
             
+            # Skip if ict_signal is dict (HOLD/RANGING)
+            if isinstance(ict_signal, dict):
+                continue
+
             # Log to ML journal for high confidence signals
             if ict_signal.confidence >= 60:  # FIX: Aligned with Telegram send threshold (was 65)
                 try:
@@ -12985,9 +13025,20 @@ async def signal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 
                 # Format with 13-point output
+                # Skip dict signals
+                if isinstance(ict_signal, dict):
+                    logger.warning(f"⚠️ Dict signal detected - skipping")
+                    await processing_msg.edit_text(
+                        f"⚠️ <b>No tradeable signal for {symbol}</b>\n\n"
+                        f"Market is in HOLD/RANGING phase.",
+                        parse_mode='HTML'
+                    )
+                    return
+
                 logger.info(f"📝 Formatting 13-point ICT signal...")
                 signal_msg = format_ict_signal_13_point(ict_signal)
                 logger.info(f"✅ Signal formatted ({len(signal_msg)} chars)")
+
                 
                 # Generate and send chart
                 logger.info(f"📊 Generating chart for {symbol} {timeframe}...")
