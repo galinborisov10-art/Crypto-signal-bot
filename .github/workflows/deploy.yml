@@ -86,12 +86,12 @@ jobs:
             # Update systemd service file if it exists in repo
             if [ -f crypto-signal-bot.service ]; then
               echo "🔧 Updating systemd service file..."
-              cp crypto-signal-bot.service /etc/systemd/system/crypto-bot.service
+              cp crypto-signal-bot.service /etc/systemd/system/crypto-signal-bot.service
               echo "✅ Service file updated"
             fi
             
             echo "🔄 Stopping bot service..."
-            systemctl stop crypto-bot || true
+            systemctl stop crypto-signal-bot || true
             
             # Kill any remaining Python processes running bot.py (force cleanup)
             echo "🧹 Cleaning up any remaining bot processes..."
@@ -112,7 +112,7 @@ jobs:
             systemctl daemon-reload
             
             echo "🚀 Starting bot service..."
-            systemctl start crypto-bot
+            systemctl start crypto-signal-bot
             
             # Wait for service to start
             sleep 5
@@ -125,7 +125,7 @@ jobs:
             fi
             
             # Check if bot is running
-            if systemctl is-active --quiet crypto-bot; then
+            if systemctl is-active --quiet crypto-signal-bot; then
               echo "✅ Bot service is active"
               
               # Verify the bot process is actually running with new code
@@ -141,7 +141,7 @@ jobs:
               fi
             else
               echo "❌ WARNING: Bot service is not active!"
-              systemctl status crypto-bot --no-pager
+              systemctl status crypto-signal-bot --no-pager
               exit 1
             fi
           EOF
