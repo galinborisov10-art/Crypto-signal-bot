@@ -107,3 +107,11 @@ test_no_duplicate_logging.py
 
 # Backup files from refactoring
 *.bak_*
+
+# Runtime data (auto-generated)
+.deployment-info
+daily_reports.json
+news_cache.json
+sent_signals_cache.json
+bot_stats.json
+active_auto_signals.json
