@@ -143,6 +143,16 @@ except ImportError as e:
     logger.warning(f"⚠️ ICT Signal Engine not available: {e}")
     real_time_monitor_global = None
 
+# V2 Signal Pipeline
+try:
+    from pipeline.signal_pipeline import SignalPipeline
+    from models.signal import Signal as SignalV2Model, SignalDirection as SignalV2Direction
+    V2_PIPELINE_AVAILABLE = True
+    logger.info("✅ V2 Signal Pipeline loaded")
+except ImportError as e:
+    V2_PIPELINE_AVAILABLE = False
+    logger.warning(f"⚠️ V2 Signal Pipeline not available: {e}")
+
 # Trade Re-analysis Engine (PR #5)
 try:
     from trade_reanalysis_engine import TradeReanalysisEngine, RecommendationType, CheckpointAnalysis
@@ -8496,8 +8506,71 @@ async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Използвай custom timeframe ако е подаден, иначе настройката на потребителя
     timeframe = custom_timeframe if custom_timeframe else settings['timeframe']
-    
-    # === NEW: USE ICT ENGINE FOR ENHANCED ANALYSIS ===
+
+    # === V2 PIPELINE: USE SignalPipeline FOR SIGNAL GENERATION ===
+    if V2_PIPELINE_AVAILABLE:
+        try:
+            # Send processing message
+            processing_msg = await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"🔍 <b>Running V2 pipeline analysis for {symbol} ({timeframe})...</b>",
+                parse_mode='HTML'
+            )
+
+            # Fetch klines for primary timeframe
+            klines_response = requests.get(
+                BINANCE_KLINES_URL,
+                params={'symbol': symbol, 'interval': timeframe, 'limit': 200},
+                timeout=10
+            )
+
+            if klines_response.status_code != 200:
+                await processing_msg.edit_text("❌ Failed to fetch market data")
+                return
+
+            klines_data = klines_response.json()
+
+            # Prepare primary dataframe
+            df = pd.DataFrame(klines_data, columns=[
+                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                'taker_buy_quote', 'ignore'
+            ])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = df[col].astype(float)
+
+            # Build df_by_tf dict (primary tf + MTF data)
+            df_by_tf = {timeframe: df}
+            mtf_data = fetch_mtf_data(symbol, timeframe, df)
+            if mtf_data:
+                df_by_tf.update(mtf_data)
+
+            # Create V2 pipeline instance and generate signal
+            pipeline = SignalPipeline(symbol=symbol, enable_telegram=False)
+            v2_signal = pipeline.generate_signal(
+                df_by_tf=df_by_tf,
+                trigger_type='manual'
+            )
+
+            if not v2_signal:
+                await processing_msg.edit_text(
+                    f"⚪ <b>No signal for {symbol} ({timeframe})</b>\n\n"
+                    f"V2 Pipeline found no tradeable setup at this time.",
+                    parse_mode='HTML'
+                )
+                return
+
+            # Format and send V2 signal
+            signal_msg = format_v2_signal(v2_signal, "MANUAL")
+            await processing_msg.edit_text(signal_msg, parse_mode='HTML')
+            return
+
+        except Exception as v2_err:
+            logger.error(f"❌ V2 pipeline error for {symbol}: {v2_err}", exc_info=True)
+            # Fall through to V1 engine below
+
+    # === LEGACY: USE ICT ENGINE FOR ENHANCED ANALYSIS ===
     if ICT_SIGNAL_ENGINE_AVAILABLE:
         try:
             # Send processing message
@@ -9516,6 +9589,118 @@ def format_ict_signal_13_point(signal: ICTSignal) -> str:
     """
     # Redirect to standardized format
     return format_standardized_signal(signal, "MANUAL")
+
+
+def format_v2_signal(signal, signal_source: str = "MANUAL") -> str:
+    """
+    Format a V2 Signal (from pipeline.signal_pipeline.SignalPipeline) for Telegram.
+
+    Handles Signal objects produced by the V2 pipeline which have different
+    field names than V1 ICTSignal objects.
+
+    Args:
+        signal: Signal object from V2 pipeline (models.signal.Signal)
+        signal_source: "MANUAL" or "AUTO"
+
+    Returns:
+        Formatted message string for Telegram
+    """
+    import pytz
+
+    direction = signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction)
+    direction_upper = direction.upper()
+    is_sell = direction_upper in ("SHORT", "BEARISH", "SELL")
+
+    emoji = "🔴" if is_sell else "🟢"
+
+    source_badge = {
+        "AUTO": "🤖 АВТОМАТИЧЕН",
+        "MANUAL": "👤 РЪЧЕН",
+    }.get(signal_source, "📊 СИГНАЛ")
+
+    timestamp_str = ""
+    if signal_source == "AUTO":
+        bg_tz = pytz.timezone('Europe/Sofia')
+        from datetime import datetime as _dt
+        now = _dt.now(bg_tz)
+        timestamp_str = f"⏰ {now.strftime('%d.%m.%Y %H:%M')} (BG)\n"
+
+    entry = signal.entry_price
+    sl = signal.stop_loss
+    tp1 = signal.take_profit_1
+    tp2 = signal.take_profit_2
+    tp3 = signal.take_profit_3
+    rr = signal.risk_reward_ratio
+    conf = signal.confidence
+    htf_bias = getattr(signal, 'htf_bias', 'N/A')
+    strength = signal.strength.value if hasattr(signal.strength, 'value') else str(signal.strength)
+    components = getattr(signal, 'components', [])
+    notes = getattr(signal, 'notes', '')
+
+    if is_sell:
+        tp1_pct = ((entry - tp1) / entry * 100) if entry > 0 else 0
+        tp2_pct = ((entry - tp2) / entry * 100) if entry > 0 else 0
+        tp3_pct = ((entry - tp3) / entry * 100) if entry > 0 else 0
+        sl_pct = ((sl - entry) / entry * 100) if entry > 0 else 0
+        tp_dir = "▼"
+    else:
+        tp1_pct = ((tp1 - entry) / entry * 100) if entry > 0 else 0
+        tp2_pct = ((tp2 - entry) / entry * 100) if entry > 0 else 0
+        tp3_pct = ((tp3 - entry) / entry * 100) if entry > 0 else 0
+        sl_pct = ((entry - sl) / entry * 100) if entry > 0 else 0
+        tp_dir = "▲"
+
+    comp_str = ", ".join(components) if components else "N/A"
+
+    msg = f"""{emoji} <b>V2 {direction_upper} SIGNAL</b> {emoji}
+{source_badge}
+{timestamp_str}
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📊 ОСНОВНА ИНФОРМАЦИЯ</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+💰 <b>Символ:</b> {signal.symbol}
+⏰ <b>Таймфрейм:</b> {signal.timeframe}
+💪 <b>Сила:</b> {strength}
+🎯 <b>Увереност:</b> {conf:.1f}%
+📊 <b>HTF Bias:</b> {htf_bias}
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>💼 TRADE SETUP</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>📍 ENTRY:</b> ${entry:,.4f}
+
+<b>🛑 STOP LOSS:</b> ${sl:,.4f} ({sl_pct:.2f}%)
+
+<b>🎯 TAKE PROFITS:</b>
+   • TP1: ${tp1:,.4f} ({tp_dir}{tp1_pct:.2f}%)
+   • TP2: ${tp2:,.4f} ({tp_dir}{tp2_pct:.2f}%)
+   • TP3: ${tp3:,.4f} ({tp_dir}{tp3_pct:.2f}%)
+
+<b>⚖️ RISK/REWARD:</b> 1:{rr:.2f} {'✅' if rr >= 2.0 else '⚠️'}
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>🔍 ICT КОМПОНЕНТИ</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>Компоненти:</b> {comp_str}
+"""
+
+    if notes:
+        msg += f"""
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📝 ОБОСНОВКА</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+{notes}
+"""
+
+    created_at = getattr(signal, 'created_at', None)
+    if created_at:
+        msg += f"\n<i>⏰ {created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}</i>"
+
+    return msg
 
 
 @require_access()
@@ -11619,7 +11804,7 @@ async def auto_signal_job(timeframe: str, bot_instance):
         
         # 🚀 ASYNC PARALLEL ANALYSIS - all symbols for this timeframe
         async def analyze_single_symbol(symbol):
-            """Analyze one symbol with ICT Engine"""
+            """Analyze one symbol with V2 Pipeline or V1 ICT Engine"""
             try:
                 # Fetch klines for primary timeframe
                 klines_response = requests.get(
@@ -11643,8 +11828,33 @@ async def auto_signal_job(timeframe: str, bot_instance):
                 
                 # ✅ FETCH MTF DATA
                 mtf_data = fetch_mtf_data(symbol, timeframe, df)
-                
-                # ✅ USE ICT ENGINE
+
+                # ✅ V2 PIPELINE (preferred)
+                if V2_PIPELINE_AVAILABLE:
+                    try:
+                        df_by_tf = {timeframe: df}
+                        if mtf_data:
+                            df_by_tf.update(mtf_data)
+                        pipeline = SignalPipeline(symbol=symbol, enable_telegram=False)
+                        v2_signal = pipeline.generate_signal(df_by_tf=df_by_tf, trigger_type='auto')
+                        if not v2_signal:
+                            return None
+                        direction_str = v2_signal.direction.value if hasattr(v2_signal.direction, 'value') else str(v2_signal.direction)
+                        return {
+                            'symbol': symbol,
+                            'timeframe': timeframe,
+                            'v2_signal': v2_signal,
+                            'ict_signal': None,
+                            'confidence': v2_signal.confidence,
+                            'df': df
+                        }
+                    except Exception as v2_err:
+                        logger.warning(f"V2 pipeline error for {symbol}: {v2_err} - falling back to V1")
+
+                # ✅ FALLBACK: V1 ICT ENGINE
+                if not ICT_SIGNAL_ENGINE_AVAILABLE:
+                    return None
+
                 ict_signal = ict_engine_global.generate_signal(
                     df=df,
                     symbol=symbol,
@@ -11701,6 +11911,7 @@ async def auto_signal_job(timeframe: str, bot_instance):
                 return {
                     'symbol': symbol,
                     'timeframe': timeframe,
+                    'v2_signal': None,
                     'ict_signal': ict_signal,
                     'confidence': ict_signal.confidence if hasattr(ict_signal, 'confidence') else (ict_signal.get('confidence', 0) if isinstance(ict_signal, dict) else 0),
                     'df': df
@@ -11735,17 +11946,19 @@ async def auto_signal_job(timeframe: str, bot_instance):
         # Send each signal to owner
         for sig in signals_to_send:
             symbol = sig['symbol']
-            ict_signal = sig['ict_signal']
-            
-            # Skip dict signals (HOLD/RANGING)
-            if isinstance(ict_signal, dict):
-                continue
+            v2_signal = sig.get('v2_signal')
+            ict_signal = sig.get('ict_signal')
 
             df = sig['df']
-            
-            # ✅ Format signal with AUTO source
-            signal_msg = format_standardized_signal(ict_signal, "AUTO")
-            
+
+            # ✅ Format and send signal (V2 preferred, V1 fallback)
+            if v2_signal is not None:
+                signal_msg = format_v2_signal(v2_signal, "AUTO")
+            elif ict_signal is not None and not isinstance(ict_signal, dict):
+                signal_msg = format_standardized_signal(ict_signal, "AUTO")
+            else:
+                continue
+
             # Send message to owner
             try:
                 await bot_instance.send_message(
@@ -11759,9 +11972,9 @@ async def auto_signal_job(timeframe: str, bot_instance):
             except Exception as e:
                 logger.error(f"❌ Failed to send auto signal message for {symbol}: {e}")
                 continue
-            
-            # Send chart if available
-            if CHART_VISUALIZATION_AVAILABLE:
+
+            # Send chart if available (V1 only - chart generator expects ICTSignal)
+            if CHART_VISUALIZATION_AVAILABLE and ict_signal is not None and not isinstance(ict_signal, dict):
                 try:
                     generator = ChartGenerator()
                     chart_bytes = generator.generate(df, ict_signal, symbol, timeframe)
@@ -11776,57 +11989,87 @@ async def auto_signal_job(timeframe: str, bot_instance):
                         logger.info(f"✅ Chart sent for auto signal {symbol}")
                 except Exception as e:
                     logger.warning(f"⚠️ Chart generation failed for auto signal: {e}")
-            
+
             # Record signal to stats
             try:
-                signal_id = record_signal(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    signal_type=ict_signal.signal_type.value,
-                    confidence=ict_signal.confidence,
-                    entry_price=ict_signal.entry_price,
-                    tp_price=ict_signal.tp_prices[0],
-                    sl_price=ict_signal.sl_price
-                )
-                logger.info(f"📊 AUTO-SIGNAL recorded to stats (ID: {signal_id})")
-            except Exception as e:
-                logger.error(f"❌ Stats recording error in auto-signal: {e}")
-            
-            # Skip if ict_signal is dict (HOLD/RANGING)
-            if isinstance(ict_signal, dict):
-                continue
-
-            # Log to ML journal for high confidence signals
-            if ict_signal.confidence >= 60:  # FIX: Aligned with Telegram send threshold (was 65)
-                try:
-                    analysis_data = {
-                        'market_bias': ict_signal.bias.value,  # Fixed: bias instead of market_bias
-                        'htf_bias': ict_signal.htf_bias if isinstance(ict_signal.htf_bias, str) else (ict_signal.htf_bias.value if ict_signal.htf_bias else None),
-                        'structure_broken': ict_signal.structure_broken,
-                        'displacement_detected': ict_signal.displacement_detected,
-                        'order_blocks_count': len(ict_signal.order_blocks),
-                        'liquidity_zones_count': len(ict_signal.liquidity_zones),
-                        'fvg_count': len(ict_signal.fair_value_gaps),
-                        'mtf_confluence': ict_signal.mtf_confluence,  # Fixed: mtf_confluence instead of mtf_confluence_score
-                        'whale_blocks': len(ict_signal.whale_blocks) if ict_signal.whale_blocks else 0
-                    }
-                    
-                    journal_id = log_trade_to_journal(
+                if v2_signal is not None:
+                    direction_str = v2_signal.direction.value if hasattr(v2_signal.direction, 'value') else str(v2_signal.direction)
+                    signal_id = record_signal(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        signal_type=direction_str,
+                        confidence=v2_signal.confidence,
+                        entry_price=v2_signal.entry_price,
+                        tp_price=v2_signal.take_profit_1,
+                        sl_price=v2_signal.stop_loss
+                    )
+                elif ict_signal is not None and not isinstance(ict_signal, dict):
+                    signal_id = record_signal(
                         symbol=symbol,
                         timeframe=timeframe,
                         signal_type=ict_signal.signal_type.value,
                         confidence=ict_signal.confidence,
                         entry_price=ict_signal.entry_price,
                         tp_price=ict_signal.tp_prices[0],
-                        sl_price=ict_signal.sl_price,
-                        analysis_data=analysis_data
+                        sl_price=ict_signal.sl_price
                     )
-                    
+                else:
+                    signal_id = None
+                if signal_id:
+                    logger.info(f"📊 AUTO-SIGNAL recorded to stats (ID: {signal_id})")
+            except Exception as e:
+                logger.error(f"❌ Stats recording error in auto-signal: {e}")
+
+            # Log to ML journal for high confidence signals
+            active_confidence = v2_signal.confidence if v2_signal is not None else (ict_signal.confidence if ict_signal is not None else 0)
+            if active_confidence >= 60:  # FIX: Aligned with Telegram send threshold (was 65)
+                try:
+                    if v2_signal is not None:
+                        direction_str = v2_signal.direction.value if hasattr(v2_signal.direction, 'value') else str(v2_signal.direction)
+                        analysis_data = {
+                            'htf_bias': v2_signal.htf_bias,
+                            'components': v2_signal.components,
+                            'notes': v2_signal.notes,
+                        }
+                        journal_id = log_trade_to_journal(
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            signal_type=direction_str,
+                            confidence=v2_signal.confidence,
+                            entry_price=v2_signal.entry_price,
+                            tp_price=v2_signal.take_profit_1,
+                            sl_price=v2_signal.stop_loss,
+                            analysis_data=analysis_data
+                        )
+                    elif ict_signal is not None and not isinstance(ict_signal, dict):
+                        analysis_data = {
+                            'market_bias': ict_signal.bias.value,
+                            'htf_bias': ict_signal.htf_bias if isinstance(ict_signal.htf_bias, str) else (ict_signal.htf_bias.value if ict_signal.htf_bias else None),
+                            'structure_broken': ict_signal.structure_broken,
+                            'displacement_detected': ict_signal.displacement_detected,
+                            'order_blocks_count': len(ict_signal.order_blocks),
+                            'liquidity_zones_count': len(ict_signal.liquidity_zones),
+                            'fvg_count': len(ict_signal.fair_value_gaps),
+                            'mtf_confluence': ict_signal.mtf_confluence,
+                            'whale_blocks': len(ict_signal.whale_blocks) if ict_signal.whale_blocks else 0
+                        }
+                        journal_id = log_trade_to_journal(
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            signal_type=ict_signal.signal_type.value,
+                            confidence=ict_signal.confidence,
+                            entry_price=ict_signal.entry_price,
+                            tp_price=ict_signal.tp_prices[0],
+                            sl_price=ict_signal.sl_price,
+                            analysis_data=analysis_data
+                        )
+                    else:
+                        journal_id = None
                     if journal_id:
                         logger.info(f"📝 AUTO-SIGNAL logged to ML journal (ID: {journal_id})")
                 except Exception as e:
                     logger.error(f"❌ Journal logging error in auto-signal: {e}")
-            
+
             # ✅ PR #7: AUTO-OPEN POSITION FOR TRACKING (Enhanced diagnostics)
             if AUTO_POSITION_TRACKING_ENABLED and POSITION_MANAGER_AVAILABLE and position_manager_global:
                 try:
@@ -11834,29 +12077,33 @@ async def auto_signal_job(timeframe: str, bot_instance):
                     logger.info(f"   - AUTO_POSITION_TRACKING_ENABLED: {AUTO_POSITION_TRACKING_ENABLED}")
                     logger.info(f"   - POSITION_MANAGER_AVAILABLE: {POSITION_MANAGER_AVAILABLE}")
                     logger.info(f"   - position_manager_global: {position_manager_global}")
-                    logger.info(f"   - Signal confidence: {ict_signal.confidence}%")
-                    
-                    position_id = position_manager_global.open_position(
-                        signal=ict_signal,
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        source='AUTO'
-                    )
-                    
-                    logger.info(f"🔍 DIAGNOSTIC: open_position() returned ID: {position_id}")
-                    
-                    if position_id > 0:
-                        logger.info(f"✅ Position auto-opened for tracking (ID: {position_id})")
-                        
-                        # Send confirmation
-                        await bot_instance.send_message(
-                            chat_id=OWNER_CHAT_ID,
-                            text=f"📊 Position tracking started for {symbol} (ID: {position_id})",
-                            parse_mode='HTML'
+                    logger.info(f"   - Signal confidence: {active_confidence}%")
+
+                    # Position tracking uses V1 ICTSignal format; skip for V2 signals
+                    if ict_signal is not None and not isinstance(ict_signal, dict):
+                        position_id = position_manager_global.open_position(
+                            signal=ict_signal,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            source='AUTO'
                         )
+
+                        logger.info(f"🔍 DIAGNOSTIC: open_position() returned ID: {position_id}")
+
+                        if position_id > 0:
+                            logger.info(f"✅ Position auto-opened for tracking (ID: {position_id})")
+
+                            # Send confirmation
+                            await bot_instance.send_message(
+                                chat_id=OWNER_CHAT_ID,
+                                text=f"📊 Position tracking started for {symbol} (ID: {position_id})",
+                                parse_mode='HTML'
+                            )
+                        else:
+                            logger.warning(f"⚠️ DIAGNOSTIC: Invalid position ID returned: {position_id}")
                     else:
-                        logger.warning(f"⚠️ DIAGNOSTIC: Invalid position ID returned: {position_id}")
-                
+                        logger.info(f"ℹ️ Position tracking skipped for V2 signal (V1 format required)")
+
                 except Exception as e:
                     logger.error(f"❌ Auto position open error: {e}")
                     import traceback
