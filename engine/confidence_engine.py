@@ -19,7 +19,7 @@ Version: 2.0
 import logging
 from typing import Optional, Dict, Any, List
 
-from models.component import ComponentV2
+from models.component import Component
 from models.signal import SignalStrength
 
 logger = logging.getLogger(__name__)
@@ -74,8 +74,8 @@ class ConfidenceEngine:
     def calculate(
         self,
         htf_bias_data: Dict[str, Any],
-        components: List[ComponentV2],
-        anchor: Optional[ComponentV2],
+        components: List[Component],
+        anchor: Optional[Component],
         risk_data: Optional[Dict[str, Any]],
         entry_data: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
@@ -84,8 +84,8 @@ class ConfidenceEngine:
 
         Args:
             htf_bias_data: Output from HTFBiasEngine.determine_bias()
-            components: All scored ComponentV2 objects from StrengthEngine
-            anchor: Selected anchor ComponentV2
+            components: All scored Component objects from StrengthEngine
+            anchor: Selected anchor Component
             risk_data: Output from RiskEngine.calculate()
             entry_data: Output from EntryEngine.calculate_entry()
 
@@ -137,7 +137,7 @@ class ConfidenceEngine:
             return 0.0
         return float(htf_data.get("confidence", 50.0))
 
-    def _score_confluence(self, components: List[ComponentV2]) -> float:
+    def _score_confluence(self, components: List[Component]) -> float:
         """Score based on component confluence (0-100)"""
         if not components:
             return 0.0
@@ -145,7 +145,7 @@ class ConfidenceEngine:
         count_bonus = min(len(components) * 5.0, 30.0)
         return min(100.0, avg + count_bonus)
 
-    def _score_anchor(self, anchor: Optional[ComponentV2]) -> float:
+    def _score_anchor(self, anchor: Optional[Component]) -> float:
         """Score from anchor component strength (0-100)"""
         if anchor is None:
             return 0.0

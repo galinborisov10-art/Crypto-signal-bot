@@ -15,7 +15,7 @@ Version: 2.0
 import logging
 from typing import Optional, Dict, Any
 
-from models.component import ComponentV2, ComponentPolarity
+from models.component import Component, ComponentPolarity
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class EntryEngine:
 
     def calculate_entry(
         self,
-        anchor: ComponentV2,
+        anchor: Component,
         current_price: float,
         bias: str,
         swing_high: Optional[float] = None,
@@ -64,7 +64,7 @@ class EntryEngine:
         Calculate entry parameters from the anchor component.
 
         Args:
-            anchor: The selected anchor ComponentV2
+            anchor: The selected anchor Component
             current_price: Latest close price
             bias: 'BULLISH' or 'BEARISH'
             swing_high: Recent swing high for OTE calculation
@@ -90,7 +90,7 @@ class EntryEngine:
 
     def _bullish_entry(
         self,
-        anchor: ComponentV2,
+        anchor: Component,
         current_price: float,
         swing_high: Optional[float],
         swing_low: Optional[float],
@@ -135,7 +135,7 @@ class EntryEngine:
 
     def _bearish_entry(
         self,
-        anchor: ComponentV2,
+        anchor: Component,
         current_price: float,
         swing_high: Optional[float],
         swing_low: Optional[float],

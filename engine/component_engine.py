@@ -14,7 +14,7 @@ import logging
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
-from models.component import ComponentV2, ComponentType
+from models.component import Component, ComponentType
 from detectors.order_block_detector import OrderBlockDetectorV2
 from detectors.fvg_detector import FVGDetectorV2
 from detectors.liquidity_detector import LiquidityDetectorV2
@@ -28,7 +28,7 @@ class ComponentEngine:
     V2 Component Detection Engine
 
     Runs all ICT detectors on the provided OHLCV data and returns a unified
-    list of ComponentV2 objects, grouped by type.
+    list of Component objects, grouped by type.
 
     Args:
         ob_config: Config overrides for OrderBlockDetectorV2
@@ -57,7 +57,7 @@ class ComponentEngine:
 
     def detect_all(
         self, df: pd.DataFrame, timeframe: str = "1H"
-    ) -> Dict[str, List[ComponentV2]]:
+    ) -> Dict[str, List[Component]]:
         """
         Run all detectors on the OHLCV data.
 
@@ -67,11 +67,11 @@ class ComponentEngine:
 
         Returns:
             dict with keys:
-                'order_blocks': List[ComponentV2]
-                'fvgs': List[ComponentV2]
-                'liquidity_zones': List[ComponentV2]
-                'breaker_blocks': List[ComponentV2]
-                'all': List[ComponentV2] (combined)
+                'order_blocks': List[Component]
+                'fvgs': List[Component]
+                'liquidity_zones': List[Component]
+                'breaker_blocks': List[Component]
+                'all': List[Component] (combined)
         """
         if df is None or len(df) < 20:
             logger.warning("ComponentEngine: insufficient data")
@@ -101,7 +101,7 @@ class ComponentEngine:
         )
         return summary
 
-    def get_stats(self, components: Dict[str, List[ComponentV2]]) -> Dict[str, int]:
+    def get_stats(self, components: Dict[str, List[Component]]) -> Dict[str, int]:
         """Return count statistics for each component type"""
         return {
             "order_blocks": len(components.get("order_blocks", [])),
@@ -112,7 +112,7 @@ class ComponentEngine:
         }
 
     @staticmethod
-    def _empty_result() -> Dict[str, List[ComponentV2]]:
+    def _empty_result() -> Dict[str, List[Component]]:
         return {
             "order_blocks": [],
             "fvgs": [],

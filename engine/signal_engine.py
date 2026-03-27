@@ -2,7 +2,7 @@
 🚀 SIGNAL ENGINE V2
 Main signal generation engine for the V2 pipeline (STEPS 5-12).
 
-Orchestrates the individual V2 engines to produce a complete SignalV2 object.
+Orchestrates the individual V2 engines to produce a complete Signal object.
 This is the core of the V2 signal generation flow, called by SignalPipelineV2.
 
 Pipeline steps handled here:
@@ -24,8 +24,8 @@ import logging
 import pandas as pd
 from typing import Optional, Dict, Any, List
 
-from models.signal import SignalV2, SignalDirection, SignalStatus
-from models.component import ComponentV2, ComponentPolarity
+from models.signal import Signal, SignalDirection, SignalStatus
+from models.component import Component, ComponentPolarity
 from engine.strength_engine import StrengthEngine
 from engine.anchor_engine import AnchorEngine
 from engine.entry_engine import EntryEngine
@@ -39,7 +39,7 @@ class SignalEngine:
     """
     V2 Signal Engine
 
-    Given OHLCV data, detected components, and HTF bias, produces a SignalV2
+    Given OHLCV data, detected components, and HTF bias, produces a Signal
     object (or None if no valid setup exists).
 
     Args:
@@ -70,9 +70,9 @@ class SignalEngine:
         df: pd.DataFrame,
         symbol: str,
         timeframe: str,
-        components: List[ComponentV2],
+        components: List[Component],
         htf_bias_data: Dict[str, Any],
-    ) -> Optional[SignalV2]:
+    ) -> Optional[Signal]:
         """
         Generate a trading signal from components and HTF bias.
 
@@ -80,11 +80,11 @@ class SignalEngine:
             df: OHLCV DataFrame (current timeframe)
             symbol: Trading pair symbol
             timeframe: Current timeframe label
-            components: All detected ComponentV2 objects (unsorted)
+            components: All detected Component objects (unsorted)
             htf_bias_data: Output from HTFBiasEngine
 
         Returns:
-            SignalV2 object if a valid setup is found, else None
+            Signal object if a valid setup is found, else None
         """
         if df is None or len(df) < 20:
             logger.warning(f"SignalEngine: insufficient data for {symbol}")
@@ -147,8 +147,8 @@ class SignalEngine:
             )
             return None
 
-        # Build SignalV2
-        signal = SignalV2(
+        # Build Signal
+        signal = Signal(
             signal_id=str(uuid.uuid4()),
             symbol=symbol,
             timeframe=timeframe,

@@ -3,7 +3,7 @@
 FVG / Imbalance detection for the V2 pipeline.
 
 Improvements over V1:
-- Returns ComponentV2 objects for unified interface
+- Returns Component objects for unified interface
 - Standalone module with no engine dependency
 - Configurable minimum gap size
 
@@ -17,7 +17,7 @@ import pandas as pd
 from typing import List, Optional
 from datetime import datetime
 
-from models.component import ComponentV2, ComponentType, ComponentPolarity, ComponentStatus
+from models.component import Component, ComponentType, ComponentPolarity, ComponentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class FVGDetectorV2:
             f"FVGDetectorV2 initialized (min_gap={min_gap_pct}%, min_strength={min_strength})"
         )
 
-    def detect(self, df: pd.DataFrame, timeframe: str = "1H") -> List[ComponentV2]:
+    def detect(self, df: pd.DataFrame, timeframe: str = "1H") -> List[Component]:
         """
         Detect FVGs in OHLCV data.
 
@@ -58,13 +58,13 @@ class FVGDetectorV2:
             timeframe: Chart timeframe label
 
         Returns:
-            List of ComponentV2 objects representing FVGs
+            List of Component objects representing FVGs
         """
         if df is None or len(df) < 5:
             logger.warning("FVGDetectorV2: insufficient data")
             return []
 
-        components: List[ComponentV2] = []
+        components: List[Component] = []
         current_idx = len(df) - 1
 
         for i in range(1, current_idx - 1):
@@ -82,7 +82,7 @@ class FVGDetectorV2:
 
     def _check_fvg(
         self, df: pd.DataFrame, i: int, timeframe: str
-    ) -> Optional[ComponentV2]:
+    ) -> Optional[Component]:
         """Check candle i for FVG pattern"""
         prev_high = float(df["high"].iloc[i - 1])
         prev_low = float(df["low"].iloc[i - 1])
@@ -123,13 +123,13 @@ class FVGDetectorV2:
         price_high: float,
         strength: float,
         timeframe: str,
-    ) -> ComponentV2:
-        """Build a ComponentV2 for an FVG"""
+    ) -> Component:
+        """Build a Component for an FVG"""
         ts = df.index[i] if hasattr(df.index[i], "to_pydatetime") else datetime.utcnow()
         if hasattr(ts, "to_pydatetime"):
             ts = ts.to_pydatetime()
 
-        return ComponentV2(
+        return Component(
             component_id=str(uuid.uuid4()),
             component_type=ComponentType.FAIR_VALUE_GAP,
             polarity=polarity,
@@ -145,8 +145,8 @@ class FVGDetectorV2:
         )
 
     def _update_fill_status(
-        self, components: List[ComponentV2], df: pd.DataFrame
-    ) -> List[ComponentV2]:
+        self, components: List[Component], df: pd.DataFrame
+    ) -> List[Component]:
         """Remove fully filled FVGs"""
         current_close = float(df["close"].iloc[-1])
         active = []

@@ -16,7 +16,7 @@ Version: 2.0
 import logging
 from typing import List, Dict, Any
 
-from models.component import ComponentV2, ComponentType, ComponentPolarity
+from models.component import Component, ComponentType, ComponentPolarity
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +67,14 @@ class StrengthEngine:
 
     def score_components(
         self,
-        components: List[ComponentV2],
+        components: List[Component],
         current_price: float,
-    ) -> List[ComponentV2]:
+    ) -> List[Component]:
         """
         Score and rank all components in-place.
 
         Args:
-            components: All detected active ComponentV2 objects
+            components: All detected active Component objects
             current_price: Latest close price
 
         Returns:
@@ -119,10 +119,10 @@ class StrengthEngine:
 
     def get_top_components(
         self,
-        components: List[ComponentV2],
+        components: List[Component],
         n: int = 5,
         polarity: ComponentPolarity = None,
-    ) -> List[ComponentV2]:
+    ) -> List[Component]:
         """
         Get the top N strongest components, optionally filtered by polarity.
 
@@ -141,7 +141,7 @@ class StrengthEngine:
         return filtered[:n]
 
     def calculate_overall_confluence(
-        self, components: List[ComponentV2]
+        self, components: List[Component]
     ) -> float:
         """
         Calculate an overall confluence score for the setup (0-100).

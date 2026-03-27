@@ -1,6 +1,6 @@
 """
 💾 SIGNAL STORAGE V2
-Persists and retrieves SignalV2 objects using JSON file storage.
+Persists and retrieves Signal objects using JSON file storage.
 
 Author: galinborisov10-art
 Version: 2.0
@@ -13,7 +13,7 @@ import fcntl
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
-from models.signal import SignalV2, SignalDirection, SignalStrength, SignalStatus
+from models.signal import Signal, SignalDirection, SignalStrength, SignalStatus
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class SignalStorageV2:
     """
     V2 Signal Storage
 
-    Stores and retrieves SignalV2 objects as JSON records.
+    Stores and retrieves Signal objects as JSON records.
     Uses file locking to prevent corruption from concurrent writes.
 
     Args:
@@ -41,12 +41,12 @@ class SignalStorageV2:
         self.max_records = max_records
         logger.info(f"SignalStorageV2 initialized (path={storage_path})")
 
-    def save(self, signal: SignalV2) -> bool:
+    def save(self, signal: Signal) -> bool:
         """
         Persist a signal to storage.
 
         Args:
-            signal: SignalV2 object to save
+            signal: Signal object to save
 
         Returns:
             True on success, False on failure
@@ -64,7 +64,7 @@ class SignalStorageV2:
             logger.error(f"SignalStorageV2: save failed: {e}")
             return False
 
-    def load_latest(self, n: int = 10) -> List[SignalV2]:
+    def load_latest(self, n: int = 10) -> List[Signal]:
         """
         Load the N most recent signals.
 
@@ -72,7 +72,7 @@ class SignalStorageV2:
             n: Number of signals to return
 
         Returns:
-            List of SignalV2 objects (most recent first)
+            List of Signal objects (most recent first)
         """
         records = self._load_all_raw()
         signals = []
@@ -82,7 +82,7 @@ class SignalStorageV2:
                 signals.append(sig)
         return signals
 
-    def load_by_symbol(self, symbol: str) -> List[SignalV2]:
+    def load_by_symbol(self, symbol: str) -> List[Signal]:
         """Load all signals for a specific symbol"""
         records = self._load_all_raw()
         signals = []
@@ -93,7 +93,7 @@ class SignalStorageV2:
                     signals.append(sig)
         return signals
 
-    def load_by_id(self, signal_id: str) -> Optional[SignalV2]:
+    def load_by_id(self, signal_id: str) -> Optional[Signal]:
         """Load a specific signal by its ID"""
         records = self._load_all_raw()
         for r in records:
@@ -131,10 +131,10 @@ class SignalStorageV2:
                 fcntl.flock(f, fcntl.LOCK_UN)
 
     @staticmethod
-    def _from_dict(data: Dict[str, Any]) -> Optional[SignalV2]:
-        """Deserialize a SignalV2 from a dict"""
+    def _from_dict(data: Dict[str, Any]) -> Optional[Signal]:
+        """Deserialize a Signal from a dict"""
         try:
-            return SignalV2(
+            return Signal(
                 signal_id=data["signal_id"],
                 symbol=data["symbol"],
                 timeframe=data["timeframe"],

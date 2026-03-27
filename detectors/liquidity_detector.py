@@ -17,7 +17,7 @@ import numpy as np
 from typing import List, Optional
 from datetime import datetime
 
-from models.component import ComponentV2, ComponentType, ComponentPolarity, ComponentStatus
+from models.component import Component, ComponentType, ComponentPolarity, ComponentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class LiquidityDetectorV2:
             f"(tolerance={equal_level_tolerance_pct}%, min_touches={min_touches})"
         )
 
-    def detect(self, df: pd.DataFrame, timeframe: str = "1H") -> List[ComponentV2]:
+    def detect(self, df: pd.DataFrame, timeframe: str = "1H") -> List[Component]:
         """
         Detect liquidity zones in OHLCV data.
 
@@ -67,7 +67,7 @@ class LiquidityDetectorV2:
             timeframe: Chart timeframe label
 
         Returns:
-            List of ComponentV2 objects representing liquidity zones
+            List of Component objects representing liquidity zones
         """
         if df is None or len(df) < 20:
             logger.warning("LiquidityDetectorV2: insufficient data")
@@ -83,9 +83,9 @@ class LiquidityDetectorV2:
         )
         return active
 
-    def _detect_bsl(self, df: pd.DataFrame, timeframe: str) -> List[ComponentV2]:
+    def _detect_bsl(self, df: pd.DataFrame, timeframe: str) -> List[Component]:
         """Detect Buy-Side Liquidity zones (above swing highs / equal highs)"""
-        zones: List[ComponentV2] = []
+        zones: List[Component] = []
         lb = self.swing_lookback
         current_idx = len(df) - 1
 
@@ -116,9 +116,9 @@ class LiquidityDetectorV2:
 
         return zones
 
-    def _detect_ssl(self, df: pd.DataFrame, timeframe: str) -> List[ComponentV2]:
+    def _detect_ssl(self, df: pd.DataFrame, timeframe: str) -> List[Component]:
         """Detect Sell-Side Liquidity zones (below swing lows / equal lows)"""
-        zones: List[ComponentV2] = []
+        zones: List[Component] = []
         lb = self.swing_lookback
         current_idx = len(df) - 1
 
@@ -156,8 +156,8 @@ class LiquidityDetectorV2:
         price_level: float,
         timeframe: str,
         strength: float,
-    ) -> Optional[ComponentV2]:
-        """Build a ComponentV2 for a liquidity zone"""
+    ) -> Optional[Component]:
+        """Build a Component for a liquidity zone"""
         tolerance = price_level * (self.tolerance_pct / 100.0)
         price_high = price_level + tolerance
         price_low = price_level - tolerance
@@ -174,7 +174,7 @@ class LiquidityDetectorV2:
         elif polarity == ComponentPolarity.BEARISH and current_close < price_low:
             status = ComponentStatus.MITIGATED
 
-        return ComponentV2(
+        return Component(
             component_id=str(uuid.uuid4()),
             component_type=ComponentType.LIQUIDITY_ZONE,
             polarity=polarity,

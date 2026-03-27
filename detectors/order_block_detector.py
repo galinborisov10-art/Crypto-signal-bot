@@ -4,7 +4,7 @@ Institutional Order Block detection for the V2 pipeline.
 
 Improvements over V1:
 - Modular design - standalone detector, no engine dependency
-- Returns ComponentV2 objects for unified interface
+- Returns Component objects for unified interface
 - Configurable via constructor parameters
 - Clean separation of detection logic
 
@@ -19,7 +19,7 @@ import numpy as np
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from models.component import ComponentV2, ComponentType, ComponentPolarity, ComponentStatus
+from models.component import Component, ComponentType, ComponentPolarity, ComponentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class OrderBlockDetectorV2:
 
     def detect(
         self, df: pd.DataFrame, timeframe: str = "1H"
-    ) -> List[ComponentV2]:
+    ) -> List[Component]:
         """
         Detect order blocks in OHLCV data.
 
@@ -66,13 +66,13 @@ class OrderBlockDetectorV2:
             timeframe: Chart timeframe label
 
         Returns:
-            List of ComponentV2 objects representing order blocks
+            List of Component objects representing order blocks
         """
         if df is None or len(df) < 10:
             logger.warning("OrderBlockDetectorV2: insufficient data")
             return []
 
-        components: List[ComponentV2] = []
+        components: List[Component] = []
         avg_volume = df["volume"].rolling(self.volume_lookback).mean()
         current_idx = len(df) - 1
 
@@ -168,8 +168,8 @@ class OrderBlockDetectorV2:
         info: Dict[str, Any],
         timeframe: str,
         current_idx: int,
-    ) -> Optional[ComponentV2]:
-        """Build a ComponentV2 from detection info"""
+    ) -> Optional[Component]:
+        """Build a Component from detection info"""
         if current_idx - i > self.max_ob_age:
             return None
 
@@ -186,7 +186,7 @@ class OrderBlockDetectorV2:
         if hasattr(ts, "to_pydatetime"):
             ts = ts.to_pydatetime()
 
-        return ComponentV2(
+        return Component(
             component_id=str(uuid.uuid4()),
             component_type=ComponentType.ORDER_BLOCK,
             polarity=polarity,
@@ -203,8 +203,8 @@ class OrderBlockDetectorV2:
         )
 
     def _update_mitigation(
-        self, components: List[ComponentV2], df: pd.DataFrame
-    ) -> List[ComponentV2]:
+        self, components: List[Component], df: pd.DataFrame
+    ) -> List[Component]:
         """Mark fully mitigated OBs and remove invalidated ones"""
         current_close = float(df["close"].iloc[-1])
         active = []

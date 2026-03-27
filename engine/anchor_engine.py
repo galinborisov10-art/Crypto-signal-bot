@@ -18,7 +18,7 @@ Version: 2.0
 import logging
 from typing import List, Optional, Dict, Any
 
-from models.component import ComponentV2, ComponentType, ComponentPolarity
+from models.component import Component, ComponentType, ComponentPolarity
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +49,10 @@ class AnchorEngine:
 
     def select_anchor(
         self,
-        components: List[ComponentV2],
+        components: List[Component],
         current_price: float,
         bias: str,
-    ) -> Optional[ComponentV2]:
+    ) -> Optional[Component]:
         """
         Select the best anchor component for the current price and bias.
 
@@ -62,7 +62,7 @@ class AnchorEngine:
             bias: HTF bias ('BULLISH' or 'BEARISH')
 
         Returns:
-            The best ComponentV2 anchor, or None if no suitable anchor found
+            The best Component anchor, or None if no suitable anchor found
         """
         if not components or current_price <= 0:
             return None
@@ -88,10 +88,10 @@ class AnchorEngine:
 
     def _filter_candidates(
         self,
-        components: List[ComponentV2],
+        components: List[Component],
         current_price: float,
         bias: str,
-    ) -> List[ComponentV2]:
+    ) -> List[Component]:
         """Filter components to valid anchor candidates"""
         result = []
         for comp in components:
@@ -109,14 +109,14 @@ class AnchorEngine:
             result.append(comp)
         return result
 
-    def _distance_pct(self, comp: ComponentV2, current_price: float) -> float:
+    def _distance_pct(self, comp: Component, current_price: float) -> float:
         """Calculate percentage distance from current price to component mid"""
         if current_price <= 0:
             return float("inf")
         return abs(comp.price_mid - current_price) / current_price * 100.0
 
     def get_anchor_info(
-        self, anchor: Optional[ComponentV2]
+        self, anchor: Optional[Component]
     ) -> Dict[str, Any]:
         """Return a summary dict for the anchor"""
         if anchor is None:

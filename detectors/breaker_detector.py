@@ -15,7 +15,7 @@ import pandas as pd
 from typing import List, Optional
 from datetime import datetime
 
-from models.component import ComponentV2, ComponentType, ComponentPolarity, ComponentStatus
+from models.component import Component, ComponentType, ComponentPolarity, ComponentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class BreakerDetectorV2:
     """
     V2 Breaker Block Detector
 
-    Takes a list of order block ComponentV2 objects (from OrderBlockDetectorV2)
+    Takes a list of order block Component objects (from OrderBlockDetectorV2)
     and identifies which ones have been breached, converting them to breaker blocks
     with flipped polarity.
 
@@ -51,24 +51,24 @@ class BreakerDetectorV2:
     def detect(
         self,
         df: pd.DataFrame,
-        order_blocks: List[ComponentV2],
+        order_blocks: List[Component],
         timeframe: str = "1H",
-    ) -> List[ComponentV2]:
+    ) -> List[Component]:
         """
         Detect breaker blocks from existing order blocks.
 
         Args:
             df: OHLCV DataFrame
-            order_blocks: List of OB ComponentV2 objects from OrderBlockDetectorV2
+            order_blocks: List of OB Component objects from OrderBlockDetectorV2
             timeframe: Chart timeframe label
 
         Returns:
-            List of ComponentV2 objects representing breaker blocks
+            List of Component objects representing breaker blocks
         """
         if not order_blocks or df is None or len(df) < 5:
             return []
 
-        breakers: List[ComponentV2] = []
+        breakers: List[Component] = []
 
         for ob in order_blocks:
             if ob.component_type != ComponentType.ORDER_BLOCK:
@@ -88,7 +88,7 @@ class BreakerDetectorV2:
         return breakers
 
     def _find_breach(
-        self, df: pd.DataFrame, ob: ComponentV2
+        self, df: pd.DataFrame, ob: Component
     ) -> Optional[dict]:
         """
         Check if an order block has been breached.
@@ -122,13 +122,13 @@ class BreakerDetectorV2:
         return None
 
     def _build_breaker(
-        self, ob: ComponentV2, breach: dict, timeframe: str
-    ) -> ComponentV2:
-        """Build a breaker block ComponentV2 from a breached OB"""
+        self, ob: Component, breach: dict, timeframe: str
+    ) -> Component:
+        """Build a breaker block Component from a breached OB"""
         new_polarity: ComponentPolarity = breach["new_polarity"]
         strength = ob.strength * self.strength_retention
 
-        return ComponentV2(
+        return Component(
             component_id=str(uuid.uuid4()),
             component_type=ComponentType.BREAKER_BLOCK,
             polarity=new_polarity,

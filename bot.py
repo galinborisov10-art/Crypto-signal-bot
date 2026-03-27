@@ -11839,7 +11839,6 @@ async def auto_signal_job(timeframe: str, bot_instance):
                         v2_signal = pipeline.generate_signal(df_by_tf=df_by_tf, trigger_type='auto')
                         if not v2_signal:
                             return None
-                        direction_str = v2_signal.direction.value if hasattr(v2_signal.direction, 'value') else str(v2_signal.direction)
                         return {
                             'symbol': symbol,
                             'timeframe': timeframe,
@@ -11993,7 +11992,9 @@ async def auto_signal_job(timeframe: str, bot_instance):
             # Record signal to stats
             try:
                 if v2_signal is not None:
-                    direction_str = v2_signal.direction.value if hasattr(v2_signal.direction, 'value') else str(v2_signal.direction)
+                    raw_dir = v2_signal.direction.value if hasattr(v2_signal.direction, 'value') else str(v2_signal.direction)
+                    # Normalize to BUY/SELL for stats compatibility
+                    direction_str = 'BUY' if raw_dir.upper() in ('LONG', 'BUY', 'BULLISH') else 'SELL'
                     signal_id = record_signal(
                         symbol=symbol,
                         timeframe=timeframe,
@@ -12025,7 +12026,8 @@ async def auto_signal_job(timeframe: str, bot_instance):
             if active_confidence >= 60:  # FIX: Aligned with Telegram send threshold (was 65)
                 try:
                     if v2_signal is not None:
-                        direction_str = v2_signal.direction.value if hasattr(v2_signal.direction, 'value') else str(v2_signal.direction)
+                        raw_dir = v2_signal.direction.value if hasattr(v2_signal.direction, 'value') else str(v2_signal.direction)
+                        direction_str = 'BUY' if raw_dir.upper() in ('LONG', 'BUY', 'BULLISH') else 'SELL'
                         analysis_data = {
                             'htf_bias': v2_signal.htf_bias,
                             'components': v2_signal.components,

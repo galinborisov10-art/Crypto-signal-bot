@@ -30,8 +30,8 @@ import logging
 import pandas as pd
 from typing import Optional, Dict, Any, List
 
-from models.signal import Signal, SignalV2
-from models.component import Component, ComponentV2
+from models.signal import Signal
+from models.component import Component
 from engine.htf_bias_engine import HTFBiasEngine
 from engine.component_engine import ComponentEngine
 from engine.signal_engine import SignalEngine

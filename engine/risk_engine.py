@@ -20,7 +20,7 @@ Version: 2.0
 import logging
 from typing import Optional, Dict, Any, List
 
-from models.component import ComponentV2
+from models.component import Component
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class RiskEngine:
     def calculate(
         self,
         entry_price: float,
-        anchor: ComponentV2,
+        anchor: Component,
         bias: str,
         swing_low: Optional[float] = None,
         swing_high: Optional[float] = None,
@@ -91,7 +91,7 @@ class RiskEngine:
     def _bullish_risk(
         self,
         entry: float,
-        anchor: ComponentV2,
+        anchor: Component,
         swing_low: Optional[float],
     ) -> Optional[Dict[str, Any]]:
         """Calculate SL/TP for bullish setup"""
@@ -136,7 +136,7 @@ class RiskEngine:
     def _bearish_risk(
         self,
         entry: float,
-        anchor: ComponentV2,
+        anchor: Component,
         swing_high: Optional[float],
     ) -> Optional[Dict[str, Any]]:
         """Calculate SL/TP for bearish setup"""
